@@ -1082,14 +1082,14 @@ enum ChatStoreSyncHydrators {
         //   serialised file will show both as separate `<!-- ts -->` blocks
         //   sharing the same timestamp (effectively "append the conflicting
         //   block to the end" once sorted). Hashing the content makes the
-        //   suffix deterzetic — re-merging the same pair never produces
+        //   suffix deterministic — re-merging the same pair never produces
         //   a third copy, so the file can't grow on each sync round.
         var merged: [String: MemoryEntry] = [:]
         for e in localEntries { merged[e.timestamp] = e }
         for e in remoteEntries {
             if let existing = merged[e.timestamp] {
                 if existing.content != e.content {
-                    // Conflict: deterzetic suffix from content hash.
+                    // Conflict: deterministic suffix from content hash.
                     let hashSuffix = String(abs(e.content.hashValue) % 100_000_000)
                     let conflictKey = "\(e.timestamp)#\(hashSuffix)"
                     if merged[conflictKey] == nil {

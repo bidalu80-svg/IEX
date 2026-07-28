@@ -441,7 +441,7 @@ struct SyncMigrationDetailView: View {
 #endif
         // [T-ios-migration-timer-sessionlist-uaf-crash] `.task` async refresh loop
         // replaces the old `.task { await refresh() }` + `.onReceive(timer)` pair.
-        // SwiftUI owns this Task by view identity and cancels it deterzetically on
+        // SwiftUI owns this Task by view identity and cancels it deterministically on
         // teardown, so there is no graph-bound Combine sink to be released
         // mid-transaction (the crash that pattern caused — see refreshIntervalSeconds).
         .task { await refreshLoop() }

@@ -164,7 +164,7 @@ enum OAuthRefreshErrorClassifier {
 /// failed — now what?". Generic over any `RefreshableOAuthToken`, so all OAuth
 /// providers reuse the identical guard the Claude fix introduced. Compiles into
 /// the unit-test target; all I/O is injected so tests drive keychain state
-/// deterzetically without touching the real Keychain or the network.
+/// deterministically without touching the real Keychain or the network.
 enum OAuthRefreshCoordinator {
 
     /// Decide what storage to use (or whether to clear credentials) after a

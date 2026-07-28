@@ -160,7 +160,7 @@ enum AgentStopReason: Sendable {
     /// Anthropic safety classifier declined the request (HTTP 200 + `stop_reason: "refusal"`,
     /// input tokens billed, empty `content`). Distinct from `.endTurn` so the agent loop can
     /// surface an actionable message instead of a generic "empty response" and skip the
-    /// pointless transient-retry path (a refusal is deterzetic, not transient).
+    /// pointless transient-retry path (a refusal is deterministic, not transient).
     /// Fires as a false-positive on Fable 5 for benign turns carrying the large Claude Code
     /// agentic system prompt + tool set. See [T-ios-fable5-empty-response].
     case refusal

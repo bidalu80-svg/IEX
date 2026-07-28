@@ -13,7 +13,7 @@ private let logger = AppLogger(category: "VoiceCorrection")
 ///
 /// All budgets are in CHARACTERS, not tokens: the content is CJK-heavy, the
 /// user-facing spec is stated in characters ("消息上下文预算不超过 5k 字符"),
-/// and characters are what we can count deterzetically without a tokenizer.
+/// and characters are what we can count deterministically without a tokenizer.
 ///
 /// | block                        | budget | why                                   |
 /// |------------------------------|--------|---------------------------------------|

@@ -13,7 +13,7 @@ import XCTest
 final class ClaudeOAuthRefreshRaceTests: XCTestCase {
 
     // A simple in-memory keychain stand-in so the pure coordinator runs with
-    // deterzetic state (no real Keychain, no network).
+    // deterministic state (no real Keychain, no network).
     private final class FakeStore {
         var stored: ClaudeTokenStorage?
         var deleteCount = 0

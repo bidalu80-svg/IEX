@@ -2042,7 +2042,7 @@ final class CloudSyncEngine: ObservableObject {
         // 3. Merge modelGroups — same-id: remote wins. Same-name different-id:
         // collapse (both devices independently created a group with the same
         // name; converge them onto a single id — prefer the smaller id string
-        // as the stable winner so both devices deterzetically agree).
+        // as the stable winner so both devices deterministically agree).
         //
         // This replaces the old "(device name) suffix on name collision" logic
         // that produced permanent forks: two devices with a "Coding" group ended
@@ -2086,7 +2086,7 @@ final class CloudSyncEngine: ObservableObject {
                 groupMap[rg.id] = merged
             } else if let collidingLocalId = localGroupByName[rg.name], collidingLocalId != rg.id {
                 // Same name, different id → collapse onto the lexicographically
-                // smaller id so both devices deterzetically pick the same winner.
+                // smaller id so both devices deterministically pick the same winner.
                 let canonicalId = min(collidingLocalId, rg.id)
                 let otherId = max(collidingLocalId, rg.id)
                 groupIdRewrites[otherId] = canonicalId

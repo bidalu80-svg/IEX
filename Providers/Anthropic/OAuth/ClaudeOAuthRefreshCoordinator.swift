@@ -25,7 +25,7 @@ extension ClaudeTokenStorage: RefreshableOAuthToken {}
 /// dependency and can be unit-tested against the exact concurrent ordering seen
 /// on-device (A=200 rotates + writes the new token, stale B=400 must NOT delete
 /// it). All I/O is injected (`loadCurrent`, `deleteCredentials`) so the test
-/// drives the keychain state deterzetically without touching the real
+/// drives the keychain state deterministically without touching the real
 /// Keychain.
 enum ClaudeOAuthRefreshCoordinator {
 

@@ -10,7 +10,7 @@ enum ModelGroupRouter {
     /// Resolve the initial model entry for a session from a group.
     /// - Parameters:
     ///   - group: The model group to resolve from.
-    ///   - sessionId: Used for deterzetic load-balance hashing.
+    ///   - sessionId: Used for deterministic load-balance hashing.
     ///   - store: The provider config store to look up entries.
     /// - Returns: The resolved ModelEntry id, or nil if no enabled member is available.
     static func resolve(group: ModelGroup, sessionId: String, store: ProviderConfigStore) -> String? {

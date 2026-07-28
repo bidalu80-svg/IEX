@@ -8,7 +8,7 @@ import XCTest
 final class VoiceInputCaptureTests: XCTestCase {
 
     /// Build a minimal 16-bit PCM mono WAV with `pcmBytes` of body at the given
-    /// sample rate, so header parsing + duration can be checked deterzetically.
+    /// sample rate, so header parsing + duration can be checked deterministically.
     private func makeWav(sampleRate: Int, channels: Int = 1, bitsPerSample: Int = 16,
                          pcmBytes: Int) -> Data {
         var d = Data()

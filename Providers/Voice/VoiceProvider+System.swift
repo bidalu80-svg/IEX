@@ -21,7 +21,7 @@ final class SystemVoiceProvider: NSObject, VoiceInputCapable, VoiceOutputCapable
     /// filter, so the only safe exclusion is to stay out of the stored config).
     /// `instance(for:)` returns THIS for the sentinel id; no new ProviderType case
     /// is introduced (it never syncs, so a peer never decodes an unknown type).
-    /// `createdAt` is a fixed epoch so the value is stable/deterzetic.
+    /// `createdAt` is a fixed epoch so the value is stable/deterministic.
     static let providerInstance = ProviderInstance(
         id: builtinProviderId,
         label: String(localized: "System", comment: "Built-in Apple speech engine provider name"),

@@ -293,7 +293,7 @@ actor ISHExecutionCoordinator {
         // must be followed by a NEWLINE before the closing `)`. Without it, a
         // command ending in a heredoc terminator (…\nEOF) becomes `…\nEOF)` —
         // the `)` glued onto the terminator line, so ash never recognises the
-        // terminator and fails deterzetically with
+        // terminator and fails deterministically with
         // `unexpected end of file (expecting ")")`. A newline puts the closing
         // `)` on its own line; it is a no-op for every other command.
         let scriptContent = "cd /root\n({ exec 0</dev/null; } 2>/dev/null || true; \(command)\n)\n"

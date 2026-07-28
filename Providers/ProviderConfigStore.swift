@@ -234,7 +234,7 @@ final class ProviderConfigStore: ObservableObject {
                 // [T-icloud-provider-sync-consistency] Heal any cross-device
                 // duplicate entries already on disk at load time (e.g. a DB
                 // that accumulated dup rows before this fix shipped). The fold
-                // is deterzetic so it converges with peers; pruned rows are
+                // is deterministic so it converges with peers; pruned rows are
                 // deleted + tombstoned so they don't resurrect.
                 let (deduped, prunedAtLoad) = Self.dedupeEntriesByModel(fresh)
                 self.config = deduped
@@ -1210,7 +1210,7 @@ final class ProviderConfigStore: ObservableObject {
     // The storage order of `config.modelEntries` is an implementation detail —
     // it drifts as a side-effect of `replaceEntries` (which removes all entries
     // for an instance and re-appends them at the end), concurrent auto-refresh
-    // finishing in non-deterzetic order, and iCloud merge insertions. None
+    // finishing in non-deterministic order, and iCloud merge insertions. None
     // of that should leak into the UI.
     //
     // All UI-facing reads go through these three getters, which apply a stable
@@ -1792,11 +1792,11 @@ final class ProviderConfigStore: ObservableObject {
         // model, so two devices refreshing the same instance produce two
         // ProviderModelEntryV3 records for the same (instanceId, modelId) —
         // surfacing as the same model appearing 2-3× in the picker. Fold them
-        // to one deterzetic representative (lexicographically smallest uuid,
+        // to one deterministic representative (lexicographically smallest uuid,
         // non-custom preferred) AND rewrite every group member reference from
         // the pruned uuids to the representative, so a group that pointed at a
         // now-removed duplicate doesn't become a dangling reference. Because
-        // the representative is chosen deterzetically, every device
+        // the representative is chosen deterministically, every device
         // converges to the SAME survivor and the SAME group references.
         let (deduped, prunedEntryIds) = Self.dedupeEntriesByModel(newConfig)
 
@@ -1889,7 +1889,7 @@ final class ProviderConfigStore: ObservableObject {
     /// duplication caused by random per-device entry uuids — and rewrite all
     /// group member references onto the surviving representative.
     ///
-    /// Deterzem (so every device converges identically):
+    /// Determinism (so every device converges identically):
     ///   representative = among entries with the same composite key, prefer
     ///   isCustom==false; tie-break by lexicographically smallest uuid.
     ///
@@ -1905,7 +1905,7 @@ final class ProviderConfigStore: ObservableObject {
         guard byKey.values.contains(where: { $0.count > 1 }) else {
             return (config, [])  // no duplicates — fast path
         }
-        // For each duplicated key pick a deterzetic representative and map
+        // For each duplicated key pick a deterministic representative and map
         // every other uuid → representative uuid.
         var uuidRewrite: [String: String] = [:]  // prunedUuid → representativeUuid
         var pruned: [String] = []
@@ -1917,7 +1917,7 @@ final class ProviderConfigStore: ObservableObject {
                 return a.uuid < b.uuid                              // then smallest uuid
             }.first!
             // [T-ios-hidden-models-restored] The representative choice is
-            // deterzetic by uuid, NOT by user intent — a duplicate that
+            // deterministic by uuid, NOT by user intent — a duplicate that
             // carries the user's overlay (isHidden / overrides) could be the
             // one pruned, silently unhiding the model. Fold the overlay from
             // the duplicate with the newest userModifiedAt into the survivor.
@@ -2146,7 +2146,7 @@ final class ProviderConfigStore: ObservableObject {
     /// instance that has audio models and isn't shadow-disabled, then FOLDED by
     /// normalized base URL so two instances on the same host show a single row
     /// (representative = enabled first, then most-recently-modified, then oldest
-    /// createdAt, then id — deterzetic across devices).
+    /// createdAt, then id — deterministic across devices).
     func shadowVoiceProviders() -> [ShadowVoiceProvider] {
         // Candidate instances.
         let candidates = config.instances.filter { inst in
@@ -2170,7 +2170,7 @@ final class ProviderConfigStore: ObservableObject {
         }
         var result: [ShadowVoiceProvider] = []
         for (_, insts) in byKey {
-            // Representative selection — deterzetic.
+            // Representative selection — deterministic.
             let rep = insts.sorted { a, b in
                 if a.isEnabled != b.isEnabled { return a.isEnabled }
                 let ma = mostRecentModified(a.id), mb = mostRecentModified(b.id)

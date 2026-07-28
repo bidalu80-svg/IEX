@@ -4707,7 +4707,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 return r.assistantText.isEmpty && r.toolEntries.isEmpty
                     && !hasReasoning && !r.isStreamInterrupted
                     && r.stopReason != .maxTokens
-                    // A refusal (Anthropic safety classifier decline) is deterzetic:
+                    // A refusal (Anthropic safety classifier decline) is deterministic:
                     // the content is empty but retrying the identical request just gets
                     // declined again and burns tokens. Don't route it through the
                     // transient-retry / group-fallback path; let the .refusal branch in
@@ -5190,7 +5190,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let deferredAssistantRaw = await buildRawMessage(assistantMessage, thoughtSignatures: sigMap)
             // Phase B: write the DB id back into agentHistory immediately — even though
             // we defer the actual appendMessages to batch with the tool results below,
-            // the id is deterzetic and compact lookups rely on it.
+            // the id is deterministic and compact lookups rely on it.
             if let raw = deferredAssistantRaw, assistantAgentIdx < agentHistory.count {
                 agentHistory[assistantAgentIdx].dbMessageId = raw.id
             }

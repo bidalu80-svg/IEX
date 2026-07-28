@@ -210,7 +210,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         return items
     }
 
-    /// Build a compact, deterzetic sync anchor from directory contents.
+    /// Build a compact, deterministic sync anchor from directory contents.
     /// Uses a fixed-size 8-byte representation to avoid exceeding the system's
     /// vendor-token size limit (which causes an assertion in FPXObserver).
     private func buildSyncAnchor() -> NSFileProviderSyncAnchor {

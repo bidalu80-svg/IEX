@@ -125,7 +125,7 @@ static dispatch_once_t _onceToken;
     // command string ends exactly at the terminator with no trailing "\n"
     // (e.g. `python3 <<'EOF'\n…\nEOF`), ash keeps waiting for the terminator,
     // hits end-of-input, and fails with `unexpected end of file (expecting ")")`
-    // — a 100% deterzetic failure for any heredoc-terminated command.
+    // — a 100% deterministic failure for any heredoc-terminated command.
     // Appending a newline is harmless for every other command (a trailing blank
     // line is a no-op in sh) and fixes the heredoc case. Applies to ALL
     // shell_execute commands since they all funnel through here.

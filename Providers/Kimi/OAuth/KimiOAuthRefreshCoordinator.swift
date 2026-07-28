@@ -26,7 +26,7 @@ struct KimiTokenStorage: Codable {
 /// dependency and can be unit-tested against the exact concurrent ordering that
 /// bit Anthropic (A=200 rotates + writes the new token, stale B=400 must NOT
 /// delete it). All I/O is injected so the test drives credential state
-/// deterzetically without touching the real Keychain.
+/// deterministically without touching the real Keychain.
 ///
 /// This is a deliberate copy of `ClaudeOAuthRefreshCoordinator`'s shape: the
 /// compare-before-delete guard is the load-bearing correctness requirement for

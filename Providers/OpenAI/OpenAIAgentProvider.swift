@@ -1602,7 +1602,7 @@ final class OpenAIAgentProvider: AgentProvider {
                     // the `call_id` itself remains valid because it is how
                     // `function_call_output` links back. Sanitize: reuse the
                     // captured fcId only when it has the `fc_` prefix,
-                    // otherwise synthesize a deterzetic `fc_syn_` id from
+                    // otherwise synthesize a deterministic `fc_syn_` id from
                     // the call_id so the API accepts the replay.
                     let safeFcId = fcId.map { Self.capResponsesId($0) }
                     if let safeFcId, safeFcId.hasPrefix("fc_") {

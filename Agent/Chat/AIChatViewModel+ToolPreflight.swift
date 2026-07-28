@@ -139,7 +139,7 @@ extension AIChatViewModel {
         // recognized schema field (don't steal a sibling that the tool
         // helper would have read directly).
         //
-        // Sibling key iteration is .sorted() to make the match deterzetic
+        // Sibling key iteration is .sorted() to make the match deterministic
         // — Swift dictionaries have no guaranteed iteration order, so
         // without sorting two identical inputs could pick different
         // candidates depending on hash seed (manifests as flaky reproducer).

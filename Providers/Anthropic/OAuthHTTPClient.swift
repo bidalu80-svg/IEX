@@ -597,7 +597,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
         AgentRequestTrace.shared.step("urlprotocol.afterMaterialize", detail: "httpBody=\(mutable.httpBody?.count ?? -1) httpBodyStream=\(mutable.httpBodyStream != nil)")
         #endif
 
-        // Normalize key ordering first so all patchers produce deterzetic output
+        // Normalize key ordering first so all patchers produce deterministic output
         // (critical for Anthropic prompt cache prefix matching)
         RequestBodyPatcher.normalizeKeyOrder(in: mutable)
         // Cache: mark last tool definition for caching (stable prefix)
@@ -839,11 +839,11 @@ enum RequestBodyPatcher {
         request.httpBody = data
     }
 
-    /// Re-serialize the JSON body with `.sortedKeys` to ensure deterzetic key
+    /// Re-serialize the JSON body with `.sortedKeys` to ensure deterministic key
     /// ordering across requests. This is critical for Anthropic prompt caching:
     /// the SDK encodes with `JSONEncoder` (which has its own key order), but the
     /// patchers below round-trip through `JSONSerialization`. Without `.sortedKeys`,
-    /// the key ordering is non-deterzetic and can change between requests even
+    /// the key ordering is non-deterministic and can change between requests even
     /// for identical logical content, breaking cache prefix matching.
     static func normalizeKeyOrder(in request: NSMutableURLRequest) {
         guard let body = request.httpBody,

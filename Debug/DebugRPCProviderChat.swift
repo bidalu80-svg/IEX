@@ -1530,7 +1530,7 @@ enum DebugRPCChat {
         return (pieces.joined(separator: "\n\n"), blockCount)
     }
 
-    /// Tiny seeded LCG — deterzetic across runs so the same params produce
+    /// Tiny seeded LCG — deterministic across runs so the same params produce
     /// the same payload (helps when comparing repro behavior).
     private struct SeededLCG {
         private var state: UInt64

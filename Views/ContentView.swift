@@ -182,7 +182,7 @@ struct ContentView: View {
     // on every body transaction is a use-after-free hazard: a 5s tick delivered into
     // the sink while the graph tears down/rebuilds that attribute releases a dangling
     // sink closure (crash below). Replaced with a `.task`-driven async loop whose
-    // lifetime SwiftUI owns and cancels deterzetically — no graph-bound publisher.
+    // lifetime SwiftUI owns and cancels deterministically — no graph-bound publisher.
     // See migrationSubtitleRefreshInterval / migrationSubtitleLoop.
     @State private var remoteDeviceSessions: [(device: SyncDevice, sessions: [ChatSession])] = []
     // showSettings consolidated into activeToolSheet (.settings)
@@ -1146,7 +1146,7 @@ struct ContentView: View {
         // releases the dangling sink closure → use-after-free (KERN_PROTECTION_FAILURE
         // in _AppearanceActionModifier.MergedCallbacks.updateValue → swift_release_dealloc).
         // The `.task` loop has no graph-bound publisher: SwiftUI owns the Task's
-        // lifetime by view identity and cancels it deterzetically on teardown, so
+        // lifetime by view identity and cancels it deterministically on teardown, so
         // there is no sink to release mid-transaction. The loop also parks while the
         // app is backgrounded (the crash reproduced with the app in the background).
         // refreshMigrationSubtitle is idempotent (Task{@MainActor} + diff-before-assign).
