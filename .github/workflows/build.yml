@@ -245,7 +245,12 @@ jobs:
             > "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg/FFmpeg.h"
 
           mkdir -p "$UP2/deps/libs"
-          for lib in lish_emu lish lfakefs; do touch "$UP2/deps/libs/lib${lib}.a"; done
+          printf 'void minis_ci_native_stub(void) {}\n' > "$UP2/deps/libs/native_stub.c"
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
+            "$UP2/deps/libs/native_stub.c" -o "$UP2/deps/libs/native_stub.o"
+          for lib in ish_emu ish fakefs; do
+            libtool -static -o "$UP2/deps/libs/lib${lib}.a" "$UP2/deps/libs/native_stub.o"
+          done
 
           for fw in slirp.0 ffi.8 gmodule-2.0.0 pixman-1.0 zstd.1 iconv.2 gio-2.0.0 intl.8 gthread-2.0.0 qemu-aarch64-softmmu gobject-2.0.0 glib-2.0.0 jpeg.62 gstnet-1.0.0 opus.0 gstcheck-1.0.0 gstcontroller-1.0.0 png16.16 json-glib-1.0.0 gcrypt.20 virglrenderer.1 gstbase-1.0.0 ssl.1.1 gstrtsp-1.0.0 EGL gstreamer-1.0.0 gstsdp-1.0.0 epoxy.0 crypto.1.1 gstvideo-1.0.0 swtpm.0 phodav-3.0.0 gstfft-1.0.0 gstaudio-1.0.0 gstpbutils-1.0.0 gstallocators-1.0.0 gstapp-1.0.0 gpg-error.0 gstrtp-1.0.0 gstriff-1.0.0 GLESv2 gsttag-1.0.0 soup-3.0.0; do
             mkdir -p "$UP2/build/frameworks/$fw.framework"
@@ -253,6 +258,7 @@ jobs:
 
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
             mkdir -p "$UP2/deps/frameworks/$fw.framework/Headers"
+            libtool -static -o "$UP2/deps/frameworks/$fw.framework/$fw" "$UP2/deps/libs/native_stub.o"
           done
 
           mkdir -p "$UP2/deps/resources"
