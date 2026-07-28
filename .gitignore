@@ -1,0 +1,31 @@
+# Xcode
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# SPM
+.spm/
+.build/
+Package.resolved
+
+# Build products
+build/
+*.o
+*.a
+*.dylib
+
+# Config
+Configs/ProviderCustomization.xcconfig
+
+# macOS
+.DS_Store
+
+# IDE
+*.swp
+*.swo
+*.swn
