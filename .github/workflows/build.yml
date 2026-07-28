@@ -102,6 +102,7 @@ jobs:
             'int create_stdio(const char *path, int major, int num);' \
             '#endif' \
             > "$UP2/deps/include/fs/path.h"
+          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
           # stub all remaining ish/kernel/, ish/fs/, ish/emu/ headers
           mkdir -p "$UP2/deps/include/ish/kernel" "$UP2/deps/include/ish/fs" "$UP2/deps/include/ish/emu"
           cp "$UP2/deps/include/kernel/fs.h" "$UP2/deps/include/ish/kernel/fs.h"
@@ -115,7 +116,7 @@ jobs:
               'struct task; struct tty; struct tty_driver; struct tty_driver_ops;' \
               'struct fd; struct winsize_; struct siginfo_; struct sigaction;' \
               'struct timespec; struct pollfd; struct rusage;' \
-              'struct dword_t; typedef unsigned long dword_t;' \
+              'typedef unsigned long dword_t;' \
               'struct tty *pty_open_fake(struct tty_driver *drv);' \
               'extern struct task *current;' \
               'struct task *pid_get_task(dword_t pid);' \
@@ -136,7 +137,6 @@ jobs:
               > "$UP2/deps/include/$h"
           done
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
-          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
 
           mkdir -p "$UP2/deps/libs"
