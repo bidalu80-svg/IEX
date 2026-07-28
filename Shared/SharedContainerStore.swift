@@ -7,14 +7,32 @@ enum SharedContainerStore {
 
     private static let pendingShareKey = "pendingShare"
 
+    static var appGroupContainerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+    }
+
+    static var hasAppGroupContainer: Bool {
+        appGroupContainerURL != nil
+    }
+
+    static var persistentContainerURL: URL {
+        if let appGroupURL = appGroupContainerURL {
+            return appGroupURL
+        }
+
+        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        let fallback = library.appendingPathComponent("MinisChat/AppGroupFallback", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
+    }
+
     static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)
     }
 
     /// Directory in the shared container for transferring attachment files.
     static var sharedFileDirectory: URL? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+        appGroupContainerURL?
             .appendingPathComponent("ShareExtension", isDirectory: true)
     }
 
