@@ -18,6 +18,7 @@ build/
 *.o
 *.a
 *.dylib
+build.log
 
 # Config
 Configs/ProviderCustomization.xcconfig
