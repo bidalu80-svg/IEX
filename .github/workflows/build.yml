@@ -28,38 +28,43 @@ jobs:
         shell: bash
         run: |
           ROOT="$PWD"
-          OUTER="$(pwd)/../.."
+          UP1="$(pwd)/.."
+          UP2="$(pwd)/../.."
 
-          mkdir -p "$OUTER/scripts"
-          echo 'IyEvYmluL2Jhc2gKT1VUPSR7U1JDUk9PVDotJFBXRH0vR2VuZXJhdGVkL0RlYnVnU2tpbGxHZW5lcmF0ZWQuc3dpZnQKbWtkaXIgLXAgIiQoZGlybmFtZSAiJE9VVCIpIgpjYXQgPiAiJE9VVCIgPDwgJ1NUVUInCiNpZiBERUJVRwplbnVtIERlYnVnU2tpbGxHZW5lcmF0ZWQgewogICAgc3RhdGljIGxldCBza2lsbE1hcmtkb3duQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50UHl0aG9uQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50Tm9kZUI2NCA9ICIiCiAgICBzdGF0aWMgbGV0IGNsaWVudEJhc2hCNjQgPSAiIgp9CiNlbmRpZgpTVFVC' | base64 -d > "$OUTER/scripts/gen_debug_skill.sh"
-          chmod +x "$OUTER/scripts/gen_debug_skill.sh"
+          # scripts/ is referenced as $SRCROOT/../../scripts/ (2 levels up)
+          mkdir -p "$UP2/scripts"
+          echo 'IyEvYmluL2Jhc2gKT1VUPSR7U1JDUk9PVDotJFBXRH0vR2VuZXJhdGVkL0RlYnVnU2tpbGxHZW5lcmF0ZWQuc3dpZnQKbWtkaXIgLXAgIiQoZGlybmFtZSAiJE9VVCIpIgpjYXQgPiAiJE9VVCIgPDwgJ1NUVUInCiNpZiBERUJVRwplbnVtIERlYnVnU2tpbGxHZW5lcmF0ZWQgewogICAgc3RhdGljIGxldCBza2lsbE1hcmtkb3duQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50UHl0aG9uQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50Tm9kZUI2NCA9ICIiCiAgICBzdGF0aWMgbGV0IGNsaWVudEJhc2hCNjQgPSAiIgp9CiNlbmRpZgpTVFVC' | base64 -d > "$UP2/scripts/gen_debug_skill.sh"
+          chmod +x "$UP2/scripts/gen_debug_skill.sh"
 
-          mkdir -p "$OUTER/shared/bashism"
-          echo '[]' > "$OUTER/shared/bashism/bashism_rules.json"
-          echo '[]' > "$OUTER/shared/bashism/bashism_test_vectors.json"
+          # shared/ is referenced as ../shared/ (1 level up)
+          mkdir -p "$UP1/shared/bashism"
+          echo '[]' > "$UP1/shared/bashism/bashism_rules.json"
+          echo '[]' > "$UP1/shared/bashism/bashism_test_vectors.json"
 
+          # Generated/ is inside the repo
           mkdir -p "$ROOT/Generated"
           printf '#if DEBUG\nenum DebugSkillGenerated {\n    static let skillMarkdownB64 = ""\n    static let clientPythonB64 = ""\n    static let clientNodeB64 = ""\n    static let clientBashB64 = ""\n}\n#endif\n' > "$ROOT/Generated/DebugSkillGenerated.swift"
 
-          mkdir -p "$OUTER/deps/include/ish"
-          mkdir -p "$OUTER/deps/include/fs"
-          echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$OUTER/deps/include/ish/ish.h"
-          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$OUTER/deps/include/fs/devices.h"
-          for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$OUTER/deps/include/ish/$f"; done
+          # deps/ + build/ are referenced as ../../deps/ and ../../build/ (2 levels up)
+          mkdir -p "$UP2/deps/include/ish"
+          mkdir -p "$UP2/deps/include/fs"
+          echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
+          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
+          for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
 
-          mkdir -p "$OUTER/deps/libs"
-          for lib in lish_emu lish lfakefs; do touch "$OUTER/deps/libs/lib${lib}.a"; done
+          mkdir -p "$UP2/deps/libs"
+          for lib in lish_emu lish lfakefs; do touch "$UP2/deps/libs/lib${lib}.a"; done
 
           for fw in slirp.0 ffi.8 gmodule-2.0.0 pixman-1.0 zstd.1 iconv.2 gio-2.0.0 intl.8 gthread-2.0.0 qemu-aarch64-softmmu gobject-2.0.0 glib-2.0.0 jpeg.62 gstnet-1.0.0 opus.0 gstcheck-1.0.0 gstcontroller-1.0.0 png16.16 json-glib-1.0.0 gcrypt.20 virglrenderer.1 gstbase-1.0.0 ssl.1.1 gstrtsp-1.0.0 EGL gstreamer-1.0.0 gstsdp-1.0.0 epoxy.0 crypto.1.1 gstvideo-1.0.0 swtpm.0 phodav-3.0.0 gstfft-1.0.0 gstaudio-1.0.0 gstpbutils-1.0.0 gstallocators-1.0.0 gstapp-1.0.0 gpg-error.0 gstrtp-1.0.0 gstriff-1.0.0 GLESv2 gsttag-1.0.0 soup-3.0.0; do
-            mkdir -p "$OUTER/build/frameworks/$fw.framework"
+            mkdir -p "$UP2/build/frameworks/$fw.framework"
           done
 
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
-            mkdir -p "$OUTER/deps/frameworks/$fw.framework/Headers"
+            mkdir -p "$UP2/deps/frameworks/$fw.framework/Headers"
           done
 
-          mkdir -p "$OUTER/deps/resources"
-          touch "$OUTER/deps/resources/RootfsPatch.bundle"
+          mkdir -p "$UP2/deps/resources"
+          touch "$UP2/deps/resources/RootfsPatch.bundle"
 
       - name: Resolve SPM dependencies
         run: |
