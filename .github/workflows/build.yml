@@ -102,13 +102,38 @@ jobs:
             'int create_stdio(const char *path, int major, int num);' \
             '#endif' \
             > "$UP2/deps/include/fs/path.h"
-          # stub ish/kernel/fs.h → replicate kernel/fs.h
-          mkdir -p "$UP2/deps/include/ish/kernel"
+          # stub all remaining ish/kernel/, ish/fs/, ish/emu/ headers
+          mkdir -p "$UP2/deps/include/ish/kernel" "$UP2/deps/include/ish/fs" "$UP2/deps/include/ish/emu"
           cp "$UP2/deps/include/kernel/fs.h" "$UP2/deps/include/ish/kernel/fs.h"
-          # stub ish/fs/
-          mkdir -p "$UP2/deps/include/ish/fs"
           cp "$UP2/deps/include/fs/fd.h" "$UP2/deps/include/ish/fs/fd.h"
           cp "$UP2/deps/include/fs/path.h" "$UP2/deps/include/ish/fs/path.h"
+          for h in ish/kernel/init.h ish/kernel/calls.h ish/kernel/task.h ish/kernel/signal.h ish/fs/real.h ish/fs/fake.h ish/fs/tty.h ish/fs/dev.h ish/emu/cpu.h; do
+            printf '%s\n' \
+              '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
+              '#define STUB_'"$(echo "$h" | tr '/.' '__')" \
+              'struct task; struct tty; struct tty_driver; struct tty_driver_ops;' \
+              'struct fd; struct winsize_; struct siginfo_; struct sigaction;' \
+              'struct timespec; struct pollfd; struct rusage;' \
+              'struct dword_t; typedef unsigned long dword_t;' \
+              'struct tty *pty_open_fake(struct tty_driver *drv);' \
+              'extern struct task *current;' \
+              'struct task *pid_get_task(dword_t pid);' \
+              'int generic_mkdirat(int dirfd, const char *path, int mode);' \
+              'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
+              'int dev_make(int major, int minor);' \
+              'int create_stdio(const char *path, int major, int num);' \
+              'int generic_open(const char *path, int flags, int mode);' \
+              'void fd_close(struct fd *fd);' \
+              'struct fd *adhoc_fd_create(const void *ops);' \
+              '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+              '#define PTR_ERR(p) ((int)(long)(p))' \
+              'extern const void *realfs_fdops;' \
+              '#define ENVP_APPEND(kv) do{}while(0)' \
+              '#define KERNEL_ENVP_APPEND(kv) do{}while(0)' \
+              '#define SIGINFO_NIL {}' \
+              '#endif' \
+              > "$UP2/deps/include/$h"
+          done
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
           echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
