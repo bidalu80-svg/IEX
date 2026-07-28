@@ -248,6 +248,60 @@ jobs:
           printf 'void minis_ci_native_stub(void) {}\n' > "$UP2/deps/libs/native_stub.c"
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
             "$UP2/deps/libs/native_stub.c" -o "$UP2/deps/libs/native_stub.o"
+          # FFmpegOffload.m references these FFmpeg globals and entry points.
+          # The CI package intentionally uses a placeholder FFmpeg binary, so
+          # export compatible symbols rather than leaving them to flat-namespace
+          # lookup at app launch.
+          printf '%s\n' \
+            '#include <stdint.h>' \
+            '_Thread_local int noff_stdout_fd = -1;' \
+            '_Thread_local int noff_stderr_fd = -1;' \
+            'void noff_av_log_redirect_start(void) {}' \
+            'void noff_av_log_redirect_stop(void) {}' \
+            'int nb_input_files = 0;' \
+            'int nb_output_files = 0;' \
+            'int nb_filtergraphs = 0;' \
+            'void *input_files = 0;' \
+            'void *output_files = 0;' \
+            'void *filtergraphs = 0;' \
+            'int64_t stats_period = 500000;' \
+            'int stdin_interaction = 1;' \
+            'float audio_drift_threshold = 0.1f;' \
+            'float dts_delta_threshold = 10.0f;' \
+            'float dts_error_threshold = 108000.0f;' \
+            'float frame_drop_threshold = 0.0f;' \
+            'int do_benchmark = 0;' \
+            'int do_benchmark_all = 0;' \
+            'int do_hex_dump = 0;' \
+            'int do_pkt_dump = 0;' \
+            'int copy_ts = 0;' \
+            'int start_at_zero = 0;' \
+            'int copy_tb = -1;' \
+            'int debug_ts = 0;' \
+            'int exit_on_error = 0;' \
+            'int abort_on_flags = 0;' \
+            'int print_stats = -1;' \
+            'float max_error_rate = 0.6666667f;' \
+            'int filter_complex_nbthreads = 0;' \
+            'int vstats_version = 2;' \
+            'int auto_conversion_filters = 1;' \
+            'int do_psnr = 0;' \
+            'int ignore_unknown_streams = 0;' \
+            'int copy_unknown_streams = 0;' \
+            'int recast_media = 0;' \
+            'void *vstats_file = 0;' \
+            'void *vstats_filename = 0;' \
+            'void *progress_avio = 0;' \
+            'void *filter_nbthreads = 0;' \
+            'void *filter_hw_device = 0;' \
+            'void *sdp_filename = 0;' \
+            'int nb_output_dumped = 0;' \
+            'int hide_banner = 0;' \
+            'void ffmpeg_reset_statics(void) {}' \
+            'int ffmpeg_main(int argc, char **argv) { (void)argc; (void)argv; return 1; }' \
+            > "$UP2/deps/libs/ffmpeg_stub.c"
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
+            "$UP2/deps/libs/ffmpeg_stub.c" -o "$UP2/deps/libs/ffmpeg_stub.o"
           for lib in ish_emu ish fakefs; do
             libtool -static -o "$UP2/deps/libs/lib${lib}.a" "$UP2/deps/libs/native_stub.o"
           done
@@ -280,15 +334,23 @@ jobs:
               '</dict>' \
               '</plist>' \
               > "$FRAMEWORK_DIR/Info.plist"
+            FRAMEWORK_OBJECT="$UP2/deps/libs/native_stub.o"
+            if [ "$fw" = "FFmpeg" ]; then
+              FRAMEWORK_OBJECT="$UP2/deps/libs/ffmpeg_stub.o"
+            fi
             xcrun --sdk iphoneos clang \
               -target arm64-apple-ios16.0 \
-              -dynamiclib "$UP2/deps/libs/native_stub.o" \
+              -dynamiclib "$FRAMEWORK_OBJECT" "$UP2/deps/libs/native_stub.o" \
               -install_name "@rpath/$fw.framework/$fw" \
               -o "$FRAMEWORK_DIR/$fw"
             actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
             expected_install_name="@rpath/$fw.framework/$fw"
             test "$actual_install_name" = "$expected_install_name"
             plutil -lint "$FRAMEWORK_DIR/Info.plist"
+            if [ "$fw" = "FFmpeg" ]; then
+              nm -gU "$FRAMEWORK_DIR/$fw" | grep -Eq '[[:space:]]_abort_on_flags$'
+              nm -gU "$FRAMEWORK_DIR/$fw" | grep -Eq '[[:space:]]_ffmpeg_main$'
+            fi
           done
 
           mkdir -p "$UP2/deps/resources"
