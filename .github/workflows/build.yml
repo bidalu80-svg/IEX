@@ -357,6 +357,47 @@ jobs:
           touch "$UP2/deps/resources/RootfsPatch.bundle"
           touch "$UP2/deps/resources/alpine-rootfs.zip"
 
+      - name: Build real native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for package in ninja llvm libarchive pkg-config; do
+            brew list "$package" >/dev/null 2>&1 || brew install "$package"
+          done
+          python3 -m pip install --user meson
+          export PATH="$(python3 -m site --user-base)/bin:$(brew --prefix llvm)/bin:$PATH"
+
+          OPENMINIS_DIR="$RUNNER_TEMP/OpenMinis"
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/OpenMinis/OpenMinis.git "$OPENMINIS_DIR"
+          git -C "$OPENMINIS_DIR" checkout --detach 9cf3a855fecd27bb5735b84cacbd56852a3ab8dd
+          git -C "$OPENMINIS_DIR" submodule update --init --recursive --depth 1
+
+          pushd "$OPENMINIS_DIR"
+          ./deps/build_lame.sh
+          ./deps/build_ffmpeg.sh
+          ./deps/build_ish.sh
+          ./deps/prepare_alpine_rootfs.sh
+          popd
+
+          UP2="$(pwd)/../.."
+          rm -rf "$UP2/deps"
+          mkdir -p "$UP2/deps"
+          for directory in include libs frameworks resources; do
+            cp -R "$OPENMINIS_DIR/deps/$directory" "$UP2/deps/$directory"
+          done
+
+          test -f "$UP2/deps/libs/libish.a"
+          test -f "$UP2/deps/libs/libish_emu.a"
+          test -f "$UP2/deps/libs/libfakefs.a"
+          test -f "$UP2/deps/resources/alpine-rootfs.zip"
+          test -d "$UP2/deps/resources/RootfsPatch.bundle"
+          for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
+            test -f "$UP2/deps/frameworks/$fw.framework/$fw"
+            test -f "$UP2/deps/frameworks/$fw.framework/Info.plist"
+          done
+
       - name: Resolve SPM dependencies
         run: |
           xcodebuild -resolvePackageDependencies \
@@ -376,7 +417,6 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             ENABLE_DEBUG_DYLIB=NO \
-            OTHER_LDFLAGS="-Wl,-undefined,dynamic_lookup" \
             | tee build.log
           exit ${PIPESTATUS[0]}
 
