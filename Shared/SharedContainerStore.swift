@@ -3,7 +3,7 @@ import Foundation
 /// Reads and writes PendingShare data to the App Group shared container.
 /// Compiled into both the main app target and the Share Extension target.
 enum SharedContainerStore {
-    static let appGroupID = "group.com.openminis.app"
+    static let appGroupID = "group.com.ze.app"
 
     private static let pendingShareKey = "pendingShare"
 
@@ -21,7 +21,7 @@ enum SharedContainerStore {
         }
 
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let fallback = library.appendingPathComponent("MinisChat/AppGroupFallback", isDirectory: true)
+        let fallback = library.appendingPathComponent("ZeChat/AppGroupFallback", isDirectory: true)
         try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true)
         return fallback
     }

@@ -16,7 +16,7 @@ final class ICloudBackupManager: ObservableObject {
     static let shared = ICloudBackupManager()
 
     enum BackupCategory: String, CaseIterable, Identifiable {
-        case sessions           // minis.db + media/ + minis/
+        case sessions           // ze.db + media/ + ze/
         case skillsAndMemories  // skills.db + skills/ + memory/
         case full               // all
 
@@ -82,7 +82,7 @@ final class ICloudBackupManager: ObservableObject {
     @Published var availableBackups: [BackupEntry] = []
 
     private let fm = FileManager.default
-    private let containerID = "iCloud.com.openminis.app"
+    private let containerID = "iCloud.com.ze.app"
 
     // MARK: - iCloud Container
 
@@ -108,17 +108,17 @@ final class ICloudBackupManager: ObservableObject {
 
     // MARK: - Local Paths
 
-    private var minisBaseURL: URL {
+    private var zeBaseURL: URL {
         let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        return lib.appendingPathComponent("MinisChat", isDirectory: true)
+        return lib.appendingPathComponent("ZeChat", isDirectory: true)
     }
 
-    private var minisDBURL: URL { minisBaseURL.appendingPathComponent("minis.db") }
-    private var skillsDBURL: URL { minisBaseURL.appendingPathComponent("skills.db") }
-    private var mediaURL: URL { minisBaseURL.appendingPathComponent("media", isDirectory: true) }
-    private var sessionMinisURL: URL { minisBaseURL.appendingPathComponent("minis", isDirectory: true) }
-    private var skillsURL: URL { minisBaseURL.appendingPathComponent("skills", isDirectory: true) }
-    private var memoryURL: URL { minisBaseURL.appendingPathComponent("memory", isDirectory: true) }
+    private var zeDBURL: URL { zeBaseURL.appendingPathComponent("ze.db") }
+    private var skillsDBURL: URL { zeBaseURL.appendingPathComponent("skills.db") }
+    private var mediaURL: URL { zeBaseURL.appendingPathComponent("media", isDirectory: true) }
+    private var sessionZeURL: URL { zeBaseURL.appendingPathComponent("ze", isDirectory: true) }
+    private var skillsURL: URL { zeBaseURL.appendingPathComponent("skills", isDirectory: true) }
+    private var memoryURL: URL { zeBaseURL.appendingPathComponent("memory", isDirectory: true) }
 
     // MARK: - Backup
 
@@ -194,13 +194,13 @@ final class ICloudBackupManager: ObservableObject {
     // MARK: - Stage Files
 
     private func stageSessionFiles(to dir: URL) async throws {
-        // WAL checkpoint minis.db before copying
-        try walCheckpoint(dbPath: minisDBURL.path)
+        // WAL checkpoint ze.db before copying
+        try walCheckpoint(dbPath: zeDBURL.path)
 
-        // Copy minis.db
-        let dbDest = dir.appendingPathComponent("minis.db")
-        if fm.fileExists(atPath: minisDBURL.path) {
-            try fm.copyItem(at: minisDBURL, to: dbDest)
+        // Copy ze.db
+        let dbDest = dir.appendingPathComponent("ze.db")
+        if fm.fileExists(atPath: zeDBURL.path) {
+            try fm.copyItem(at: zeDBURL, to: dbDest)
         }
 
         // Copy media/
@@ -208,9 +208,9 @@ final class ICloudBackupManager: ObservableObject {
             try fm.copyItem(at: mediaURL, to: dir.appendingPathComponent("media"))
         }
 
-        // Copy minis/ (session workspace files)
-        if fm.fileExists(atPath: sessionMinisURL.path) {
-            try fm.copyItem(at: sessionMinisURL, to: dir.appendingPathComponent("minis"))
+        // Copy ze/ (session workspace files)
+        if fm.fileExists(atPath: sessionZeURL.path) {
+            try fm.copyItem(at: sessionZeURL, to: dir.appendingPathComponent("ze"))
         }
     }
 
@@ -543,21 +543,21 @@ final class ICloudBackupManager: ObservableObject {
     }
 
     private func restoreSessionFiles(from dir: URL) async throws {
-        let dbSrc = dir.appendingPathComponent("minis.db")
+        let dbSrc = dir.appendingPathComponent("ze.db")
         if fm.fileExists(atPath: dbSrc.path) {
             // Close existing DB connection before replacing
             await ChatStore.shared.closeDatabase()
 
-            if fm.fileExists(atPath: minisDBURL.path) {
-                try fm.removeItem(at: minisDBURL)
+            if fm.fileExists(atPath: zeDBURL.path) {
+                try fm.removeItem(at: zeDBURL)
             }
             // Also remove WAL and SHM files
-            let walPath = minisDBURL.path + "-wal"
-            let shmPath = minisDBURL.path + "-shm"
+            let walPath = zeDBURL.path + "-wal"
+            let shmPath = zeDBURL.path + "-shm"
             try? fm.removeItem(atPath: walPath)
             try? fm.removeItem(atPath: shmPath)
 
-            try fm.copyItem(at: dbSrc, to: minisDBURL)
+            try fm.copyItem(at: dbSrc, to: zeDBURL)
         }
 
         let mediaSrc = dir.appendingPathComponent("media")
@@ -568,12 +568,12 @@ final class ICloudBackupManager: ObservableObject {
             try fm.copyItem(at: mediaSrc, to: mediaURL)
         }
 
-        let minisSrc = dir.appendingPathComponent("minis")
-        if fm.fileExists(atPath: minisSrc.path) {
-            if fm.fileExists(atPath: sessionMinisURL.path) {
-                try fm.removeItem(at: sessionMinisURL)
+        let zeSrc = dir.appendingPathComponent("ze")
+        if fm.fileExists(atPath: zeSrc.path) {
+            if fm.fileExists(atPath: sessionZeURL.path) {
+                try fm.removeItem(at: sessionZeURL)
             }
-            try fm.copyItem(at: minisSrc, to: sessionMinisURL)
+            try fm.copyItem(at: zeSrc, to: sessionZeURL)
         }
     }
 

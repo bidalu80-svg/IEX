@@ -1,6 +1,6 @@
 //
 //  CoordinateUtils.h
-//  MinisApp
+//  ZeApp
 //
 //  WGS-84 <-> GCJ-02 coordinate conversion utilities.
 //  GCJ-02 is the coordinate system used by all map services in mainland China.

@@ -1,6 +1,6 @@
 //
 //  AudioPlayback.swift
-//  MinisApp
+//  ZeApp
 //
 //  Global audio player singleton + floating PiP capsule + inline audio
 //  bubble. Extracted from AIChatView.swift.
@@ -275,7 +275,7 @@ struct AudioPiPCapsule: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .sheet(isPresented: $player.showFullPreview) {
                         if let url = player.activeFileURL {
-                            MinisAudioPreviewView(fileURL: url)
+                            ZeAudioPreviewView(fileURL: url)
                                 .presentationDetents([.large])
                                 .presentationDragIndicator(.hidden)
                         }
@@ -353,7 +353,7 @@ struct AudioPiPCapsule: View {
 
 // MARK: - Inline Audio Bubble
 
-struct MinisAudioPlayerView: View {
+struct ZeAudioPlayerView: View {
     let url: URL
     let fileURL: URL
     @ObservedObject private var player = GlobalAudioPlayer.shared
@@ -441,7 +441,7 @@ struct MinisAudioPlayerView: View {
         .background(ChatColors.secondaryBg)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .sheet(isPresented: $showPreview) {
-            MinisAudioPreviewView(fileURL: fileURL)
+            ZeAudioPreviewView(fileURL: fileURL)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
         }

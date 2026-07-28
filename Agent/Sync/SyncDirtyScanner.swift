@@ -43,7 +43,7 @@ final class SyncDirtyScanner {
     private var knownModDates: [String: Date] = [:]
 
     private var skillsDir: URL {
-        AIChatViewModel.minisSkillsPersistentDir
+        AIChatViewModel.zeSkillsPersistentDir
     }
 
     private init() {}
@@ -99,7 +99,7 @@ final class SyncDirtyScanner {
     /// Return the max file modification date for a given skill ID.
     /// Used by CloudSyncEngine to detect filesystem changes not reflected in the DB.
     static func maxModDate(inSkill skillId: String) -> Date {
-        let dir = AIChatViewModel.minisSkillsPersistentDir.appendingPathComponent(skillId)
+        let dir = AIChatViewModel.zeSkillsPersistentDir.appendingPathComponent(skillId)
         return SyncDirtyScanner.shared.maxModDate(in: dir)
     }
 
@@ -193,8 +193,8 @@ final class SyncDirtyScanner {
     private func scanConfigFiles() async {
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
         let files: [(path: String, recordType: String, recordId: String)] = [
-            ("MinisChat/provider-config.json", "ProviderConfig", "provider-config"),
-            ("MinisChat/env-vars.json", "EnvVar", "env-vars"),
+            ("ZeChat/provider-config.json", "ProviderConfig", "provider-config"),
+            ("ZeChat/env-vars.json", "EnvVar", "env-vars"),
         ]
         for file in files {
             let url = library.appendingPathComponent(file.path)
@@ -215,8 +215,8 @@ final class SyncDirtyScanner {
         }
 
         // [T-mcp-per-server-sync] mcp-servers/servers.json lives in the
-        // MinisConfig persistent dir (bind-mounted at /var/minis/mcp-servers),
-        // and is also written by the in-guest minis-mcp-cli — so an mtime scan
+        // ZeConfig persistent dir (bind-mounted at /var/ze/mcp-servers),
+        // and is also written by the in-guest ze-mcp-cli — so an mtime scan
         // is the only way to catch CLI edits. The mtime is only the cheap
         // trigger: the actual dirty marking is per-server, done by
         // MCPStore.scanExternalChanges() against its persisted semantic
@@ -245,7 +245,7 @@ final class SyncDirtyScanner {
     // MARK: - Memory Files
 
     private func scanMemoryFiles() async {
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
         guard fm.fileExists(atPath: memDir.path),
               let files = try? fm.contentsOfDirectory(at: memDir,
                                                        includingPropertiesForKeys: [.contentModificationDateKey],

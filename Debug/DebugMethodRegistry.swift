@@ -150,10 +150,10 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "timeout", type: "number", required: false, default: 60, description: "Max wait time in seconds. Clamped to [1, 600]."),
                 ParamSpec(name: "stdinScript", type: "bool", required: false, default: false, description: "When true, run /bin/sh with no argv and feed command via stdin pipe. Mirrors ISHExecutionCoordinator.runCommand path used by the LLM agent. Required for sessionId routing."),
                 ParamSpec(name: "env", type: "object", required: false, default: nil, description: "Optional map of environment overrides passed to the child process."),
-                ParamSpec(name: "sessionId", type: "string", required: false, default: nil, description: "Stamp the spawned shell's task group with this session's fs_context, so /var/minis/{offloads,attachments,workspace,browser} route to that session's host bucket. Requires stdinScript=true. Omit for the default global view (fs_context=0)."),
+                ParamSpec(name: "sessionId", type: "string", required: false, default: nil, description: "Stamp the spawned shell's task group with this session's fs_context, so /var/ze/{offloads,attachments,workspace,browser} route to that session's host bucket. Requires stdinScript=true. Omit for the default global view (fs_context=0)."),
             ],
             returns: "{exitCode, pid, error, stdout, stderr, duration, timedOut}",
-            example: ["command": "ls /var/minis/workspace", "timeout": 30, "stdinScript": true, "sessionId": "ABC123..."]
+            example: ["command": "ls /var/ze/workspace", "timeout": 30, "stdinScript": true, "sessionId": "ABC123..."]
         ),
         MethodSpec(
             name: "debug.scrollMetrics",
@@ -206,7 +206,7 @@ enum DebugMethodRegistry {
         ),
         MethodSpec(
             name: "debug.db.list",
-            description: "List the app's known SQLite databases (minis, skills, provider-config, voice-correction, alarm-labels, rootfs-meta) with existence and size.",
+            description: "List the app's known SQLite databases (ze, skills, provider-config, voice-correction, alarm-labels, rootfs-meta) with existence and size.",
             params: [],
             returns: "{databases: [{name, path, exists, sizeBytes}]}",
             example: [:]
@@ -218,7 +218,7 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "name", type: "string", required: true, default: nil, description: "DB name from debug.db.list."),
             ],
             returns: "{db, tables: [{name, type}]}",
-            example: ["name": "minis"]
+            example: ["name": "ze"]
         ),
         MethodSpec(
             name: "debug.db.schema",
@@ -228,7 +228,7 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "table", type: "string", required: false, default: nil, description: "Optional table name; omit for the whole-db DDL dump."),
             ],
             returns: "{db, table?, columns?, indexes?, objects?}",
-            example: ["name": "minis", "table": "messages"]
+            example: ["name": "ze", "table": "messages"]
         ),
         MethodSpec(
             name: "debug.db.query",
@@ -239,7 +239,7 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "limit", type: "int", required: false, default: 200, description: "Max rows. Clamped to [1, 2000]."),
             ],
             returns: "{db, columns:[...], rows:[{col:val}], rowCount, truncated}",
-            example: ["name": "minis", "sql": "SELECT role, COUNT(*) c FROM messages GROUP BY role", "limit": 20]
+            example: ["name": "ze", "sql": "SELECT role, COUNT(*) c FROM messages GROUP BY role", "limit": 20]
         ),
         MethodSpec(
             name: "debug.browser.listTabs",
@@ -716,7 +716,7 @@ enum DebugMethodRegistry {
         ),
         MethodSpec(
             name: "provider.models.setAgentLoop",
-            description: "Toggle whether a model entry is exposed to the in-shell `minis-model-use` agent.",
+            description: "Toggle whether a model entry is exposed to the in-shell `ze-model-use` agent.",
             params: [
                 ParamSpec(name: "entryId", type: "string", required: true, default: nil, description: "Target entry UUID."),
                 ParamSpec(name: "inLoop", type: "bool", required: true, default: nil, description: "true = expose to agent loop; false = remove."),
@@ -812,7 +812,7 @@ enum DebugMethodRegistry {
         ),
         MethodSpec(
             name: "provider.groups.setAgentLoop",
-            description: "Toggle whether a group is exposed to the in-shell minis-model-use agent.",
+            description: "Toggle whether a group is exposed to the in-shell ze-model-use agent.",
             params: [
                 ParamSpec(name: "groupId", type: "string", required: true, default: nil, description: "Target group UUID."),
                 ParamSpec(name: "inLoop", type: "bool", required: true, default: nil, description: "true = expose; false = remove."),
@@ -1066,9 +1066,9 @@ enum DebugMethodRegistry {
         ),
         MethodSpec(
             name: "debug.providers.quickTest",
-            description: "Run Quick Test on a specific model entry (same as the UI Quick Test sheet). Tests applicable modalities (text, speechOut, transcription, imageGen) concurrently and returns results. Use `minis-config get models` to find entry IDs.",
+            description: "Run Quick Test on a specific model entry (same as the UI Quick Test sheet). Tests applicable modalities (text, speechOut, transcription, imageGen) concurrently and returns results. Use `ze-config get models` to find entry IDs.",
             params: [
-                ParamSpec(name: "entryId", type: "string", required: true, default: nil, description: "The model entry ID to test (from `minis-config get models`)."),
+                ParamSpec(name: "entryId", type: "string", required: true, default: nil, description: "The model entry ID to test (from `ze-config get models`)."),
                 ParamSpec(name: "kinds", type: "string[]", required: false, default: nil, description: "Optional list of test kinds to run: 'text', 'speechOut', 'transcription', 'imageGen'. Omit to auto-detect from model modalities."),
             ],
             returns: "{model, results: [{kind, status, elapsed, detail}]}",

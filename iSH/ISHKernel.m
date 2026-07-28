@@ -1,6 +1,6 @@
 //
 //  ISHKernel.m
-//  MinisApp
+//  ZeApp
 //
 //  Objective-C wrapper for iSH kernel initialization and control
 //
@@ -297,7 +297,7 @@ static void handle_process_exit(struct task *task, int code) {
     struct tty *_consoleTTY;
     NSString *_rootPath;    // Host filesystem path to fakefs root (contains data/ + meta.db)
     NSString *_dataPath;    // Host filesystem path to fakefs data/ directory
-    NSString *_dnsHostPath; // Host path to resolv.conf (Library/MinisChat/dns/resolv.conf)
+    NSString *_dnsHostPath; // Host path to resolv.conf (Library/ZeChat/dns/resolv.conf)
 
     // Command execution state
     NSMutableString *_commandOutputBuffer;
@@ -322,7 +322,7 @@ static void handle_process_exit(struct task *task, int code) {
         _isBooted = NO;
         _consoleTTY = NULL;
         _commandOutputBuffer = [NSMutableString new];
-        _commandQueue = dispatch_queue_create("com.minisapp.ish.command", DISPATCH_QUEUE_SERIAL);
+        _commandQueue = dispatch_queue_create("com.zeapp.ish.command", DISPATCH_QUEUE_SERIAL);
     }
     return self;
 }
@@ -437,9 +437,9 @@ static void handle_process_exit(struct task *task, int code) {
     sessions_offload_register();
     browser_use_offload_register();
     config_offload_register();
-    // Registered in every build: the `minis-debug logs` subcommand reads the
+    // Registered in every build: the `ze-debug logs` subcommand reads the
     // app's own runtime log in-process (OSLogStore + LoggingManager) and must
-    // work on Release devices (T-ios-minis-debug-logs-oslogstore). The
+    // work on Release devices (T-ios-ze-debug-logs-oslogstore). The
     // RPC-backed subcommands inside the handler stay DEBUG-gated and
     // self-report as unavailable in Release.
     debug_offload_register();
@@ -584,14 +584,14 @@ static void handle_process_exit(struct task *task, int code) {
 
 /// Set up /etc/resolv.conf as a file-level bind mount pointing to a host file.
 /// Called once during boot, after the root filesystem and init process are ready.
-/// The host file lives in Library/MinisChat/dns/resolv.conf and can be freely
+/// The host file lives in Library/ZeChat/dns/resolv.conf and can be freely
 /// updated by the app at any time — changes are instantly visible inside iSH.
 - (void)mountDnsConfig {
     NSFileManager *fm = [NSFileManager defaultManager];
 
-    // Determine host path: Library/MinisChat/dns/resolv.conf
+    // Determine host path: Library/ZeChat/dns/resolv.conf
     NSString *library = [NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) firstObject];
-    NSString *dnsDir = [library stringByAppendingPathComponent:@"MinisChat/dns"];
+    NSString *dnsDir = [library stringByAppendingPathComponent:@"ZeChat/dns"];
     _dnsHostPath = [dnsDir stringByAppendingPathComponent:@"resolv.conf"];
 
     // Ensure directory and seed file exist before bind mount
@@ -605,7 +605,7 @@ static void handle_process_exit(struct task *task, int code) {
         NSLog(@"ISHKernel: [DNS] seeded host resolv.conf at %@", _dnsHostPath);
     }
 
-    // Bind mount: /etc/resolv.conf -> Library/MinisChat/dns/resolv.conf
+    // Bind mount: /etc/resolv.conf -> Library/ZeChat/dns/resolv.conf
     int err = fakefs_bind_mount("/etc/resolv.conf", _dnsHostPath.fileSystemRepresentation, false);
     if (err < 0) {
         NSLog(@"ISHKernel: [DNS] bind mount FAILED (%d) — writing via VFS fallback", err);
@@ -757,7 +757,7 @@ static void handle_process_exit(struct task *task, int code) {
         // Mirrors ISHShellExecutor: route browser-open calls to the in-app
         // preview shim. Needed for interactive terminal sessions too, where
         // Python's webbrowser module picks $BROWSER before $DISPLAY probing.
-        KERNEL_ENVP_APPEND("BROWSER=/usr/local/bin/minis-open");
+        KERNEL_ENVP_APPEND("BROWSER=/usr/local/bin/ze-open");
 
         // Inject device timezone so iSH userspace sees local time.
         // Use POSIX TZ format with a fixed name to avoid abbreviations like "GMT+8"
@@ -935,7 +935,7 @@ static void handle_process_exit(struct task *task, int code) {
     [_commandOutputBuffer appendString:output];
 
     // Check if we've received a shell prompt (indicating command completion)
-    // Common prompt patterns: "$ ", "# ", "root@minis:", etc.
+    // Common prompt patterns: "$ ", "# ", "root@ze:", etc.
     NSString *buffer = _commandOutputBuffer;
 
     // Look for prompt patterns at the end of the buffer

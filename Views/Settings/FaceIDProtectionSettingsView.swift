@@ -1,6 +1,6 @@
 //
 //  FaceIDProtectionSettingsView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Settings entry for per-session biometric protection. Surfaces the
 //  master toggle, an idle-timeout picker, and (when relevant) a count of
@@ -26,7 +26,7 @@ struct FaceIDProtectionSettingsView: View {
                 Toggle(isOn: $appLockEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Lock App")
-                        Text("Require \(BiometricAuth.biometryDisplayName) to open Minis.")
+                        Text("Require \(BiometricAuth.biometryDisplayName) to open Ze.")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }

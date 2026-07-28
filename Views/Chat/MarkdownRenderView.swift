@@ -5,7 +5,7 @@ private let renderLogger = AppLogger(category: "MdRenderView")
 // MARK: - MarkdownRenderView
 
 /// A lightweight UIView that renders NSAttributedString using a standalone TextKit 1
-/// stack (NSTextStorage + MinisLayoutManager + NSTextContainer).
+/// stack (NSTextStorage + ZeLayoutManager + NSTextContainer).
 ///
 /// Unlike `SelectableMarkdownTextView` (UITextView), this view does NOT create
 /// `_UITextViewCanvasView` tiled CALayers — text is drawn directly via
@@ -20,7 +20,7 @@ final class MarkdownRenderView: UIView, UIGestureRecognizerDelegate {
     // MARK: - TextKit Stack
 
     let textStorage: NSTextStorage
-    let textLayoutManager: MinisLayoutManager
+    let textLayoutManager: ZeLayoutManager
     let textContainer: NSTextContainer
 
     // MARK: - Attachment Tracking
@@ -68,7 +68,7 @@ final class MarkdownRenderView: UIView, UIGestureRecognizerDelegate {
 
     override init(frame: CGRect) {
         textStorage = NSTextStorage()
-        textLayoutManager = MinisLayoutManager()
+        textLayoutManager = ZeLayoutManager()
         textContainer = NSTextContainer()
         textContainer.lineFragmentPadding = 0
         textContainer.lineBreakMode = .byWordWrapping

@@ -73,7 +73,7 @@ enum EnvVarRedactor {
     /// `EnvVarStore.allAsDict()` but stays nonisolated.
     private static func loadAllValues() -> [String] {
         let libraryURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let fileURL = libraryURL.appendingPathComponent("MinisChat/env-vars.json")
+        let fileURL = libraryURL.appendingPathComponent("ZeChat/env-vars.json")
         guard let data = try? Data(contentsOf: fileURL),
               let entries = try? JSONDecoder().decode([EnvVarEntry].self, from: data) else {
             return []

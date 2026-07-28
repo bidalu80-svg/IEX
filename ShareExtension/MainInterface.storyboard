@@ -7,7 +7,7 @@
     <scenes>
         <scene sceneID="ceB-am-kn3">
             <objects>
-                <viewController id="j1y-V4-xli" customClass="ShareViewController" customModule="MinisShare" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController id="j1y-V4-xli" customClass="ShareViewController" customModule="ZeShare" customModuleProvider="target" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="wbc-yd-hQf">
                         <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>

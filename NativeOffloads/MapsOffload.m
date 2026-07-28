@@ -1,6 +1,6 @@
 //
 //  MapsOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-maps`.
 //  Subcommands: search, route, eta
@@ -188,7 +188,7 @@ static int cmd_search(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL 
                 if (pm.subThoroughfare) [addrParts addObject:pm.subThoroughfare];
                 if (pm.thoroughfare) [addrParts addObject:pm.thoroughfare];
                 if (pm.locality) [addrParts addObject:pm.locality];
-                if (pm.administrativeArea) [addrParts addObject:pm.administrativeArea];
+                if (pm.adzetrativeArea) [addrParts addObject:pm.adzetrativeArea];
                 if (pm.postalCode) [addrParts addObject:pm.postalCode];
                 if (pm.country) [addrParts addObject:pm.country];
                 d[@"address"] = addrParts.count > 0 ? [addrParts componentsJoinedByString:@", "] : @"";

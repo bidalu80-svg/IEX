@@ -1,6 +1,6 @@
 //
 //  FileHandleSafeWrite.h
-//  MinisApp
+//  ZeApp
 //
 //  NSFileHandle raises an ObjC `NSFileHandleOperationException` when a
 //  write fails (disk full, pipe closed, fd invalidated mid-call) — Swift's
@@ -22,6 +22,6 @@ NS_ASSUME_NONNULL_BEGIN
 /// on success, NO if the write raised an NSException (e.g. pipe closed,
 /// disk full, fd invalidated). The caller may also inspect `errorMessage`
 /// (nullable) to get the exception reason for logging.
-BOOL MinisFileHandleSafeWrite(NSFileHandle *handle, NSData *data, NSString *_Nullable *_Nullable errorMessage);
+BOOL ZeFileHandleSafeWrite(NSFileHandle *handle, NSData *data, NSString *_Nullable *_Nullable errorMessage);
 
 NS_ASSUME_NONNULL_END

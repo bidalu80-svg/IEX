@@ -5,7 +5,7 @@ import Foundation
 /// keyed by topic; topic names line up with the CLI subcommands.
 ///
 /// Registration is idempotent and runs once at app launch from
-/// `MinisApp.onAppear` via `ConfigRegistry.shared.registerBuiltinsIfNeeded()`.
+/// `ZeApp.onAppear` via `ConfigRegistry.shared.registerBuiltinsIfNeeded()`.
 extension ConfigRegistry {
     @MainActor
     static func registerBuiltins(into r: ConfigRegistry) {
@@ -56,7 +56,7 @@ extension ConfigRegistry {
     // MARK: Soul — SOUL.md (persistent personality / identity file)
     //
     // Each field reads/writes one piece of SOUL.md (path:
-    // <minisMemoryPersistentDir>/SOUL.md). The four fields below mirror
+    // <zeMemoryPersistentDir>/SOUL.md). The four fields below mirror
     // the SOUL Settings UI exactly; everything goes through SoulStore so
     // the on-disk file, the cached metadata, the chat bubble header, the
     // sidebar title, and the system-prompt builder all observe the same
@@ -303,7 +303,7 @@ extension ConfigRegistry {
                                          store: ProviderConfigStore) throws -> SessionModelSource {
         if s.hasPrefix("entry:") {
             let raw = String(s.dropFirst("entry:".count))
-            // [T-ios-minis-config-entry-id-composite] Same normalize-then-
+            // [T-ios-ze-config-entry-id-composite] Same normalize-then-
             // validate as defaults.agentLoopEntries: entry ids are composite
             // keys now, but the agent may pass a legacy random uuid. Store the
             // normalized (current) id so the binding never carries a stale ref.
@@ -311,7 +311,7 @@ extension ConfigRegistry {
             guard !raw.isEmpty,
                   store.config.modelEntries.contains(where: { $0.id == entryId }) else {
                 throw ConfigError.invalidValue(
-                    "Unknown model entry id: \(raw) (expected {instanceId}/{modelId} composite form; run `minis-config get models` for valid entry_id values)"
+                    "Unknown model entry id: \(raw) (expected {instanceId}/{modelId} composite form; run `ze-config get models` for valid entry_id values)"
                 )
             }
             return .directEntry(modelEntryId: entryId)
@@ -340,7 +340,7 @@ extension ConfigRegistry {
         r.register(GroupsCollection())
         r.register(EnvVarsCollection())
 
-        // Aggregate read-only summary so `minis-config get providers`
+        // Aggregate read-only summary so `ze-config get providers`
         // returns a useful list of configured instances. Credentials
         // (apiKey / oauthToken) are deliberately omitted — only the
         // identity / type / endpoint-config fields ship.
@@ -367,7 +367,7 @@ extension ConfigRegistry {
             }
         ))
 
-        // Aggregate read-only summary so `minis-config get models`
+        // Aggregate read-only summary so `ze-config get models`
         // returns every model entry along with its provider context —
         // enough for the agent to find an entry_id to feed into
         // `defaults.agentLoopEntries.append`.
@@ -402,7 +402,7 @@ extension ConfigRegistry {
             }
         ))
 
-        // Aggregate read-only summary so `minis-config get envvars`
+        // Aggregate read-only summary so `ze-config get envvars`
         // returns every env var key with its non-secret metadata. The
         // value (stored in Keychain) is never exposed; agents only see
         // the key, note, and createdAt.
@@ -445,7 +445,7 @@ extension ConfigRegistry {
             }
         ))
 
-        // Aggregate read-only summary so `minis-config get groups`
+        // Aggregate read-only summary so `ze-config get groups`
         // returns every model group with its expanded entries. Each
         // entry is enriched with display_name + provider info so the
         // agent doesn't need to cross-reference `models` to know what
@@ -552,10 +552,10 @@ extension ConfigRegistry {
         r.register(ClosureField(
             path: "defaults.agentLoopEntries",
             displayName: "Agent loop model entries",
-            description: "Model entries available via minis-model-use. Replace with full list to set.",
+            description: "Model entries available via ze-model-use. Replace with full list to set.",
             valueSchema: .array(.string()),
             risk: .sensitive, revertable: true,
-            // [T-ios-minis-config-entry-id-composite] Emit normalized ids so
+            // [T-ios-ze-config-entry-id-composite] Emit normalized ids so
             // the agent never sees (and round-trips) a stale legacy uuid that
             // survived in storage from before the composite-key migration.
             // [T-ios-agentloop-dirty-data-skip] Normalize, then drop any id that
@@ -572,7 +572,7 @@ extension ConfigRegistry {
             writer: { v in
                 guard case .array(let arr) = v else { throw ConfigError.typeMismatch(expected: "array") }
                 let rawIds: [String] = arr.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
-                // [T-ios-minis-config-entry-id-composite] Entry ids became
+                // [T-ios-ze-config-entry-id-composite] Entry ids became
                 // composite keys ("{instanceId}/{modelId}"); lists written by
                 // the agent may still carry legacy random uuids (read from an
                 // un-normalized store or older notes). Normalize each ref
@@ -591,7 +591,7 @@ extension ConfigRegistry {
                 let ids = normalized.filter { valid.contains($0) }
                 let skipped = normalized.filter { !valid.contains($0) }
                 if !skipped.isEmpty {
-                    AppLogger(category: "MinisConfig").info("[MinisConfig] skipped unknown agentLoopEntries ids: \(skipped.joined(separator: ", "))")
+                    AppLogger(category: "ZeConfig").info("[ZeConfig] skipped unknown agentLoopEntries ids: \(skipped.joined(separator: ", "))")
                 }
                 store.agentLoopModelEntryIds = ids
             }
@@ -599,7 +599,7 @@ extension ConfigRegistry {
         r.register(ClosureField(
             path: "defaults.agentLoopGroups",
             displayName: "Agent loop groups",
-            description: "Whole groups exposed via minis-model-use.",
+            description: "Whole groups exposed via ze-model-use.",
             valueSchema: .array(.string()),
             risk: .sensitive, revertable: true,
             // [T-ios-agentloop-dirty-data-skip] Filter unknown group ids on read.
@@ -617,7 +617,7 @@ extension ConfigRegistry {
                 let ids = rawIds.filter { valid.contains($0) }
                 let skipped = rawIds.filter { !valid.contains($0) }
                 if !skipped.isEmpty {
-                    AppLogger(category: "MinisConfig").info("[MinisConfig] skipped unknown agentLoopGroups ids: \(skipped.joined(separator: ", "))")
+                    AppLogger(category: "ZeConfig").info("[ZeConfig] skipped unknown agentLoopGroups ids: \(skipped.joined(separator: ", "))")
                 }
                 ProviderConfigStore.shared.agentLoopGroupIds = ids
             }
@@ -631,7 +631,7 @@ extension ConfigRegistry {
         // The whole sync stack (CloudSyncEngine V2 + its Settings entry) is
         // iOS 17+ — ContentView doesn't even show the iCloud Sync row on
         // iOS 16. Register the same paths as UnavailableField stubs there so
-        // minis-config answers with a clear feature_unavailable instead of
+        // ze-config answers with a clear feature_unavailable instead of
         // silently flipping cloudSync.* UserDefaults keys no engine will
         // ever read — or worse, keys a later OS upgrade would suddenly honor
         // without the user ever having seen a sync consent surface.
@@ -730,19 +730,19 @@ extension ConfigRegistry {
         // The master switch surface. Agent CAN read it (so it knows why
         // it might be denied later in the session) but CAN'T write it —
         // the writer always throws. The bridge's first-line check on
-        // `MinisConfigPermissionStore.shared.enabled` will short-circuit
+        // `ZeConfigPermissionStore.shared.enabled` will short-circuit
         // most of these calls when the switch is off; the registration
         // exists for the rare case where the agent reads while we're
         // still enabled, plus to surface the switch in topic-help.
         r.register(ClosureField(
-            path: "permissions.minisConfig.enabled",
-            displayName: "Allow minis-config",
+            path: "permissions.zeConfig.enabled",
+            displayName: "Allow ze-config",
             description: "Master switch. Read-only here — toggle via Settings → Permissions.",
             valueSchema: .bool,
             access: .readonly,
             risk: .destructive,
             revertable: false,
-            reader: { .bool(MinisConfigPermissionStore.shared.enabled) },
+            reader: { .bool(ZeConfigPermissionStore.shared.enabled) },
             writer: { _ in
                 throw ConfigError.permissionDenied(
                     reason: "Master switch — toggle via Settings → Permissions only")
@@ -1091,7 +1091,7 @@ extension ConfigRegistry {
         // entirely on devices where ActivityKit doesn't work (iPad < iPadOS
         // 17, iOS-on-Mac, failed runtime probe — see
         // AgentLiveActivityManager.isLiveActivitySupported). Same gate here:
-        // where the UI hides the toggle, minis-config returns
+        // where the UI hides the toggle, ze-config returns
         // feature_unavailable instead of flipping a switch that does nothing.
         // Routed through BackgroundKeepAliveManager (not raw UserDefaults) so
         // the didSet side effects run: OFF tears down the currently displayed

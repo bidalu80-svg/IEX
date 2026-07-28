@@ -3,7 +3,7 @@ import Foundation
 struct AppLogger {
     let category: String
 
-    init(subsystem: String = "com.openminis.app", category: String) {
+    init(subsystem: String = "com.ze.app", category: String) {
         self.category = category
     }
 

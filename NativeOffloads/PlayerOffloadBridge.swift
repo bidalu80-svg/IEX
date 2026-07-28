@@ -1,9 +1,9 @@
 //
 //  PlayerOffloadBridge.swift
-//  MinisApp
+//  ZeApp
 //
 //  Swift bridge for apple-player offload — manages playback sessions
-//  using the shared UI components (MinisAudioPreviewView, MinisVideoFullscreenPlayer).
+//  using the shared UI components (ZeAudioPreviewView, ZeVideoFullscreenPlayer).
 //
 
 import Foundation
@@ -108,7 +108,7 @@ private class PlayerSession {
         }
     }
 
-    // MARK: - Audio (delegates to GlobalAudioPlayer + MinisAudioPreviewView)
+    // MARK: - Audio (delegates to GlobalAudioPlayer + ZeAudioPreviewView)
 
     private static func openAudioSession(_ session: PlayerSession, completion: @escaping (NSDictionary?, NSString?) -> Void) {
         // Use GlobalAudioPlayer for playback
@@ -128,12 +128,12 @@ private class PlayerSession {
             "status": "playing",
         ]
 
-        // Present MinisAudioPreviewView
+        // Present ZeAudioPreviewView
         presentAudioUI(for: session)
         completion(data, nil)
     }
 
-    // MARK: - Video (own AVPlayer + MinisVideoFullscreenPlayer)
+    // MARK: - Video (own AVPlayer + ZeVideoFullscreenPlayer)
 
     private static func openVideoSession(_ session: PlayerSession, completion: @escaping (NSDictionary?, NSString?) -> Void) {
         // Suspend silent audio keep-alive for full volume
@@ -392,7 +392,7 @@ private class PlayerSession {
     private static func presentAudioUI(for session: PlayerSession) {
         guard let topVC = topViewController() else { return }
 
-        let view = MinisAudioPreviewView(fileURL: session.fileURL)
+        let view = ZeAudioPreviewView(fileURL: session.fileURL)
         let hostingVC = UIHostingController(rootView: view)
         hostingVC.modalPresentationStyle = .pageSheet
         if let sheet = hostingVC.sheetPresentationController {
@@ -408,7 +408,7 @@ private class PlayerSession {
         guard let topVC = topViewController() else { return }
         guard let player = session.videoPlayer else { return }
 
-        let view = MinisVideoFullscreenPlayer(fileURL: session.fileURL, externalPlayer: player)
+        let view = ZeVideoFullscreenPlayer(fileURL: session.fileURL, externalPlayer: player)
         let hostingVC = UIHostingController(rootView: view)
         hostingVC.modalPresentationStyle = .overFullScreen
         hostingVC.modalTransitionStyle = .crossDissolve

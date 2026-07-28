@@ -10,7 +10,7 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
-private let minisLogger = AppLogger(category: "MinisURL")
+private let zeLogger = AppLogger(category: "ZeURL")
 
 /// Wrapper that resolves an AIChatViewModel from the cache.
 /// Used as @StateObject so SwiftUI creates it once per AIChatView lifetime,
@@ -36,17 +36,17 @@ private final class CachedViewModel: ObservableObject {
             // (T-inbound-message-cached-vm-stale). Cache HIT only —
             // `isNew` already loads from scratch.
             if !isNew, ViewModelCache.shared.consumeStaleFlag(sessionId: sessionId) {
-                minisLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) — STALE flag consumed, scheduling reload")
+                zeLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) — STALE flag consumed, scheduling reload")
                 Task { @MainActor [weak vm = cached] in
                     await vm?.loadSession()
                 }
             }
-            minisLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) vm=\(cached.vmInstanceId) isNew=\(isNew)")
+            zeLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) vm=\(cached.vmInstanceId) isNew=\(isNew)")
         } else {
             let draft = ViewModelCache.shared.createDraft()
             self.vm = draft
             self.isNew = true
-            minisLogger.info("🔑DRAFT CachedViewModel.init DRAFT vm=\(draft.vmInstanceId)")
+            zeLogger.info("🔑DRAFT CachedViewModel.init DRAFT vm=\(draft.vmInstanceId)")
         }
         // Forward VM's objectWillChange → this wrapper's objectWillChange
         // so that SwiftUI re-renders when any @Published property on `vm` changes.
@@ -368,9 +368,9 @@ struct AIChatView: View {
     /// Session being edited via the title-pill tap. Drives the SessionEditSheet.
     @State private var titlePillEditSession: ChatSession?
     /// Default chat title for sessions without a generated title. Sourced
-    /// from SOUL.md (`name`), falls back to "Minis". Refreshed on .soulMdChanged.
+    /// from SOUL.md (`name`), falls back to "Ze". Refreshed on .soulMdChanged.
     @State private var soulName: String = SoulStore.cachedMetadata.name.isEmpty
-        ? "Minis" : SoulStore.cachedMetadata.name
+        ? "Ze" : SoulStore.cachedMetadata.name
 
     /// True when any sheet or fullScreenCover is presented (suppress auto-focus to avoid keyboard bugs).
     private var hasOverlayPresented: Bool {
@@ -383,9 +383,9 @@ struct AIChatView: View {
     /// used to suppress auto-focus so the keyboard doesn't pop up behind other pages.
     @State private var isChatViewVisible: Bool = false
 
-    // minis:// link preview sheet state — hoisted from MinisOpenURLHandler so
+    // ze:// link preview sheet state — hoisted from ZeOpenURLHandler so
     // sheet presentation originates from a stable window-hierarchy root and
-    // plays its slide-up transition correctly. See MinisOpenURLHandler for rationale.
+    // plays its slide-up transition correctly. See ZeOpenURLHandler for rationale.
     @State private var previewImageFile: URL?
     @State private var imageGallery: GalleryPresentation?
     @State private var previewVideoFile: URL?
@@ -398,10 +398,10 @@ struct AIChatView: View {
     @State private var safariURL: URL?
     @State private var fullBrowserURL: URL?
     @State private var fullBrowserIsLocal = false
-    /// Filename to show in the "file missing" alert. Set by `handleMinisURLTap`
-    /// when `resolveMinisFileURL` returns nil for a tapped `minis://` link
+    /// Filename to show in the "file missing" alert. Set by `handleZeURLTap`
+    /// when `resolveZeFileURL` returns nil for a tapped `ze://` link
     /// (file was deleted, the session was pruned, or iCloud hasn't synced yet).
-    @State private var missingMinisFileName: String?
+    @State private var missingZeFileName: String?
 
     var body: some View {
         ZStack {
@@ -578,7 +578,7 @@ struct AIChatView: View {
                     // whether a center-spinner report corresponds to
                     // this overlay or some other ProgressView in the
                     // chat.
-                    minisLogger.warning("[SpinnerTrace] isLoadingSession → \(newValue) sid=\(vm.sessionId?.prefix(8) ?? "nil") msgs=\(vm.messages.count)")
+                    zeLogger.warning("[SpinnerTrace] isLoadingSession → \(newValue) sid=\(vm.sessionId?.prefix(8) ?? "nil") msgs=\(vm.messages.count)")
                 }
 
             // Full-screen kernel boot overlay
@@ -681,8 +681,8 @@ struct AIChatView: View {
             if let sid = vm.sessionId {
                 NavigationStack {
                     FileBrowserView(
-                        rootPath: AIChatViewModel.minisWorkspacePersistentDir(for: sid),
-                        rootLabel: "/var/minis/workspace",
+                        rootPath: AIChatViewModel.zeWorkspacePersistentDir(for: sid),
+                        rootLabel: "/var/ze/workspace",
                         highlightFileName: target.filename
                     )
                 }
@@ -772,24 +772,24 @@ struct AIChatView: View {
             Text(String(localized: "Messages above this point will be compacted into a summary. This cannot be undone."))
         }
         .offloadPermissionDialog()
-        .environment(\.openMinisURL, OpenMinisURLAction { url in
-            handleMinisURLTap(url)
+        .environment(\.openZeURL, ZeURLAction { url in
+            handleZeURLTap(url)
         })
         .environment(\.openImageGallery, OpenImageGalleryAction { presentation in
             imageGallery = presentation
         })
         .fullScreenCover(item: $previewImageFile) { fileURL in
-            MinisImageFilePreviewView(fileURL: fileURL)
+            ZeImageFilePreviewView(fileURL: fileURL)
         }
         .alert(
             String(localized: "File Not Found"),
             isPresented: Binding(
-                get: { missingMinisFileName != nil },
-                set: { if !$0 { missingMinisFileName = nil } }
+                get: { missingZeFileName != nil },
+                set: { if !$0 { missingZeFileName = nil } }
             ),
-            presenting: missingMinisFileName
+            presenting: missingZeFileName
         ) { _ in
-            Button(String(localized: "OK"), role: .cancel) { missingMinisFileName = nil }
+            Button(String(localized: "OK"), role: .cancel) { missingZeFileName = nil }
         } message: { name in
             Text(String(localized: "\(name) is unavailable. It may have been deleted or not yet synced from iCloud."))
         }
@@ -809,27 +809,27 @@ struct AIChatView: View {
         .modifier(ChatInputAppendListener(vm: vm, inputFocused: $inputFocused))
         .modifier(RerunFromToolBlockListener(vm: vm))
         .fullScreenCover(item: $previewVideoFile) { fileURL in
-            MinisVideoFullscreenPlayer(fileURL: fileURL)
+            ZeVideoFullscreenPlayer(fileURL: fileURL)
         }
         .sheet(item: $previewAudioFile) { fileURL in
-            MinisAudioPreviewView(fileURL: fileURL)
+            ZeAudioPreviewView(fileURL: fileURL)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
         }
         .sheet(item: $previewTextFile) { fileURL in
-            MinisTextPreviewView(fileURL: fileURL)
+            ZeTextPreviewView(fileURL: fileURL)
         }
         .sheet(item: $previewMarkdownFile) { fileURL in
-            MinisMarkdownPreviewView(fileURL: fileURL)
+            ZeMarkdownPreviewView(fileURL: fileURL)
         }
         .sheet(item: $previewDocumentFile) { fileURL in
-            MinisDocumentPreviewView(fileURL: fileURL)
+            ZeDocumentPreviewView(fileURL: fileURL)
         }
         .sheet(item: $shareFile) { fileURL in
-            MinisShareSheet(url: fileURL)
+            ZeShareSheet(url: fileURL)
         }
         .sheet(item: $safariURL) { url in
-            MinisLinkPreviewView(url: url, browserPool: vm.browserTabPool, onExpand: { _ in
+            ZeLinkPreviewView(url: url, browserPool: vm.browserTabPool, onExpand: { _ in
                 fullBrowserIsLocal = false
                 let targetURL = url
                 safariURL = nil
@@ -839,37 +839,37 @@ struct AIChatView: View {
             })
         }
         // Auto-present the in-app preview when a shell tool's stdout emits
-        // an OSC MinisOpenURL marker (via /usr/local/bin/minis-open).
+        // an OSC ZeOpenURL marker (via /usr/local/bin/ze-open).
         //
         // Dispatch by scheme:
         //  - http/https/about: in-chat WKWebView preview. ToolLiveSheet
         //    observes the same broker and takes priority for web URLs when
         //    it is on top (broker.toolSheetVisible).
-        //  - minis://...: chat-resource file preview (image/markdown/html/
-        //    pdf/...). Routed through handleMinisURLTap which already
+        //  - ze://...: chat-resource file preview (image/markdown/html/
+        //    pdf/...). Routed through handleZeURLTap which already
         //    picks the right sheet by extension. Always dispatched here
         //    because ToolLiveSheet cannot host fullscreen file previews.
         //
         // `.dropFirst()` skips the current value that `@Published` delivers
         // to new subscribers on first attach — without it, a chat view
         // created after a previous OSC capture would re-present a stale URL.
-        .onReceive(MinisOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
-            if MinisOpenURLBroker.isWebScheme(url.scheme) {
+        .onReceive(ZeOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
+            if ZeOpenURLBroker.isWebScheme(url.scheme) {
                 // Skip when a topmost host wants to present the web preview
                 // itself: ToolLiveSheet (`toolSheetVisible`) or the
                 // full-screen iSH terminal (`terminalVisible`). Otherwise
                 // our sheet fights their presentation and the terminal's
                 // fullScreenCover gets dismissed mid-animation.
-                guard !MinisOpenURLBroker.shared.toolSheetVisible,
-                      !MinisOpenURLBroker.shared.terminalVisible else { return }
+                guard !ZeOpenURLBroker.shared.toolSheetVisible,
+                      !ZeOpenURLBroker.shared.terminalVisible else { return }
                 withAnimation { safariURL = url }
             } else {
-                _ = handleMinisURLTap(url)
+                _ = handleZeURLTap(url)
             }
-            MinisOpenURLBroker.shared.consume()
+            ZeOpenURLBroker.shared.consume()
         }
         .sheet(item: $previewHTMLFile) { fileURL in
-            MinisHTMLPreviewView(fileURL: fileURL, onExpand: { _ in
+            ZeHTMLPreviewView(fileURL: fileURL, onExpand: { _ in
                 fullBrowserIsLocal = true
                 let targetURL = fileURL
                 previewHTMLFile = nil
@@ -880,7 +880,7 @@ struct AIChatView: View {
         }
         .fullScreenCover(item: $fullBrowserURL) { url in
             let wasLocal = fullBrowserIsLocal
-            MinisSafariView(url: url, localFile: wasLocal, onCollapse: {
+            ZeSafariView(url: url, localFile: wasLocal, onCollapse: {
                 fullBrowserURL = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     if wasLocal {
@@ -894,7 +894,7 @@ struct AIChatView: View {
         .sheet(isPresented: $showFileBrowser) {
             NavigationStack {
                 let base = RootfsManager.shared.dataPath
-                FileBrowserView(rootPath: base, initialPath: base.appendingPathComponent("var/minis"), rootLabel: "/")
+                FileBrowserView(rootPath: base, initialPath: base.appendingPathComponent("var/ze"), rootLabel: "/")
             }
         }
         .sheet(isPresented: $showBrowserSheet) {
@@ -963,16 +963,16 @@ struct AIChatView: View {
                 ISHTerminalView(sessionId: vm.sessionId, showCloseButton: true, initCommand: terminalInitCommand)
                     .onAppear {
                         if let sid = vm.sessionId {
-                            minisLogger.info("🔍MOUNT Terminal onAppear — re-mounting minis for session \(sid)")
-                            vm.mountMinis(for: sid)
+                            zeLogger.info("🔍MOUNT Terminal onAppear — re-mounting ze for session \(sid)")
+                            vm.mountZe(for: sid)
                         } else {
-                            minisLogger.info("🔍MOUNT Terminal onAppear — no sessionId, skipping mount")
+                            zeLogger.info("🔍MOUNT Terminal onAppear — no sessionId, skipping mount")
                         }
                     }
             }
         }
         .fullScreenCover(isPresented: $showCamera, onDismiss: {
-            minisLogger.info("[QuickAction] fullScreenCover(camera) onDismiss showCamera=\(showCamera)")
+            zeLogger.info("[QuickAction] fullScreenCover(camera) onDismiss showCamera=\(showCamera)")
         }) {
             // AnyView erases the camera sheet's view tree from the
             // outer body's generic chain. Without it, AIChatView.body's
@@ -993,12 +993,12 @@ struct AIChatView: View {
             // into separate View structs (v1.10 follow-up).
             AnyView(
                 CameraPicker { image in
-                    minisLogger.info("[QuickAction] CameraPicker onCapture size=\(Int(image.size.width))x\(Int(image.size.height))")
+                    zeLogger.info("[QuickAction] CameraPicker onCapture size=\(Int(image.size.width))x\(Int(image.size.height))")
                     vm.addImageAttachment(image)
                 }
                 .ignoresSafeArea()
                 .onAppear {
-                    minisLogger.info("[QuickAction] fullScreenCover(camera) content onAppear — notifying workflow")
+                    zeLogger.info("[QuickAction] fullScreenCover(camera) content onAppear — notifying workflow")
                     QuickActionWorkflow.shared.markCoverPresented()
                 }
             )
@@ -1073,12 +1073,12 @@ struct AIChatView: View {
                     vm.addFileAttachment(from: url)
                 }
             case .failure(let error):
-                minisLogger.error("File import failed: \(error.localizedDescription)")
+                zeLogger.error("File import failed: \(error.localizedDescription)")
             }
         }
         .onAppear {
             let sinceInit = (CFAbsoluteTimeGetCurrent() - AIChatViewModel.onAppearTimestamp) * 1000
-            minisLogger.info("[SessionLoad] onAppear T+\(String(format: "%.0f", sinceInit))ms isNew=\(cached.isNew) msgs=\(vm.messages.count)")
+            zeLogger.info("[SessionLoad] onAppear T+\(String(format: "%.0f", sinceInit))ms isNew=\(cached.isNew) msgs=\(vm.messages.count)")
             // [T-inputbar-stale-across-reentry] Re-arm the leading-edge seed on
             // EVERY appear. AIChatView is keyed `.id(sessionId)` in ContentView,
             // so re-entering the SAME session reuses the same SwiftUI identity
@@ -1119,7 +1119,7 @@ struct AIChatView: View {
                     // Load session if: (a) VM is freshly created, or (b) cache hit but messages
                     // are empty — this can happen on iOS 16 where NavigationStack may recreate
                     // @StateObject unexpectedly, causing isNew=false but an empty VM.
-                    minisLogger.info("🔄SESSION AIChatView.onAppear loading session \(sessionId) isNew=\(cached.isNew) msgs=\(vm.messages.count)")
+                    zeLogger.info("🔄SESSION AIChatView.onAppear loading session \(sessionId) isNew=\(cached.isNew) msgs=\(vm.messages.count)")
                     // [T-ios-session-coldload-listsessions-block] .userInitiated
                     // so the actual session-open work wins the serialized
                     // ChatStore actor queue over background sidebar-refresh
@@ -1135,7 +1135,7 @@ struct AIChatView: View {
                     // but this view appeared before it completed. Wait for it to finish,
                     // then reload if messages are still empty (objectWillChange may have
                     // fired between old and new CachedViewModel subscriptions).
-                    minisLogger.info("🔄SESSION AIChatView.onAppear WAITING for in-flight load session=\(sessionId)")
+                    zeLogger.info("🔄SESSION AIChatView.onAppear WAITING for in-flight load session=\(sessionId)")
                     Task {
                         // Wait for the in-flight load to complete (poll at short intervals)
                         for _ in 0..<20 {
@@ -1144,15 +1144,15 @@ struct AIChatView: View {
                         }
                         // If messages are still empty after the load completed, retry
                         if vm.messages.isEmpty && !vm.isLoadingSession {
-                            minisLogger.warning("🔄SESSION AIChatView.onAppear RETRY load — messages still empty after in-flight load for \(sessionId)")
+                            zeLogger.warning("🔄SESSION AIChatView.onAppear RETRY load — messages still empty after in-flight load for \(sessionId)")
                             await vm.loadSession()
                         }
                     }
                 } else {
                     let reuseStart = CFAbsoluteTimeGetCurrent()
-                    minisLogger.info("🔄SESSION AIChatView.onAppear REUSING cached vm for \(sessionId) isProcessing=\(vm.isProcessing) msgs=\(vm.messages.count)")
-                    // Remount minis for this session (in case another session took over)
-                    vm.mountMinis(for: sessionId)
+                    zeLogger.info("🔄SESSION AIChatView.onAppear REUSING cached vm for \(sessionId) isProcessing=\(vm.isProcessing) msgs=\(vm.messages.count)")
+                    // Remount ze for this session (in case another session took over)
+                    vm.mountZe(for: sessionId)
                     // While the user was off this view, an iCloud / LAN
                     // sync may have landed new messages (or applied a
                     // tombstone). reloadMessagesFromDB internally compares
@@ -1172,17 +1172,17 @@ struct AIChatView: View {
                         vm.forceScrollToBottom.send()
                     }
                     let totalElapsed = (CFAbsoluteTimeGetCurrent() - reuseStart) * 1000
-                    minisLogger.info("[SessionLoad] \(sessionId) — REUSE: \(String(format: "%.1f", totalElapsed))ms [mount: \(String(format: "%.1f", mountElapsed)) | msgs: \(vm.messages.count)]")
+                    zeLogger.info("[SessionLoad] \(sessionId) — REUSE: \(String(format: "%.1f", totalElapsed))ms [mount: \(String(format: "%.1f", mountElapsed)) | msgs: \(vm.messages.count)]")
                 }
             } else {
-                minisLogger.info("🔄SESSION AIChatView.onAppear nil sessionId — draft mode")
+                zeLogger.info("🔄SESSION AIChatView.onAppear nil sessionId — draft mode")
                 // Draft session — auto-focus input for immediate typing
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     guard !hasOverlayPresented, isChatViewVisible else { return }
                     inputFocused = true
                 }
             }
-            minisLogger.info("[Share] AIChatView.onAppear: sessionId=\(sessionId ?? "nil") bufferVersion=\(shareCoordinator.bufferVersion) hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
+            zeLogger.info("[Share] AIChatView.onAppear: sessionId=\(sessionId ?? "nil") bufferVersion=\(shareCoordinator.bufferVersion) hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
             injectPendingShareIfNeeded()
             injectPendingTransferIfNeeded()
             isChatViewVisible = true
@@ -1207,7 +1207,7 @@ struct AIChatView: View {
         }
         .onChange(of: shareCoordinator.bufferVersion) { newVersion in
             // Warm start: user is already in a session when share arrives
-            minisLogger.info("[Share] AIChatView.onChange(bufferVersion)=\(newVersion) sessionId=\(sessionId ?? "nil") hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
+            zeLogger.info("[Share] AIChatView.onChange(bufferVersion)=\(newVersion) sessionId=\(sessionId ?? "nil") hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
             injectPendingShareIfNeeded()
         }
         .onDisappear {
@@ -1244,7 +1244,7 @@ struct AIChatView: View {
                 AppLogger(category: "InputBarLayout").info("chat onDisappear — released a lingering first responder (would have left a phantom keyboard inset on the window)")
             }
             // Capsule auto-shows whenever audio is loaded — no manual activation needed.
-            minisLogger.info("🔑DRAFT AIChatView.onDisappear vm=\(vm.vmInstanceId) sessionId=\(sessionId ?? "nil") draftId=\(draftId ?? "nil") vm.sessionId=\(vm.sessionId ?? "nil") vm.isProcessing=\(vm.isProcessing)")
+            zeLogger.info("🔑DRAFT AIChatView.onDisappear vm=\(vm.vmInstanceId) sessionId=\(sessionId ?? "nil") draftId=\(draftId ?? "nil") vm.sessionId=\(vm.sessionId ?? "nil") vm.isProcessing=\(vm.isProcessing)")
         }
         // [T-voice-bg-fg-gap] Structural immunity: while the voice panel is up
         // and the transcript editor is NOT open, there is no legitimate keyboard
@@ -1388,7 +1388,7 @@ struct AIChatView: View {
     private func tryMarkWorkflowChatReady(reason: String) {
         guard let sid = quickActionMatchId, isChatViewVisible else { return }
         if case .waitingForChatMount(_, let target) = QuickActionWorkflow.shared.state, target == sid {
-            minisLogger.info("[QuickAction] tryMarkWorkflowChatReady reason=\(reason) sid=\(sid)")
+            zeLogger.info("[QuickAction] tryMarkWorkflowChatReady reason=\(reason) sid=\(sid)")
             QuickActionWorkflow.shared.markChatReady(sessionId: sid)
         }
     }
@@ -1397,14 +1397,14 @@ struct AIChatView: View {
     /// `chatReady` state. Flips the relevant @State so SwiftUI mounts
     /// the camera sheet / starts speech recognition.
     private func applyQuickAction(_ action: ChatLaunchAction) {
-        minisLogger.info("[QuickAction] applyQuickAction action=\(String(describing: action)) showCamera=\(showCamera) hasOverlay=\(hasOverlayPresented) chatVisible=\(isChatViewVisible)")
+        zeLogger.info("[QuickAction] applyQuickAction action=\(String(describing: action)) showCamera=\(showCamera) hasOverlay=\(hasOverlayPresented) chatVisible=\(isChatViewVisible)")
         // Guard against late deliveries to a view that already
         // disappeared — workflow re-publishes chatReady on retry and
         // the modifier's onReceive can fire after our onDisappear set
         // isChatViewVisible=false. In that case let the workflow's
         // retry timer re-publish so the next live view picks it up.
         guard isChatViewVisible else {
-            minisLogger.info("[QuickAction] applyQuickAction skipped — view not visible")
+            zeLogger.info("[QuickAction] applyQuickAction skipped — view not visible")
             return
         }
         switch action {
@@ -1437,7 +1437,7 @@ struct AIChatView: View {
             // hop is needed.
             inputFocused = false
             showCamera = true
-            minisLogger.info("[QuickAction] openCamera — showCamera=true")
+            zeLogger.info("[QuickAction] openCamera — showCamera=true")
         }
     }
 
@@ -1474,15 +1474,15 @@ struct AIChatView: View {
 
     private func injectPendingShareIfNeeded() {
         guard let pending = shareCoordinator.consumeBuffer() else {
-            minisLogger.info("[Share] injectPendingShareIfNeeded — no buffer or expired")
+            zeLogger.info("[Share] injectPendingShareIfNeeded — no buffer or expired")
             return
         }
-        minisLogger.info("[Share] Injecting \(pending.items.count) items into chat")
+        zeLogger.info("[Share] Injecting \(pending.items.count) items into chat")
 
         for (i, item) in pending.items.enumerated() {
             switch item.kind {
             case .inlineText:
-                minisLogger.info("[Share] item[\(i)] inlineText: \(String(item.value.prefix(100)))")
+                zeLogger.info("[Share] item[\(i)] inlineText: \(String(item.value.prefix(100)))")
                 if !vm.inputText.isEmpty { vm.inputText += "\n" }
                 let text = item.value
                 // Append a trailing space to URLs so the cursor doesn't stick to the link
@@ -1493,12 +1493,12 @@ struct AIChatView: View {
                 }
             case .attachment:
                 guard let dir = SharedContainerStore.sharedFileDirectory else {
-                    minisLogger.error("[Share] item[\(i)] sharedFileDirectory is nil!")
+                    zeLogger.error("[Share] item[\(i)] sharedFileDirectory is nil!")
                     continue
                 }
                 let fileURL = dir.appendingPathComponent(item.value)
                 let exists = FileManager.default.fileExists(atPath: fileURL.path)
-                minisLogger.info("[Share] item[\(i)] attachment: \(item.value) exists=\(exists) path=\(fileURL.path)")
+                zeLogger.info("[Share] item[\(i)] attachment: \(item.value) exists=\(exists) path=\(fileURL.path)")
                 guard exists else { continue }
                 // [T-ios-json-open-provider-import-prompt] If this is a JSON
                 // Provider export, don't silently attach it — ask the user
@@ -1512,18 +1512,18 @@ struct AIChatView: View {
                         .appendingPathComponent("provider-share-\(UUID().uuidString).json")
                     try? FileManager.default.copyItem(at: fileURL, to: tempURL)
                     pendingProviderImport = PendingProviderImport(json: json, fileURL: tempURL)
-                    minisLogger.info("[Share] item[\(i)] detected Provider export JSON — prompting import vs attachment")
+                    zeLogger.info("[Share] item[\(i)] detected Provider export JSON — prompting import vs attachment")
                     continue
                 }
                 vm.addFileAttachment(from: fileURL)
-                minisLogger.info("[Share] item[\(i)] addFileAttachment done, attachments count=\(self.vm.attachments.count)")
+                zeLogger.info("[Share] item[\(i)] addFileAttachment done, attachments count=\(self.vm.attachments.count)")
             }
         }
 
         // Clean up shared files after ingestion
         SharedContainerStore.cleanSharedFiles()
 
-        minisLogger.info("[Share] Injection complete. inputText='\(String(self.vm.inputText.prefix(100)))' attachments=\(self.vm.attachments.count)")
+        zeLogger.info("[Share] Injection complete. inputText='\(String(self.vm.inputText.prefix(100)))' attachments=\(self.vm.attachments.count)")
 
         hasInjectedShareContent = true
 
@@ -1541,10 +1541,10 @@ struct AIChatView: View {
     private func injectPendingTransferIfNeeded() {
         guard let transfer = ViewModelCache.pendingTransfer else { return }
         ViewModelCache.pendingTransfer = nil
-        minisLogger.info("[MoveTo] Injecting transfer: text='\(String(transfer.inputText.prefix(50)))' attachments=\(transfer.attachments.count) existing=\(vm.attachments.count)")
+        zeLogger.info("[MoveTo] Injecting transfer: text='\(String(transfer.inputText.prefix(50)))' attachments=\(transfer.attachments.count) existing=\(vm.attachments.count)")
         // Clean up any stale unsent attachments on the target VM before injecting
         if !vm.attachments.isEmpty {
-            minisLogger.info("[MoveTo] Clearing \(vm.attachments.count) stale attachments from target session")
+            zeLogger.info("[MoveTo] Clearing \(vm.attachments.count) stale attachments from target session")
             for a in vm.attachments { try? FileManager.default.removeItem(at: a.cacheURL) }
             vm.attachments.removeAll()
         }
@@ -1845,7 +1845,7 @@ struct AIChatView: View {
         // when one exists (auto-generated or user-renamed). Tap opens the
         // same SessionEditSheet used from the home screen so users can
         // rename / re-categorize without leaving the chat. Falls back to
-        // the SOUL.md `name` (or "Minis") for draft sessions or before a
+        // the SOUL.md `name` (or "Ze") for draft sessions or before a
         // title has been generated.
         let sessionTitle: String? = (titlePillSession?.title?.trimmingCharacters(in: .whitespacesAndNewlines))
             .flatMap { $0.isEmpty ? nil : $0 }
@@ -1882,7 +1882,7 @@ struct AIChatView: View {
         // 2026-05-20 tightening overlapped row 2 into the title's line box by
         // 8pt — more than the 13pt font's entire descender zone (~3.1pt), so
         // any title containing g/p/y/z visually fused with the model pill
-        // (only descender-less titles like "Minis" hid it). -3 keeps a ~2pt
+        // (only descender-less titles like "Ze" hid it). -3 keeps a ~2pt
         // visible gap for descender titles. HEIGHT-NEUTRAL: the 5pt spent
         // here is reclaimed inside row 2 (provider-row bottom clearance
         // 4 → 1 and group vertical padding 3 → 2 on legacy), so the stack's
@@ -1923,9 +1923,13 @@ struct AIChatView: View {
                     //                 total stack height instead, so it
                     //                 naturally has breathing room above
                     //                 and below.
+                    //   2026-07-28: 13 → 12pt + minimumScaleFactor 0.85 →
+                    //                 0.80 after the title still sat too
+                    //                 close to the status-bar / Dynamic Island
+                    //                 crop on the affected layout.
                     // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 13 : 16, weight: .semibold))
-                    .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
+                    .font(.system(size: legacyLayout ? 12 : 16, weight: .semibold))
+                    .minimumScaleFactor(legacyLayout ? 0.80 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1940,7 +1944,7 @@ struct AIChatView: View {
                     .padding(.top, legacyLayout ? 0 : 2)
                     .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
                         let n = SoulStore.cachedMetadata.name
-                        soulName = n.isEmpty ? "Minis" : n
+                        soulName = n.isEmpty ? "Ze" : n
                     }
             }
             .buttonStyle(.plain)
@@ -2184,7 +2188,7 @@ struct AIChatView: View {
                     || next?.title != titlePillSession?.title
                     || next?.category != titlePillSession?.category {
                     // Direct replace — animating the toolbar title makes the
-                    // old "Minis" string slide before the real title swaps
+                    // old "Ze" string slide before the real title swaps
                     // in, which looks broken. SwiftUI's default crossfade
                     // for non-animated text changes is what we want.
                     titlePillSession = next
@@ -2365,7 +2369,7 @@ struct AIChatView: View {
                     .onTapGesture { inputFocused = false }
             }
             // Empty-chat onboarding tip: a single card explaining the
-            // per-session vs cross-session /var/minis/ layout. Only shown
+            // per-session vs cross-session /var/ze/ layout. Only shown
             // on a true draft (vm.sessionId == nil) — opening an existing
             // session would otherwise flash the card during the brief
             // window before its messages load. Returning users with any
@@ -2518,7 +2522,7 @@ struct AIChatView: View {
     /// only when read-replies is enabled.
     @ViewBuilder
     // The read-replies speech capsule is now a SINGLE app-root instance (mounted
-    // in MinisApp beside AudioPiPCapsule) so it persists across chat → home. No
+    // in ZeApp beside AudioPiPCapsule) so it persists across chat → home. No
     // per-session copy is rendered here anymore.
     private var floatingSpeechButton: some View { EmptyView() }
 
@@ -2583,7 +2587,7 @@ struct AIChatView: View {
     // MARK: - Drag & Drop Import
 
     /// Handle items dropped onto the chat from outside the app (Files, Photos, Safari, etc.).
-    /// Handle a minis:// or http(s):// URL tap forwarded from a cell-level
+    /// Handle a ze:// or http(s):// URL tap forwarded from a cell-level
     /// view. Routes deep links and opens the appropriate file preview sheet
     /// (state lives on AIChatView so sheet animations play correctly).
     /// Route a tap on a markdown-embedded image into a paged gallery covering
@@ -2635,7 +2639,7 @@ struct AIChatView: View {
                     let src = content.substring(with: match.range(at: 2))
                     let alt = content.substring(with: match.range(at: 1))
                     let ext = (URL(string: src)?.pathExtension ?? (src as NSString).pathExtension).lowercased()
-                    if minisVideoExtensions.contains(ext) || minisAudioExtensions.contains(ext) { return }
+                    if zeVideoExtensions.contains(ext) || zeAudioExtensions.contains(ext) { return }
                     let title = alt.isEmpty ? ((src as NSString).lastPathComponent) : alt
                     refs.append(MarkdownImageRef(messageId: message.id, source: src, title: title))
                 }
@@ -2667,7 +2671,7 @@ struct AIChatView: View {
             // regex scan are resolved the same way the inline markdown
             // renderer resolves them.
             let canonical = ImageAttachment.canonicalizeMarkdownImageSource(ref.source)
-            let fpKey = minisMediaCacheKey(for: canonical)
+            let fpKey = zeMediaCacheKey(for: canonical)
             return GalleryItem(
                 id: "\(index)|\(ref.messageId)|\(fpKey)",
                 title: ref.title,
@@ -2677,7 +2681,7 @@ struct AIChatView: View {
         imageGallery = GalleryPresentation(items: items, startIndex: startIndex)
     }
 
-    /// Load a markdown image source (already canonicalized to minis:// or
+    /// Load a markdown image source (already canonicalized to ze:// or
     /// http(s)://) off the main thread. Caches in the shared
     /// `NativeMediaImageCache` using a fingerprint-derived key so
     /// in-place rewrites of local files are picked up on the next render.
@@ -2688,8 +2692,8 @@ struct AIChatView: View {
         }
         guard let url = URL(string: source) else { return nil }
         let img: UIImage?
-        if url.scheme == "minis" {
-            guard let fileURL = resolveMinisFileURLCached(url: url),
+        if url.scheme == "ze" {
+            guard let fileURL = resolveZeFileURLCached(url: url),
                   let data = try? Data(contentsOf: fileURL) else { return nil }
             img = downsampleImageData(data, maxPixelSize: 2048)
         } else {
@@ -2700,14 +2704,14 @@ struct AIChatView: View {
         return img
     }
 
-    private func handleMinisURLTap(_ url: URL) -> OpenURLAction.Result {
+    private func handleZeURLTap(_ url: URL) -> OpenURLAction.Result {
         if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
             withAnimation { safariURL = url }
             return .handled
         }
-        guard url.scheme == "minis" else { return .systemAction }
+        guard url.scheme == "ze" else { return .systemAction }
 
-        // Terminal deep link: minis://open_terminal?init_command=...
+        // Terminal deep link: ze://open_terminal?init_command=...
         if url.host == "open_terminal" {
             let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let initCmd = comps?.queryItems?.first(where: { $0.name == "init_command" })?.value
@@ -2716,12 +2720,12 @@ struct AIChatView: View {
             dl.showTerminal = true
             return .handled
         }
-        // View deep links: minis://views/alarm
+        // View deep links: ze://views/alarm
         if url.host == "views" && url.path == "/alarm" {
             DeepLinkCoordinator.shared.showAlarmList = true
             return .handled
         }
-        // Any minis://settings/<path> goes through DeepLinkRouter so all
+        // Any ze://settings/<path> goes through DeepLinkRouter so all
         // supported settings sub-paths (logs, providers, model-groups,
         // usage, skills, memory, storage, mounts, shared-folders,
         // appearance, background, about, permissions, environments,
@@ -2732,22 +2736,22 @@ struct AIChatView: View {
             DeepLinkRouter.handle(url: url, shareCoordinator: shareCoordinator)
             return .handled
         }
-        if let fileURL = resolveMinisFileURL(url: url) {
+        if let fileURL = resolveZeFileURL(url: url) {
             let ext = url.pathExtension.lowercased()
             withAnimation {
-                if minisImageExtensions.contains(ext) {
+                if zeImageExtensions.contains(ext) {
                     previewImageFile = fileURL
-                } else if minisVideoExtensions.contains(ext) {
+                } else if zeVideoExtensions.contains(ext) {
                     previewVideoFile = fileURL
-                } else if minisAudioExtensions.contains(ext) {
+                } else if zeAudioExtensions.contains(ext) {
                     previewAudioFile = fileURL
-                } else if minisMarkdownExtensions.contains(ext) {
+                } else if zeMarkdownExtensions.contains(ext) {
                     previewMarkdownFile = fileURL
-                } else if minisTextExtensions.contains(ext) {
+                } else if zeTextExtensions.contains(ext) {
                     previewTextFile = fileURL
-                } else if minisHTMLExtensions.contains(ext) {
+                } else if zeHTMLExtensions.contains(ext) {
                     previewHTMLFile = fileURL
-                } else if minisDocumentExtensions.contains(ext) {
+                } else if zeDocumentExtensions.contains(ext) {
                     previewDocumentFile = fileURL
                 } else {
                     shareFile = fileURL
@@ -2758,16 +2762,16 @@ struct AIChatView: View {
             // session, or iCloud sync hasn't brought it down yet. Surface
             // a dismissable alert so the tap isn't silently ignored.
             let name = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
-            missingMinisFileName = name.isEmpty ? url.absoluteString : name
+            missingZeFileName = name.isEmpty ? url.absoluteString : name
         }
         return .handled
     }
 
     private func handleDropProviders(_ providers: [NSItemProvider]) {
-        minisLogger.info("[Drop] handleDropProviders called with \(providers.count) provider(s)")
+        zeLogger.info("[Drop] handleDropProviders called with \(providers.count) provider(s)")
         for (index, provider) in providers.enumerated() {
             let types = provider.registeredTypeIdentifiers
-            minisLogger.info("[Drop] provider[\(index)] types=\(types) suggestedName=\(provider.suggestedName ?? "nil")")
+            zeLogger.info("[Drop] provider[\(index)] types=\(types) suggestedName=\(provider.suggestedName ?? "nil")")
 
             // Determine if this provider represents a file (vs. inline text).
             let hasFileType = types.contains { id in
@@ -2780,30 +2784,30 @@ struct AIChatView: View {
                 !($0 as NSString).pathExtension.isEmpty
             } ?? false
 
-            minisLogger.info("[Drop] provider[\(index)] hasFileType=\(hasFileType) hasFileName=\(hasFileName)")
+            zeLogger.info("[Drop] provider[\(index)] hasFileType=\(hasFileType) hasFileName=\(hasFileName)")
 
             guard hasFileType || hasFileName else {
-                minisLogger.info("[Drop] provider[\(index)] SKIPPED — no file type or filename")
+                zeLogger.info("[Drop] provider[\(index)] SKIPPED — no file type or filename")
                 continue
             }
 
             // 1. File URL (most common on iPad — files, images, videos, documents)
             let hasFileURL = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
             let canLoadImage = provider.canLoadObject(ofClass: UIImage.self)
-            minisLogger.info("[Drop] provider[\(index)] hasFileURL=\(hasFileURL) canLoadImage=\(canLoadImage)")
+            zeLogger.info("[Drop] provider[\(index)] hasFileURL=\(hasFileURL) canLoadImage=\(canLoadImage)")
 
             if hasFileURL {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
                     if let error {
-                        minisLogger.error("[Drop] provider[\(index)] loadItem fileURL error: \(error.localizedDescription)")
+                        zeLogger.error("[Drop] provider[\(index)] loadItem fileURL error: \(error.localizedDescription)")
                         return
                     }
                     guard let data = item as? Data,
                           let url = URL(dataRepresentation: data, relativeTo: nil) else {
-                        minisLogger.error("[Drop] provider[\(index)] loadItem fileURL failed to parse — item type: \(type(of: item))")
+                        zeLogger.error("[Drop] provider[\(index)] loadItem fileURL failed to parse — item type: \(type(of: item))")
                         return
                     }
-                    minisLogger.info("[Drop] provider[\(index)] fileURL loaded: \(url.path)")
+                    zeLogger.info("[Drop] provider[\(index)] fileURL loaded: \(url.path)")
                     DispatchQueue.main.async { vm.addFileAttachment(from: url) }
                 }
                 continue
@@ -2812,14 +2816,14 @@ struct AIChatView: View {
             if canLoadImage {
                 provider.loadObject(ofClass: UIImage.self) { item, error in
                     if let error {
-                        minisLogger.error("[Drop] provider[\(index)] loadObject UIImage error: \(error.localizedDescription)")
+                        zeLogger.error("[Drop] provider[\(index)] loadObject UIImage error: \(error.localizedDescription)")
                         return
                     }
                     guard let image = item as? UIImage else {
-                        minisLogger.error("[Drop] provider[\(index)] loadObject UIImage returned nil")
+                        zeLogger.error("[Drop] provider[\(index)] loadObject UIImage returned nil")
                         return
                     }
-                    minisLogger.info("[Drop] provider[\(index)] UIImage loaded: \(image.size)")
+                    zeLogger.info("[Drop] provider[\(index)] UIImage loaded: \(image.size)")
                     DispatchQueue.main.async { vm.addImageAttachment(image) }
                 }
                 continue
@@ -2829,29 +2833,29 @@ struct AIChatView: View {
                 guard let ut = UTType(id) else { return false }
                 return ut.conforms(to: .data)
             }) {
-                minisLogger.info("[Drop] provider[\(index)] fallback loadFileRepresentation contentType=\(contentType)")
+                zeLogger.info("[Drop] provider[\(index)] fallback loadFileRepresentation contentType=\(contentType)")
                 provider.loadFileRepresentation(forTypeIdentifier: contentType) { url, error in
                     if let error {
-                        minisLogger.error("[Drop] provider[\(index)] loadFileRepresentation error: \(error.localizedDescription)")
+                        zeLogger.error("[Drop] provider[\(index)] loadFileRepresentation error: \(error.localizedDescription)")
                         return
                     }
                     guard let url else {
-                        minisLogger.error("[Drop] provider[\(index)] loadFileRepresentation returned nil URL")
+                        zeLogger.error("[Drop] provider[\(index)] loadFileRepresentation returned nil URL")
                         return
                     }
                     let tmp = FileManager.default.temporaryDirectory
                         .appendingPathComponent(UUID().uuidString.prefix(8) + "_" + url.lastPathComponent)
                     do {
                         try FileManager.default.copyItem(at: url, to: tmp)
-                        minisLogger.info("[Drop] provider[\(index)] file copied to: \(tmp.path)")
+                        zeLogger.info("[Drop] provider[\(index)] file copied to: \(tmp.path)")
                         DispatchQueue.main.async { vm.addFileAttachment(from: tmp) }
                     } catch {
-                        minisLogger.error("[Drop] provider[\(index)] copyItem failed: \(error.localizedDescription)")
+                        zeLogger.error("[Drop] provider[\(index)] copyItem failed: \(error.localizedDescription)")
                     }
                 }
                 continue
             }
-            minisLogger.info("[Drop] provider[\(index)] NO handler matched — dropped")
+            zeLogger.info("[Drop] provider[\(index)] NO handler matched — dropped")
         }
     }
 
@@ -4116,7 +4120,7 @@ struct AIChatView: View {
         // Intercept slash commands — execute instead of sending to LLM
         if vm.tryExecuteInputAsSlashCommand() { return }
 
-        minisLogger.info("🔑DRAFT performSend vm=\(vm.vmInstanceId) vm.sessionId=\(vm.sessionId ?? "nil") draftId=\(draftId ?? "nil") inputText='\(String(vm.inputText.prefix(50)))' isProcessing=\(vm.isProcessing)")
+        zeLogger.info("🔑DRAFT performSend vm=\(vm.vmInstanceId) vm.sessionId=\(vm.sessionId ?? "nil") draftId=\(draftId ?? "nil") inputText='\(String(vm.inputText.prefix(50)))' isProcessing=\(vm.isProcessing)")
         // Keep SwiftUI focus when a hardware keyboard is connected — dropping
         // it would force the user to tap the field again before typing the
         // next message. With only the software keyboard, clear focus and
@@ -5651,11 +5655,11 @@ private struct StatRow: View {
 
 /// Onboarding view rendered in the center of a New Chat (no messages yet).
 /// Shows the per-session vs cross-session directory layout under
-/// `/var/minis/` as a 2-column folder grid so the user understands what's
+/// `/var/ze/` as a 2-column folder grid so the user understands what's
 /// available before typing.
 ///
 /// Source-of-truth for the descriptions: AIChatViewModel.swift system-prompt
-/// directory listing (`Shared directory /var/minis/ ...`). Keep them aligned
+/// directory listing (`Shared directory /var/ze/ ...`). Keep them aligned
 /// when either side changes.
 private struct EmptyChatDirectoryTimeline: View {
     var onBrowse: () -> Void

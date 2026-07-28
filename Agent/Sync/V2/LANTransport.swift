@@ -9,7 +9,7 @@ import Foundation
 /// Future implementation outline (left here so the next person picks up
 /// the right shape):
 ///
-///   1. start() — advertise `_minis-sync._tcp` via NWListener; concurrently
+///   1. start() — advertise `_ze-sync._tcp` via NWListener; concurrently
 ///      run an NWBrowser to discover peers, store WebSocket connections
 ///      in `peers`.
 ///   2. send() — encode the batch as JSON (PortableRecord is Codable),

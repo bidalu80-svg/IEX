@@ -1,7 +1,7 @@
 #if DEBUG
 import Foundation
 
-/// In-process bridge for the `minis-debug` CLI offload.
+/// In-process bridge for the `ze-debug` CLI offload.
 ///
 /// The CLI handler (`DebugOffload.m`) used to open a TCP connection to
 /// 127.0.0.1:8321 to talk to `DebugServer`. That server is Debug-only AND can

@@ -510,7 +510,7 @@ final class ViewModelCache {
     // MARK: - Background UI Suspension
 
     /// Suspend streaming UI updates on ALL cached VMs that are actively
-    /// processing. Called from MinisApp on scenePhase → .inactive so that
+    /// processing. Called from ZeApp on scenePhase → .inactive so that
     /// no MarkdownRenderer layout work runs on the main thread while the
     /// app is transitioning to background — iOS can SIGKILL for excessive
     /// background CPU/rendering otherwise.
@@ -521,7 +521,7 @@ final class ViewModelCache {
     }
 
     /// Resume streaming UI updates on ALL cached VMs, flushing any chunks
-    /// that accumulated while backgrounded. Called from MinisApp on
+    /// that accumulated while backgrounded. Called from ZeApp on
     /// scenePhase → .active so the user sees the latest content
     /// immediately on return.
     func resumeAllStreamingUI() {

@@ -1,6 +1,6 @@
 //
 //  SkillStore.swift
-//  MinisApp
+//  ZeApp
 //
 //  Manages AI skill (SKILL.md) lifecycle: import, storage, session overrides,
 //  and system prompt injection.  All metadata is stored in a SQLite database
@@ -76,7 +76,7 @@ final class SkillStore: ObservableObject {
     private var db: OpaquePointer?
 
     private var skillsDir: URL {
-        AIChatViewModel.minisSkillsPersistentDir
+        AIChatViewModel.zeSkillsPersistentDir
     }
 
     func skillDirectoryURL(for skillId: String) -> URL {
@@ -85,12 +85,12 @@ final class SkillStore: ObservableObject {
 
     private var dbPath: String {
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        return library.appendingPathComponent("MinisChat/skills.db").path
+        return library.appendingPathComponent("ZeChat/skills.db").path
     }
 
     private var rootfsSkillsDir: URL {
         let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documents.appendingPathComponent("alpine-rootfs/data/var/minis/skills")
+        return documents.appendingPathComponent("alpine-rootfs/data/var/ze/skills")
     }
 
     private init() {
@@ -853,7 +853,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             try? fm.createDirectory(at: rootfsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? entry.data.write(to: rootfsFile)
 
-            let linuxPath = "/var/minis/skills/\(skill.id)/\(relativePath)"
+            let linuxPath = "/var/ze/skills/\(skill.id)/\(relativePath)"
             ensureParentDirsInMetaDB(for: linuxPath)
             ensureFakefsMetadata(for: linuxPath, isDirectory: false)
         }
@@ -974,7 +974,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
     /// [T-ios-shell-created-skill-not-syncing] Reconcile a skill directory that
     /// exists on disk (`<skillsDir>/<id>/SKILL.md`) but has no skills.db row and
     /// is absent from the in-memory `skills` array — e.g. a skill created purely
-    /// via the iSH shell (`mkdir /var/minis/skills/<id>` + write SKILL.md),
+    /// via the iSH shell (`mkdir /var/ze/skills/<id>` + write SKILL.md),
     /// bypassing the import UI. Such orphans were registered into the DB by
     /// `discoverNewSkillsOnDisk` at launch but never `markDirty`'d, so the
     /// CloudKit upload builder found the row yet the dirty queue never carried
@@ -982,7 +982,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
     ///
     /// Registers the orphan (parse frontmatter → DB row with `.session` source →
     /// in-memory array) AND markDirty so it enters the upload queue. The
-    /// directory name is the id (NOT a re-slugified name) so the `minis://` link
+    /// directory name is the id (NOT a re-slugified name) so the `ze://` link
     /// keeps resolving. Idempotent: a no-op when the id is already loaded, and
     /// `dbInsertSkill`'s `ON CONFLICT` preserves `use_count`. Returns true if a
     /// new orphan was ingested.
@@ -1232,10 +1232,10 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
         return .high
     }
 
-    /// Extract skill ID from a Linux path like /var/minis/skills/<skillId>/SKILL.md.
+    /// Extract skill ID from a Linux path like /var/ze/skills/<skillId>/SKILL.md.
     /// Only matches SKILL.md reads (the trigger for skill usage), not sub-resource reads.
     func skillIdFromPath(_ path: String) -> String? {
-        let prefix = "/var/minis/skills/"
+        let prefix = "/var/ze/skills/"
         guard path.hasPrefix(prefix) else { return nil }
         let rest = String(path.dropFirst(prefix.count))
         guard let slashIdx = rest.firstIndex(of: "/") else { return nil }
@@ -1340,20 +1340,20 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             xml += "  <skill>\n"
             xml += "    <name>\(escapedName)</name>\n"
             xml += "    <description>\(escapedDesc)</description>\n"
-            xml += "    <path>/var/minis/skills/\(skill.id)/SKILL.md</path>\n"
+            xml += "    <path>/var/ze/skills/\(skill.id)/SKILL.md</path>\n"
             xml += "  </skill>\n"
         }
         xml += "</available_skills>"
 
         var fragment = "Skills:\n"
-        fragment += "Reusable instruction sets stored at /var/minis/skills/<name>/SKILL.md. Read the SKILL.md file to load full instructions before using a skill.\n\n"
+        fragment += "Reusable instruction sets stored at /var/ze/skills/<name>/SKILL.md. Read the SKILL.md file to load full instructions before using a skill.\n\n"
         fragment += xml
 
         if hasMore {
             let omitted = enabled.filter { s in !selected.contains(where: { $0.id == s.id }) }
             let maxUndisclosed = 100 - selected.count
             let undisclosedNames = omitted.prefix(maxUndisclosed).map(\.name).joined(separator: ", ")
-            fragment += "\n\n\(omitted.count) more skills not shown above: \(undisclosedNames). List /var/minis/skills/ or grep to search all."
+            fragment += "\n\n\(omitted.count) more skills not shown above: \(undisclosedNames). List /var/ze/skills/ or grep to search all."
         }
 
         return fragment
@@ -1564,7 +1564,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
         let destFile = destDir.appendingPathComponent("SKILL.md")
         try? content.write(to: destFile, atomically: true, encoding: .utf8)
 
-        let linuxSkillDir = "/var/minis/skills/\(skill.id)"
+        let linuxSkillDir = "/var/ze/skills/\(skill.id)"
         let linuxSkillFile = "\(linuxSkillDir)/SKILL.md"
         ensureParentDirsInMetaDB(for: linuxSkillFile)
         ensureFakefsMetadata(for: linuxSkillDir, isDirectory: true)
@@ -1839,7 +1839,7 @@ Do not create extraneous files: README.md, INSTALLATION_GUIDE.md, CHANGELOG.md, 
             outcome.filesWritten += 1
 
             // Ensure fakefs metadata for file and parent dirs
-            let linuxPath = "/var/minis/skills/\(skill.id)/\(relPath)"
+            let linuxPath = "/var/ze/skills/\(skill.id)/\(relPath)"
             ensureParentDirsInMetaDB(for: linuxPath)
             ensureFakefsMetadata(for: linuxPath, isDirectory: false)
         }
@@ -2188,7 +2188,7 @@ extension SkillStore {
                 try? fm.removeItem(at: libFile)
                 let rootfsFile = rootfsDir.appendingPathComponent(rel)
                 try? fm.removeItem(at: rootfsFile)
-                let linuxPath = "/var/minis/skills/\(skillId)/\(rel)"
+                let linuxPath = "/var/ze/skills/\(skillId)/\(rel)"
                 removeFakefsPathIfPresent(linuxPath)
                 prunedCount += 1
                 syncLogger.info("[IMPORT] '\(skillId)' pruned stale bundled file: \(rel)")
@@ -2214,7 +2214,7 @@ extension SkillStore {
                 try? fm.createDirectory(at: rootfsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? entry.data.write(to: rootfsFile)
 
-                let linuxPath = "/var/minis/skills/\(skillId)/\(rel)"
+                let linuxPath = "/var/ze/skills/\(skillId)/\(rel)"
                 ensureParentDirsInMetaDB(for: linuxPath)
                 ensureFakefsMetadata(for: linuxPath, isDirectory: false)
 

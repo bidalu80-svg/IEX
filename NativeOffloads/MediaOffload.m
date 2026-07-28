@@ -1,6 +1,6 @@
 //
 //  MediaOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-media`.
 //  Subcommands: now-playing, play, pause, toggle, next, prev, volume, search, play-search
@@ -63,7 +63,7 @@ static dispatch_queue_t authQueue(void) {
     static dispatch_queue_t q = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.openminis.media.auth", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.ze.media.auth", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }
@@ -86,7 +86,7 @@ static BOOL requestMediaAccess(NSString **outError) {
         if (outError) {
             *outError = @"Media library access not granted. "
                          "To grant access, open Settings > Privacy & Security > Media & Apple Music "
-                         "and enable Minis.";
+                         "and enable Ze.";
         }
         return NO;
     }

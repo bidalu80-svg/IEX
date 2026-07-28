@@ -165,7 +165,7 @@ final class DebugAuthenticator: @unchecked Sendable {
         guard let key = Data(hex: rec.keyHex) else {
             throw AuthFailure(code: "token_unknown", message: "Corrupt token record")
         }
-        let kMac = Self.hmac(key, Data("minis-dbg-v1|mac".utf8) + nonce)
+        let kMac = Self.hmac(key, Data("ze-dbg-v1|mac".utf8) + nonce)
         let signed = Data("v1".utf8) + tok4 + Self.be64(UInt64(ts)) + nonce + ct
         guard Self.tagMatches(tag, message: signed, key: kMac) else {
             throw AuthFailure(code: "bad_tag", message: "MAC verification failed")
@@ -189,14 +189,14 @@ final class DebugAuthenticator: @unchecked Sendable {
         lock.unlock()
         if needsPersist { persistTokens() }
 
-        let kEncReq = Self.hmac(key, Data("minis-dbg-v1|enc-req".utf8) + nonce)
+        let kEncReq = Self.hmac(key, Data("ze-dbg-v1|enc-req".utf8) + nonce)
         let plaintextData = Self.keystreamXOR(key: kEncReq, nonce: nonce, data: ct)
         guard let plaintext = String(data: plaintextData, encoding: .utf8) else {
             throw AuthFailure(code: "bad_tag", message: "Decrypted payload is not UTF-8")
         }
 
         let sealResponse: (String) -> String = { responseJSON in
-            let kEncResp = Self.hmac(key, Data("minis-dbg-v1|enc-resp".utf8) + nonce)
+            let kEncResp = Self.hmac(key, Data("ze-dbg-v1|enc-resp".utf8) + nonce)
             let respCt = Self.keystreamXOR(key: kEncResp, nonce: nonce, data: Data(responseJSON.utf8))
             let respTag = Self.hmac(kMac, Data("resp".utf8) + nonce + respCt)
             let envelope: [String: Any] = [
@@ -281,8 +281,8 @@ final class DebugAuthenticator: @unchecked Sendable {
                 let peerKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: clientPub)
                 let shared = try devicePriv.sharedSecretFromKeyAgreement(with: peerKey)
                 let sharedData = shared.withUnsafeBytes { Data($0) }
-                let kWrap = Self.hmac(sharedData, Data("minis-dbg-pair".utf8) + clientPub + devicePub)
-                let pad = Self.hmac(kWrap, Data("minis-dbg-wrap".utf8))
+                let kWrap = Self.hmac(sharedData, Data("ze-dbg-pair".utf8) + clientPub + devicePub)
+                let pad = Self.hmac(kWrap, Data("ze-dbg-wrap".utf8))
                 let tokenCt = Data(zip(key, pad).map { $0 ^ $1 })
                 let resp: [String: Any] = [
                     "pub": devicePub.base64EncodedString(),

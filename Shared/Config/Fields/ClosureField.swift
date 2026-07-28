@@ -53,7 +53,7 @@ struct ReadOnlyField: ConfigField {
 /// around so the bridge can return a precise error rather than
 /// leaking implementation details with "unknown_path". Examples:
 /// `providers.<id>.apiKey`, `providers.<id>.oauthToken`,
-/// `envvars.<key>.value`, `permissions.minisConfig.enabled` (the
+/// `envvars.<key>.value`, `permissions.zeConfig.enabled` (the
 /// master switch can only be toggled in Settings UI).
 struct HiddenField: ConfigField {
     let path: String
@@ -109,7 +109,7 @@ struct UnavailableField: ConfigField {
 /// additionally masks the written value in the audit log / confirm sheet /
 /// response (ConfigValue.secretObjectKeys), so the plaintext only reaches the
 /// writer closure (→ Keychain). Not revertable (no old value to restore to).
-/// [T-minis-config-provider-add]
+/// [T-ze-config-provider-add]
 struct WriteOnlySecretField: ConfigField {
     let path: String
     let displayName: String

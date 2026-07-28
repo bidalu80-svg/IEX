@@ -1,6 +1,6 @@
 //
 //  WebPreviewSheet.swift
-//  MinisApp
+//  ZeApp
 //
 //  Safari-style full-screen web preview + half-sheet link preview,
 //  plus the shared WKWebView holder that is re-parented between the
@@ -47,10 +47,10 @@ final class WebViewHolder: NSObject, ObservableObject {
         config.websiteDataStore = .default()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.preferences.isElementFullscreenEnabled = true
-        config.setURLSchemeHandler(BrowserUseManager.sharedMinisSchemeHandler, forURLScheme: "minis")
+        config.setURLSchemeHandler(BrowserUseManager.sharedZeSchemeHandler, forURLScheme: "ze")
 
         // Bridge JS window.print() to the native print dialog, matching
-        // BrowserUseManager so minis:// HTML opened from chat (which routes
+        // BrowserUseManager so ze:// HTML opened from chat (which routes
         // through this holder, not the agent browser) can print too.
         config.userContentController.addUserScript(BrowserUseManager.printBridgeScript())
 
@@ -131,7 +131,7 @@ final class WebViewHolder: NSObject, ObservableObject {
     /// every 50ms, up to ~2s) until `webView.window != nil`.
     ///
     /// Rationale: when the preview is presented via `.sheet(item:)` from
-    /// inside a `.fullScreenCover` (the iSH terminal → `minis-open` flow
+    /// inside a `.fullScreenCover` (the iSH terminal → `ze-open` flow
     /// on Mac Catalyst), SwiftUI attaches the webview to a superview
     /// before attaching it to a window. A WKWebView that calls `load()`
     /// while detached from a window enters a pathological state: WebKit
@@ -264,7 +264,7 @@ struct WebPreviewMoreMenu: View {
     /// Inverse of `onExpand` — fullscreen preview wires it up to return to
     /// the sheet presentation. Sheet preview passes nil.
     var onCollapse: (() -> Void)? = nil
-    /// Only the minis:// HTML preview wires this up — it triggers the
+    /// Only the ze:// HTML preview wires this up — it triggers the
     /// existing `WebAppAddToHomeSheet` flow. http(s) previews pass nil so
     /// the entry is hidden (Safari shortcut sheets aren't reachable from
     /// inside our app anyway).
@@ -560,7 +560,7 @@ struct WebViewDismissArbiterGate: UIViewRepresentable {
 /// swiping down from the top edge; the host swaps back to the sheet
 /// preview via `onCollapse` so all the menu actions (share, reload,
 /// desktop-mode, …) are reachable again.
-struct MinisSafariView: View {
+struct ZeSafariView: View {
     @StateObject private var holder: WebViewHolder
     let shareURL: URL
     let isLocalFile: Bool
@@ -614,7 +614,7 @@ struct MinisSafariView: View {
         .persistentSystemOverlays(.hidden)
         .preferredColorScheme(appearanceMode == 1 ? .light : appearanceMode == 2 ? .dark : nil)
         .sheet(isPresented: $showShareSheet) {
-            MinisShareSheet(url: shareURL)
+            ZeShareSheet(url: shareURL)
         }
     }
 
@@ -703,7 +703,7 @@ struct MinisSafariView: View {
 
 // MARK: - Sheet Link Preview
 
-struct MinisLinkPreviewView: View {
+struct ZeLinkPreviewView: View {
     let url: URL
     let browserPool: BrowserTabPool?
     var onExpand: ((WebViewHolder) -> Void)? = nil
@@ -785,7 +785,7 @@ struct MinisLinkPreviewView: View {
         // and leaving dismiss enabled preserves nav-bar pull-down + xmark.
         .preferredColorScheme(appearanceMode == 1 ? .light : appearanceMode == 2 ? .dark : nil)
         .sheet(isPresented: $showShareSheet) {
-            MinisShareSheet(url: url)
+            ZeShareSheet(url: url)
         }
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 private let logger = AppLogger(category: "SyncCore")
 
 /// Top-level entry point for the v2 sync stack. Called once at app launch
-/// from MinisApp.swift. Wires Syncable types into the registry, registers
+/// from ZeApp.swift. Wires Syncable types into the registry, registers
 /// ChatStore-backed hydrators, hooks ICloudSharedZoneTransport into
 /// SyncCore, and (optionally) runs the v1→v2 migration engine.
 ///
@@ -81,7 +81,7 @@ enum SyncV2Bootstrap {
             }
         }
         // T-v2-hot-enable: user flipped the toggle ON after launch. Older
-        // builds required a relaunch because boot only ran from MinisApp
+        // builds required a relaunch because boot only ran from ZeApp
         // launch path — leaving the engine in 'Starting…' with
         // transports=0, isRunning=false, and sendNow warnings forever.
         // Bootstrap is now idempotent (SyncCore.register dedups by name,
@@ -132,7 +132,7 @@ enum SyncV2Bootstrap {
         return false
     }
 
-    /// Called once from MinisApp launch (or on flag flip in debug builds).
+    /// Called once from ZeApp launch (or on flag flip in debug builds).
     /// Idempotent — running twice is harmless.
     @MainActor
     static func startIfEnabled() async {
@@ -217,7 +217,7 @@ enum SyncV2Bootstrap {
                 // ensureZonesExist / initialSendChanges show as 'Stopped'.
                 SyncCore.shared.bootDelayUntil = nil
                 logger.info("[SyncCore] v2 startup STEP=coreStart done")
-                // Self-register this device into minis-devices zone so peers
+                // Self-register this device into ze-devices zone so peers
                 // can list us (and we'll fetch their records back). Re-runs
                 // on every launch — markDirty is idempotent (INSERT OR
                 // REPLACE in sync_dirty_records); the record's lastSeen

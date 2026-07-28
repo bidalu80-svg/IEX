@@ -1,6 +1,6 @@
 //
 //  PhotosOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-photos`.
 //  Subcommands: list, near, albums, album, stats, export, import,
@@ -30,7 +30,7 @@ static NSString *const HELP_TEXT =
      "  albums        List all albums\n"
      "  album         List assets in an album\n"
      "  stats         Photo library statistics\n"
-     "  export        Export a photo/video to /var/minis/offloads/\n"
+     "  export        Export a photo/video to /var/ze/offloads/\n"
      "  import        Import an image/video file into the photo library (alias: save)\n"
      "  create-album  Create a new album\n"
      "  add-to-album  Add assets to an album\n"
@@ -69,7 +69,7 @@ static NSString *const HELP_TEXT =
      "\n"
      "IMPORT OPTIONS (alias: save):\n"
      "  --path <file>        File to import (required). Image or video.\n"
-     "                       Accepts guest paths (/var/minis/attachments/a.jpg),\n"
+     "                       Accepts guest paths (/var/ze/attachments/a.jpg),\n"
      "                       relative paths (attachments/a.jpg), or host-absolute\n"
      "                       paths.\n"
      "  --album <id>         Add to album by local identifier (optional)\n"
@@ -86,7 +86,7 @@ static NSString *const HELP_TEXT =
      "                       (one of --album or --album-name is required)\n"
      "  --assets <ids>       Comma-separated existing asset IDs\n"
      "  --paths <files>      Comma-separated file paths to import and add.\n"
-     "                       Accepts guest paths (/var/minis/...), paths relative\n"
+     "                       Accepts guest paths (/var/ze/...), paths relative\n"
      "                       to the current directory (attachments/foo.jpg), or\n"
      "                       host-absolute paths. At least one of --assets or\n"
      "                       --paths is required.\n"
@@ -106,9 +106,9 @@ static NSString *const HELP_TEXT =
      "  apple-photos stats\n"
      "  apple-photos export --id ABC123\n"
      "  apple-photos export --id ABC123 --size medium\n"
-     "  apple-photos import --path /var/minis/offloads/pic.jpg\n"
-     "  apple-photos import --path /var/minis/offloads/pic.jpg --album-name \"My Album\"\n"
-     "  apple-photos save --path /var/minis/offloads/clip.mov --album <album-id>\n"
+     "  apple-photos import --path /var/ze/offloads/pic.jpg\n"
+     "  apple-photos import --path /var/ze/offloads/pic.jpg --album-name \"My Album\"\n"
+     "  apple-photos save --path /var/ze/offloads/clip.mov --album <album-id>\n"
      "  apple-photos add-to-album --album-name \"Trip\" --paths attachments/a.jpg,attachments/b.jpg\n"
      "  apple-photos create-album --name \"My Album\"\n"
      "  apple-photos favorite --id ABC123\n"
@@ -119,7 +119,7 @@ static dispatch_queue_t authQueue(void) {
     static dispatch_queue_t q = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.openminis.photos.auth", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.ze.photos.auth", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }
@@ -157,7 +157,7 @@ static BOOL requestPhotosAccess(NSString **outError) {
     if (!granted && outError) {
         *outError = @"Photo library access not granted. "
                      "To grant access, open Settings > Privacy & Security > Photos "
-                     "and enable Minis.";
+                     "and enable Ze.";
     }
     return granted;
 }
@@ -605,7 +605,7 @@ static int cmd_export(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL 
                          [[NSCharacterSet alphanumericCharacterSet] invertedSet]]
                         componentsJoinedByString:@"_"];
 
-    NSString *guestDir = @"/var/minis/offloads";
+    NSString *guestDir = @"/var/ze/offloads";
     NSString *hostDir = noff_resolve_host_path(guestDir);
 
     // Ensure host directory exists
@@ -767,7 +767,7 @@ static int cmd_export(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL 
 
 // Resolve a user-provided path to a host filesystem path that exists.
 // Supports three forms:
-//   1. Guest-absolute: "/var/minis/attachments/foo.jpg" → mapped into fakefs data dir.
+//   1. Guest-absolute: "/var/ze/attachments/foo.jpg" → mapped into fakefs data dir.
 //   2. Relative:       "attachments/foo.jpg"           → resolved against host CWD,
 //                                                        which the offload runtime has already
 //                                                        chdir'd to the guest CWD equivalent.

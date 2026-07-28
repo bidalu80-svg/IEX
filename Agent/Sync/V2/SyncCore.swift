@@ -251,7 +251,7 @@ final class SyncCore {
                 }
             }
         }
-        m.start(queue: DispatchQueue(label: "com.openminis.sync.pathMonitor"))
+        m.start(queue: DispatchQueue(label: "com.ze.sync.pathMonitor"))
         pathMonitor = m
     }
 
@@ -353,7 +353,7 @@ final class SyncCore {
         isSending = true; defer { isSending = false }
 
         // Drain any pending file changes recorded by the iSH fakefs
-        // change tracker (shell tools writing under /var/minis/<subdir>)
+        // change tracker (shell tools writing under /var/ze/<subdir>)
         // and translate them into SessionFile dirty rows. This must run
         // BEFORE loadDirtyRecords so the freshly-marked rows are picked
         // up in this push cycle. Cheap when nothing pending.
@@ -806,7 +806,7 @@ final class SyncCore {
 
     /// Drain pending file changes from `SessionFileChangeTracker` (events
     /// emitted by the iSH fakefs realfs hooks for any shell-tool write,
-    /// truncate, unlink, rename inside `/var/minis/<workspace|attachments|browser|offloads>/...`)
+    /// truncate, unlink, rename inside `/var/ze/<workspace|attachments|browser|offloads>/...`)
     /// and turn them into SessionFile v2 dirty rows.
     ///
     /// Called from `sendNow` immediately before reading dirty rows so the
@@ -820,9 +820,9 @@ final class SyncCore {
         // process opens write-mode but never writes. Entries whose
         // mtime hasn't caught up yet stay in the tracker for the next
         // push cycle — the actual write may still be in flight.
-        let baseURL = await ChatStore.shared.minisBaseURL
+        let baseURL = await ChatStore.shared.zeBaseURL
         let snapshot = await SessionFileChangeTracker.shared.drainAllWithMtimeFilter(
-            minisBaseURL: baseURL)
+            zeBaseURL: baseURL)
         guard !snapshot.isEmpty else { return }
 
         var totalUpsert = 0, totalDelete = 0

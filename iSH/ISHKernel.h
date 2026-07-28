@@ -1,6 +1,6 @@
 //
 //  ISHKernel.h
-//  MinisApp
+//  ZeApp
 //
 //  Objective-C wrapper for iSH kernel initialization and control
 //
@@ -64,7 +64,7 @@ typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullab
 /// Bind-mount an external host directory onto a fakefs path.
 /// After this call, iSH processes accessing linuxPath will transparently
 /// read/write files in hostPath. Parent directories must exist in meta.db.
-/// @param linuxPath Absolute path in fakefs (e.g. "/var/minis/offloads")
+/// @param linuxPath Absolute path in fakefs (e.g. "/var/ze/offloads")
 /// @param hostPath  Absolute path on the iOS host filesystem
 /// @return 0 on success, negative error code on failure
 - (int)bindMountPath:(NSString *)linuxPath toHostPath:(NSString *)hostPath;
@@ -73,7 +73,7 @@ typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullab
 /// When readOnly=YES, the top-level mount directory in meta.db is written
 /// with mode 0555, so iSH's standard access_check rejects any create/unlink/
 /// rename/rmdir inside the mount with EACCES. No special fakefs plumbing.
-/// @param linuxPath Absolute path in fakefs (e.g. "/var/minis/mounts/Obsidian")
+/// @param linuxPath Absolute path in fakefs (e.g. "/var/ze/mounts/Obsidian")
 /// @param hostPath  Absolute path on the iOS host filesystem
 /// @param readOnly  If YES, the mount is exposed as a read-only directory
 /// @return 0 on success, negative error code on failure

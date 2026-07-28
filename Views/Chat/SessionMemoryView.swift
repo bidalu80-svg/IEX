@@ -1,6 +1,6 @@
 //
 //  SessionMemoryView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Shows all memory used in the current session: auto-injected + tool-recalled.
 //
@@ -93,7 +93,7 @@ struct SessionMemoryView: View {
     private var autoInjected: [AutoItem] {
         var items: [AutoItem] = []
         let fm = FileManager.default
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
 
         // SOUL.md — listed first because it's the identity/personality
         // layer that SystemPromptBuilder.identitySection() injects at
@@ -440,7 +440,7 @@ private struct MemoryWriteDetailView: View {
     /// Returns the filename on success, nil on failure.
     private func replaceEntryInLog(oldContent: String, newContent: String) -> String? {
         let fm = FileManager.default
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd"
         let candidates = [
@@ -493,7 +493,7 @@ private struct MemoryWriteDetailView: View {
         }
 
         let fm = FileManager.default
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
 
         // Search today and yesterday files for the entry
         let dateFmt = DateFormatter()

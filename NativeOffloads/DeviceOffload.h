@@ -1,6 +1,6 @@
 //
 //  DeviceOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-device` — UIDevice + ProcessInfo.
 //

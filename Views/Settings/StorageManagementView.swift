@@ -6,8 +6,8 @@ class StorageManagementViewModel: ObservableObject {
     struct SessionStorage: Identifiable {
         let id: String
         let title: String?
-        var minisSize: Int64 = 0
-        var totalSize: Int64 { minisSize }
+        var zeSize: Int64 = 0
+        var totalSize: Int64 { zeSize }
     }
 
     @Published var shellContainerSize: Int64 = 0
@@ -44,24 +44,24 @@ class StorageManagementViewModel: ObservableObject {
             let shellSize = self.directorySize(at: rootfsURL)
 
             // Chat database
-            let dbURL = libraryURL.appendingPathComponent("MinisChat/minis.db")
+            let dbURL = libraryURL.appendingPathComponent("ZeChat/ze.db")
             let dbSize = self.fileSize(at: dbURL)
 
-            // Per-session minis files: Library/MinisChat/minis/<sessionId>/
-            let minisBaseURL = libraryURL.appendingPathComponent("MinisChat/minis", isDirectory: true)
+            // Per-session ze files: Library/ZeChat/ze/<sessionId>/
+            let zeBaseURL = libraryURL.appendingPathComponent("ZeChat/ze", isDirectory: true)
             // Get all chat sessions
             let chatSessions = await ChatStore.shared.listSessions()
 
             // Build a set of session IDs
             let sessionIds = Set(chatSessions.map(\.id))
 
-            // Enumerate minis directories
-            var minisSizes: [String: Int64] = [:]
-            if let contents = try? self.fm.contentsOfDirectory(at: minisBaseURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
+            // Enumerate ze directories
+            var zeSizes: [String: Int64] = [:]
+            if let contents = try? self.fm.contentsOfDirectory(at: zeBaseURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
                 for dir in contents {
                     let sid = dir.lastPathComponent
                     if sessionIds.contains(sid) {
-                        minisSizes[sid] = self.directorySize(at: dir)
+                        zeSizes[sid] = self.directorySize(at: dir)
                     }
                 }
             }
@@ -71,7 +71,7 @@ class StorageManagementViewModel: ObservableObject {
                 SessionStorage(
                     id: session.id,
                     title: session.title,
-                    minisSize: minisSizes[session.id] ?? 0
+                    zeSize: zeSizes[session.id] ?? 0
                 )
             }.sorted { $0.totalSize > $1.totalSize }
 
@@ -175,12 +175,12 @@ struct SessionStorageDetailView: View {
 
     @State private var showClearConfirmation = false
     @State private var isClearing = false
-    @State private var currentMinisSize: Int64
+    @State private var currentZeSize: Int64
 
     init(session: StorageManagementViewModel.SessionStorage, onFilesCleared: (() -> Void)? = nil) {
         self.session = session
         self.onFilesCleared = onFilesCleared
-        _currentMinisSize = State(initialValue: session.minisSize)
+        _currentZeSize = State(initialValue: session.zeSize)
     }
 
     private let formatter: ByteCountFormatter = {
@@ -190,30 +190,30 @@ struct SessionStorageDetailView: View {
         return f
     }()
 
-    private var minisURL: URL {
+    private var zeURL: URL {
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        return lib.appendingPathComponent("MinisChat/minis/\(session.id)", isDirectory: true)
+        return lib.appendingPathComponent("ZeChat/ze/\(session.id)", isDirectory: true)
     }
 
-    private var totalFileSize: Int64 { currentMinisSize }
+    private var totalFileSize: Int64 { currentZeSize }
     private var hasFiles: Bool { totalFileSize > 0 }
 
     var body: some View {
         List {
-            Section("Minis Files") {
-                if currentMinisSize > 0 {
+            Section("Ze Files") {
+                if currentZeSize > 0 {
                     NavigationLink {
-                        FileBrowserView(rootPath: minisURL)
+                        FileBrowserView(rootPath: zeURL)
                     } label: {
                         HStack {
                             Label("Browse Files", systemImage: "folder")
                             Spacer()
-                            Text(formatter.string(fromByteCount: currentMinisSize))
+                            Text(formatter.string(fromByteCount: currentZeSize))
                                 .foregroundStyle(.secondary)
                         }
                     }
                 } else {
-                    Text("No minis files")
+                    Text("No ze files")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -260,11 +260,11 @@ struct SessionStorageDetailView: View {
         Task.detached(priority: .userInitiated) {
             let fm = FileManager.default
             let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-            let minisDir = lib.appendingPathComponent("MinisChat/minis/\(sessionId)", isDirectory: true)
-            try? fm.removeItem(at: minisDir)
+            let zeDir = lib.appendingPathComponent("ZeChat/ze/\(sessionId)", isDirectory: true)
+            try? fm.removeItem(at: zeDir)
 
             await MainActor.run {
-                currentMinisSize = 0
+                currentZeSize = 0
                 isClearing = false
                 onFilesCleared?()
             }

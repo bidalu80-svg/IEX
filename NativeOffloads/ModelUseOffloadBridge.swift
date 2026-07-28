@@ -1,8 +1,8 @@
 //
 //  ModelUseOffloadBridge.swift
-//  MinisApp
+//  ZeApp
 //
-//  Swift bridge for minis-model-use offload — lists, searches,
+//  Swift bridge for ze-model-use offload — lists, searches,
 //  and invokes LLM models using configured providers.
 //
 
@@ -83,7 +83,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
     ///      preferred when the model_id itself contains slashes.
     /// `entry_id` (UUID) also works but is opaque; prefer the human-readable forms.
     private static let usageHint =
-        "To invoke a model, pass `--model <model_id>` to `minis-model-use run`. " +
+        "To invoke a model, pass `--model <model_id>` to `ze-model-use run`. " +
         "If multiple providers expose the same `model_id`, disambiguate either with " +
         "`--model <instance_label>/<model_id>` (e.g. `--model deepseek/deepseek-v4-flash`) " +
         "or with `--model <model_id> --provider <instance_label>` " +
@@ -693,17 +693,17 @@ private let logger = AppLogger(category: "ModelUseOffload")
 
             // Save media attachments to files.
             // Write directly to the session-specific persistent directory
-            // instead of through the /var/minis/attachments symlink, which
+            // instead of through the /var/ze/attachments symlink, which
             // is racy under concurrent sessions (symlink target can change
             // mid-write when another session's view appears).
             var mediaFiles: [[String: Any]] = []
             let callerSid = ISHExecutionCoordinator.mountedSessionIdSnapshot ?? ""
             let attachDir: String
             if !callerSid.isEmpty {
-                attachDir = AIChatViewModel.minisAttachmentsPersistentDir(for: callerSid).path
+                attachDir = AIChatViewModel.zeAttachmentsPersistentDir(for: callerSid).path
             } else {
                 attachDir = RootfsManager.shared.dataPath
-                    .appendingPathComponent("var/minis/attachments").path
+                    .appendingPathComponent("var/ze/attachments").path
             }
             let modelSlug = entry.model.id.replacingOccurrences(of: "/", with: "_")
             let sessionShort = callerSid
@@ -729,7 +729,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
                 } else {
                     // No --output, or a STRUCTURED (.json/.yaml) --output whose
                     // media belongs in attachments and is REFERENCED by the
-                    // structured file → /var/minis/attachments/.
+                    // structured file → /var/ze/attachments/.
                     // [T-model-use-media-path-mismatch] Aligns this save site
                     // with buildMediaResult (which already guarded structured
                     // output): previously a structured --output in workspace
@@ -824,7 +824,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
                 return inst.label.lowercased() == pf || inst.id.lowercased() == pf
             }
             if filtered.isEmpty {
-                throw ModelUseError.modelNotFound("No provider matches --provider '\(providerFilter)'. Use 'minis-model-use list' to see provider labels.")
+                throw ModelUseError.modelNotFound("No provider matches --provider '\(providerFilter)'. Use 'ze-model-use list' to see provider labels.")
             }
             agentEntries = filtered
         }
@@ -942,7 +942,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
                               let imgObj = part["image_url"] as? [String: Any],
                               let url = imgObj["url"] as? String {
                         // [T-model-use-image-url-resolution] resolveImageURL
-                        // now throws on unresolvable URLs (minis:// to a
+                        // now throws on unresolvable URLs (ze:// to a
                         // missing file, file:// to nonexistent path, http(s)
                         // not yet supported, unknown scheme). Previously it
                         // returned nil silently, so the agent's call would
@@ -1517,10 +1517,10 @@ private let logger = AppLogger(category: "ModelUseOffload")
         let callerSid2 = ISHExecutionCoordinator.mountedSessionIdSnapshot ?? ""
         let attachDir: String
         if !callerSid2.isEmpty {
-            attachDir = AIChatViewModel.minisAttachmentsPersistentDir(for: callerSid2).path
+            attachDir = AIChatViewModel.zeAttachmentsPersistentDir(for: callerSid2).path
         } else {
             attachDir = RootfsManager.shared.dataPath
-                .appendingPathComponent("var/minis/attachments").path
+                .appendingPathComponent("var/ze/attachments").path
         }
         let modelSlug = entry.model.id.replacingOccurrences(of: "/", with: "_")
         let sessionShort = callerSid2
@@ -1611,13 +1611,13 @@ private let logger = AppLogger(category: "ModelUseOffload")
     /// Supports:
     ///   - `data:<mime>;base64,...` — decode inline base64
     ///   - `file:///path` — read local file, infer MIME from extension
-    ///   - `minis://<scope>/<path>` — resolve to host storage via the
+    ///   - `ze://<scope>/<path>` — resolve to host storage via the
     ///     per-session lookup used by the in-app image preview
     ///     (attachments, workspace, offloads, shared, skills, memory,
     ///     mounts). Active session id is inferred from the calling
     ///     agent's chat context.
-    ///   - `/var/minis/<scope>/<path>` — bare Linux paths under
-    ///     `/var/minis/`, mapped to the same scopes as `minis://`.
+    ///   - `/var/ze/<scope>/<path>` — bare Linux paths under
+    ///     `/var/ze/`, mapped to the same scopes as `ze://`.
     ///   - `/<absolute/host/path>` (other) — fall back to direct iSH
     ///     rootfs lookup.
     ///
@@ -1642,37 +1642,37 @@ private let logger = AppLogger(category: "ModelUseOffload")
             return LLMMessage.ImageAttachment(mimeType: mime, data: data)
         }
 
-        // minis:// — route through the in-app minis URL resolver so
+        // ze:// — route through the in-app ze URL resolver so
         // attachments/workspace/shared/etc. all work without the caller
         // knowing host paths.
-        if url.hasPrefix("minis://") {
+        if url.hasPrefix("ze://") {
             guard let parsed = URL(string: url),
-                  let resolved = AIChatViewModel.resolveMinisURL(parsed) else {
-                throw ModelUseError.invalidInput("Could not resolve minis:// URL '\(url)' — file not found in any session scope. Try /var/minis/<scope>/<path> or file:///<host-path>.")
+                  let resolved = AIChatViewModel.resolveZeURL(parsed) else {
+                throw ModelUseError.invalidInput("Could not resolve ze:// URL '\(url)' — file not found in any session scope. Try /var/ze/<scope>/<path> or file:///<host-path>.")
             }
             guard let data = FileManager.default.contents(atPath: resolved.path) else {
-                throw ModelUseError.invalidInput("minis:// URL '\(url)' resolved to \(resolved.path) but the file is unreadable")
+                throw ModelUseError.invalidInput("ze:// URL '\(url)' resolved to \(resolved.path) but the file is unreadable")
             }
             let mime = Self.imageMimeForExtension(url)
             return LLMMessage.ImageAttachment(mimeType: mime, data: data)
         }
 
-        // /var/minis/<scope>/<path> — Linux bare path equivalent of
-        // minis://<scope>/<path>. Rewrite to a minis:// URL and reuse
+        // /var/ze/<scope>/<path> — Linux bare path equivalent of
+        // ze://<scope>/<path>. Rewrite to a ze:// URL and reuse
         // the same resolver so behavior is identical.
-        if url.hasPrefix("/var/minis/") {
-            let stripped = String(url.dropFirst("/var/minis/".count))
-            // Split into scope + subpath. The minis URL "host" is the
+        if url.hasPrefix("/var/ze/") {
+            let stripped = String(url.dropFirst("/var/ze/".count))
+            // Split into scope + subpath. The ze URL "host" is the
             // first path component.
             let parts = stripped.split(separator: "/", maxSplits: 1).map(String.init)
             guard !parts.isEmpty, !parts[0].isEmpty else {
-                throw ModelUseError.invalidInput("/var/minis/ path must include a scope (attachments, workspace, shared, etc.): '\(url)'")
+                throw ModelUseError.invalidInput("/var/ze/ path must include a scope (attachments, workspace, shared, etc.): '\(url)'")
             }
             let scope = parts[0]
             let sub = parts.count > 1 ? parts[1] : ""
-            let minisURLStr = sub.isEmpty ? "minis://\(scope)" : "minis://\(scope)/\(sub)"
-            guard let parsed = URL(string: minisURLStr),
-                  let resolved = AIChatViewModel.resolveMinisURL(parsed) else {
+            let zeURLStr = sub.isEmpty ? "ze://\(scope)" : "ze://\(scope)/\(sub)"
+            guard let parsed = URL(string: zeURLStr),
+                  let resolved = AIChatViewModel.resolveZeURL(parsed) else {
                 throw ModelUseError.invalidInput("Could not resolve '\(url)' — file not found in scope '\(scope)'. Check the path and that the file exists.")
             }
             guard let data = FileManager.default.contents(atPath: resolved.path) else {
@@ -1684,7 +1684,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
 
         // http(s):// — not supported. Tell the agent how to do it.
         if url.hasPrefix("http://") || url.hasPrefix("https://") {
-            throw ModelUseError.invalidInput("http(s):// image URLs are not supported by minis-model-use. Download first with `shell_execute` (curl/wget) into /var/minis/workspace/, then reference the local path.")
+            throw ModelUseError.invalidInput("http(s):// image URLs are not supported by ze-model-use. Download first with `shell_execute` (curl/wget) into /var/ze/workspace/, then reference the local path.")
         }
 
         // file:// — keep behavior, but throw on missing.
@@ -1707,14 +1707,14 @@ private let logger = AppLogger(category: "ModelUseOffload")
                 let mime = Self.imageMimeForExtension(url)
                 return LLMMessage.ImageAttachment(mimeType: mime, data: data)
             }
-            throw ModelUseError.invalidInput("Image file not found at '\(url)'. For minis-scope files prefer /var/minis/<scope>/<path> or minis://<scope>/<path>.")
+            throw ModelUseError.invalidInput("Image file not found at '\(url)'. For ze-scope files prefer /var/ze/<scope>/<path> or ze://<scope>/<path>.")
         }
 
-        throw ModelUseError.invalidInput("Unsupported image_url '\(url)'. Use a data: URL, file:///host/path, /var/minis/<scope>/<path>, or minis://<scope>/<path>.")
+        throw ModelUseError.invalidInput("Unsupported image_url '\(url)'. Use a data: URL, file:///host/path, /var/ze/<scope>/<path>, or ze://<scope>/<path>.")
     }
 
     /// Read a file given a Linux-side path. Tries the iSH rootfs data
-    /// directory first (where bind-mounted /var/minis/* and /tmp/* land
+    /// directory first (where bind-mounted /var/ze/* and /tmp/* land
     /// for direct host access), then the literal host path.
     private static func readImageFile(linuxPath: String) -> Data? {
         let hostPath = RootfsManager.shared.dataPath.appendingPathComponent(linuxPath).path
@@ -1746,7 +1746,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
     // MARK: - Output
 
     /// Convert a host filesystem path back to the Linux (shell) path.
-    /// e.g. "/private/var/mobile/.../Documents/alpine-rootfs/data/var/minis/foo" → "/var/minis/foo"
+    /// e.g. "/private/var/mobile/.../Documents/alpine-rootfs/data/var/ze/foo" → "/var/ze/foo"
     private static func toLinuxPath(_ hostPath: String) -> String {
         let dataPrefix = RootfsManager.shared.dataPath.path
         // Try with and without /private prefix (iOS symlink)
@@ -1767,25 +1767,25 @@ private let logger = AppLogger(category: "ModelUseOffload")
         return hostPath
     }
 
-    /// [T-model-use-media-path-mismatch] Derive the guest (`/var/minis/...`)
+    /// [T-model-use-media-path-mismatch] Derive the guest (`/var/ze/...`)
     /// path a just-saved media file is actually reachable at, from the REAL
     /// host `filePath` it was written to — so the response `media_files[].path`
     /// always matches where the bytes landed.
     ///
     /// Two host-storage shapes exist and each maps to a different guest path:
-    ///   1. Session-persistent dirs under app Library (`.../minis/<sid>/{attachments,
+    ///   1. Session-persistent dirs under app Library (`.../ze/<sid>/{attachments,
     ///      workspace,offloads}/`). These are NOT under rootfs `dataPath`, so
     ///      `toLinuxPath` can't strip them — they're reachable in the guest only
-    ///      via the per-session symlinks `ensureMinisSymlinks` maintains
-    ///      (`/var/minis/attachments` → `.../<sid>/attachments`, etc.). Map by
+    ///      via the per-session symlinks `ensureZeSymlinks` maintains
+    ///      (`/var/ze/attachments` → `.../<sid>/attachments`, etc.). Map by
     ///      matching the persistent-dir prefix for THIS caller session and
-    ///      substituting the corresponding `/var/minis/<name>` root, preserving
+    ///      substituting the corresponding `/var/ze/<name>` root, preserving
     ///      any sub-path + filename.
     ///   2. A path already inside rootfs `dataPath` (e.g. a user `--output`
-    ///      under `/var/minis/...` resolved by the CLI). `toLinuxPath` strips
+    ///      under `/var/ze/...` resolved by the CLI). `toLinuxPath` strips
     ///      it directly.
     ///
-    /// The previous code hardcoded `/var/minis/attachments/<filename>` in the
+    /// The previous code hardcoded `/var/ze/attachments/<filename>` in the
     /// fallback branch regardless of where the file actually went — so a media
     /// file saved next to a `--output` in workspace was announced under
     /// attachments and read back as "file not found".
@@ -1799,12 +1799,12 @@ private let logger = AppLogger(category: "ModelUseOffload")
         // Case 1: match a session-persistent dir prefix for this caller.
         if !callerSid.isEmpty {
             let mappings: [(persistDir: String, linuxDir: String)] = [
-                (AIChatViewModel.minisAttachmentsPersistentDir(for: callerSid).path,
-                 AIChatViewModel.minisAttachmentsLinuxDir),
-                (AIChatViewModel.minisWorkspacePersistentDir(for: callerSid).path,
-                 AIChatViewModel.minisWorkspaceLinuxDir),
-                (AIChatViewModel.minisOffloadsPersistentDir(for: callerSid).path,
-                 AIChatViewModel.minisOffloadsLinuxDir),
+                (AIChatViewModel.zeAttachmentsPersistentDir(for: callerSid).path,
+                 AIChatViewModel.zeAttachmentsLinuxDir),
+                (AIChatViewModel.zeWorkspacePersistentDir(for: callerSid).path,
+                 AIChatViewModel.zeWorkspaceLinuxDir),
+                (AIChatViewModel.zeOffloadsPersistentDir(for: callerSid).path,
+                 AIChatViewModel.zeOffloadsLinuxDir),
             ]
             for (persistDir, linuxDir) in mappings {
                 for prefix in [persistDir, "/private" + persistDir] {
@@ -1822,7 +1822,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
         // Last resort: preserve prior behavior (announce under attachments by
         // basename). Only reachable when the file is neither under dataPath nor
         // any known persistent dir — shouldn't happen for our own save paths.
-        return AIChatViewModel.minisAttachmentsLinuxDir + "/" + (filePath as NSString).lastPathComponent
+        return AIChatViewModel.zeAttachmentsLinuxDir + "/" + (filePath as NSString).lastPathComponent
     }
 
     /// Strip MIME parameters (e.g. "audio/L16;codec=pcm;rate=24000" → "audio/L16")
@@ -2064,11 +2064,11 @@ enum ModelUseError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .modelNotFound(let id):
-            return "Model '\(id)' not found. Use 'minis-model-use list' to see available models."
+            return "Model '\(id)' not found. Use 'ze-model-use list' to see available models."
         case .invalidInput(let msg):
             return msg
         case .modalityNotSupported(let model, let required, let supported):
-            return "Model '\(model)' does not support \(required). Supported modalities: \(supported.joined(separator: ", ")). Use 'minis-model-use list' to find a model with the required capability."
+            return "Model '\(model)' does not support \(required). Supported modalities: \(supported.joined(separator: ", ")). Use 'ze-model-use list' to find a model with the required capability."
         }
     }
 }

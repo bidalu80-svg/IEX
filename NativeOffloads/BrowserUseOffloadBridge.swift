@@ -1,6 +1,6 @@
 //
 //  BrowserUseOffloadBridge.swift
-//  MinisApp
+//  ZeApp
 //
 //  Swift bridge for BrowserTabPool, called from BrowserUseOffload.m.
 //  BrowserTabPool is Swift-only and @MainActor; this class exposes
@@ -55,7 +55,7 @@ import Foundation
         // the shell rather than silently spinning up a zombie pool.
         let exists = await ChatStore.shared.getSession(sid) != nil
         guard exists else {
-            logger.warning("minis-browser-use invoked for deleted session \(sid.prefix(8))")
+            logger.warning("ze-browser-use invoked for deleted session \(sid.prefix(8))")
             return nil
         }
         let p = BrowserTabPool()
@@ -95,18 +95,18 @@ import Foundation
     /// at the moment the handler fires. Because shell execution is
     /// serialized by the coordinator actor and the mount-swap happens
     /// synchronously before the guest command runs, this value is
-    /// guaranteed to be the session that owns the current `/var/minis/`
+    /// guaranteed to be the session that owns the current `/var/ze/`
     /// bind mount for the lifetime of this CLI invocation.
     ///
     /// When `withBase64` is false (default), any captured screenshot is
-    /// persisted to that session's `/var/minis/browser/` directory and
-    /// surfaced via `image_path` + `minis_url` instead of `image_base64`.
+    /// persisted to that session's `/var/ze/browser/` directory and
+    /// surfaced via `image_path` + `ze_url` instead of `image_base64`.
     /// Set `withBase64` to true only when the caller explicitly wants the
     /// raw base64 blob inline (e.g. piping to another tool).
     ///
     /// Keys on success: text, success, page_url?, image_path?,
-    /// minis_url?, image_base64?, fetched_file?, fetched_bytes?,
-    /// fetched_path?, fetched_minis_url?.
+    /// ze_url?, image_base64?, fetched_file?, fetched_bytes?,
+    /// fetched_path?, fetched_ze_url?.
     /// Keys on failure: text, success=false.
     @objc public static func execute(
         withJson json: String,
@@ -186,12 +186,12 @@ import Foundation
         // browser directory. We resolve the host path directly from the sid
         // captured at execute() entry instead of querying the coordinator's
         // live mount table — a concurrent UI session-switch could null that
-        // out mid-flight. `minisBrowserPersistentDir` is a pure path join
-        // against Library/MinisChat/minis/<sid>/browser/, which is exactly
-        // what /var/minis/browser/ bind-mounts to for that session.
+        // out mid-flight. `zeBrowserPersistentDir` is a pure path join
+        // against Library/ZeChat/ze/<sid>/browser/, which is exactly
+        // what /var/ze/browser/ bind-mounts to for that session.
         let browserHostDir: URL? = (sid == Self.unmountedSentinel)
             ? nil
-            : AIChatViewModel.minisBrowserPersistentDir(for: sid)
+            : AIChatViewModel.zeBrowserPersistentDir(for: sid)
 
         // ── Screenshot / snapshot ──
         var persistedImagePath: String? = nil
@@ -202,15 +202,15 @@ import Foundation
                 let dest = hostDir.appendingPathComponent(filename)
                 do {
                     try data.write(to: dest)
-                    let linuxPath = "\(AIChatViewModel.minisBrowserLinuxDir)/\(filename)"
+                    let linuxPath = "\(AIChatViewModel.zeBrowserLinuxDir)/\(filename)"
                     persistedImagePath = linuxPath
                     out["image_path"] = linuxPath
-                    out["minis_url"] = "minis://browser/\(filename)"
+                    out["ze_url"] = "ze://browser/\(filename)"
                 } catch {
                     logger.warning("Failed to persist screenshot to \(dest.path): \(error.localizedDescription)")
                 }
             } else {
-                logger.warning("No /var/minis/browser mount — falling back to base64-only output")
+                logger.warning("No /var/ze/browser mount — falling back to base64-only output")
             }
         }
 
@@ -233,9 +233,9 @@ import Foundation
                     let dest = hostDir.appendingPathComponent(name)
                     do {
                         try data.write(to: dest)
-                        let linuxPath = "\(AIChatViewModel.minisBrowserLinuxDir)/\(name)"
+                        let linuxPath = "\(AIChatViewModel.zeBrowserLinuxDir)/\(name)"
                         out["fetched_path"] = linuxPath
-                        out["fetched_minis_url"] = "minis://browser/\(name)"
+                        out["fetched_ze_url"] = "ze://browser/\(name)"
                     } catch {
                         logger.warning("Failed to persist fetched file to \(dest.path): \(error.localizedDescription)")
                     }

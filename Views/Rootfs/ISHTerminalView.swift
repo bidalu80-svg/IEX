@@ -1,6 +1,6 @@
 //
 //  ISHTerminalView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Terminal view for iSH shell interaction
 //
@@ -24,8 +24,8 @@ struct ISHTerminalView: View {
     /// software keyboard can be hidden while the input view remains first
     /// responder and continues to receive hardware key events.
     @State private var softwareKeyboardVisible = false
-    /// URL captured from an OSC `MinisOpenURL` marker emitted by
-    /// /usr/local/bin/minis-open — presented in an in-app WKWebView sheet.
+    /// URL captured from an OSC `ZeOpenURL` marker emitted by
+    /// /usr/local/bin/ze-open — presented in an in-app WKWebView sheet.
     @State private var linkPreviewURL: URL?
     /// Track whether a sheet is presented so we can resign first responder
     /// and stop fighting with text fields inside the sheet.
@@ -93,7 +93,7 @@ struct ISHTerminalView: View {
             )
         }
         .background(Color.black)
-        .navigationTitle("Minis Shell")
+        .navigationTitle("Ze Shell")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showCloseButton {
@@ -119,10 +119,10 @@ struct ISHTerminalView: View {
             // fullScreenCover is up, SwiftUI dismisses the terminal to make
             // room for the sheet, and the user sees "terminal closes,
             // browser opens, loading forever". Cleared in .onDisappear.
-            MinisOpenURLBroker.shared.terminalVisible = true
+            ZeOpenURLBroker.shared.terminalVisible = true
         }
         .onDisappear {
-            MinisOpenURLBroker.shared.terminalVisible = false
+            ZeOpenURLBroker.shared.terminalVisible = false
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
             let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
@@ -157,32 +157,32 @@ struct ISHTerminalView: View {
                 RootfsManagementView()
             }
         }
-        // In-app WKWebView preview for URLs emitted by `minis-open` via
-        // the OSC 1337 MinisOpenURL marker. `TerminalEmulator` parses the
-        // marker and forwards the URL through `MinisOpenURLBroker`.
+        // In-app WKWebView preview for URLs emitted by `ze-open` via
+        // the OSC 1337 ZeOpenURL marker. `TerminalEmulator` parses the
+        // marker and forwards the URL through `ZeOpenURLBroker`.
         // `.dropFirst()` skips the broker's current value on first attach
         // so a stale URL from an earlier session isn't re-presented.
-        .onReceive(MinisOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
-            // Only web schemes are routed here — minis:// resource
-            // previews need AIChatView's `handleMinisURLTap` and aren't
+        .onReceive(ZeOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
+            // Only web schemes are routed here — ze:// resource
+            // previews need AIChatView's `handleZeURLTap` and aren't
             // reachable from the standalone terminal. Consume either way
             // so the broker doesn't leak a stale pendingURL back to chat
             // on next attach.
-            if MinisOpenURLBroker.isWebScheme(url.scheme),
+            if ZeOpenURLBroker.isWebScheme(url.scheme),
                linkPreviewURL?.absoluteString != url.absoluteString {
                 linkPreviewURL = url
             }
-            MinisOpenURLBroker.shared.consume()
+            ZeOpenURLBroker.shared.consume()
         }
         .sheet(item: $linkPreviewURL) { url in
             // Reuse the exact same preview the AIChat markdown-link tap
-            // uses — `MinisLinkPreviewView` with its toolbar (reload /
+            // uses — `ZeLinkPreviewView` with its toolbar (reload /
             // stop / Safari / share / expand to fullscreen). The underlying
             // `WebViewHolder` reads the user's Browser Settings UA and
             // shares the global process pool, so cookies / HSTS state /
             // user agent match the rest of the app. `browserPool: nil`
             // is fine — the preview view doesn't actually use it.
-            MinisLinkPreviewView(url: url, browserPool: nil)
+            ZeLinkPreviewView(url: url, browserPool: nil)
         }
     }
 }
@@ -340,13 +340,13 @@ class ISHTerminalViewModel: ObservableObject {
 
         Task { @MainActor in MirrorSpeedTestViewModel.shared.autoDetectOnceIfNeeded() }
 
-        // Mount /var/minis/* for this session BEFORE starting the shell.
+        // Mount /var/ze/* for this session BEFORE starting the shell.
         // We must do this synchronously before executeCommand so the shell sees the mounts.
         // Use Task.detached to avoid inheriting main actor isolation (which would deadlock
         // the semaphore since .onAppear runs on the main actor).
         if let sid = sessionId {
             stepStart = CFAbsoluteTimeGetCurrent()
-            print("[ISHTerminal] Mounting /var/minis for session \(sid) before shell start")
+            print("[ISHTerminal] Mounting /var/ze for session \(sid) before shell start")
             let semaphore = DispatchSemaphore(value: 0)
             Task.detached {
                 await ISHExecutionCoordinator.shared.mountForSession(sid)
@@ -383,7 +383,7 @@ class ISHTerminalViewModel: ObservableObject {
         // If opened from a session, cd to the session's shared directory
         if sessionId != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                if let data = "cd /var/minis && clear\n".data(using: .utf8) {
+                if let data = "cd /var/ze && clear\n".data(using: .utf8) {
                     self?.sendInput(data)
                 }
                 // Pre-fill init command (without newline) so the user can review before pressing Enter
@@ -408,7 +408,7 @@ class ISHTerminalViewModel: ObservableObject {
     /// Serial queue for sending input to the kernel TTY.
     /// tty_input() acquires a pthread mutex that can block when the kernel is busy,
     /// so we must never call it on the main thread.
-    private let inputQueue = DispatchQueue(label: "com.openminis.terminal.input")
+    private let inputQueue = DispatchQueue(label: "com.ze.terminal.input")
 
     func sendInput(_ data: Data) {
         let tEnq = TerminalRedrawLog.nowMs()

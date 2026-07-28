@@ -1,6 +1,6 @@
 //
 //  TerminalKeyboardAccessory.swift
-//  MinisApp
+//  ZeApp
 //
 //  Quick command bar with terminal control buttons
 //

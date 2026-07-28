@@ -43,7 +43,7 @@ struct CloudSyncSettingsView: View {
                 }
             }
         } message: {
-            Text("This will permanently delete everything Minis has uploaded to your iCloud account, across ALL of your devices:\n\n• Chat sessions & messages\n• Session files & attachments\n• Skills\n• Provider configurations\n• Environment variables\n\nThis device's local data will NOT be deleted — only the cloud copy. After the wipe, this device will re-upload its local content to a fresh iCloud zone.")
+            Text("This will permanently delete everything Ze has uploaded to your iCloud account, across ALL of your devices:\n\n• Chat sessions & messages\n• Session files & attachments\n• Skills\n• Provider configurations\n• Environment variables\n\nThis device's local data will NOT be deleted — only the cloud copy. After the wipe, this device will re-upload its local content to a fresh iCloud zone.")
         }
         .alert("Are you absolutely sure?", isPresented: $showDeleteCloudStep2) {
             Button("Cancel", role: .cancel) {}
@@ -51,12 +51,12 @@ struct CloudSyncSettingsView: View {
                 performDeleteCloudData()
             }
         } message: {
-            Text("This action cannot be undone. All Minis data stored in iCloud will be erased immediately. Other devices signed into the same iCloud account will lose their synced copies on the next sync.\n\nLocal data on this device is safe.")
+            Text("This action cannot be undone. All Ze data stored in iCloud will be erased immediately. Other devices signed into the same iCloud account will lose their synced copies on the next sync.\n\nLocal data on this device is safe.")
         }
         .alert("iCloud Data Deleted", isPresented: $showDeleteCloudDone) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("All Minis data has been removed from iCloud. This device is now re-uploading its local content to a fresh iCloud zone.")
+            Text("All Ze data has been removed from iCloud. This device is now re-uploading its local content to a fresh iCloud zone.")
         }
         .alert("Delete Failed", isPresented: $showDeleteCloudError) {
             Button("OK", role: .cancel) {}
@@ -275,7 +275,7 @@ struct CloudSyncSettingsView: View {
         } header: {
             Text("Danger Zone")
         } footer: {
-            Text("Permanently erase all Minis data from iCloud. Local data on this device is not affected.")
+            Text("Permanently erase all Ze data from iCloud. Local data on this device is not affected.")
         }
     }
 
@@ -724,7 +724,7 @@ struct SyncLogView: View {
                 Button {
                     let report = store.exportSanitizedReport()
                     let tempURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("minis-sync-diagnostic.txt")
+                        .appendingPathComponent("ze-sync-diagnostic.txt")
                     try? report.write(to: tempURL, atomically: true, encoding: .utf8)
                     shareItem = ShareFileItem(url: tempURL)
                 } label: {
@@ -783,8 +783,8 @@ private struct ShareFileItem: Identifiable {
 private struct SyncLogShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        // [T-share-sheet-uti] See MinisShareSheet.sanitizedShareURL.
-        let safeURL = MinisShareSheet.sanitizedShareURL(url) ?? url
+        // [T-share-sheet-uti] See ZeShareSheet.sanitizedShareURL.
+        let safeURL = ZeShareSheet.sanitizedShareURL(url) ?? url
         return UIActivityViewController(activityItems: [safeURL], applicationActivities: nil)
     }
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}

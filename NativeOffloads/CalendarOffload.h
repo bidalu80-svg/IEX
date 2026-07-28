@@ -1,6 +1,6 @@
 //
 //  CalendarOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-calendar` — EventKit events & reminders.
 //

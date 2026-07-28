@@ -38,7 +38,7 @@ final class BrowserHistoryStore: ObservableObject {
 
     private static var storeURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("MinisChat", isDirectory: true)
+            .appendingPathComponent("ZeChat", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("browser_history.json")
     }

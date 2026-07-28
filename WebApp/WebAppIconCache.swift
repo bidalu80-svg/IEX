@@ -6,7 +6,7 @@ private let iconCacheLogger = AppLogger(category: "WebAppIconCache")
 /// Manages the on-disk bitmap cache for WebApp-shortcut icons under
 /// `Library/WebAppIconCache/`. Bitmaps written here are referenced by
 /// `WebAppShortcut.iconCachePath` (sandbox-relative). Files are owned 1:1 by
-/// shortcut id so deleting a shortcut can deterministically delete its icon.
+/// shortcut id so deleting a shortcut can deterzetically delete its icon.
 enum WebAppIconCache {
     /// Path component below `Library/` where all icon bitmaps live.
     static let directoryName = "WebAppIconCache"

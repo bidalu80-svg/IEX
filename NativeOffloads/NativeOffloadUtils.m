@@ -1,6 +1,6 @@
 //
 //  NativeOffloadUtils.m
-//  MinisApp
+//  ZeApp
 //
 //  Shared utilities for native offload CLI tools.
 //

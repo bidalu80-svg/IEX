@@ -1,12 +1,12 @@
 //
 //  JiebaWrapper.h
-//  Minis
+//  Ze
 //
 //  Thin ObjC wrapper around CppJieba (header-only C++), bridged to Swift. Lazily
 //  loads the ~5MB dictionary + HMM model from the bundle on first use
 //  (dispatch_once, thread-safe) and reuses one shared segmenter for the process
 //  lifetime. The C++ types live only in JiebaWrapper.mm, so this header stays
-//  pure ObjC and is safe to import from MinisApp-Bridging-Header.h.
+//  pure ObjC and is safe to import from ZeApp-Bridging-Header.h.
 //
 
 #import <Foundation/Foundation.h>

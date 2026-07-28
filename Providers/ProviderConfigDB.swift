@@ -24,11 +24,11 @@ actor ProviderConfigDB {
 
     // MARK: - File locations
 
-    /// Default DB path: same MinisChat folder as `provider-config.json`.
+    /// Default DB path: same ZeChat folder as `provider-config.json`.
     static func defaultURL() -> URL {
         let library = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        let base = library.appendingPathComponent("MinisChat", isDirectory: true)
+        let base = library.appendingPathComponent("ZeChat", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("provider-config.db")
     }
@@ -53,7 +53,7 @@ actor ProviderConfigDB {
         }
         self.db = handle
 
-        // WAL mode: same as minis.db. Tolerates concurrent reads while we
+        // WAL mode: same as ze.db. Tolerates concurrent reads while we
         // upsert per-row from the sync inbound path.
         Self.exec(db: handle, "PRAGMA journal_mode = WAL")
         Self.exec(db: handle, "PRAGMA foreign_keys = ON")

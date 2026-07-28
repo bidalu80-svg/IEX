@@ -43,7 +43,7 @@ typedef struct {
 
 static IMP gOriginalSetSize = NULL;
 
-static void minis_NSTextContainer_setSize(id self, SEL _cmd, CGSize newSize) {
+static void ze_NSTextContainer_setSize(id self, SEL _cmd, CGSize newSize) {
     if (![NSThread isMainThread]) {
         // Off-main calls (rare) bypass the guard entirely. Safer to
         // forward unconditionally than risk dropping a legit update.
@@ -52,7 +52,7 @@ static void minis_NSTextContainer_setSize(id self, SEL _cmd, CGSize newSize) {
     }
 
     // Sanitise obviously poisoned sizes that SwiftUI's measure path
-    // occasionally leaks through (observed in Minis-2026-05-22-225827.ips
+    // occasionally leaks through (observed in Ze-2026-05-22-225827.ips
     // ViewGraphGeometryObservers crash logs: `408 x 1.79e308` from
     // Double.greatestFiniteMagnitude, and `-16 x 0` from a ViewGraph
     // arithmetic underflow). NSTextContainer reacts to setSize: by
@@ -164,7 +164,7 @@ static void bumpRunloopTick(CFRunLoopObserverRef obs, CFRunLoopActivity act, voi
             NSLog(@"[TextContainerGuard] [WARN] setSize: method not found on NSTextContainer");
             return;
         }
-        gOriginalSetSize = method_setImplementation(m, (IMP)minis_NSTextContainer_setSize);
+        gOriginalSetSize = method_setImplementation(m, (IMP)ze_NSTextContainer_setSize);
 
         // Runloop observer to rotate the tick id. Order 999_999 puts us
         // after typical layout observers; the exact value is not

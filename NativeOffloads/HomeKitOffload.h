@@ -1,6 +1,6 @@
 //
 //  HomeKitOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-homekit` — HomeKit.
 //

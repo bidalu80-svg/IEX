@@ -1,6 +1,6 @@
 //
 //  AutoTouch.m
-//  MinisApp
+//  ZeApp
 //
 //  Simulates touch events using private UIKit APIs for debug/testing.
 //

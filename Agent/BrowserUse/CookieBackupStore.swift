@@ -12,7 +12,7 @@ private let logger = AppLogger(category: "CookieBackup")
 /// established in the takeover sheet kept vanishing (observations.db showed
 /// 5 wipes for x.com on the reporting device).
 ///
-/// Mitigation: before every browser_use / minis-browser-use action (throttled
+/// Mitigation: before every browser_use / ze-browser-use action (throttled
 /// to once per 60s) we
 ///   1. snapshot every cookie in `WKWebsiteDataStore.default()` with its FULL
 ///      metadata (domain / path / expires / secure / HttpOnly), rendered as a
@@ -417,7 +417,7 @@ final class CookieBackupStore {
     /// HttpOnly uses curl's convention: the domain field is prefixed with
     /// `#HttpOnly_`.
     private static func renderNetscape(_ cookies: [BackupCookie]) -> String {
-        var lines = ["# Netscape HTTP Cookie File", "# Written by Minis CookieBackupStore — do not edit while the app runs", ""]
+        var lines = ["# Netscape HTTP Cookie File", "# Written by Ze CookieBackupStore — do not edit while the app runs", ""]
         for c in cookies.sorted(by: { ($0.domain, $0.path, $0.name) < ($1.domain, $1.path, $1.name) }) {
             let domainField = (c.httpOnly ? "#HttpOnly_" : "") + c.domain
             let includeSubdomains = c.domain.hasPrefix(".") ? "TRUE" : "FALSE"

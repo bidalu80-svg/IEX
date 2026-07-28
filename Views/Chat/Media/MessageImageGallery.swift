@@ -1,6 +1,6 @@
 //
 //  MessageImageGallery.swift
-//  MinisApp
+//  ZeApp
 //
 //  Paged fullscreen image gallery shared by both preview paths:
 //    1. User-message attachments (via \.openImageGallery environment action)
@@ -136,7 +136,7 @@ struct MessageImageGallery: View {
             if let img = currentImage,
                let data = img.pngData(),
                let tmpURL = Self.writeTempImageFile(data: data) {
-                MinisShareSheet(url: tmpURL)
+                ZeShareSheet(url: tmpURL)
             }
         }
         .statusBar(hidden: true)
@@ -308,7 +308,7 @@ struct OpenImageGalleryAction {
 ///
 /// Payload keys:
 ///   - `messageId: UUID` — the assistant message that owns the tapped image
-///   - `sourceURL: String` — the minis:// (or http) URL inside the markdown
+///   - `sourceURL: String` — the ze:// (or http) URL inside the markdown
 ///     `![](...)` that was tapped; used to pick the starting page
 enum MarkdownImageTapRouter {
     static let tappedNotification = Notification.Name("MarkdownImageTappedNotification")

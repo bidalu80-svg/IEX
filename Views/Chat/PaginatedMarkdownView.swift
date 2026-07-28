@@ -1,6 +1,6 @@
 //
 //  PaginatedMarkdownView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Renders a large markdown document by splitting it into segments at
 //  paragraph boundaries and laying each segment out as a separate

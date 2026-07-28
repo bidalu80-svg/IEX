@@ -1,6 +1,6 @@
 //
 //  ISHCommandExecutionExample.swift
-//  MinisApp
+//  ZeApp
 //
 //  Examples of how to execute shell commands with proper completion detection
 //

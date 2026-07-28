@@ -1,6 +1,6 @@
 //
 //  NativeOffloadUtils.h
-//  MinisApp
+//  ZeApp
 //
 //  Shared utilities for native offload CLI tools.
 //  Provides arg parsing, JSON envelope construction, date parsing,
@@ -89,7 +89,7 @@ void noff_ensure_guest_stub(const char *guest_path);
 // ── Path resolution ──
 
 /// Convert a guest (Linux) absolute path to the corresponding host (iOS) path.
-/// e.g. "/var/minis/offloads" → "…/Documents/alpine-rootfs/data/var/minis/offloads"
+/// e.g. "/var/ze/offloads" → "…/Documents/alpine-rootfs/data/var/ze/offloads"
 /// Returns nil if the path is empty.
 NSString *_Nullable noff_resolve_host_path(NSString *guestPath);
 

@@ -1,6 +1,6 @@
 //
 //  ClipboardOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-clipboard`.
 //  Subcommands: get, set, clear, status
@@ -35,7 +35,7 @@ static NSString *const HELP_TEXT =
      "\n"
      "EXAMPLES:\n"
      "  apple-clipboard                 (same as: apple-clipboard get)\n"
-     "  apple-clipboard get --image /var/minis/attachments/clipboard_image.png\n"
+     "  apple-clipboard get --image /var/ze/attachments/clipboard_image.png\n"
      "  apple-clipboard set --text \"Hello World\"\n"
      "  echo \"piped text\" | apple-clipboard set\n"
      "  apple-clipboard clear\n"

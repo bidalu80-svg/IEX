@@ -1,6 +1,6 @@
 //
 //  WeatherOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-weather`.
 //  Subcommands: current, hourly, daily, alerts, report
@@ -16,7 +16,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreLocation/CoreLocation.h>
 #import "NativeOffloadUtils.h"
-#import "Minis-Swift.h"
+#import "Ze-Swift.h"
 #include "kernel/native_offload.h"
 #include <unistd.h>
 
@@ -107,7 +107,7 @@ static CLLocation *get_location_sync(int argc, char **argv) {
                                userInfo:@{NSLocalizedDescriptionKey:
                                    @"Location access denied. To grant access, open "
                                     "Settings > Privacy & Security > Location Services "
-                                    "and enable Minis."}];
+                                    "and enable Ze."}];
             dispatch_semaphore_signal(delegate.semaphore);
         }
     });

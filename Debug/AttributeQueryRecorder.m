@@ -48,7 +48,7 @@ static inline void recordSampleMainThread(id receiver, NSAttributedStringKey nam
 }
 
 #define DEFINE_HOOK(NAME, ORIG_VAR) \
-    static NSObject *minis_attrQuery_##NAME(id self, SEL _cmd, NSAttributedStringKey name, NSUInteger index, NSRangePointer range) { \
+    static NSObject *ze_attrQuery_##NAME(id self, SEL _cmd, NSAttributedStringKey name, NSUInteger index, NSRangePointer range) { \
         NSObject *result = ORIG_VAR(self, _cmd, name, index, range); \
         if ([NSThread isMainThread]) { \
             recordSampleMainThread(self, name, index, result); \
@@ -86,9 +86,9 @@ static AttrQueryFn swizzleOne(Class cls, IMP newImp) {
         Class mutable  = NSClassFromString(@"NSMutableAttributedString");
         Class base     = NSClassFromString(@"NSAttributedString");
 
-        gOrigConcrete = swizzleOne(concrete, (IMP)minis_attrQuery_Concrete);
-        gOrigMutable  = swizzleOne(mutable,  (IMP)minis_attrQuery_Mutable);
-        gOrigBase     = swizzleOne(base,     (IMP)minis_attrQuery_Base);
+        gOrigConcrete = swizzleOne(concrete, (IMP)ze_attrQuery_Concrete);
+        gOrigMutable  = swizzleOne(mutable,  (IMP)ze_attrQuery_Mutable);
+        gOrigBase     = swizzleOne(base,     (IMP)ze_attrQuery_Base);
 
         memset(gRing, 0, sizeof(gRing));
 

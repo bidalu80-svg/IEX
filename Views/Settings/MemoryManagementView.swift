@@ -1,6 +1,6 @@
 //
 //  MemoryManagementView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Settings-level memory management: unified file list with edit/delete.
 //
@@ -110,7 +110,7 @@ struct MemoryManagementView: View {
 
     private func loadFiles() {
         let fm = FileManager.default
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
         try? fm.createDirectory(at: memDir, withIntermediateDirectories: true)
 
         // GLOBAL.md always first
@@ -144,7 +144,7 @@ struct MemoryManagementView: View {
 
     private func deleteFiles(at offsets: IndexSet) {
         let fm = FileManager.default
-        let memDir = AIChatViewModel.minisMemoryPersistentDir
+        let memDir = AIChatViewModel.zeMemoryPersistentDir
         for idx in offsets {
             let file = memoryFiles[idx]
             if file.isGlobal { continue }
@@ -202,7 +202,7 @@ private struct MemoryFileEditView: View {
     @State private var suppressNextChange = false
 
     private var fileURL: URL {
-        AIChatViewModel.minisMemoryPersistentDir.appendingPathComponent(fileName)
+        AIChatViewModel.zeMemoryPersistentDir.appendingPathComponent(fileName)
     }
 
     var body: some View {
@@ -289,7 +289,7 @@ private struct MemoryFileEditView: View {
 
     private func save() {
         let fm = FileManager.default
-        try? fm.createDirectory(at: AIChatViewModel.minisMemoryPersistentDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: AIChatViewModel.zeMemoryPersistentDir, withIntermediateDirectories: true)
         do {
             try content.data(using: .utf8)?.write(to: fileURL)
             hasChanges = false
@@ -297,7 +297,7 @@ private struct MemoryFileEditView: View {
             // [T-toast-feedback] Confirm the save succeeded — the screen
             // doesn't dismiss or change, so without this the user gets no
             // signal that the write landed.
-            MinisToast.show(String(localized: "Saved"))
+            ZeToast.show(String(localized: "Saved"))
             // Enqueue for iCloud v2 sync. GLOBAL.md uses its own singleton
             // record; per-day logs use the dateKey from the filename.
             if isGlobal {
@@ -324,5 +324,5 @@ extension Notification.Name {
     /// locally — either by the user editing in MemoryManagementView, by
     /// memory_write tool, or by an inbound iCloud sync merge. Observers
     /// can use this to refresh their in-memory snapshot of memory files.
-    static let memoryFilesDidChange = Notification.Name("com.openminis.app.memoryFilesDidChange")
+    static let memoryFilesDidChange = Notification.Name("com.ze.app.memoryFilesDidChange")
 }

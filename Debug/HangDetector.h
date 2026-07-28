@@ -1,6 +1,6 @@
 //
 //  HangDetector.h
-//  MinisApp (Debug only)
+//  ZeApp (Debug only)
 //
 //  Main-thread hang detector. Compiled in only for DEBUG builds.
 //
@@ -31,7 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface HangFrame : NSObject
 /// Absolute PC / LR address.
 @property (nonatomic, assign) uintptr_t address;
-/// Image base name (e.g. "Minis", "UIKitCore"); nil if dladdr failed.
+/// Image base name (e.g. "Ze", "UIKitCore"); nil if dladdr failed.
 @property (nonatomic, copy, nullable) NSString *imageName;
 /// Address relative to the image base (suitable for `atos -l 0x100000000 + offset`).
 @property (nonatomic, assign) uintptr_t imageOffset;

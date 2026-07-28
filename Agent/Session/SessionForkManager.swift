@@ -199,7 +199,7 @@ final class SessionForkManager {
             return false
         }
 
-        let memoryDir = AIChatViewModel.minisMemoryPersistentDir
+        let memoryDir = AIChatViewModel.zeMemoryPersistentDir
         try? FileManager.default.createDirectory(at: memoryDir, withIntermediateDirectories: true)
 
         let destURL = memoryDir.appendingPathComponent(memory.fileName)

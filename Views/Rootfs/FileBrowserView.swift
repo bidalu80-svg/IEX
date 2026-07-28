@@ -1,6 +1,6 @@
 //
 //  FileBrowserView.swift
-//  MinisApp
+//  ZeApp
 //
 //  File browser for exploring and exporting files from the rootfs
 //
@@ -217,8 +217,8 @@ struct FileBrowserView: View {
             }
         }
         .sheet(item: $moveOrCopyItem) { item in
-            let minisPath = viewModel.rootPath.appendingPathComponent("var/minis")
-            let initial = FileManager.default.fileExists(atPath: minisPath.path) ? minisPath : nil
+            let zePath = viewModel.rootPath.appendingPathComponent("var/ze")
+            let initial = FileManager.default.fileExists(atPath: zePath.path) ? zePath : nil
             NavigationStack {
                 DirectoryPickerView(
                     rootPath: viewModel.rootPath,
@@ -535,7 +535,7 @@ private struct HTMLFilePreview: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-        config.setURLSchemeHandler(BrowserUseManager.sharedMinisSchemeHandler, forURLScheme: "minis")
+        config.setURLSchemeHandler(BrowserUseManager.sharedZeSchemeHandler, forURLScheme: "ze")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         return webView
@@ -733,7 +733,7 @@ private struct FileBrowserRow: View {
             .contextMenu {
                 Button {
                     // [T-ios-file-context-copy-abs-path] Copy the file's guest
-                    // absolute path (e.g. /var/minis/workspace/.../L3_0001.png)
+                    // absolute path (e.g. /var/ze/workspace/.../L3_0001.png)
                     // to the system clipboard. displayPath() is the same
                     // host-URL → guest-path mapping the breadcrumb uses, so we
                     // reuse it instead of reconstructing the path by hand.
@@ -781,7 +781,7 @@ private struct FileBrowserRow: View {
             .sheet(isPresented: $showAddWebApp) {
                 // The browser exposes already-resolved host URLs via
                 // FileItem.url, so we hand the URL straight to the sheet
-                // without going through minis:// resolution.
+                // without going through ze:// resolution.
                 WebAppAddToHomeSheet(htmlURL: item.url, sourceSessionId: nil)
             }
     }
@@ -867,7 +867,7 @@ struct FileItemRow: View {
 /// The source lives on the rootfs/fakefs, which isn't a stable URL the share
 /// extensions can read, so we stage a copy in tmp first (mirrors the old
 /// export path), then hand it to `UIActivityViewController` (reusing
-/// `MinisShareSheet.sanitizedShareURL` for the ShareKit UTI crash mitigation).
+/// `ZeShareSheet.sanitizedShareURL` for the ShareKit UTI crash mitigation).
 struct DocumentExportView: UIViewControllerRepresentable {
     let fileURL: URL
 
@@ -877,7 +877,7 @@ struct DocumentExportView: UIViewControllerRepresentable {
             .appendingPathComponent(fileURL.lastPathComponent)
         try? FileManager.default.removeItem(at: staged)
         try? FileManager.default.copyItem(at: fileURL, to: staged)
-        let shareURL = MinisShareSheet.sanitizedShareURL(staged) ?? staged
+        let shareURL = ZeShareSheet.sanitizedShareURL(staged) ?? staged
         return UIActivityViewController(activityItems: [shareURL], applicationActivities: nil)
     }
 
@@ -933,7 +933,7 @@ class FileBrowserViewModel: ObservableObject {
 
             do {
                 // Resolve symlinks so contentsOfDirectory works on bind-mounted dirs
-                // (e.g. /var/minis/attachments -> Library/MinisChat/...)
+                // (e.g. /var/ze/attachments -> Library/ZeChat/...)
                 let resolvedPath = self.currentPath.resolvingSymlinksInPath()
                 // Note: we deliberately do NOT bulk-prefetch iCloud placeholder
                 // files here. A large iCloud folder could contain thousands of
@@ -1040,7 +1040,7 @@ class FileBrowserViewModel: ObservableObject {
             if let linux = linuxPath(for: removedURL) {
                 RootfsManager.shared.removeFakefsPath(linux)
                 // If the deleted file lived under one of the FileProvider-exposed
-                // trees (/var/minis/{shared,skills,memory}/...), the Files app has
+                // trees (/var/ze/{shared,skills,memory}/...), the Files app has
                 // a cached enumeration of the parent folder that is now stale.
                 // The underlying storage is a bind mount into the App Group
                 // container, so the file is already gone from disk — we just need
@@ -1048,7 +1048,7 @@ class FileBrowserViewModel: ObservableObject {
                 Self.signalFileProviderParent(forLinuxPath: linux)
             }
             // iCloud Sync: if the removed file lives under a session's
-            // workspace tree (Library/MinisChat/minis/<sid>/...), queue
+            // workspace tree (Library/ZeChat/ze/<sid>/...), queue
             // a SessionFile cloud-delete so peers stop seeing it.
             Self.queueSessionFileCloudDelete(forRemovedURL: removedURL)
             loadItems()
@@ -1058,15 +1058,15 @@ class FileBrowserViewModel: ObservableObject {
         }
     }
 
-    /// Maps a Linux path under `/var/minis/{shared,skills,memory}/...` to the
+    /// Maps a Linux path under `/var/ze/{shared,skills,memory}/...` to the
     /// parent-folder identifier used by the FileProvider extension, and asks the
     /// system to re-enumerate that folder so the Files app drops the stale entry.
     /// Linux paths outside those three trees are not exposed by the FileProvider
     /// and are skipped.
     private static let fileProviderExposedRoots: [String: NSFileProviderItemIdentifier] = [
-        "/var/minis/shared":  NSFileProviderItemIdentifier("shared"),
-        "/var/minis/skills":  NSFileProviderItemIdentifier("skills"),
-        "/var/minis/memory":  NSFileProviderItemIdentifier("memory"),
+        "/var/ze/shared":  NSFileProviderItemIdentifier("shared"),
+        "/var/ze/skills":  NSFileProviderItemIdentifier("skills"),
+        "/var/ze/memory":  NSFileProviderItemIdentifier("memory"),
     ]
 
     private static func signalFileProviderParent(forLinuxPath linux: String) {
@@ -1093,7 +1093,7 @@ class FileBrowserViewModel: ObservableObject {
         }
         guard let targetID = parentID else { return }
 
-        let domainIdentifier = NSFileProviderDomainIdentifier("com.openminis.app.files")
+        let domainIdentifier = NSFileProviderDomainIdentifier("com.ze.app.files")
         NSFileProviderManager.getDomainsWithCompletionHandler { domains, _ in
             guard let domain = domains.first(where: { $0.identifier == domainIdentifier }) else {
                 return
@@ -1102,13 +1102,13 @@ class FileBrowserViewModel: ObservableObject {
         }
     }
 
-    /// If `removedURL` lives inside a session's per-session minis directory
-    /// (`Library/MinisChat/minis/<sid>/<subdir>/<rel>`), queue a SessionFile
+    /// If `removedURL` lives inside a session's per-session ze directory
+    /// (`Library/ZeChat/ze/<sid>/<subdir>/<rel>`), queue a SessionFile
     /// cloud-delete so peer devices stop seeing the file. Silent when the URL
     /// is outside any session tree (e.g. shared/skills/memory deletes — those
     /// are not SessionFile-scoped) or when sync isn't configured.
     private static func queueSessionFileCloudDelete(forRemovedURL removedURL: URL) {
-        let baseURL = ChatStore.shared.minisBaseURL
+        let baseURL = ChatStore.shared.zeBaseURL
             .resolvingSymlinksInPath().standardized
         let removed = removedURL.resolvingSymlinksInPath().standardized
         let basePath = baseURL.path
@@ -1157,9 +1157,9 @@ class FileBrowserViewModel: ObservableObject {
         let fm = FileManager.default
         let dest = destURL.resolvingSymlinksInPath().standardized.path
         let roots: [(String, URL)] = [
-            ("shared", AIChatViewModel.minisSharedPersistentDir),
-            ("skills", AIChatViewModel.minisSkillsPersistentDir),
-            ("memory", AIChatViewModel.minisMemoryPersistentDir),
+            ("shared", AIChatViewModel.zeSharedPersistentDir),
+            ("skills", AIChatViewModel.zeSkillsPersistentDir),
+            ("memory", AIChatViewModel.zeMemoryPersistentDir),
         ]
         for (key, rootURL) in roots {
             let rootPath = rootURL.resolvingSymlinksInPath().standardized.path
@@ -1228,26 +1228,26 @@ class FileBrowserViewModel: ObservableObject {
     }
 
     func displayPath(for url: URL) -> String {
-        // [T-ios-copy-abs-path-varminis-rooted] Primary path: reconstruct the
+        // [T-ios-copy-abs-path-varze-rooted] Primary path: reconstruct the
         // guest path from `currentPath` (the LOGICAL, un-symlink-resolved
-        // directory we're browsing, e.g. `.../data/var/minis/browser`) + the
+        // directory we're browsing, e.g. `.../data/var/ze/browser`) + the
         // item's filename, relative to `rootPath`.
         //
         // Why this is the reliable source: `loadItems()` lists
         // `currentPath.resolvingSymlinksInPath()`, so each `item.url` is already
-        // symlink-RESOLVED. For a bind-mounted subdir like `/var/minis/browser`
-        // (an APFS symlink → `.../Library/MinisChat/minis/<sid>/browser`) the
+        // symlink-RESOLVED. For a bind-mounted subdir like `/var/ze/browser`
+        // (an APFS symlink → `.../Library/ZeChat/ze/<sid>/browser`) the
         // resolved item URL lands OUTSIDE the rootfs `data/` tree, so BOTH the
         // resolved-prefix and raw-prefix checks below miss and the function fell
         // through to `url.lastPathComponent` — copying just the filename
-        // (`0419….jpg`) instead of `/var/minis/browser/0419….jpg`.
+        // (`0419….jpg`) instead of `/var/ze/browser/0419….jpg`.
         // `currentPath` is never symlink-resolved (init standardizes; navigateTo
         // appends names), so `currentPath` relative to `rootPath` is always the
         // true guest directory regardless of bind mounts.
         let rawRootEarly = rootPath.standardized.path
         let curStd = currentPath.standardized.path
         if curStd == rawRootEarly || curStd.hasPrefix(rawRootEarly + "/") {
-            let relDir = String(curStd.dropFirst(rawRootEarly.count))   // "" or "/var/minis/browser"
+            let relDir = String(curStd.dropFirst(rawRootEarly.count))   // "" or "/var/ze/browser"
             let full = join(rootLabel, relDir)
             return join(full, url.lastPathComponent)
         }
@@ -1260,9 +1260,9 @@ class FileBrowserViewModel: ObservableObject {
             return join(rootLabel, String(urlStd.dropFirst(rootStd.count)))
         }
         // [T-ios-copy-abs-path-fullpath] Bind-mounted subtrees (attachments →
-        // MinisChat container) resolve OUTSIDE the rootfs `data/` tree, so the
+        // ZeChat container) resolve OUTSIDE the rootfs `data/` tree, so the
         // resolved prefix check above won't match them. Fall back to the
-        // UN-resolved namespace: the listing keeps the logical `/var/minis/…`
+        // UN-resolved namespace: the listing keeps the logical `/var/ze/…`
         // path on the URL before symlink resolution would diverge.
         let rawRoot = rootPath.standardized.path
         let rawURL = url.standardized.path
@@ -1276,7 +1276,7 @@ class FileBrowserViewModel: ObservableObject {
 
     /// [T-ios-copy-abs-path-fullpath] Join the guest `rootLabel` with a
     /// relative remainder, collapsing the slash seam so a `rootLabel` of "/"
-    /// plus a rel of "/var/minis/x" yields "/var/minis/x" (not "//var/minis/x")
+    /// plus a rel of "/var/ze/x" yields "/var/ze/x" (not "//var/ze/x")
     /// — important now that the result is copied to the clipboard as a real
     /// path, not just shown as a cosmetic breadcrumb.
     private func join(_ label: String, _ rel: String) -> String {

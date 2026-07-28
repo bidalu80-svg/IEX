@@ -1,2 +1,2 @@
 # Interactive ash configuration
-# This file is sourced via ENV=$HOME/.ashrc set in /etc/profile.d/minis.sh
+# This file is sourced via ENV=$HOME/.ashrc set in /etc/profile.d/ze.sh

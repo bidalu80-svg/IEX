@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build Minis.app
+    name: Build Ze.app
     runs-on: macos-15
 
     steps:
@@ -245,7 +245,7 @@ jobs:
             > "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg/FFmpeg.h"
 
           mkdir -p "$UP2/deps/libs"
-          printf 'void minis_ci_native_stub(void) {}\n' > "$UP2/deps/libs/native_stub.c"
+          printf 'void ze_ci_native_stub(void) {}\n' > "$UP2/deps/libs/native_stub.c"
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
             "$UP2/deps/libs/native_stub.c" -o "$UP2/deps/libs/native_stub.o"
           # FFmpegOffload.m references these FFmpeg globals and entry points.
@@ -323,7 +323,7 @@ jobs:
               '<dict>' \
               '  <key>CFBundleDevelopmentRegion</key><string>en</string>' \
               '  <key>CFBundleExecutable</key><string>'"$fw"'</string>' \
-              '  <key>CFBundleIdentifier</key><string>com.openminis.ci.stub.'"$fw"'</string>' \
+              '  <key>CFBundleIdentifier</key><string>com.ze.ci.stub.'"$fw"'</string>' \
               '  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>' \
               '  <key>CFBundleName</key><string>'"$fw"'</string>' \
               '  <key>CFBundlePackageType</key><string>FMWK</string>' \
@@ -370,13 +370,13 @@ jobs:
           "$MESON_VENV/bin/pip" install meson
           export PATH="$MESON_VENV/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
 
-          OPENMINIS_DIR="$RUNNER_TEMP/OpenMinis"
+          ZE_DIR="$RUNNER_TEMP/openminis-build-deps"
           git clone --depth 1 --recurse-submodules --shallow-submodules \
-            https://github.com/OpenMinis/OpenMinis.git "$OPENMINIS_DIR"
-          git -C "$OPENMINIS_DIR" checkout --detach 9cf3a855fecd27bb5735b84cacbd56852a3ab8dd
-          git -C "$OPENMINIS_DIR" submodule update --init --recursive --depth 1
+            https://github.com/OpenMinis/OpenMinis.git "$ZE_DIR"
+          git -C "$ZE_DIR" checkout --detach 9cf3a855fecd27bb5735b84cacbd56852a3ab8dd
+          git -C "$ZE_DIR" submodule update --init --recursive --depth 1
 
-          pushd "$OPENMINIS_DIR"
+          pushd "$ZE_DIR"
           ./deps/build_lame.sh
           ./deps/build_ffmpeg.sh
           ./deps/build_ish.sh
@@ -387,7 +387,7 @@ jobs:
           rm -rf "$UP2/deps"
           mkdir -p "$UP2/deps"
           for directory in include libs frameworks resources; do
-            cp -R "$OPENMINIS_DIR/deps/$directory" "$UP2/deps/$directory"
+            cp -R "$ZE_DIR/deps/$directory" "$UP2/deps/$directory"
           done
 
           test -f "$UP2/deps/libs/libish.a"
@@ -403,15 +403,15 @@ jobs:
       - name: Resolve SPM dependencies
         run: |
           xcodebuild -resolvePackageDependencies \
-            -project Minis.xcodeproj \
-            -scheme Minis \
+            -project Ze.xcodeproj \
+            -scheme Ze \
             -clonedSourcePackagesDirPath .spm
 
       - name: Build (Debug, no signing)
         run: |
           xcodebuild build \
-            -project Minis.xcodeproj \
-            -scheme Minis \
+            -project Ze.xcodeproj \
+            -scheme Ze \
             -configuration Debug \
             -destination generic/platform=iOS \
             -clonedSourcePackagesDirPath .spm \
@@ -424,32 +424,32 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
-          APP_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path '*/Build/Products/Debug-iphoneos/Minis.app' -print -quit)"
+          APP_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path '*/Build/Products/Debug-iphoneos/Ze.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "Minis.app was not found after the build."
+            echo "Ze.app was not found after the build."
             exit 1
           fi
 
-          IPA_STAGING="$RUNNER_TEMP/minis-ipa"
+          IPA_STAGING="$RUNNER_TEMP/ze-ipa"
           mkdir -p "$IPA_STAGING/Payload"
-          cp -R "$APP_PATH" "$IPA_STAGING/Payload/Minis.app"
-          ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Minis-unsigned.ipa"
+          cp -R "$APP_PATH" "$IPA_STAGING/Payload/Ze.app"
+          ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Ze-unsigned.ipa"
 
       - name: Audit unsigned IPA bundle
         run: |
-          test -f Minis-unsigned.ipa
-          IPA_AUDIT="$RUNNER_TEMP/minis-ipa-audit"
+          test -f Ze-unsigned.ipa
+          IPA_AUDIT="$RUNNER_TEMP/ze-ipa-audit"
           rm -rf "$IPA_AUDIT"
           mkdir -p "$IPA_AUDIT"
-          ditto -x -k Minis-unsigned.ipa "$IPA_AUDIT"
-          APP_AUDIT="$IPA_AUDIT/Payload/Minis.app"
+          ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
+          APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
           # Xcode 16 Debug builds may split the executable into a tiny
-          # launcher plus Minis.debug.dylib.  Third-party re-signers often do
+          # launcher plus Ze.debug.dylib.  Third-party re-signers often do
           # not sign that auxiliary dylib, so reject that launch-only layout.
-          test ! -e "$APP_AUDIT/Minis.debug.dylib"
-          if otool -L "$APP_AUDIT/Minis" | grep -Fq '@rpath/Minis.debug.dylib'; then
-            echo "The app still depends on Minis.debug.dylib."
+          test ! -e "$APP_AUDIT/Ze.debug.dylib"
+          if otool -L "$APP_AUDIT/Ze" | grep -Fq '@rpath/Ze.debug.dylib'; then
+            echo "The app still depends on Ze.debug.dylib."
             exit 1
           fi
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
@@ -463,8 +463,8 @@ jobs:
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Minis-unsigned-ipa
-          path: Minis-unsigned.ipa
+          name: Ze-unsigned-ipa
+          path: Ze-unsigned.ipa
 
       - name: Upload build log
         if: always()

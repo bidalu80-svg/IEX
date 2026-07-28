@@ -1,6 +1,6 @@
 #import "ObjCExceptionCatcher.h"
 
-BOOL MinisCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason) {
+BOOL ZeCatchObjCException(void (NS_NOESCAPE ^block)(void), NSString *_Nullable *_Nullable reason) {
     @try {
         block();
         return YES;

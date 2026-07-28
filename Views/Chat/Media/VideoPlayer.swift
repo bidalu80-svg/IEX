@@ -1,6 +1,6 @@
 //
 //  VideoPlayer.swift
-//  MinisApp
+//  ZeApp
 //
 //  Inline video thumbnail bubble + fullscreen player overlay +
 //  AVPlayerLayer UIViewRepresentable. Extracted from AIChatView.swift.
@@ -14,7 +14,7 @@ import UIKit
 
 // MARK: - Inline Video Player
 
-struct MinisVideoPlayerView: View {
+struct ZeVideoPlayerView: View {
     let url: URL
     let fileURL: URL
     @State private var thumbnail: UIImage?
@@ -91,7 +91,7 @@ struct MinisVideoPlayerView: View {
             loadThumbnail()
         }
         .fullScreenCover(isPresented: $showPlayer) {
-            MinisVideoFullscreenPlayer(fileURL: fileURL)
+            ZeVideoFullscreenPlayer(fileURL: fileURL)
         }
     }
 
@@ -122,19 +122,19 @@ struct MinisVideoPlayerView: View {
     private func notifyFileReadyOnce() {
         guard !didNotifyFileReady else { return }
         didNotifyFileReady = true
-        NotificationCenter.default.post(name: .minisAttachmentSizeChanged, object: url.absoluteString)
+        NotificationCenter.default.post(name: .zeAttachmentSizeChanged, object: url.absoluteString)
     }
 
     private func notifyThumbnailOnce() {
         guard !didNotifyThumbnail else { return }
         didNotifyThumbnail = true
-        NotificationCenter.default.post(name: .minisAttachmentSizeChanged, object: url.absoluteString)
+        NotificationCenter.default.post(name: .zeAttachmentSizeChanged, object: url.absoluteString)
     }
 
     private func loadThumbnail() {
         let cacheKey = fileURL.path
         // Check cache first — avoids regenerating on cell recycle
-        if let cached = MinisMediaCache.shared.thumbnail(for: cacheKey) {
+        if let cached = ZeMediaCache.shared.thumbnail(for: cacheKey) {
             thumbnail = cached
             // [T-attachment-size-invalidate] Even cache hit changes layout
             // (placeholder fixed height → aspect-fit thumbnail).
@@ -150,7 +150,7 @@ struct MinisVideoPlayerView: View {
         ) { _, cgImage, _, _, _ in
             if let cgImage {
                 let img = UIImage(cgImage: cgImage)
-                MinisMediaCache.shared.setThumbnail(img, for: cacheKey)
+                ZeMediaCache.shared.setThumbnail(img, for: cacheKey)
                 DispatchQueue.main.async {
                     self.thumbnail = img
                     self.notifyThumbnailOnce()
@@ -162,7 +162,7 @@ struct MinisVideoPlayerView: View {
 
 // MARK: - Fullscreen Video Player
 
-struct MinisVideoFullscreenPlayer: View {
+struct ZeVideoFullscreenPlayer: View {
     let fileURL: URL
     /// Optional externally-managed AVPlayer (e.g. from PlayerOffloadBridge).
     /// When provided, the view skips creating its own player.
@@ -200,7 +200,7 @@ struct MinisVideoFullscreenPlayer: View {
             Color.black.opacity(1.0 - Double(max(dragOffset, 0) / dismissThreshold) * 0.4)
                 .ignoresSafeArea()
             if let player {
-                MinisAVPlayerLayerView(player: player)
+                ZeAVPlayerLayerView(player: player)
                     .ignoresSafeArea()
                     .offset(y: dragOffset)
             }
@@ -423,7 +423,7 @@ struct MinisVideoFullscreenPlayer: View {
             player = nil
         }
         .sheet(isPresented: $showShareSheet) {
-            MinisShareSheet(url: fileURL)
+            ZeShareSheet(url: fileURL)
         }
         .statusBar(hidden: true)
     }
@@ -472,7 +472,7 @@ struct MinisVideoFullscreenPlayer: View {
 }
 
 /// Raw AVPlayerLayer wrapper – renders video with no system controls.
-struct MinisAVPlayerLayerView: UIViewRepresentable {
+struct ZeAVPlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
 
     func makeUIView(context: Context) -> UIView {

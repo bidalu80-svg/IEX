@@ -1,6 +1,6 @@
 //
 //  SpeakOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-speak`.
 //  Subcommands: speak, voices, stop

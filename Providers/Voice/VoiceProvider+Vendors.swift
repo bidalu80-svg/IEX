@@ -260,7 +260,7 @@ final class DoubaoVoiceProvider: VoiceProvider {
         applyVoiceAuth(&urlRequest)
 
         let body: [String: Any] = [
-            "user": ["uid": "minis_user"],
+            "user": ["uid": "ze_user"],
             "audio": ["data": request.audioData.base64EncodedString()],
             "request": ["model_name": "bigmodel"]
         ]

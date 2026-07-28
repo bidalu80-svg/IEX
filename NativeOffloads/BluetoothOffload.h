@@ -1,6 +1,6 @@
 //
 //  BluetoothOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-bluetooth` — CoreBluetooth BLE operations.
 //

@@ -235,9 +235,9 @@ extension AIChatViewModel {
         sessionCacheWriteTokens = 0
         guard !rawMessages.isEmpty else {
             logger.info("[SessionLoad] \(sessionId) — empty session, DB query took \(String(format: "%.1f", dbElapsed))ms")
-            // Still mount minis even for empty sessions so /var/minis works in terminal
+            // Still mount ze even for empty sessions so /var/ze works in terminal
             logger.info("🔍MOUNT loadSession empty-session fallback, still mounting for \(sessionId)")
-            mountMinis(for: sessionId)
+            mountZe(for: sessionId)
             return
         }
 
@@ -730,12 +730,12 @@ extension AIChatViewModel {
         let snapshotElapsed = (CFAbsoluteTimeGetCurrent() - snapshotStart) * 1000
         logger.info("[SessionLoad] \(sessionId) — Phase 3 tool snapshots: \(String(format: "%.1f", snapshotElapsed))ms (\(loadedSnapshots.count) snapshots)")
 
-        // Phase 4: Migrate offloads + mount minis
+        // Phase 4: Migrate offloads + mount ze
         let mountStart = CFAbsoluteTimeGetCurrent()
         migrateOffloadsIfNeeded(for: sessionId)
         let migrateElapsed = (CFAbsoluteTimeGetCurrent() - mountStart) * 1000
-        logger.info("🔍MOUNT loadSession Phase4 calling mountMinis for \(sessionId) (msgs=\(rawMessages.count))")
-        mountMinis(for: sessionId)
+        logger.info("🔍MOUNT loadSession Phase4 calling mountZe for \(sessionId) (msgs=\(rawMessages.count))")
+        mountZe(for: sessionId)
         let mountElapsed = (CFAbsoluteTimeGetCurrent() - mountStart) * 1000
         logger.info("🔍MOUNT loadSession Phase4 done in \(String(format: "%.1f", mountElapsed))ms")
 
@@ -993,7 +993,7 @@ extension AIChatViewModel {
         // Cache this draft VM now that it has a session ID
         ViewModelCache.shared.cacheDraft(self, sessionId: session.id)
         logger.info("🔑DRAFT [vm=\(self.vmInstanceId)] ensureSession CREATED sessionId=\(session.id) draftId=\(self.draftId ?? "nil")")
-        mountMinis(for: session.id)
+        mountZe(for: session.id)
 
         // Create initial session binding from default group → last-used → latest
         // provider + latest text model. See createInitialBinding doc for the

@@ -1,6 +1,6 @@
 //
 //  AppDelegate.swift
-//  MinisApp
+//  ZeApp
 //
 //  Minimal UIApplicationDelegate stub mounted via
 //  `@UIApplicationDelegateAdaptor` so we can receive
@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // delegate must be in place BEFORE didFinishLaunching returns, or iOS
         // never delivers a cold-launch notification tap to didReceive — the
         // app then falls through to the Launch Session preference and opens
-        // the wrong (new) session. The .onAppear registration in MinisApp
+        // the wrong (new) session. The .onAppear registration in ZeApp
         // remains as an idempotent backstop.
         ShortcutNotificationDelegate.shared.register()
 
@@ -108,7 +108,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
         }
         // [T-ios-ipad-airdrop-provider-json-no-import] Cold-launch URL
         // delivery. When the app is NOT already running and the user AirDrops
-        // (or "Open in Minis") a file, the file:// URL arrives here in
+        // (or "Open in Ze") a file, the file:// URL arrives here in
         // `connectionOptions.urlContexts` — NOT via SwiftUI `.onOpenURL`.
         // Providing this custom UIWindowSceneDelegate suppresses SwiftUI's
         // automatic URL-context bridging, so without forwarding these the
@@ -133,19 +133,19 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
     }
 
     // [T-ios-ipad-airdrop-provider-json-no-import] Warm URL delivery. When the
-    // app is ALREADY running, AirDrop / "Open in Minis" delivers the file URL
+    // app is ALREADY running, AirDrop / "Open in Ze" delivers the file URL
     // here. A custom scene delegate must implement this or the URL is dropped
     // (SwiftUI's `.onOpenURL` no longer auto-receives it). Same pipeline as the
-    // cold-launch path above and as MinisApp's `.onOpenURL`.
+    // cold-launch path above and as ZeApp's `.onOpenURL`.
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         Self.handleURLContexts(URLContexts, phase: "openURLContexts")
     }
 
     /// Route each opened URL through the shared import pipeline, mirroring
-    /// MinisApp's `.onOpenURL`: a local file goes to `ExternalFileImporter`
+    /// ZeApp's `.onOpenURL`: a local file goes to `ExternalFileImporter`
     /// (which detects Provider-export JSON and prompts import-vs-attach), and
     /// anything else falls through to `DeepLinkRouter`. Uses
-    /// `ShareCoordinator.shared` — the exact instance MinisApp injects into the
+    /// `ShareCoordinator.shared` — the exact instance ZeApp injects into the
     /// environment — so `raisePendingShare()` drives the same SwiftUI flow.
     private static func handleURLContexts(_ contexts: Set<UIOpenURLContext>, phase: String) {
         for context in contexts {

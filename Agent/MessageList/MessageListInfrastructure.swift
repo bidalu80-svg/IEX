@@ -1,6 +1,6 @@
 //
 //  MessageListInfrastructure.swift
-//  MinisApp
+//  ZeApp
 //
 //  Shared types for the V3 collection-view-based chat message list.
 //  These types were originally defined in the now-removed V1 and V2
@@ -21,7 +21,7 @@ import UIKit
 enum MessageListItem: Hashable {
     /// A complete user message, compact divider, or system info message.
     case wholeMessage(UUID)
-    /// The "sparkles Minis" label row at the top of an assistant turn.
+    /// The "sparkles Ze" label row at the top of an assistant turn.
     case assistantHeader(UUID)
     /// A single AssistantBlock within an assistant turn.
     case assistantBlock(UUID, UUID)  // (messageId, blockId)
@@ -655,7 +655,7 @@ final class NoAnimationCollectionView: UICollectionView {
             // `frame.y − contentOffset.y`. If BOTH the frame AND the offset
             // animate (the naive `UIView.animate { super.layoutSubviews() }`),
             // they interpolate on independent CA timings, so cells above the
-            // streaming one (the "Minis" header) drift — the header↔body spacing
+            // streaming one (the "Ze" header) drift — the header↔body spacing
             // jitter. Animating ONLY the offset means there is a single moving
             // quantity: every cell, header included, slides up together in
             // lock-step as the viewport eases to the bottom. No relative drift.
@@ -965,7 +965,7 @@ final class MessageListViewController: UIViewController {
                 if let table = value as? TableAttachment {
                     table.invalidateCachedLayoutForWidthChange()
                     count += 1
-                    if let lm = tv.layoutManager as? MinisLayoutManager {
+                    if let lm = tv.layoutManager as? ZeLayoutManager {
                         lm.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
                     }
                 }
@@ -1001,8 +1001,8 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var onCopyScreenshot: (() -> Void)?
     /// Read this whole reply aloud from the start (clears in-progress TTS).
     @Published var onReadAloud: (() -> Void)?
-    /// [T-selection-menu-minis-tts] Speak an arbitrary text snippet (the
-    /// selection-menu "Read Selection" action) via the Minis TTS stack.
+    /// [T-selection-menu-ze-tts] Speak an arbitrary text snippet (the
+    /// selection-menu "Read Selection" action) via the Ze TTS stack.
     @Published var onSpeakText: ((String) -> Void)?
     /// True while this reply is still streaming — disables "Read from Start".
     @Published var isStreaming: Bool = false

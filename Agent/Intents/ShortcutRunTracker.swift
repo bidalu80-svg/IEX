@@ -135,7 +135,7 @@ enum ShortcutRunTracker {
 
     // MARK: - Foreground scan (concern #3 payoff)
 
-    /// Called from MinisApp's scenePhase → .active handler. Any pending record
+    /// Called from ZeApp's scenePhase → .active handler. Any pending record
     /// still present is by definition orphaned: the Intent handed off to the
     /// agent loop and neither the loop's completion path nor a previous
     /// foreground scan reached `markCompleted`. Records older than
@@ -229,12 +229,12 @@ enum ShortcutRunTracker {
         switch category {
         case .keepAliveDisabled:
             title = String(localized: "Automation may not have completed")
-            body = String(localized: "The Shortcut sent to Minis may not have finished running in the background. Turn on Background Keep-Alive in Settings so automations can complete reliably.")
+            body = String(localized: "The Shortcut sent to Ze may not have finished running in the background. Turn on Background Keep-Alive in Settings so automations can complete reliably.")
         case .keepAliveEnabledButStillOrphaned:
             // Softer wording — the user already did the right thing; we
             // still tell them but avoid finger-pointing at their setup.
             title = String(localized: "Automation may not have completed")
-            body = String(localized: "A Shortcut sent to Minis may not have finished. Open the session to check.")
+            body = String(localized: "A Shortcut sent to Ze may not have finished. Open the session to check.")
         }
 
         let center = UNUserNotificationCenter.current()

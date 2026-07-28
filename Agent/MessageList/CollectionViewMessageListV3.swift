@@ -154,7 +154,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
 
 // MARK: - V3 Bridged Cell Views (no GeometryReader)
 
-/// Header: "✦ Minis" label at the top of each assistant turn.
+/// Header: "✦ Ze" label at the top of each assistant turn.
 /// Name comes from SOUL.md (user-editable in Soul Settings); the
 /// sparkles glyph is fixed — custom emoji is no longer supported,
 /// matching the Soul Settings UI.
@@ -174,7 +174,7 @@ private struct BridgedAssistantHeaderV3: View {
                         endPoint: .bottomTrailing
                     )
                 )
-            Text(soulMeta.name.isEmpty ? "Minis" : soulMeta.name)
+            Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(ChatColors.primaryText)
         }
@@ -226,7 +226,7 @@ private struct BridgedAssistantBlockV3: View {
                 toggleUsage()
             },
             onCopyScreenshot: { bridge.onCopyScreenshot?() },
-            // [T-selection-menu-minis-tts] Selection-menu TTS: whole-reply
+            // [T-selection-menu-ze-tts] Selection-menu TTS: whole-reply
             // replay is suppressed while this reply is still streaming (same
             // rule as the overlay context menu); Read Selection stays available.
             onReadAloud: bridge.isStreaming ? nil : bridge.onReadAloud,
@@ -1185,8 +1185,8 @@ extension CollectionViewMessageListV3 {
             bridge.onReadAloud = (message.role == .assistant)
                 ? { [weak vm] in vm?.readReplyFromStart(message) }
                 : nil
-            // [T-selection-menu-minis-tts] "Read Selection" from the text
-            // selection menu — speaks the selected snippet via the Minis TTS
+            // [T-selection-menu-ze-tts] "Read Selection" from the text
+            // selection menu — speaks the selected snippet via the Ze TTS
             // stack (sanitizer + provider voices + fail-over).
             bridge.onSpeakText = { [weak vm] text in vm?.speakText(text) }
             bridge.onCopyScreenshot = { [weak self, weak vm] in
@@ -1836,7 +1836,7 @@ extension CollectionViewMessageListV3 {
 
             // Subscribe to thinking block toggle notifications (once)
             if attachmentSizeChangedSub == nil {
-                attachmentSizeChangedSub = NotificationCenter.default.publisher(for: .minisAttachmentSizeChanged)
+                attachmentSizeChangedSub = NotificationCenter.default.publisher(for: .zeAttachmentSizeChanged)
                     .receive(on: DispatchQueue.main)
                     .sink { [weak self] notification in
                         let alog = AppLogger(category: "AttachmentSize")
@@ -2081,7 +2081,7 @@ extension CollectionViewMessageListV3 {
 
                     switch item {
                     case .assistantHeader:
-                        // Header is always a fixed "sparkles Minis" label row (measured: 28pt)
+                        // Header is always a fixed "sparkles Ze" label row (measured: 28pt)
                         layout.setEstimatedHeight(28, at: i)
 
                     case .assistantFooter:
@@ -2454,7 +2454,7 @@ extension CollectionViewMessageListV3 {
         /// calling attachmentBounds() during layout, unlike boundingRect() which
         /// uses the attachment's 1×1px placeholder image.
         /// [T-ios-decel-inv-estimate-calibration] Measure with the REAL render
-        /// engine: an offscreen SelectableMarkdownTextView (MinisLayoutManager +
+        /// engine: an offscreen SelectableMarkdownTextView (ZeLayoutManager +
         /// 4/4 textContainerInset), exactly what the live cell hosts. The
         /// previous bare-NSLayoutManager measure drifted +4..+21pt on ~30% of
         /// blocks (multi-paragraph / emoji-heading content) — debug.measureCompare

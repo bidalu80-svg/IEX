@@ -1,6 +1,6 @@
 //
 //  MountedFolderCoordinator.swift
-//  MinisApp
+//  ZeApp
 //
 //  Thin wrapper around NSFileCoordinator + FileManager for user-mounted
 //  external folders (see MountedFoldersManager). When a path descends into
@@ -25,7 +25,7 @@ enum MountedFolderCoordinator {
     // MARK: - Mount detection
 
     /// Returns true if `url` resolves to a location under any active mount.
-    /// Checks both the fakefs symlink path (/var/minis/mounts/<name>/...) and
+    /// Checks both the fakefs symlink path (/var/ze/mounts/<name>/...) and
     /// the underlying resolved host path.
     static func isUnderMount(_ url: URL) -> Bool {
         mountRoot(for: url) != nil
@@ -53,13 +53,13 @@ enum MountedFolderCoordinator {
         return false
     }
 
-    /// Returns true if `linuxPath` (a `/var/minis/mounts/<name>/...` path from
+    /// Returns true if `linuxPath` (a `/var/ze/mounts/<name>/...` path from
     /// the iSH namespace) is under a mount entry that is effectively read-only.
-    /// Compares by mount name under `/var/minis/mounts/`, so it's immune to the
+    /// Compares by mount name under `/var/ze/mounts/`, so it's immune to the
     /// firmlink / symlink / case-sensitivity edge cases that `isUnderReadOnlyMount`
     /// (which operates on resolved host URLs) has to worry about.
     static func isLinuxPathUnderReadOnlyMount(_ linuxPath: String) -> Bool {
-        let prefix = AIChatViewModel.minisMountsLinuxDir + "/"
+        let prefix = AIChatViewModel.zeMountsLinuxDir + "/"
         guard linuxPath.hasPrefix(prefix) else { return false }
         let rest = linuxPath.dropFirst(prefix.count)
         let name = rest.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true)

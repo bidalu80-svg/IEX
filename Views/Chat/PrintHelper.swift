@@ -1,6 +1,6 @@
 //
 //  PrintHelper.swift
-//  MinisApp
+//  ZeApp
 //
 //  Shared wrappers around UIPrintInteractionController so every preview
 //  surface (web/HTML, image gallery, text + markdown file previews)
@@ -44,7 +44,7 @@ enum PrintHelper {
         let controller = UIPrintInteractionController.shared
         let info = UIPrintInfo.printInfo()
         info.outputType = outputType
-        info.jobName = jobName.isEmpty ? "Minis" : jobName
+        info.jobName = jobName.isEmpty ? "Ze" : jobName
         controller.printInfo = info
         configure(controller)
         controller.present(animated: true) { _, completed, error in

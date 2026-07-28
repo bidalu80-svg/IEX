@@ -8,7 +8,7 @@ extension AIChatViewModel {
 
     /// Load full global memory content for system prompt injection.
     nonisolated static func loadGlobalMemoryFragment() -> String? {
-        let globalFile = minisMemoryPersistentDir.appendingPathComponent("GLOBAL.md")
+        let globalFile = zeMemoryPersistentDir.appendingPathComponent("GLOBAL.md")
         guard FileManager.default.fileExists(atPath: globalFile.path),
               let content = try? String(contentsOf: globalFile, encoding: .utf8),
               !content.isEmpty else { return nil }
@@ -30,7 +30,7 @@ extension AIChatViewModel {
         while fragments.count < 3 && dayOffset < maxLookback {
             let date = today.addingTimeInterval(-Double(dayOffset) * 86400)
             let dateStr = fmt.string(from: date)
-            let fileURL = minisMemoryPersistentDir.appendingPathComponent("\(dateStr).md")
+            let fileURL = zeMemoryPersistentDir.appendingPathComponent("\(dateStr).md")
 
             if fm.fileExists(atPath: fileURL.path),
                let content = try? String(contentsOf: fileURL, encoding: .utf8),
@@ -72,7 +72,7 @@ extension AIChatViewModel {
         }
 
         let fm = FileManager.default
-        let persistDir = Self.minisMemoryPersistentDir
+        let persistDir = Self.zeMemoryPersistentDir
         try? fm.createDirectory(at: persistDir, withIntermediateDirectories: true)
 
         let dateFmt = DateFormatter()
@@ -104,7 +104,7 @@ extension AIChatViewModel {
         }
 
         // Register in meta.db for iSH visibility
-        let linuxPath = "\(Self.minisMemoryLinuxDir)/\(fileName)"
+        let linuxPath = "\(Self.zeMemoryLinuxDir)/\(fileName)"
         ensureFakefsMetadata(for: linuxPath, isDirectory: false)
 
         // Enqueue for iCloud v2 sync. Reuse fileName's stem (no second
@@ -149,7 +149,7 @@ extension AIChatViewModel {
 
         var filesToSearch: [(label: String, url: URL)] = []
         let fm = FileManager.default
-        let memDir = Self.minisMemoryPersistentDir
+        let memDir = Self.zeMemoryPersistentDir
 
         var globalEmpty = false
         if scope == "all" {

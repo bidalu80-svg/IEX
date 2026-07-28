@@ -10,13 +10,13 @@ private let sheetLogger = AppLogger(category: "WebAppAddSheet")
 ///   1. Classify the host URL into `(scope, scopeContext, htmlPath)` and
 ///      persist a `WebAppShortcut` row so deep-link return can re-resolve
 ///      the file by id (or by session+path).
-///   2. Build an `https://openminis.app/launch.html?…` URL whose query
+///   2. Build an `https://ze.app/launch.html?…` URL whose query
 ///      encodes the scope-prefixed path + session + a category-driven
 ///      icon key, with the title in the fragment.
 ///   3. `UIApplication.shared.open(url)` hands the user off to Safari so
 ///      they can use Share → Add to Home Screen. The pinned tile loads
 ///      the launcher; when launched in standalone mode it deep-links back
-///      to `minis://open?session=…&path=…`, which `DeepLinkRouter` routes
+///      to `ze://open?session=…&path=…`, which `DeepLinkRouter` routes
 ///      into the immersive WebView.
 struct WebAppAddToHomeSheet: View {
     let htmlURL: URL
@@ -255,7 +255,7 @@ struct WebAppAddToHomeSheet: View {
                                   category: LauncherCategory) -> URL? {
         var components = URLComponents()
         components.scheme = "https"
-        components.host = "openminis.app"
+        components.host = "ze.app"
         components.path = "/launch.html"
 
         var items: [URLQueryItem] = [
@@ -293,7 +293,7 @@ struct WebAppAddToHomeSheet: View {
 // MARK: - Launcher category
 
 /// The 16 home-screen-tile categories. Each one maps 1:1 to:
-///   - a PNG at openminis.app/icons/category/<rawValue>.png
+///   - a PNG at ze.app/icons/category/<rawValue>.png
 ///   - the `(systemName, color)` pair shown in the iOS Category UI
 ///     (ContentView's session-category picker) so the sheet and the
 ///     home-screen tile feel like the same visual language.
@@ -384,7 +384,7 @@ private struct LauncherTilePreview: View {
             ZStack {
                 // Aurora-ish background — a lightweight on-device
                 // approximation; the actual home-screen tile uses the
-                // exact PNG from openminis.app.
+                // exact PNG from ze.app.
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(
                         LinearGradient(

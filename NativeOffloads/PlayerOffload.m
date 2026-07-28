@@ -1,6 +1,6 @@
 //
 //  PlayerOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-player`.
 //  Subcommands: play, pause, resume, seek, status, stop, list
@@ -13,7 +13,7 @@
 #include "kernel/native_offload.h"
 #include <unistd.h>
 
-#import "Minis-Swift.h"
+#import "Ze-Swift.h"
 
 static NSString *const TOOL_NAME = @"apple-player";
 
@@ -38,7 +38,7 @@ static NSString *const HELP_TEXT =
      "  -q, --quiet          Output only data field\n"
      "\n"
      "EXAMPLES:\n"
-     "  apple-player play /var/minis/workspace/video.mp4\n"
+     "  apple-player play /var/ze/workspace/video.mp4\n"
      "  apple-player pause abc123\n"
      "  apple-player seek abc123 30.5\n"
      "  apple-player status abc123\n"
@@ -63,7 +63,7 @@ static int cmd_play(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL co
     // argv paths are already translated to host paths by native_offload_exec,
     // but we also handle guest paths that start with / for robustness.
     NSString *hostPath = nil;
-    if ([guestPath hasPrefix:@"/var/minis/"] || [guestPath hasPrefix:@"/home/"] || [guestPath hasPrefix:@"/tmp/"]) {
+    if ([guestPath hasPrefix:@"/var/ze/"] || [guestPath hasPrefix:@"/home/"] || [guestPath hasPrefix:@"/tmp/"]) {
         hostPath = noff_resolve_host_path(guestPath);
     } else {
         hostPath = guestPath;

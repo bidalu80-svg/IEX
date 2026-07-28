@@ -53,7 +53,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
     var hasInflightDownloads: Bool { !inflightDownloads.isEmpty }
 
     /// Returns the chat session id owning this browser — wired by BrowserTabPool.
-    /// Downloads are saved into that session's /var/minis/workspace/ directory.
+    /// Downloads are saved into that session's /var/ze/workspace/ directory.
     var sessionIdProvider: (() -> String?)?
 
     /// Returns this tab's pool id — wired by BrowserTabPool. Diagnostics only,
@@ -116,9 +116,9 @@ final class BrowserUseManager: NSObject, ObservableObject {
 
     // MARK: - WebView Factory
 
-    /// Shared scheme handler for `minis://` URLs across all browser tabs
+    /// Shared scheme handler for `ze://` URLs across all browser tabs
     /// and in-app previews that embed a WKWebView.
-    static let sharedMinisSchemeHandler = MinisURLSchemeHandler()
+    static let sharedZeSchemeHandler = ZeURLSchemeHandler()
 
     /// Resolve the effective UA string. For `.custom` with an empty custom string,
     /// fall back to mobile Safari so WebKit never reverts to its default UA.
@@ -137,10 +137,10 @@ final class BrowserUseManager: NSObject, ObservableObject {
         config.processPool = sharedProcessPool
         config.websiteDataStore = .default()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
-        config.setURLSchemeHandler(Self.sharedMinisSchemeHandler, forURLScheme: "minis")
+        config.setURLSchemeHandler(Self.sharedZeSchemeHandler, forURLScheme: "ze")
 
         // Bridge JS window.print() to the native iOS print dialog. Injected on
-        // every page (minis:// and external http/https) at document start so a
+        // every page (ze:// and external http/https) at document start so a
         // print button works even if it fires before the page finishes loading.
         config.userContentController.addUserScript(printBridgeScript())
 
@@ -193,7 +193,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
 
     // MARK: - Print Support
 
-    nonisolated static let printMessageHandlerName = "minisPrint"
+    nonisolated static let printMessageHandlerName = "zePrint"
 
     /// Override `window.print()` to message the native side so we can present the
     /// iOS system print dialog (WKWebView ignores `window.print()` by default).
@@ -226,7 +226,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
         let printController = UIPrintInteractionController.shared
         let printInfo = UIPrintInfo.printInfo()
         printInfo.outputType = .general
-        printInfo.jobName = pageTitle.isEmpty ? "Minis" : pageTitle
+        printInfo.jobName = pageTitle.isEmpty ? "Ze" : pageTitle
         printController.printInfo = printInfo
         printController.printFormatter = webView.viewPrintFormatter()
         printController.present(animated: true) { _, completed, error in
@@ -676,10 +676,10 @@ final class BrowserUseManager: NSObject, ObservableObject {
             return .error("Invalid URL: \(urlString)")
         }
 
-        // Only allow HTTP(S) and minis:// schemes for direct navigation
+        // Only allow HTTP(S) and ze:// schemes for direct navigation
         let scheme = url.scheme?.lowercased() ?? ""
-        if !["http", "https", "minis"].contains(scheme) {
-            return .error("Cannot navigate to \(scheme):// URLs. Only http://, https://, and minis:// are supported.")
+        if !["http", "https", "ze"].contains(scheme) {
+            return .error("Cannot navigate to \(scheme):// URLs. Only http://, https://, and ze:// are supported.")
         }
 
         logger.info("[NavTiming] load_start url=\(url.absoluteString.prefix(100))")
@@ -1130,10 +1130,10 @@ final class BrowserUseManager: NSObject, ObservableObject {
         let safeDomain = rootDomain.replacingOccurrences(of: ".", with: "_")
         let envFilename = "env_cookies_\(safeDomain)_\(timestamp).sh"
         let offloadsDir = RootfsManager.shared.dataPath
-            .appendingPathComponent("var/minis/offloads", isDirectory: true)
+            .appendingPathComponent("var/ze/offloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: offloadsDir, withIntermediateDirectories: true)
         let envFileURL = offloadsDir.appendingPathComponent(envFilename)
-        let envGuestPath = "/var/minis/offloads/\(envFilename)"
+        let envGuestPath = "/var/ze/offloads/\(envFilename)"
 
         var envLines: [String] = ["#!/bin/sh"]
         var cookieHeaderParts: [String] = []
@@ -2098,7 +2098,7 @@ extension BrowserUseManager: WKNavigationDelegate {
         preferences: WKWebpagePreferences,
         decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
-        let allowedSchemes: Set<String> = ["http", "https", "about", "blob", "minis"]
+        let allowedSchemes: Set<String> = ["http", "https", "about", "blob", "ze"]
 
         // <a download> anchors (including blob: URLs) mark the action as a
         // download — route it through WKDownload instead of navigating.
@@ -2121,7 +2121,7 @@ extension BrowserUseManager: WKNavigationDelegate {
                 if let cont = self.navigationContinuation {
                     self.navigationContinuation = nil
                     cont.resume(throwing: URLError(.unsupportedURL, userInfo: [
-                        NSLocalizedDescriptionKey: "Blocked navigation to \(scheme):// — only http(s) and minis:// are allowed in the browser."
+                        NSLocalizedDescriptionKey: "Blocked navigation to \(scheme):// — only http(s) and ze:// are allowed in the browser."
                     ]))
                 }
             }
@@ -2237,7 +2237,7 @@ extension BrowserUseManager: WKDownloadDelegate {
                 completionHandler(nil)
                 return
             }
-            let dir = AIChatViewModel.minisWorkspacePersistentDir(for: sid)
+            let dir = AIChatViewModel.zeWorkspacePersistentDir(for: sid)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
             // Unique filename: name.ext, name-1.ext, name-2.ext, …
@@ -2394,25 +2394,25 @@ extension BrowserUseManager: WKScriptMessageHandler {
     }
 }
 
-// MARK: - MinisURLSchemeHandler
+// MARK: - ZeURLSchemeHandler
 
-/// Handles `minis://` URLs in WKWebView by resolving them to local files.
-/// Supports `minis://workspace/file.html`, `minis://shared/...`, etc.
-final class MinisURLSchemeHandler: NSObject, WKURLSchemeHandler {
-    private let logger = AppLogger(category: "MinisScheme")
+/// Handles `ze://` URLs in WKWebView by resolving them to local files.
+/// Supports `ze://workspace/file.html`, `ze://shared/...`, etc.
+final class ZeURLSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let logger = AppLogger(category: "ZeScheme")
 
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
         let url = urlSchemeTask.request.url!
-        logger.info("[MinisScheme] start \(url.absoluteString)")
+        logger.info("[ZeScheme] start \(url.absoluteString)")
 
-        guard let fileURL = AIChatViewModel.resolveMinisURL(url) else {
-            logger.warning("[MinisScheme] not found: \(url.absoluteString)")
+        guard let fileURL = AIChatViewModel.resolveZeURL(url) else {
+            logger.warning("[ZeScheme] not found: \(url.absoluteString)")
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
 
         guard let data = try? Data(contentsOf: fileURL) else {
-            logger.warning("[MinisScheme] read failed: \(fileURL.path)")
+            logger.warning("[ZeScheme] read failed: \(fileURL.path)")
             urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
             return
         }
@@ -2427,7 +2427,7 @@ final class MinisURLSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didReceive(response)
         urlSchemeTask.didReceive(data)
         urlSchemeTask.didFinish()
-        logger.info("[MinisScheme] served \(url.absoluteString) → \(fileURL.lastPathComponent) (\(data.count) bytes, \(mimeType))")
+        logger.info("[ZeScheme] served \(url.absoluteString) → \(fileURL.lastPathComponent) (\(data.count) bytes, \(mimeType))")
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
@@ -2532,7 +2532,7 @@ final class BrowserDownloadCenter: ObservableObject {
                              progress: progress, state: .downloading,
                              startedAt: Date(), onCancel: onCancel))
         queueAgentEvent(sessionId: sessionId, filename: filename,
-                        line: "\(filename): download started → saving to minis://workspace/\(filename)")
+                        line: "\(filename): download started → saving to ze://workspace/\(filename)")
         return id
     }
 
@@ -2542,7 +2542,7 @@ final class BrowserDownloadCenter: ObservableObject {
         entries[idx].seen = false
         let e = entries[idx]
         queueAgentEvent(sessionId: e.sessionId, filename: e.filename,
-                        line: "\(e.filename): download COMPLETED (\(sizeText)) → minis://workspace/\(e.filename) (shell path: /var/minis/workspace/\(e.filename))")
+                        line: "\(e.filename): download COMPLETED (\(sizeText)) → ze://workspace/\(e.filename) (shell path: /var/ze/workspace/\(e.filename))")
     }
 
     func failed(id: UUID, reason: String) {
@@ -2601,7 +2601,7 @@ final class BrowserDownloadCenter: ObservableObject {
             let done = ByteCountFormatter.string(fromByteCount: p.completedUnitCount, countStyle: .file)
             let total = p.totalUnitCount > 0
                 ? ByteCountFormatter.string(fromByteCount: p.totalUnitCount, countStyle: .file) : "?"
-            return "\(e.filename): downloading \(pct) (\(done) / \(total)) → saving to minis://workspace/\(e.filename)"
+            return "\(e.filename): downloading \(pct) (\(done) / \(total)) → saving to ze://workspace/\(e.filename)"
         }
         // A live progress line supersedes the same file's queued "started" line.
         lines += events.filter { !inflightNames.contains($0.filename) }.map(\.line)
@@ -2613,7 +2613,7 @@ final class BrowserDownloadCenter: ObservableObject {
             + "\nDo NOT re-download these files with curl/wget in shell_execute. "
             + "Completed files are already fully saved at the given path; for in-progress "
             + "downloads, wait and check again (e.g. via a later browser_use call or "
-            + "shell `ls -l /var/minis/workspace/`) instead of downloading in parallel."
+            + "shell `ls -l /var/ze/workspace/`) instead of downloading in parallel."
     }
 
     private func queueAgentEvent(sessionId: String, filename: String, line: String) {

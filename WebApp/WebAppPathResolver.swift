@@ -47,12 +47,12 @@ enum WebAppPathResolver {
         switch shortcut.pathScope {
         case .sessionAttachment:
             guard let sid = shortcut.scopeContext else { throw ResolveError.missingContext }
-            base = AIChatViewModel.minisAttachmentsPersistentDir(for: sid)
+            base = AIChatViewModel.zeAttachmentsPersistentDir(for: sid)
         case .sessionWorkspace:
             guard let sid = shortcut.scopeContext else { throw ResolveError.missingContext }
-            base = AIChatViewModel.minisWorkspacePersistentDir(for: sid)
+            base = AIChatViewModel.zeWorkspacePersistentDir(for: sid)
         case .shared:
-            base = AIChatViewModel.minisSharedPersistentDir
+            base = AIChatViewModel.zeSharedPersistentDir
         case .mount:
             guard let raw = shortcut.scopeContext, let mountId = UUID(uuidString: raw) else {
                 throw ResolveError.missingContext
@@ -89,7 +89,7 @@ enum WebAppPathResolver {
         let readAccessRoot: URL
         switch shortcut.pathScope {
         case .sessionAttachment, .sessionWorkspace:
-            // <minisPersistentBase>/<sid>/   ← parent of attachments/ and workspace/
+            // <zePersistentBase>/<sid>/   ← parent of attachments/ and workspace/
             readAccessRoot = base.deletingLastPathComponent()
         case .shared, .mount:
             readAccessRoot = base

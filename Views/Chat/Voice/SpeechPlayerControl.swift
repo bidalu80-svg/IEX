@@ -20,7 +20,7 @@ import UIKit
 
 struct SpeechPlayerControl: View {
     /// GLOBAL read-replies state — this control is a single app-root instance that
-    /// persists across chat → home (mounted in MinisApp beside AudioPiPCapsule).
+    /// persists across chat → home (mounted in ZeApp beside AudioPiPCapsule).
     @ObservedObject private var state = VoiceOutputState.shared
     /// Drives the "…" loading animation on the speaker while cloud TTS is
     /// synthesizing (network request in flight, nothing playing yet).

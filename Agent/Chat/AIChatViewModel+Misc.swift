@@ -3,7 +3,7 @@ import UIKit
 
 private let logger = AppLogger(category: "AIChatVM")
 
-// MARK: - Kernel Boot + Prompt Queue + Minis paths + Dynamic Max Tokens
+// MARK: - Kernel Boot + Prompt Queue + Ze paths + Dynamic Max Tokens
 
 extension AIChatViewModel {
 
@@ -40,8 +40,8 @@ extension AIChatViewModel {
 
                     // Install per-session path-translate hook. Must run
                     // before any session task is spawned so the first
-                    // /var/minis/* access already routes correctly.
-                    MinisFsRouter.shared.installHook()
+                    // /var/ze/* access already routes correctly.
+                    ZeFsRouter.shared.installHook()
                 }
                 RootfsManager.shared.applyDefaultMountOverlay()
                 Task { @MainActor in MirrorSpeedTestViewModel.shared.autoDetectOnceIfNeeded() }
@@ -97,51 +97,51 @@ extension AIChatViewModel {
         logger.info("Withdrew queued message, queue size=\(self.promptQueue.count)")
     }
 
-    // MARK: - /var/minis/ Shared Directory
+    // MARK: - /var/ze/ Shared Directory
     //
     // Unified bidirectional file area between iOS and iSH:
-    //   /var/minis/attachments/  — screenshots, images, media
-    //   /var/minis/offloads/     — large tool outputs (migrated from /var/offloads/)
-    //   /var/minis/workspace/    — general session working area
+    //   /var/ze/attachments/  — screenshots, images, media
+    //   /var/ze/offloads/     — large tool outputs (migrated from /var/offloads/)
+    //   /var/ze/workspace/    — general session working area
     //
-    // Persistent storage: Library/MinisChat/minis/<sessionId>/{attachments,offloads,workspace}/
-    // iSH-visible path:   /var/minis/{attachments,offloads,workspace}/  (session-unaware)
+    // Persistent storage: Library/ZeChat/ze/<sessionId>/{attachments,offloads,workspace}/
+    // iSH-visible path:   /var/ze/{attachments,offloads,workspace}/  (session-unaware)
     //
     // On session load/switch, the current session's files are synced into the
-    // iSH-visible directory so the model and shell commands always see /var/minis/.
+    // iSH-visible directory so the model and shell commands always see /var/ze/.
 
-    nonisolated static let minisLinuxBaseDir = "/var/minis"
-    nonisolated static let minisAttachmentsLinuxDir = "/var/minis/attachments"
-    nonisolated static let minisOffloadsLinuxDir = "/var/minis/offloads"
-    nonisolated static let minisWorkspaceLinuxDir = "/var/minis/workspace"
-    nonisolated static let minisBrowserLinuxDir = "/var/minis/browser"
-    nonisolated static let minisMemoryLinuxDir = "/var/minis/memory"
-    nonisolated static let minisSkillsLinuxDir = "/var/minis/skills"
-    nonisolated static let minisSharedLinuxDir = "/var/minis/shared"
-    nonisolated static let minisMcpServersLinuxDir = "/var/minis/mcp-servers"
-    nonisolated static let minisMountsLinuxDir = "/var/minis/mounts"
+    nonisolated static let zeLinuxBaseDir = "/var/ze"
+    nonisolated static let zeAttachmentsLinuxDir = "/var/ze/attachments"
+    nonisolated static let zeOffloadsLinuxDir = "/var/ze/offloads"
+    nonisolated static let zeWorkspaceLinuxDir = "/var/ze/workspace"
+    nonisolated static let zeBrowserLinuxDir = "/var/ze/browser"
+    nonisolated static let zeMemoryLinuxDir = "/var/ze/memory"
+    nonisolated static let zeSkillsLinuxDir = "/var/ze/skills"
+    nonisolated static let zeSharedLinuxDir = "/var/ze/shared"
+    nonisolated static let zeMcpServersLinuxDir = "/var/ze/mcp-servers"
+    nonisolated static let zeMountsLinuxDir = "/var/ze/mounts"
 
-    /// iOS persistent base for all minis data (Library/MinisChat/minis/).
-    nonisolated static var minisPersistentBase: URL {
+    /// iOS persistent base for all ze data (Library/ZeChat/ze/).
+    nonisolated static var zePersistentBase: URL {
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        return lib.appendingPathComponent("MinisChat/minis", isDirectory: true)
+        return lib.appendingPathComponent("ZeChat/ze", isDirectory: true)
     }
 
     /// Persistent storage directory for a specific session's offloads.
-    nonisolated static func minisOffloadsPersistentDir(for sid: String) -> URL {
-        minisPersistentBase.appendingPathComponent(sid, isDirectory: true)
+    nonisolated static func zeOffloadsPersistentDir(for sid: String) -> URL {
+        zePersistentBase.appendingPathComponent(sid, isDirectory: true)
             .appendingPathComponent("offloads", isDirectory: true)
     }
 
     /// Persistent storage directory for a specific session's attachments.
-    nonisolated static func minisAttachmentsPersistentDir(for sid: String) -> URL {
-        minisPersistentBase.appendingPathComponent(sid, isDirectory: true)
+    nonisolated static func zeAttachmentsPersistentDir(for sid: String) -> URL {
+        zePersistentBase.appendingPathComponent(sid, isDirectory: true)
             .appendingPathComponent("attachments", isDirectory: true)
     }
 
     /// Persistent storage directory for a specific session's uploaded attachments.
-    static func minisUploadsDir(for sid: String) -> URL {
-        minisAttachmentsPersistentDir(for: sid)
+    static func zeUploadsDir(for sid: String) -> URL {
+        zeAttachmentsPersistentDir(for: sid)
             .appendingPathComponent("uploads", isDirectory: true)
     }
 

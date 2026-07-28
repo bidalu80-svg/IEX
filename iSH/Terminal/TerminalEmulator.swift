@@ -1,6 +1,6 @@
 //
 //  TerminalEmulator.swift
-//  MinisApp
+//  ZeApp
 //
 //  Core terminal emulator: connects ANSIParser → TerminalBuffer, handles all sequences
 //
@@ -570,9 +570,9 @@ final class TerminalEmulator: ObservableObject {
             break
         case 2: // Set Window Title
             title = payload
-        case 1337: // iTerm2 proprietary — used by /usr/local/bin/minis-open
-            // Payload looks like `MinisOpenURL=https://example.com`. Forward
-            // the URL to MinisOpenURLBroker so the host can present the in-app
+        case 1337: // iTerm2 proprietary — used by /usr/local/bin/ze-open
+            // Payload looks like `ZeOpenURL=https://example.com`. Forward
+            // the URL to ZeOpenURLBroker so the host can present the in-app
             // WKWebView preview. ANSIParser already stripped the ESC]…BEL
             // envelope, so `payload` is just `key=value` here.
             handleITermOSC(payload: payload)
@@ -582,10 +582,10 @@ final class TerminalEmulator: ObservableObject {
     }
 
     private func handleITermOSC(payload: String) {
-        // Payload is `key=value` — we only recognise `MinisOpenURL=<url>`,
-        // emitted by `/usr/local/bin/minis-open` in the rootfs overlay.
+        // Payload is `key=value` — we only recognise `ZeOpenURL=<url>`,
+        // emitted by `/usr/local/bin/ze-open` in the rootfs overlay.
         guard let eq = payload.firstIndex(of: "="),
-              payload[..<eq] == "MinisOpenURL" else { return }
+              payload[..<eq] == "ZeOpenURL" else { return }
         let urlString = String(payload[payload.index(after: eq)...])
         guard !urlString.isEmpty, let url = URL(string: urlString) else { return }
         // The broker is @MainActor. `feed()` is already called on the main
@@ -593,8 +593,8 @@ final class TerminalEmulator: ObservableObject {
         // through a `Task { @MainActor }` keeps the compiler happy without
         // an explicit `DispatchQueue.main` dance.
         Task { @MainActor in
-            guard MinisOpenURLBroker.isSupportedScheme(url.scheme) else { return }
-            MinisOpenURLBroker.shared.offer(url)
+            guard ZeOpenURLBroker.isSupportedScheme(url.scheme) else { return }
+            ZeOpenURLBroker.shared.offer(url)
         }
     }
 

@@ -1,6 +1,6 @@
 //
 //  ISHShellExecutor.m
-//  MinisApp
+//  ZeApp
 //
 //  Shell execution implementation with line-by-line output and process completion
 //
@@ -125,7 +125,7 @@ static dispatch_once_t _onceToken;
     // command string ends exactly at the terminator with no trailing "\n"
     // (e.g. `python3 <<'EOF'\n…\nEOF`), ash keeps waiting for the terminator,
     // hits end-of-input, and fails with `unexpected end of file (expecting ")")`
-    // — a 100% deterministic failure for any heredoc-terminated command.
+    // — a 100% deterzetic failure for any heredoc-terminated command.
     // Appending a newline is harmless for every other command (a trailing blank
     // line is a no-op in sh) and fixes the heredoc case. Applies to ALL
     // shell_execute commands since they all funnel through here.
@@ -373,8 +373,8 @@ static dispatch_once_t _onceToken;
     // Python's stdlib `webbrowser` module honours $BROWSER before probing
     // $DISPLAY, so setting it here lets `python -c "import webbrowser;
     // webbrowser.open(...)"` and similar non-login shell invocations reach
-    // /usr/local/bin/minis-open which emits an OSC marker parsed by the host.
-    ENVP_APPEND("BROWSER=/usr/local/bin/minis-open");
+    // /usr/local/bin/ze-open which emits an OSC marker parsed by the host.
+    ENVP_APPEND("BROWSER=/usr/local/bin/ze-open");
 
     // Inject device timezone so iSH userspace sees local time.
     // Use POSIX TZ format with a fixed name to avoid abbreviations like "GMT+8"

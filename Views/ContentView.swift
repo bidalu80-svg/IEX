@@ -144,10 +144,10 @@ struct ContentView: View {
     /// when `sessions` changes (see .onChange below).
     @State private var sessionsByIdCache: [String: ChatSession] = [:]
     /// Soul name shown as the sidebar title. Sourced from SOUL.md, falls
-    /// back to "Minis". Refreshed whenever SoulStore posts .soulMdChanged.
+    /// back to "Ze". Refreshed whenever SoulStore posts .soulMdChanged.
     @State private var soulName: String = SoulStore.cachedMetadata.name.isEmpty
-        ? "Minis" : SoulStore.cachedMetadata.name
-    /// Subtitle state shown under the "Minis" sidebar title. nil hides the
+        ? "Ze" : SoulStore.cachedMetadata.name
+    /// Subtitle state shown under the "Ze" sidebar title. nil hides the
     /// row; otherwise it renders as small capsules per type or a single
     /// status string. Refreshed by a 5s timer.
     @State private var migrationSubtitle: SyncSubtitleState?
@@ -182,7 +182,7 @@ struct ContentView: View {
     // on every body transaction is a use-after-free hazard: a 5s tick delivered into
     // the sink while the graph tears down/rebuilds that attribute releases a dangling
     // sink closure (crash below). Replaced with a `.task`-driven async loop whose
-    // lifetime SwiftUI owns and cancels deterministically — no graph-bound publisher.
+    // lifetime SwiftUI owns and cancels deterzetically — no graph-bound publisher.
     // See migrationSubtitleRefreshInterval / migrationSubtitleLoop.
     @State private var remoteDeviceSessions: [(device: SyncDevice, sessions: [ChatSession])] = []
     // showSettings consolidated into activeToolSheet (.settings)
@@ -698,7 +698,7 @@ struct ContentView: View {
             // the outgoing vm (any @Published delta, scroll signal, etc.)
             // races with `AG::Subgraph::NodeCache::~NodeCache` on the same
             // AsyncRenderer thread → EXC_BAD_ACCESS (build-48 crash
-            // Minis-2026-06-01-134710.ips). Suspend the outgoing vm here,
+            // Ze-2026-06-01-134710.ips). Suspend the outgoing vm here,
             // then schedule a resume on a short delay so when the user comes
             // back to that session everything catches up. Run before the
             // redirect/tracking-clear logic so we always pin the right id.
@@ -1146,7 +1146,7 @@ struct ContentView: View {
         // releases the dangling sink closure → use-after-free (KERN_PROTECTION_FAILURE
         // in _AppearanceActionModifier.MergedCallbacks.updateValue → swift_release_dealloc).
         // The `.task` loop has no graph-bound publisher: SwiftUI owns the Task's
-        // lifetime by view identity and cancels it deterministically on teardown, so
+        // lifetime by view identity and cancels it deterzetically on teardown, so
         // there is no sink to release mid-transaction. The loop also parks while the
         // app is backgrounded (the crash reproduced with the app in the background).
         // refreshMigrationSubtitle is idempotent (Task{@MainActor} + diff-before-assign).
@@ -1159,7 +1159,7 @@ struct ContentView: View {
         // and can't drop a .soulMdChanged notification arriving during reconstruction.
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
             let n = SoulStore.cachedMetadata.name
-            soulName = n.isEmpty ? "Minis" : n
+            soulName = n.isEmpty ? "Ze" : n
         }
     }
 
@@ -1445,7 +1445,7 @@ struct ContentView: View {
                 if migrationSubtitle != next { migrationSubtitle = next }
             } else {
                 // No active sync work — hide the subtitle entirely so the
-                // "Minis" title sits at its normal size.
+                // "Ze" title sits at its normal size.
                 if migrationSubtitle != nil { migrationSubtitle = nil }
             }
         }
@@ -1474,7 +1474,7 @@ struct ContentView: View {
             .map { (label: $0.0, count: $0.1) }
     }
 
-    /// Tiny indicator next to the "Minis" title showing the sync state.
+    /// Tiny indicator next to the "Ze" title showing the sync state.
     @ViewBuilder
     private func titleSyncIndicator(for state: SyncSubtitleState?) -> some View {
         switch state {
@@ -1578,7 +1578,7 @@ struct ContentView: View {
                     if #available(iOS 17.0, *) { return SyncV2Bootstrap.isEnabled }
                     return false
                 }()
-                // Title text comes from SOUL.md (falls back to "Minis"). The
+                // Title text comes from SOUL.md (falls back to "Ze"). The
                 // leading sync indicator floats as an overlay so it doesn't
                 // take layout space — title stays perfectly centered in the
                 // navigation bar regardless of whether the indicator is visible.
@@ -2094,7 +2094,7 @@ struct ContentView: View {
                 .padding(.bottom, 4)
 
             VStack(spacing: 8) {
-                Text("Welcome to Minis")
+                Text("Welcome to Ze")
                     .font(.title2.bold())
                 Text("Your first On-Device Agent is almost ready.")
                     .font(.subheadline)
@@ -2667,8 +2667,8 @@ struct ContentView: View {
     private nonisolated static func computeDeleteInfo(for ids: Set<String>, totalSessions: Int) -> DeleteInfo {
         let fm = FileManager.default
         let libBase = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let minisBase = libBase.appendingPathComponent("MinisChat/minis", isDirectory: true)
-        let dbPath = libBase.appendingPathComponent("MinisChat/minis.db")
+        let zeBase = libBase.appendingPathComponent("ZeChat/ze", isDirectory: true)
+        let dbPath = libBase.appendingPathComponent("ZeChat/ze.db")
 
         var totalSize: Int64 = 0
         var allFileNames: [String] = []
@@ -2682,7 +2682,7 @@ struct ContentView: View {
         }
 
         for id in ids {
-            let sessionDir = minisBase.appendingPathComponent(id, isDirectory: true)
+            let sessionDir = zeBase.appendingPathComponent(id, isDirectory: true)
             if let enumerator = fm.enumerator(at: sessionDir, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
                 for case let fileURL as URL in enumerator {
                     let vals = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
@@ -2757,11 +2757,11 @@ struct ContentView: View {
         }
     }
 
-    /// Remove persistent minis files for a session (Library/MinisChat/minis/<sessionId>/).
+    /// Remove persistent ze files for a session (Library/ZeChat/ze/<sessionId>/).
     private func deleteSessionFiles(_ sessionId: String) {
         let fm = FileManager.default
         let base = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("MinisChat/minis", isDirectory: true)
+            .appendingPathComponent("ZeChat/ze", isDirectory: true)
             .appendingPathComponent(sessionId, isDirectory: true)
         try? fm.removeItem(at: base)
         BrowserTabPool.deletePersistedData(for: sessionId)
@@ -2809,7 +2809,7 @@ struct ContentView: View {
 
             // Per-export workspace under tmp
             let tmpRoot = FileManager.default.temporaryDirectory
-                .appendingPathComponent("minis-export-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("ze-export-\(UUID().uuidString)", isDirectory: true)
             let workDir = tmpRoot.appendingPathComponent("payload", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
@@ -2824,7 +2824,7 @@ struct ContentView: View {
                     .replacingOccurrences(of: "/", with: "-")
                     .replacingOccurrences(of: ":", with: "-")
             } else {
-                baseName = "minis-sessions-\(ids.count)"
+                baseName = "ze-sessions-\(ids.count)"
             }
             let payloadURL = workDir.appendingPathComponent("\(baseName).\(ext)")
 
@@ -3103,7 +3103,7 @@ struct ContentView: View {
                 done += 1
                 if msg.isToolResultOnly { continue }
 
-                let role = msg.role == .user ? "User" : "Minis"
+                let role = msg.role == .user ? "User" : "Ze"
                 let time = timeFmt.string(from: msg.createdAt)
                 var parts: [String] = []
                 for part in msg.parts {
@@ -3471,8 +3471,8 @@ private struct ShareSheet: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIActivityViewController {
         // [T-share-sheet-uti] Defense against ShareKit's
         // UTTypeGetForIdentifier assert on Mac Catalyst — see
-        // MinisShareSheet.sanitizedShareURL for context.
-        let safeURL = MinisShareSheet.sanitizedShareURL(url) ?? url
+        // ZeShareSheet.sanitizedShareURL for context.
+        let safeURL = ZeShareSheet.sanitizedShareURL(url) ?? url
         return UIActivityViewController(activityItems: [safeURL], applicationActivities: nil)
     }
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
@@ -3650,7 +3650,7 @@ private struct SessionContextMenu: View, Equatable {
             let title = (key.title ?? "Untitled").prefix(60)
             let subject = "Content Report: \(title)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
             let msgBody = "Session: \(key.sid)\n\nPlease describe the issue:\n".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            if let url = URL(string: "mailto:dev@openminis.app?subject=\(subject)&body=\(msgBody)") {
+            if let url = URL(string: "mailto:dev@ze.app?subject=\(subject)&body=\(msgBody)") {
                 UIApplication.shared.open(url)
             }
         } label: {
@@ -4695,7 +4695,7 @@ private struct AppearanceSettingsView: View {
                     Button {
                         // Persist a reopen-hint BEFORE flipping appLanguage —
                         // the @AppStorage write triggers the root
-                        // `.id(appLanguage)` rebuild in MinisApp.swift, which
+                        // `.id(appLanguage)` rebuild in ZeApp.swift, which
                         // drops the entire view tree including the Settings
                         // sheet. ContentView/SettingsSheet read this flag on
                         // re-mount and reopen the sheet + push back to the
@@ -4785,7 +4785,6 @@ private enum SettingsDestination: Hashable {
     case logs
     case appearance
     case background
-    case about
     case permissions
     case environments
     // [T-mcp-oauth-deeplink]
@@ -4799,7 +4798,6 @@ private struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var navPath = NavigationPath()
-    @State private var showFeedbackDialog = false
 
     var body: some View {
         NavigationStack(path: $navPath) {
@@ -5024,59 +5022,6 @@ private struct SettingsSheet: View {
                     }
                 }
 
-                Section("About") {
-                    NavigationLink {
-                        AboutView()
-                    } label: {
-                        Label {
-                            Text("About Minis")
-                        } icon: {
-                            Image(systemName: "info")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.indigo, in: Circle())
-                        }
-                    }
-                    Link(destination: URL(string: "https://openminis.github.io/privacy-policy.html")!) {
-                        Label {
-                            Text("Privacy Policy")
-                        } icon: {
-                            Image(systemName: "hand.raised")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.teal, in: Circle())
-                        }
-                    }
-                    Button {
-                        showFeedbackDialog = true
-                    } label: {
-                        Label {
-                            Text("Feedback")
-                        } icon: {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.indigo, in: Circle())
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                    .confirmationDialog("Feedback", isPresented: $showFeedbackDialog, titleVisibility: .visible) {
-                        Button("Report a Bug (GitHub)") {
-                            if let url = Self.makeBugReportURL() { UIApplication.shared.open(url) }
-                        }
-                        Button("Feedback (Telegram)") {
-                            if let url = URL(string: "https://t.me/+2NzhOJuzRyI1YmM1") { UIApplication.shared.open(url) }
-                        }
-                        Button("Feedback (Email)") {
-                            if let url = Self.makeFeedbackEmailURL() { UIApplication.shared.open(url) }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    }
-                }
-
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -5118,8 +5063,6 @@ private struct SettingsSheet: View {
                     AppearanceSettingsView()
                 case .background:
                     EnhancedBackgroundSettingsView()
-                case .about:
-                    AboutView()
                 case .environments:
                     EnvironmentVariablesView()
                 case .permissions:
@@ -5214,8 +5157,6 @@ private struct SettingsSheet: View {
             navPath.append(SettingsDestination.appearance)
         case .background:
             navPath.append(SettingsDestination.background)
-        case .about:
-            navPath.append(SettingsDestination.about)
         case .permissions:
             navPath.append(SettingsDestination.permissions)
         case .environments:
@@ -5228,107 +5169,6 @@ private struct SettingsSheet: View {
         deepLink.pendingSettingsTarget = nil
     }
 
-    /// Compose the feedback mailto URL with a prefilled body that includes
-    /// app version, iOS version, and a machine identifier, plus a prompt
-    /// asking the user to attach a screenshot manually (mailto:// can't
-    /// auto-attach). Using URLComponents so the subject and body go through
-    /// proper URL encoding without hand-rolling addingPercentEncoding calls.
-    fileprivate static func makeFeedbackEmailURL() -> URL? {
-        let bundle = Bundle.main
-        let appVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = bundle.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        let iosVersion = UIDevice.current.systemVersion
-        let device = machineIdentifier()
-
-        let body = """
-        Please describe your feedback:
-
-
-        ---
-        App Version: \(appVersion) (\(build))
-        iOS Version: \(iosVersion)
-        Device: \(device)
-
-        Screenshot (optional): Please attach a screenshot if relevant.
-        """
-
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.path = "dev@openminis.app"
-        components.queryItems = [
-            URLQueryItem(name: "subject", value: "Minis Feedback"),
-            URLQueryItem(name: "body", value: body),
-        ]
-        return components.url
-    }
-
-    /// Build the GitHub Issue URL with a bilingual bug-report template
-    /// pre-filled with platform / OS / app / device info. SwiftUI `Link`
-    /// hands the URL to UIApplication.shared.open, which routes to Safari.
-    fileprivate static func makeBugReportURL() -> URL? {
-        let bundle = Bundle.main
-        let appVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = bundle.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        let iosVersion = UIDevice.current.systemVersion
-        let device = machineIdentifier()
-
-        let body = """
-        ## 📝 Problem Summary
-
-        <!-- Briefly describe the issue you encountered -->
-
-
-        ## 📱 Basic Information
-
-        | Field | Value |
-        |-------|-------|
-        | Platform | iOS |
-        | OS Version | iOS \(iosVersion) |
-        | Minis Version | \(appVersion) (build \(build)) |
-        | Device Model | \(device) |
-
-        ## 🔁 Steps to Reproduce
-
-        1.
-        2.
-        3.
-
-        ## ❌ Error Details
-
-        ```
-        paste error here
-        ```
-
-        ## ✅ Expected Behavior
-
-
-
-        ## 🗂️ Additional Information
-
-        """
-
-        var components = URLComponents(string: "https://github.com/OpenMinis/OpenMinis/issues/new")
-        components?.queryItems = [
-            URLQueryItem(name: "template", value: "bug_report.md"),
-            URLQueryItem(name: "title", value: "[Bug] "),
-            URLQueryItem(name: "body", value: body),
-        ]
-        return components?.url
-    }
-
-    /// Returns the hardware model identifier, e.g. "iPhone16,2".
-    /// `UIDevice.current.model` returns the generic "iPhone" / "iPad" and
-    /// isn't useful in a bug report, so we fall back to utsname.
-    private static func machineIdentifier() -> String {
-        var sys = utsname()
-        uname(&sys)
-        let id = withUnsafePointer(to: &sys.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: Int(_SYS_NAMELEN)) {
-                String(cString: $0)
-            }
-        }
-        return id.isEmpty ? UIDevice.current.model : id
-    }
 }
 
 #Preview {

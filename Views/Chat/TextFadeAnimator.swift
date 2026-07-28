@@ -1,5 +1,5 @@
 //  TextFadeAnimator.swift
-//  Minis
+//  Ze
 //
 //  Word-by-word fade-in animation for streaming Markdown output.
 //
@@ -9,7 +9,7 @@
 //  with a small per-word stagger, producing a "ripple" reveal.
 //
 //  Design constraints (see /tmp/task_word_fade_animation.md):
-//   - Display-layer only. Does NOT touch MinisMarkdownParser / AST /
+//   - Display-layer only. Does NOT touch ZeMarkdownParser / AST /
 //     MarkdownNSRenderer. We mutate the live NSTextStorage's `.foregroundColor`
 //     attribute and rely on TextKit 1's behaviour that a foregroundColor change
 //     does NOT invalidate layout (no `ensureLayout` reflow) — only a redraw.

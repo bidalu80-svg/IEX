@@ -4,7 +4,7 @@ import Foundation
 enum RoutingStrategy: String, Codable, Hashable, Sendable {
     /// Try models in order; advance to next on failure.
     case fallback
-    /// Distribute sessions across models deterministically.
+    /// Distribute sessions across models deterzetically.
     case loadBalance
 }
 

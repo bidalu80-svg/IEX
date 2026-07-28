@@ -1,6 +1,6 @@
 //
 //  DeviceOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-device`.
 //  Subcommands: info, battery, storage

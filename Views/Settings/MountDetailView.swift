@@ -1,6 +1,6 @@
 //
 //  MountDetailView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Unified detail page for both "Shared Folders" (shared/skills/memory) and
 //  "Mount External Folders" (user-picked external directories). Provides:
@@ -222,7 +222,7 @@ struct MountDetailView: View {
         } header: {
             Text("Name")
         } footer: {
-            Text("Becomes the folder name under /var/minis/mounts/")
+            Text("Becomes the folder name under /var/ze/mounts/")
         }
     }
 
@@ -251,7 +251,7 @@ struct MountDetailView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Show in Files app")
                     Text(visibleInFiles
-                         ? String(localized: "This folder appears in Files → On My iPhone → Minis.")
+                         ? String(localized: "This folder appears in Files → On My iPhone → Ze.")
                          : String(localized: "This folder is hidden from the iOS Files app."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -340,7 +340,7 @@ struct MountDetailView: View {
     }
 
     private func signalFileProviderRoot() {
-        let domainIdentifier = NSFileProviderDomainIdentifier("com.openminis.app.files")
+        let domainIdentifier = NSFileProviderDomainIdentifier("com.ze.app.files")
         NSFileProviderManager.getDomainsWithCompletionHandler { domains, _ in
             guard let domain = domains.first(where: { $0.identifier == domainIdentifier }) else {
                 return

@@ -1,6 +1,6 @@
 //
 //  TerminalTypes.swift
-//  MinisApp
+//  ZeApp
 //
 //  Data structures for the terminal emulator
 //

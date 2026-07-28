@@ -1,6 +1,6 @@
 //
 //  FFmpegOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler that routes iSH `ffmpeg` commands to
 //  FFmpeg.framework's ffmpeg_main(). Stdin/stdout/stderr are redirected

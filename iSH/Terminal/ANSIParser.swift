@@ -1,6 +1,6 @@
 //
 //  ANSIParser.swift
-//  MinisApp
+//  ZeApp
 //
 //  VT100/xterm escape sequence parser (state machine)
 //

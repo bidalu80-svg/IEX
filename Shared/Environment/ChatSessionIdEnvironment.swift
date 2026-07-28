@@ -1,6 +1,6 @@
 //
 //  ChatSessionIdEnvironment.swift
-//  MinisApp
+//  ZeApp
 //
 //  SwiftUI environment key used to propagate the current chat sessionId
 //  down to nested tool sheets, media previews, and URL handlers that

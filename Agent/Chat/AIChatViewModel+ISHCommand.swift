@@ -84,7 +84,7 @@ extension AIChatViewModel {
         // trailing newline fails with "unexpected end of file". Guarantee one.
         let normalized = script.hasSuffix("\n") ? script : script + "\n"
         let b64 = Data(normalized.utf8).base64EncodedString()
-        let f = "/tmp/.minis-exec-$$.sh"
+        let f = "/tmp/.ze-exec-$$.sh"
         let wrapped = "command -v bash >/dev/null 2>&1 || exit \(Self.bashMissingSentinel); "
             + "printf %s '\(b64)' | base64 -d > \(f) && bash \(f); rc=$?; rm -f \(f); exit $rc"
         let result = try await runRaw(wrapped, sessionId: sid, timeout: timeout, lineCallback: lineCallback)

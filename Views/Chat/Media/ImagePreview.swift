@@ -1,6 +1,6 @@
 //
 //  ImagePreview.swift
-//  MinisApp
+//  ZeApp
 //
 //  In-bubble zoomable image + fullscreen image preview with pinch/zoom/
 //  drag/save/share. Extracted from AIChatView.swift.
@@ -412,7 +412,7 @@ struct ImagePreviewView: View {
             )
             .ignoresSafeArea()
 
-            // Top bar overlay — inside ZStack to match MinisVideoFullscreenPlayer
+            // Top bar overlay — inside ZStack to match ZeVideoFullscreenPlayer
             // zIndex ensures buttons sit above gesture layers on iPad
             VStack {
                 HStack {
@@ -505,7 +505,7 @@ struct ImagePreviewView: View {
         }
         .sheet(isPresented: $showShareSheet) {
             if let data = image.pngData(), let tmpURL = Self.writeTempImageFile(data: data) {
-                MinisShareSheet(url: tmpURL)
+                ZeShareSheet(url: tmpURL)
             }
         }
         .statusBar(hidden: true)

@@ -1,6 +1,6 @@
 //
 //  PhotosOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-photos` — PhotoKit framework.
 //

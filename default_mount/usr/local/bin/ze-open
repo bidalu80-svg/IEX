@@ -1,0 +1,86 @@
+#!/bin/sh
+# ze-open — ZeApp URL interceptor for iSH.
+#
+# Stands in for xdg-open / sensible-browser / www-browser / BROWSER, and also
+# doubles as the in-app preview opener for chat resources. Any argument is
+# emitted to stdout wrapped in an OSC 1337 escape sequence that the ZeApp
+# host parses and routes to the appropriate built-in viewer:
+#
+#   * http:// https:// about:*                 → WKWebView link preview
+#   * /var/ze/<host>/<path>  (absolute)     → converted to ze://<host>/<path>
+#     ze://attachments/...  ze://workspace/...  ze://shared/... etc.
+#                                              → routed by extension:
+#                                                 images → image viewer
+#                                                 markdown → markdown preview
+#                                                 html → html preview
+#                                                 pdf/office → QuickLook
+#                                                 audio/video → media player
+#                                                 else → share sheet
+#
+# Protocol: ESC ] 1337 ; ZeOpenURL = <url> BEL
+#   - ESC = 0x1B, BEL = 0x07
+#   - Host scanner strips the whole sequence from the displayed output.
+#
+# Exit 0 always when we emitted something: the caller should believe the
+# viewer was opened.
+
+set -e
+
+ESC=$(printf '\033')
+BEL=$(printf '\007')
+
+emit_marker() {
+    printf '%s]1337;ZeOpenURL=%s%s\n' "$ESC" "$1" "$BEL"
+}
+
+emit() {
+    case "$1" in
+        http://*|https://*|about:*)
+            emit_marker "$1"
+            printf 'Opened in Ze browser: %s\n' "$1"
+            ;;
+        ze://*)
+            # Already a ze:// URL — pass through.
+            emit_marker "$1"
+            printf 'Opened in Ze preview: %s\n' "$1"
+            ;;
+        /var/ze/*)
+            # Convert /var/ze/<host>/<path> → ze://<host>/<path>
+            # so the host can resolve it to the real APFS location and pick
+            # the right in-app preview by extension.
+            rel="${1#/var/ze/}"
+            case "$rel" in
+                */*)
+                    host="${rel%%/*}"
+                    path="${rel#*/}"
+                    emit_marker "ze://$host/$path"
+                    printf 'Opened in Ze preview: ze://%s/%s\n' "$host" "$path"
+                    ;;
+                *)
+                    # e.g. /var/ze/workspace with no trailing path — a bare
+                    # directory. Not previewable; treat as non-URL.
+                    printf 'ze-open: not a previewable resource: %s\n' "$1" >&2
+                    return 0
+                    ;;
+            esac
+            ;;
+        *)
+            # Non-URL, non-/var/ze path: print a hint but don't fail — mimic
+            # xdg-open best-effort so shell scripts that chain it don't abort.
+            printf 'ze-open: not a URL or chat resource, ignoring: %s\n' "$1" >&2
+            return 0
+            ;;
+    esac
+}
+
+if [ $# -eq 0 ]; then
+    echo "Usage: ze-open <url-or-path>" >&2
+    echo "  url-or-path: http(s):// URL, ze:// URL, or /var/ze/<host>/<path>" >&2
+    exit 1
+fi
+
+for arg in "$@"; do
+    emit "$arg"
+done
+
+exit 0

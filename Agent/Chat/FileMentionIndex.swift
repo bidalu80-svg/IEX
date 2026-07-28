@@ -1,6 +1,6 @@
 //
 //  FileMentionIndex.swift
-//  MinisApp
+//  ZeApp
 //
 //  Backing index for the chat input's `@` file-mention feature.
 //  Layered scan (session → shared → mounts) with 10-minute cache and
@@ -52,7 +52,7 @@ struct FileMentionEntry: Identifiable, Equatable, Hashable {
         }
     }
 
-    /// iSH-visible path (e.g. `/var/minis/workspace/foo/bar.py`). Inserted into input.
+    /// iSH-visible path (e.g. `/var/ze/workspace/foo/bar.py`). Inserted into input.
     let linuxPath: String
     let scope: Scope
     /// Name of the specific mount (only set for `.mount`), used for grouping.
@@ -68,9 +68,9 @@ struct FileMentionEntry: Identifiable, Equatable, Hashable {
         (linuxPath as NSString).lastPathComponent
     }
 
-    /// Path shown in the menu (strips the `/var/minis/` prefix for density).
+    /// Path shown in the menu (strips the `/var/ze/` prefix for density).
     var displayPath: String {
-        let prefix = "/var/minis/"
+        let prefix = "/var/ze/"
         if linuxPath.hasPrefix(prefix) {
             return String(linuxPath.dropFirst(prefix.count))
         }
@@ -119,7 +119,7 @@ final class FileMentionIndex: ObservableObject {
 
     private var lastScanAt: Date?
     private var lastScannedSessionId: String?
-    private var scanQueue = DispatchQueue(label: "com.openminis.filementionindex", qos: .userInitiated)
+    private var scanQueue = DispatchQueue(label: "com.ze.filementionindex", qos: .userInitiated)
     /// Monotonic token — cancels stale scans when a new one starts.
     private var currentScanToken: UUID?
 
@@ -375,14 +375,14 @@ final class FileMentionIndex: ObservableObject {
         return [
             ScanRoot(
                 scope: .workspace,
-                hostURL: AIChatViewModel.minisWorkspacePersistentDir(for: sid),
-                linuxPrefix: AIChatViewModel.minisWorkspaceLinuxDir,
+                hostURL: AIChatViewModel.zeWorkspacePersistentDir(for: sid),
+                linuxPrefix: AIChatViewModel.zeWorkspaceLinuxDir,
                 mountName: nil
             ),
             ScanRoot(
                 scope: .attachments,
-                hostURL: AIChatViewModel.minisAttachmentsPersistentDir(for: sid),
-                linuxPrefix: AIChatViewModel.minisAttachmentsLinuxDir,
+                hostURL: AIChatViewModel.zeAttachmentsPersistentDir(for: sid),
+                linuxPrefix: AIChatViewModel.zeAttachmentsLinuxDir,
                 mountName: nil
             ),
         ]
@@ -392,20 +392,20 @@ final class FileMentionIndex: ObservableObject {
         [
             ScanRoot(
                 scope: .shared,
-                hostURL: AIChatViewModel.minisSharedPersistentDir,
-                linuxPrefix: AIChatViewModel.minisSharedLinuxDir,
+                hostURL: AIChatViewModel.zeSharedPersistentDir,
+                linuxPrefix: AIChatViewModel.zeSharedLinuxDir,
                 mountName: nil
             ),
             ScanRoot(
                 scope: .skills,
-                hostURL: AIChatViewModel.minisSkillsPersistentDir,
-                linuxPrefix: AIChatViewModel.minisSkillsLinuxDir,
+                hostURL: AIChatViewModel.zeSkillsPersistentDir,
+                linuxPrefix: AIChatViewModel.zeSkillsLinuxDir,
                 mountName: nil
             ),
             ScanRoot(
                 scope: .memory,
-                hostURL: AIChatViewModel.minisMemoryPersistentDir,
-                linuxPrefix: AIChatViewModel.minisMemoryLinuxDir,
+                hostURL: AIChatViewModel.zeMemoryPersistentDir,
+                linuxPrefix: AIChatViewModel.zeMemoryLinuxDir,
                 mountName: nil
             ),
         ]
@@ -415,7 +415,7 @@ final class FileMentionIndex: ObservableObject {
         let mgr = MountedFoldersManager.shared
         return mgr.entries.compactMap { entry -> ScanRoot? in
             guard let url = mgr.resolvedURL(for: entry.id) else { return nil }
-            let linuxPrefix = "\(AIChatViewModel.minisMountsLinuxDir)/\(entry.name)"
+            let linuxPrefix = "\(AIChatViewModel.zeMountsLinuxDir)/\(entry.name)"
             return ScanRoot(scope: .mount, hostURL: url, linuxPrefix: linuxPrefix, mountName: entry.name)
         }
     }
@@ -425,7 +425,7 @@ final class FileMentionIndex: ObservableObject {
     private struct ScanRoot {
         let scope: FileMentionEntry.Scope
         let hostURL: URL
-        /// Linux-visible path prefix (e.g. `/var/minis/workspace`).
+        /// Linux-visible path prefix (e.g. `/var/ze/workspace`).
         let linuxPrefix: String
         let mountName: String?
     }
@@ -495,7 +495,7 @@ final class FileMentionIndex: ObservableObject {
     ]
 
     /// True if any `/`-delimited component of `path` contains `query` as a
-    /// substring. Lets `@mounts` match `/var/minis/mounts/<name>/...` even
+    /// substring. Lets `@mounts` match `/var/ze/mounts/<name>/...` even
     /// when the file's basename doesn't contain "mounts".
     private static func anyPathComponentMatches(path: String, query: String) -> Bool {
         for component in path.split(separator: "/") where component.contains(query) {
@@ -504,16 +504,16 @@ final class FileMentionIndex: ObservableObject {
         return false
     }
 
-    /// Is this the immediate child of a scope root (e.g. `/var/minis/skills/foo`,
-    /// `/var/minis/mounts/bar`, `/var/minis/shared/baz`)? These top-level
+    /// Is this the immediate child of a scope root (e.g. `/var/ze/skills/foo`,
+    /// `/var/ze/mounts/bar`, `/var/ze/shared/baz`)? These top-level
     /// directories are first-class `@` targets, boosted above their descendants.
     private static func isTopLevelScopeRoot(_ entry: FileMentionEntry) -> Bool {
         guard entry.isDirectory else { return false }
         let path = entry.linuxPath
         let tops = [
-            "/var/minis/skills/",
-            "/var/minis/mounts/",
-            "/var/minis/shared/",
+            "/var/ze/skills/",
+            "/var/ze/mounts/",
+            "/var/ze/shared/",
         ]
         for top in tops where path.hasPrefix(top) {
             let rest = path.dropFirst(top.count)

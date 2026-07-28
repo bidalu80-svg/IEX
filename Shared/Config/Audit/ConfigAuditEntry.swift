@@ -2,13 +2,13 @@ import Foundation
 
 /// Who initiated the change.
 enum ConfigAuditActor: String, Codable {
-    /// LLM agent invoked `minis-config <topic> set …`.
+    /// LLM agent invoked `ze-config <topic> set …`.
     case agent
     /// User interacted with a Settings UI control directly (rare; only
     /// recorded when the surface explicitly funnels through ConfigRegistry,
-    /// e.g. toggling the master `permissions.minisConfig.enabled` switch).
+    /// e.g. toggling the master `permissions.zeConfig.enabled` switch).
     case user
-    /// Agent invoked `minis-config audit revert <id>`.
+    /// Agent invoked `ze-config audit revert <id>`.
     case agentRevert = "agent-revert"
     /// User tapped Revert in Logs → Config Changes.
     case userRevert = "user-revert"
@@ -58,7 +58,7 @@ struct ConfigAuditEntry: Identifiable, Codable, Hashable {
     var status: ConfigAuditStatus
     /// If this entry IS a revert, points back at the audit id it undid.
     let revertOf: String?
-    /// Caller-supplied description (`minis-config set --caption "..."`),
+    /// Caller-supplied description (`ze-config set --caption "..."`),
     /// shown alongside the row in the Logs UI to make the agent's intent
     /// scannable. Nil/empty when the caller didn't pass one. Older rows
     /// written before this column existed decode as nil.

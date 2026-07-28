@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings page for SOUL.md — Minis's persistent personality file.
+/// Settings page for SOUL.md — Ze's persistent personality file.
 /// Lives between Skills and Memory in the Agent Runtime section.
 struct SoulSettingsView: View {
     @State private var name: String = SoulMetadata.default.name
@@ -37,7 +37,7 @@ struct SoulSettingsView: View {
 
             Section(String(localized: "Identity")) {
                 LabeledContent(String(localized: "Name")) {
-                    TextField("Minis", text: $name)
+                    TextField("Ze", text: $name)
                         .multilineTextAlignment(.trailing)
                         .textInputAutocapitalization(.words)
                         .submitLabel(.done)
@@ -145,7 +145,7 @@ struct SoulSettingsView: View {
             Text(SoulMetadata.default.displayEmoji)
                 .font(.system(size: 32))
             VStack(alignment: .leading, spacing: 2) {
-                Text(name.isEmpty ? "Minis" : name)
+                Text(name.isEmpty ? "Ze" : name)
                     .font(.title3.weight(.semibold))
                 if !style.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text(style)

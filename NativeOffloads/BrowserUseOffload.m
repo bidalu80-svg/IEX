@@ -1,8 +1,8 @@
 //
 //  BrowserUseOffload.m
-//  MinisApp
+//  ZeApp
 //
-//  Native offload handler for `minis-browser-use`.
+//  Native offload handler for `ze-browser-use`.
 //  Exposes the in-app browser_use tool (WKWebView automation) as a CLI
 //  inside the ish guest. Supports the same action + parameter set as the
 //  browser_use agent tool, plus a --help surface.
@@ -16,21 +16,21 @@
 #include <unistd.h>
 
 // Swift bridge — generated header
-#if __has_include("Minis-Swift.h")
-#import "Minis-Swift.h"
-#elif __has_include("MinisApp-Swift.h")
-#import "MinisApp-Swift.h"
+#if __has_include("Ze-Swift.h")
+#import "Ze-Swift.h"
+#elif __has_include("ZeApp-Swift.h")
+#import "ZeApp-Swift.h"
 #endif
 
-static NSString *const TOOL_NAME = @"minis-browser-use";
+static NSString *const TOOL_NAME = @"ze-browser-use";
 
 static NSString *const HELP_TEXT =
-    @"minis-browser-use - Drive the in-app WebView from the shell\n"
+    @"ze-browser-use - Drive the in-app WebView from the shell\n"
      "\n"
      "USAGE:\n"
-     "  minis-browser-use <action> [options]\n"
-     "  minis-browser-use --json '<json>'\n"
-     "  minis-browser-use --help\n"
+     "  ze-browser-use <action> [options]\n"
+     "  ze-browser-use --json '<json>'\n"
+     "  ze-browser-use --help\n"
      "\n"
      "ACTIONS:\n"
      "  navigate        --url <url>\n"
@@ -78,8 +78,8 @@ static NSString *const HELP_TEXT =
      "  --json '<s>'     Pass the full input object as JSON (matches browser_use schema)\n"
      "  --with-base64    Also include image_base64 in the screenshot output.\n"
      "                   Off by default — screenshots are saved to\n"
-     "                   /var/minis/browser/ and referenced via image_path +\n"
-     "                   minis_url, so shells don't get flooded with base64.\n"
+     "                   /var/ze/browser/ and referenced via image_path +\n"
+     "                   ze_url, so shells don't get flooded with base64.\n"
      "  --compact        Minimize JSON output\n"
      "  -q, --quiet      Output only the data field\n"
      "  -h, --help       Show this help message\n"
@@ -90,23 +90,23 @@ static NSString *const HELP_TEXT =
      "    success           true / false\n"
      "    page_url          URL after the action (when applicable)\n"
      "    image_path        Linux path of the persisted JPEG, e.g.\n"
-     "                      /var/minis/browser/screenshot_<ms>.jpg\n"
-     "    minis_url         minis://browser/<filename> — stable reference for\n"
+     "                      /var/ze/browser/screenshot_<ms>.jpg\n"
+     "    ze_url         ze://browser/<filename> — stable reference for\n"
      "                      read_image / downstream tools\n"
      "    image_base64      Base64 JPEG (only when --with-base64 is set)\n"
      "    fetched_file      Filename of the downloaded resource (fetch action)\n"
      "    fetched_path      Linux path of the persisted download under\n"
-     "                      /var/minis/browser/\n"
-     "    fetched_minis_url minis://browser/<filename> for the download\n"
+     "                      /var/ze/browser/\n"
+     "    fetched_ze_url ze://browser/<filename> for the download\n"
      "\n"
      "EXAMPLES:\n"
-     "  minis-browser-use navigate --url https://example.com\n"
-     "  minis-browser-use screenshot\n"
-     "  minis-browser-use screenshot --full-page\n"
-     "  minis-browser-use click --selector '.btn-primary'\n"
-     "  minis-browser-use type --selector 'input[name=q]' --text 'hello'\n"
-     "  minis-browser-use execute_js --script 'return document.title'\n"
-     "  minis-browser-use --json '{\"action\":\"navigate\",\"url\":\"https://x.com\"}'\n";
+     "  ze-browser-use navigate --url https://example.com\n"
+     "  ze-browser-use screenshot\n"
+     "  ze-browser-use screenshot --full-page\n"
+     "  ze-browser-use click --selector '.btn-primary'\n"
+     "  ze-browser-use type --selector 'input[name=q]' --text 'hello'\n"
+     "  ze-browser-use execute_js --script 'return document.title'\n"
+     "  ze-browser-use --json '{\"action\":\"navigate\",\"url\":\"https://x.com\"}'\n";
 
 // ── Netscape cookies.txt parsing ──
 
@@ -225,7 +225,7 @@ static NSDictionary *buildInputJson(int argc, char **argv, NSString **errOut) {
     // Cookies: a JSON array of cookie objects for set_cookies. Either inline via
     // --cookies '<json>' or, to dodge busybox-ash shell mangling of the quotes /
     // braces / colons in the JSON, from a file via --cookies-file <path>
-    // (mirrors `minis-config set --file`). Parse failures are surfaced as an
+    // (mirrors `ze-config set --file`). Parse failures are surfaced as an
     // explicit error rather than silently dropped — a dropped array used to
     // reach set_cookies as empty and read as a confusing "array is empty".
     NSString *cookiesFile = noff_find_arg(argc, argv, "--cookies-file");
@@ -346,11 +346,11 @@ static int browser_use_handler(int argc, char **argv,
 }
 
 void browser_use_offload_register(void) {
-    int err = native_offload_add_handler("minis-browser-use", browser_use_handler);
+    int err = native_offload_add_handler("ze-browser-use", browser_use_handler);
     if (err == 0) {
-        noff_ensure_guest_stub("/usr/local/bin/minis-browser-use");
-        NSLog(@"NativeOffloads: minis-browser-use handler registered");
+        noff_ensure_guest_stub("/usr/local/bin/ze-browser-use");
+        NSLog(@"NativeOffloads: ze-browser-use handler registered");
     } else {
-        NSLog(@"NativeOffloads: failed to register minis-browser-use handler (err=%d)", err);
+        NSLog(@"NativeOffloads: failed to register ze-browser-use handler (err=%d)", err);
     }
 }

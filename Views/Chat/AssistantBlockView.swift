@@ -11,7 +11,7 @@ struct AssistantBlockView: View {
     var onStop: (() -> Void)?
     var onTapBlank: ((CGPoint) -> Void)?
     var onCopyScreenshot: (() -> Void)?
-    /// [T-selection-menu-minis-tts] Selection-menu read-aloud hooks, plumbed
+    /// [T-selection-menu-ze-tts] Selection-menu read-aloud hooks, plumbed
     /// down to SelectableMarkdownView (nil for non-text or streaming contexts).
     var onReadAloud: (() -> Void)?
     var onSpeakText: ((String) -> Void)?
@@ -125,7 +125,7 @@ struct AssistantBlockView: View {
             onSpeakText: onSpeakText
         )
         .fixedSize(horizontal: false, vertical: true)
-        .modifier(MinisOpenURLHandler())
+        .modifier(ZeOpenURLHandler())
     }
 }
 
@@ -459,7 +459,7 @@ struct ToolCapsuleView: View {
             Button(String(localized: "Go Enable")) {
                 // Deep-link to Settings → Permissions → Background, nudging the
                 // recommended rows ON — they highlight only while still OFF
-                // (= minis://settings/background?focus=…:true,…:true). Location
+                // (= ze://settings/background?focus=…:true,…:true). Location
                 // Tracking is included so the background heartbeat that keeps the
                 // task Live Activity refreshing in real time gets enabled too.
                 DeepLinkCoordinator.shared.setFocus(
@@ -524,7 +524,7 @@ extension Notification.Name {
     /// caches so cells re-measure. notification.object is the source URL
     /// string (for logging only — handler invalidates all visible cells).
     /// [T-attachment-size-invalidate 2026-05-21]
-    static let minisAttachmentSizeChanged = Notification.Name("minisAttachmentSizeChanged")
+    static let zeAttachmentSizeChanged = Notification.Name("zeAttachmentSizeChanged")
     /// Posted from a tool capsule's long-press menu "Re-run from here".
     /// userInfo["blockId"] is the AssistantBlock.id (UUID) of the tapped
     /// tool_use. The active AIChatView listens, maps the block to its
@@ -904,7 +904,7 @@ struct TypingIndicator: View {
     /// `.soulMdChanged` Notification — same wiring used by `AssistantSoulName`.
     @State private var soulName: String = {
         let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "Minis" : n
+        return n.isEmpty ? "Ze" : n
     }()
 
     var body: some View {
@@ -922,7 +922,7 @@ struct TypingIndicator: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
             let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            soulName = n.isEmpty ? "Minis" : n
+            soulName = n.isEmpty ? "Ze" : n
         }
         .font(.system(size: 15, weight: .medium))
         .foregroundStyle(ChatColors.tertiaryText)

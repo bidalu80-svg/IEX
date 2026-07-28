@@ -1,6 +1,6 @@
 //
 //  MapsOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-maps` — MapKit framework.
 //

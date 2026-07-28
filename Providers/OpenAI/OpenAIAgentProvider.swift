@@ -783,11 +783,11 @@ final class OpenAIAgentProvider: AgentProvider {
                 if case .text(let t) = part, !t.isEmpty {
                     let digest = SHA256.hash(data: Data(t.utf8))
                     let hex = digest.map { String(format: "%02x", $0) }.joined()
-                    return "minis-\(hex.prefix(32))"
+                    return "ze-\(hex.prefix(32))"
                 }
             }
         }
-        return "minis-\(UUID().uuidString.lowercased())"
+        return "ze-\(UUID().uuidString.lowercased())"
     }
 
     // MARK: - Thinking Config
@@ -1602,7 +1602,7 @@ final class OpenAIAgentProvider: AgentProvider {
                     // the `call_id` itself remains valid because it is how
                     // `function_call_output` links back. Sanitize: reuse the
                     // captured fcId only when it has the `fc_` prefix,
-                    // otherwise synthesize a deterministic `fc_syn_` id from
+                    // otherwise synthesize a deterzetic `fc_syn_` id from
                     // the call_id so the API accepts the replay.
                     let safeFcId = fcId.map { Self.capResponsesId($0) }
                     if let safeFcId, safeFcId.hasPrefix("fc_") {

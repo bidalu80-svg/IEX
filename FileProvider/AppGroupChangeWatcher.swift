@@ -2,7 +2,7 @@ import Foundation
 import FileProvider
 import UIKit
 
-/// Watches the App Group `MinisFileProvider/{shared,skills,memory}/` subtrees and
+/// Watches the App Group `ZeFileProvider/{shared,skills,memory}/` subtrees and
 /// signals the FileProvider extension whenever directory contents change.
 ///
 /// Why this exists: iSH shell commands and the in-app FileBrowserView both write
@@ -19,8 +19,8 @@ final class AppGroupChangeWatcher {
     static let shared = AppGroupChangeWatcher()
 
     private let logger = AppLogger(category: "FPWatcher")
-    private let queue = DispatchQueue(label: "com.openminis.app.fpwatcher", qos: .utility)
-    private let domainIdentifier = NSFileProviderDomainIdentifier("com.openminis.app.files")
+    private let queue = DispatchQueue(label: "com.ze.app.fpwatcher", qos: .utility)
+    private let domainIdentifier = NSFileProviderDomainIdentifier("com.ze.app.files")
 
     /// Hard cap on simultaneous watched directories. Each watch holds an `O_EVTONLY`
     /// fd; iOS apps typically have a per-process limit around 256. We cap well below
@@ -49,9 +49,9 @@ final class AppGroupChangeWatcher {
 
         let fm = FileManager.default
         let roots: [(URL, String)] = [
-            (AIChatViewModel.minisSharedPersistentDir, "shared"),
-            (AIChatViewModel.minisSkillsPersistentDir, "skills"),
-            (AIChatViewModel.minisMemoryPersistentDir, "memory"),
+            (AIChatViewModel.zeSharedPersistentDir, "shared"),
+            (AIChatViewModel.zeSkillsPersistentDir, "skills"),
+            (AIChatViewModel.zeMemoryPersistentDir, "memory"),
         ]
 
         for (rootURL, rootKey) in roots {

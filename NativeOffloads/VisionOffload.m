@@ -1,6 +1,6 @@
 //
 //  VisionOffload.m
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-vision`.
 //  Subcommands: ocr, barcode, classify, detect, faces, analyze, similarity, overlap
@@ -44,14 +44,14 @@ static NSString *const HELP_TEXT =
      "\n"
      "NOTES:\n"
      "  <image-path> is automatically translated from iSH guest path to host path.\n"
-     "  Supports images in /var/minis/attachments/ and other accessible paths.\n"
+     "  Supports images in /var/ze/attachments/ and other accessible paths.\n"
      "\n"
      "EXAMPLES:\n"
-     "  apple-vision ocr /var/minis/attachments/photo.jpg\n"
-     "  apple-vision ocr /var/minis/attachments/doc.png --lang zh-Hans,en --level fast\n"
-     "  apple-vision barcode /var/minis/attachments/qr.png --compact -q\n"
-     "  apple-vision classify /var/minis/attachments/photo.jpg --limit 5\n"
-     "  apple-vision analyze /var/minis/attachments/photo.jpg\n"
+     "  apple-vision ocr /var/ze/attachments/photo.jpg\n"
+     "  apple-vision ocr /var/ze/attachments/doc.png --lang zh-Hans,en --level fast\n"
+     "  apple-vision barcode /var/ze/attachments/qr.png --compact -q\n"
+     "  apple-vision classify /var/ze/attachments/photo.jpg --limit 5\n"
+     "  apple-vision analyze /var/ze/attachments/photo.jpg\n"
      "  apple-vision similarity img1.png img2.png img3.png\n"
      "  apple-vision similarity img1.png img2.png --threshold 0.8\n"
      "  apple-vision overlap top.png bottom.png\n"

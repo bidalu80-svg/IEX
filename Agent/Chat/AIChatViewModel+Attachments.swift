@@ -388,7 +388,7 @@ extension AIChatViewModel {
                 continue
             }
             try? fm.setAttributes([.creationDate: fileDate, .modificationDate: fileDate], ofItemAtPath: destURL.path)
-            let linuxPath = "/var/minis/attachments/uploads/\(safeName)"
+            let linuxPath = "/var/ze/attachments/uploads/\(safeName)"
             let meta = AttachmentMeta(path: linuxPath, size: fileSize, modified: fileDate)
             metas.append(meta)
             logger.info("📎[QUEUE-DRAIN]   saved \(safeName): \(fileSize) bytes → \(linuxPath)")
@@ -428,7 +428,7 @@ extension AIChatViewModel {
         if !metas.isEmpty {
             var xml = "<user-attached-files>\n"
             for meta in metas {
-                xml += "  <file path=\"\(meta.path)\" url=\"\(meta.minisURL)\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
+                xml += "  <file path=\"\(meta.path)\" url=\"\(meta.zeURL)\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
             }
             xml += "</user-attached-files>"
             parts.append(.text(xml))

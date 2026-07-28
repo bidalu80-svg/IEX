@@ -1,6 +1,6 @@
 //
 //  QuickActionWorkflow.swift
-//  MinisApp
+//  ZeApp
 //
 //  Explicit, checkpoint-driven state machine for Home Screen Quick
 //  Actions (Chat with Voice / Chat with Camera). Replaces the previous

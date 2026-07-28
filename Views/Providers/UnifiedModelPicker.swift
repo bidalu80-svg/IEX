@@ -654,7 +654,7 @@ struct UnifiedModelPicker: View {
         .contextMenu {
             Button {
                 UIPasteboard.general.string = "group:\(group.id)"
-                MinisToast.show(String(localized: "Copied: \(group.name)"))
+                ZeToast.show(String(localized: "Copied: \(group.name)"))
             } label: {
                 Label(String(localized: "Copy Shortcut Model ID"), systemImage: "link")
             }
@@ -891,7 +891,7 @@ struct UnifiedModelPicker: View {
         .contextMenu {
             Button {
                 UIPasteboard.general.string = "entry:\(entry.compositeKey)"
-                MinisToast.show(String(localized: "Copied: \(entry.model.displayName)"))
+                ZeToast.show(String(localized: "Copied: \(entry.model.displayName)"))
             } label: {
                 Label(String(localized: "Copy Shortcut Model ID"), systemImage: "link")
             }
@@ -1106,7 +1106,7 @@ struct UnifiedModelPicker: View {
         .contextMenu {
             Button {
                 UIPasteboard.general.string = "entry:\(entry.compositeKey)"
-                MinisToast.show(String(localized: "Copied: \(entry.model.displayName)"))
+                ZeToast.show(String(localized: "Copied: \(entry.model.displayName)"))
             } label: {
                 Label(String(localized: "Copy Shortcut Model ID"), systemImage: "link")
             }

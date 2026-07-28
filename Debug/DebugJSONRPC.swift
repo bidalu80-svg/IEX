@@ -103,7 +103,7 @@ final class DebugJSONRPC: @unchecked Sendable {
     private static let responseMeta: [String: Any] = {
         let info = Bundle.main.infoDictionary ?? [:]
         return [
-            "app": "MinisApp",
+            "app": "ZeApp",
             "version": info["CFBundleShortVersionString"] as? String ?? "?",
             "build": info["CFBundleVersion"] as? String ?? "?",
             "device": DeviceIdentity.deviceName,
@@ -716,7 +716,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             }
         case "mic":
             await MainActor.run {
-                NotificationCenter.default.post(name: Notification.Name("MinisDebugVoiceMicTap"), object: nil)
+                NotificationCenter.default.post(name: Notification.Name("ZeDebugVoiceMicTap"), object: nil)
             }
         default:
             throw RPCError(code: -32602, message: "Unknown action '\(action)' (open|close|mic)")
@@ -1038,7 +1038,7 @@ final class DebugJSONRPC: @unchecked Sendable {
     ///
     /// Params:
     ///   recordType  (string, default "MessageV2")
-    ///   zone        (string, default "minis-shared")
+    ///   zone        (string, default "ze-shared")
     ///   predicate   (string, default "TRUEPREDICATE")
     ///   predicateArgs (array of strings, optional — passed positionally
     ///                  via NSPredicate(format:argumentArray:); each
@@ -1057,7 +1057,7 @@ final class DebugJSONRPC: @unchecked Sendable {
     ///   { "ok": false, "errorCode": Int, "ckCode": Int, "description": "..." }
     private func handleSyncCKQuery(params: [String: Any]) async -> Any {
         let recordType = (params["recordType"] as? String) ?? "MessageV2"
-        let zoneName = (params["zone"] as? String) ?? "minis-shared"
+        let zoneName = (params["zone"] as? String) ?? "ze-shared"
         let predicateString = (params["predicate"] as? String) ?? "TRUEPREDICATE"
         let predicateArgs = params["predicateArgs"] as? [String] ?? []
         let sortKey = params["sortKey"] as? String
@@ -1085,7 +1085,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             query.sortDescriptors = [NSSortDescriptor(key: key, ascending: sortAscending)]
         }
         let zoneID = CKRecordZone.ID(zoneName: zoneName)
-        let container = CKContainer(identifier: "iCloud.com.openminis.app")
+        let container = CKContainer(identifier: "iCloud.com.ze.app")
         do {
             let result = try await container.privateCloudDatabase.records(
                 matching: query,
@@ -1136,10 +1136,10 @@ final class DebugJSONRPC: @unchecked Sendable {
 
     /// List all CKRecordZone IDs in the user's private database. Used to
     /// diagnose v1 zone presence (device-<id>) and confirm v2 zones
-    /// (minis-shared / minis-devices / minis-secrets) when migration
+    /// (ze-shared / ze-devices / ze-secrets) when migration
     /// counters look suspect.
     private func handleSyncAllZones() async -> Any {
-        let container = CKContainer(identifier: "iCloud.com.openminis.app")
+        let container = CKContainer(identifier: "iCloud.com.ze.app")
         do {
             let zones = try await container.privateCloudDatabase.allRecordZones()
             return [
@@ -1187,7 +1187,7 @@ final class DebugJSONRPC: @unchecked Sendable {
     ///   recordTypes (optional): override the default per-zone type
     ///     list. Useful for ad-hoc probes.
     private func handleSyncZoneStats(params: [String: Any]) async -> Any {
-        let containerId = "iCloud.com.openminis.app"
+        let containerId = "iCloud.com.ze.app"
         let container = CKContainer(identifier: containerId)
         let db = container.privateCloudDatabase
 
@@ -1203,9 +1203,9 @@ final class DebugJSONRPC: @unchecked Sendable {
             // Default: all v2 zones + own v1 zone.
             let myDeviceId = DeviceIdentity.deviceId
             zonesToScan = [
-                ("minis-shared", ["SessionV2", "MessageV2", "CompactMarkerV2", "SessionFileV2", "SkillV2"]),
-                ("minis-devices", ["SyncDeviceV2"]),
-                ("minis-secrets", ["ProviderConfigV2", "EnvVarV2", "EnvVarItem"]),
+                ("ze-shared", ["SessionV2", "MessageV2", "CompactMarkerV2", "SessionFileV2", "SkillV2"]),
+                ("ze-devices", ["SyncDeviceV2"]),
+                ("ze-secrets", ["ProviderConfigV2", "EnvVarV2", "EnvVarItem"]),
                 ("device-\(myDeviceId)", ["Session", "Message", "CompactMarker", "SessionFile"]),
             ]
         }
@@ -1278,11 +1278,11 @@ final class DebugJSONRPC: @unchecked Sendable {
     /// matching `device-*` as a v1 zone.
     private static func guessRecordTypes(forZone zone: String) -> [String] {
         switch zone {
-        case "minis-shared":
+        case "ze-shared":
             return ["SessionV2", "MessageV2", "CompactMarkerV2", "SessionFileV2", "SkillV2"]
-        case "minis-devices":
+        case "ze-devices":
             return ["SyncDeviceV2"]
-        case "minis-secrets":
+        case "ze-secrets":
             return ["ProviderConfigV2", "EnvVarV2", "EnvVarItem"]
         default:
             if zone.hasPrefix("device-") {
@@ -1687,7 +1687,7 @@ final class DebugJSONRPC: @unchecked Sendable {
         // where the FileProvider extension writes its diagnostic log.
         if stripped.hasPrefix("AppGroup/") {
             let fm = FileManager.default
-            if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") {
+            if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ze.app") {
                 let relative = String(stripped.dropFirst("AppGroup/".count))
                 return relative.isEmpty ? container : container.appendingPathComponent(relative)
             }
@@ -1939,11 +1939,11 @@ final class DebugJSONRPC: @unchecked Sendable {
         let stdinScript = params["stdinScript"] as? Bool ?? false
         let env = params["env"] as? [String: String]
         // Optional sessionId to stamp the shell's task group with the matching
-        // fs_context, so /var/minis/{offloads,attachments,workspace,browser}
+        // fs_context, so /var/ze/{offloads,attachments,workspace,browser}
         // route to that session's bucket. Omit (or pass nil) for the default
         // global view (fs_context = 0).
         let sessionId = params["sessionId"] as? String
-        let fsContext: UInt64 = sessionId.map { MinisFsRouter.shared.context(for: $0) } ?? 0
+        let fsContext: UInt64 = sessionId.map { ZeFsRouter.shared.context(for: $0) } ?? 0
 
         // Run off the main thread (blocks on semaphore).
         let (result, didTimeout): (ISHShellExecutionResult?, Bool) = await withCheckedContinuation { continuation in
@@ -2123,7 +2123,7 @@ final class DebugJSONRPC: @unchecked Sendable {
         // find_and_tap RPC on 127.0.0.1:8200. iCTRL is a UI test bundle so
         // it has XCUIElement.tap(), which drives the OS's real touch
         // pipeline and works on SwiftUI Lists / hosting-view content that
-        // MinisApp's app-embedded synthesis can't reach. iCTRL's isLoopback
+        // ZeApp's app-embedded synthesis can't reach. iCTRL's isLoopback
         // check bypasses its bearer auth for us. If iCTRL isn't running (or
         // returns "no element found") we fall through to the existing app-
         // embedded escalation ladder — behaviour unchanged when the tool
@@ -2205,7 +2205,7 @@ final class DebugJSONRPC: @unchecked Sendable {
     }
 
     /// URL of iCTRL's JSON-RPC endpoint on this device. iCTRL is a co-
-    /// installed XCTest automation service (bundle com.openminis.ictrl,
+    /// installed XCTest automation service (bundle com.ze.ictrl,
     /// port 8200). It runs inside a UI test runner so it can drive
     /// XCUIElement.tap() — which we can't from the app process.
     /// Loopback auth exemption on iCTRL side means we don't send a token.
@@ -2237,10 +2237,10 @@ final class DebugJSONRPC: @unchecked Sendable {
         }
 
         // iCTRL defaults to querying whatever app is currently bound (or
-        // SpringBoard if none). Since debug.tap is called BY MinisApp asking
+        // SpringBoard if none). Since debug.tap is called BY ZeApp asking
         // to tap something in ITSELF, pin the query to our own bundle id
         // unless the caller explicitly overrides via ictrl_bundle_id.
-        let bundleId = (params["ictrl_bundle_id"] as? String) ?? Bundle.main.bundleIdentifier ?? "com.openminis.app"
+        let bundleId = (params["ictrl_bundle_id"] as? String) ?? Bundle.main.bundleIdentifier ?? "com.ze.app"
         let rpcParams: [String: Any] = [
             "element_id": elementId,
             "match": matchMode,
@@ -2358,7 +2358,7 @@ final class DebugJSONRPC: @unchecked Sendable {
         // customAction target.perform → Foundation recursion → NSException →
         // abort, taking the whole app down from a debug-server tap RPC fired
         // during launch). Swift can't catch ObjC exceptions — run each
-        // invocation under MinisCatchObjCException and treat a raise as
+        // invocation under ZeCatchObjCException and treat a raise as
         // "this node didn't activate" instead of terminating the process.
         var stack: [UIView] = [root]
         var visits = 0
@@ -2366,7 +2366,7 @@ final class DebugJSONRPC: @unchecked Sendable {
         func attempt(_ label: String, _ body: () -> Bool) -> Bool {
             var accepted = false
             var reason: NSString?
-            let ok = MinisCatchObjCException({ accepted = body() }, &reason)
+            let ok = ZeCatchObjCException({ accepted = body() }, &reason)
             if !ok {
                 caughtReason = reason
                 AppLogger(category: "DebugServer").error("[debug.tap] \(label) raised NSException (caught): \(reason ?? "?")")
@@ -2431,7 +2431,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             // raise an ObjC exception Swift can't catch.
             // [T-ios-debugtap-nsexception-abort]
             var sendReason: NSString?
-            if !MinisCatchObjCException({ control.sendActions(for: .touchUpInside) }, &sendReason) {
+            if !ZeCatchObjCException({ control.sendActions(for: .touchUpInside) }, &sendReason) {
                 AppLogger(category: "DebugServer").error("[debug.tap] sendActions raised NSException (caught): \(sendReason ?? "?")")
                 return ["ok": false, "strategy": strategy,
                         "error": "target action raised NSException: \(sendReason ?? "?")"]
@@ -2567,7 +2567,7 @@ final class DebugJSONRPC: @unchecked Sendable {
         // bridge and fall back to a fixed error envelope.
         var data: Data?
         var reason: NSString?
-        let ok = MinisCatchObjCException({
+        let ok = ZeCatchObjCException({
             data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
         }, &reason)
         guard ok, let data, let str = String(data: data, encoding: .utf8) else {
@@ -2779,16 +2779,16 @@ final class DebugJSONRPC: @unchecked Sendable {
     /// allow-list: `name` params for the other db.* methods must be one of these,
     /// so no arbitrary filesystem path can be opened.
     private func knownDatabases() -> [(name: String, url: URL)] {
-        // Every app SQLite db lives under Library/MinisChat/ (verified against
+        // Every app SQLite db lives under Library/ZeChat/ (verified against
         // ChatStore, ProviderConfigDB, VoiceCorrectionDB, AlarmOffloadBridge),
         // except the rootfs meta.db which lives inside the iSH rootfs.
         let fm = FileManager.default
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let chatBase = library.appendingPathComponent("MinisChat", isDirectory: true)
+        let chatBase = library.appendingPathComponent("ZeChat", isDirectory: true)
         let rootfs = RootfsManager.shared.rootfsPath
         return [
-            ("minis", chatBase.appendingPathComponent("minis.db")),
-            ("skills", chatBase.appendingPathComponent("minis").appendingPathComponent("skills.db")),
+            ("ze", chatBase.appendingPathComponent("ze.db")),
+            ("skills", chatBase.appendingPathComponent("ze").appendingPathComponent("skills.db")),
             ("provider-config", chatBase.appendingPathComponent("provider-config.db")),
             ("voice-correction", chatBase.appendingPathComponent("voice-correction.db")),
             ("alarm-labels", chatBase.appendingPathComponent("alarm-labels.db")),

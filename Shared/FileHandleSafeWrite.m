@@ -1,11 +1,11 @@
 //
 //  FileHandleSafeWrite.m
-//  MinisApp
+//  ZeApp
 //
 
 #import "FileHandleSafeWrite.h"
 
-BOOL MinisFileHandleSafeWrite(NSFileHandle *handle, NSData *data, NSString *_Nullable *_Nullable errorMessage) {
+BOOL ZeFileHandleSafeWrite(NSFileHandle *handle, NSData *data, NSString *_Nullable *_Nullable errorMessage) {
     if (!handle || !data) {
         if (errorMessage) { *errorMessage = @"handle or data is nil"; }
         return NO;

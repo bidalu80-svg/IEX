@@ -57,8 +57,8 @@ enum AgentContentPart: @unchecked Sendable {
     case text(String)
     case toolUse(id: String, name: String, input: [String: Any])
     /// `imageLinuxPath` — iSH-visible linux path the image bytes were
-    /// persisted to (e.g. `/var/minis/browser/<sid>/screenshot_*.jpg`,
-    /// `/var/minis/attachments/uploads/*`). Carried so the request-level
+    /// persisted to (e.g. `/var/ze/browser/<sid>/screenshot_*.jpg`,
+    /// `/var/ze/attachments/uploads/*`). Carried so the request-level
     /// image budget can emit a re-fetchable text placeholder when the
     /// cumulative payload would exceed the 25MB cap. Defaults to nil for
     /// backward compatibility with existing call sites and persisted
@@ -160,7 +160,7 @@ enum AgentStopReason: Sendable {
     /// Anthropic safety classifier declined the request (HTTP 200 + `stop_reason: "refusal"`,
     /// input tokens billed, empty `content`). Distinct from `.endTurn` so the agent loop can
     /// surface an actionable message instead of a generic "empty response" and skip the
-    /// pointless transient-retry path (a refusal is deterministic, not transient).
+    /// pointless transient-retry path (a refusal is deterzetic, not transient).
     /// Fires as a false-positive on Fable 5 for benign turns carrying the large Claude Code
     /// agentic system prompt + tool set. See [T-ios-fable5-empty-response].
     case refusal

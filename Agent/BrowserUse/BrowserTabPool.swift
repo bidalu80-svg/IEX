@@ -664,7 +664,7 @@ final class BrowserTabPool: ObservableObject {
     /// implicit-tab fan-out below is bypassed and an action with no explicit
     /// `tab_id` always targets `selectedTabId` (the current / most-recently
     /// navigated tab), even while that tab is inside its inUse post-action
-    /// grace window. This is the `minis-browser-use` CLI path: a human/script
+    /// grace window. This is the `ze-browser-use` CLI path: a human/script
     /// drives a SERIAL sequence (navigate → execute_js → navigate → …) and
     /// expects "read the page I just navigated to", so spreading the read
     /// across fan-out tabs (which the grace-based fan-out does, to keep the
@@ -1303,7 +1303,7 @@ final class BrowserTabPool: ObservableObject {
         manager.closeHandler = { [weak self] webView in
             self?.closeWebView(webView)
         }
-        // Downloads land in this session's /var/minis/workspace/ so the agent
+        // Downloads land in this session's /var/ze/workspace/ so the agent
         // can read and operate on them in follow-up turns.
         manager.sessionIdProvider = { [weak self] in self?.sessionId }
         // [BrowserToolDiag] Let the manager name its own tab when its WebContent
@@ -1438,7 +1438,7 @@ final class BrowserTabPool: ObservableObject {
 
     private static func storeURL(for sessionId: String) -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("MinisChat/browser_tabs", isDirectory: true)
+            .appendingPathComponent("ZeChat/browser_tabs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("\(sessionId).json")
     }

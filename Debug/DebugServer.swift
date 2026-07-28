@@ -153,7 +153,7 @@ final class DebugServer: @unchecked Sendable {
         func schemaJSON() -> String {
             let info = Bundle.main.infoDictionary ?? [:]
             return """
-            {"app":"MinisApp","version":"\(info["CFBundleShortVersionString"] as? String ?? "?")",\
+            {"app":"ZeApp","version":"\(info["CFBundleShortVersionString"] as? String ?? "?")",\
             "rpc":"jsonrpc-2.0","auth":"\(auth.authRequired ? "v1" : "off")",\
             "pair_path":"/pair","rpc_path":"/rpc","skill_path":"/skill"}
             """
@@ -184,15 +184,15 @@ final class DebugServer: @unchecked Sendable {
                 }
                 close(fd)
                 return
-            case "/skill/examples/python", "/skill/examples/minis_rpc.py":
+            case "/skill/examples/python", "/skill/examples/ze_rpc.py":
                 sendSkillClient(fd, base64: DebugSkillGenerated.clientPythonB64, contentType: "text/x-python; charset=utf-8")
                 close(fd)
                 return
-            case "/skill/examples/node", "/skill/examples/minis_rpc.mjs":
+            case "/skill/examples/node", "/skill/examples/ze_rpc.mjs":
                 sendSkillClient(fd, base64: DebugSkillGenerated.clientNodeB64, contentType: "text/javascript; charset=utf-8")
                 close(fd)
                 return
-            case "/skill/examples/bash", "/skill/examples/minis_rpc.sh":
+            case "/skill/examples/bash", "/skill/examples/ze_rpc.sh":
                 sendSkillClient(fd, base64: DebugSkillGenerated.clientBashB64, contentType: "text/x-shellscript; charset=utf-8")
                 close(fd)
                 return

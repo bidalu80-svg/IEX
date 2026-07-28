@@ -1,11 +1,11 @@
 //
 //  SharedFoldersSettingsView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Settings screen that lists the three FileProvider-exposed shared directories
 //  (shared, skills, memory), lets the user tap each row to browse its contents,
 //  and toggles whether each one is visible in the iOS Files app under
-//  "On My iPhone → Minis".
+//  "On My iPhone → Ze".
 //
 
 import SwiftUI
@@ -20,7 +20,7 @@ struct SharedFoldersSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Shared folders", systemImage: "info.circle")
                         .font(.subheadline.weight(.semibold))
-                    Text("These directories appear in iOS Files under On My iPhone → Minis. Tap a row to see details, browse, or toggle visibility.")
+                    Text("These directories appear in iOS Files under On My iPhone → Ze. Tap a row to see details, browse, or toggle visibility.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -139,7 +139,7 @@ struct SharedFolderEntry: Identifiable, Hashable {
     /// UserDefaults key / FileProvider subdir name ("shared", "skills", "memory").
     let name: String
     let displayName: String
-    /// Linux path inside iSH (e.g. "/var/minis/shared").
+    /// Linux path inside iSH (e.g. "/var/ze/shared").
     let linuxPath: String
     /// Host filesystem URL (App Group container) for FileBrowserView.
     let hostURL: URL
@@ -147,7 +147,7 @@ struct SharedFolderEntry: Identifiable, Hashable {
     let iconColor: Color
     /// Whether the Files app (via FileProvider extension) can write to this
     /// folder. `memory` and `skills` are read-only from Files; `shared` is r/w.
-    /// Note: the MinisApp itself always reads/writes all three — this flag only
+    /// Note: the ZeApp itself always reads/writes all three — this flag only
     /// describes the Files-app-facing surface.
     let isWritableFromFiles: Bool
 
@@ -191,12 +191,12 @@ final class SharedFoldersViewModel: ObservableObject {
     }
 
     private static func buildEntries() -> [SharedFolderEntry] {
-        let root = AIChatViewModel.minisAppGroupRoot
+        let root = AIChatViewModel.zeAppGroupRoot
         return [
             SharedFolderEntry(
                 name: "shared",
                 displayName: String(localized: "Shared"),
-                linuxPath: "/var/minis/shared",
+                linuxPath: "/var/ze/shared",
                 hostURL: root.appendingPathComponent("shared", isDirectory: true),
                 iconName: "folder.fill",
                 iconColor: .blue,
@@ -205,7 +205,7 @@ final class SharedFoldersViewModel: ObservableObject {
             SharedFolderEntry(
                 name: "skills",
                 displayName: String(localized: "Skills"),
-                linuxPath: "/var/minis/skills",
+                linuxPath: "/var/ze/skills",
                 hostURL: root.appendingPathComponent("skills", isDirectory: true),
                 iconName: "sparkles",
                 iconColor: .purple,
@@ -214,7 +214,7 @@ final class SharedFoldersViewModel: ObservableObject {
             SharedFolderEntry(
                 name: "memory",
                 displayName: String(localized: "Memory"),
-                linuxPath: "/var/minis/memory",
+                linuxPath: "/var/ze/memory",
                 hostURL: root.appendingPathComponent("memory", isDirectory: true),
                 iconName: "brain.head.profile",
                 iconColor: .pink,
@@ -224,7 +224,7 @@ final class SharedFoldersViewModel: ObservableObject {
     }
 
     private static func signalFileProviderRoot() {
-        let domainIdentifier = NSFileProviderDomainIdentifier("com.openminis.app.files")
+        let domainIdentifier = NSFileProviderDomainIdentifier("com.ze.app.files")
         NSFileProviderManager.getDomainsWithCompletionHandler { domains, _ in
             guard let domain = domains.first(where: { $0.identifier == domainIdentifier }) else {
                 return

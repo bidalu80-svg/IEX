@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Inline section for ModelGroupsView — manages models available via minis-model-use.
+/// Inline section for ModelGroupsView — manages models available via ze-model-use.
 /// Supports both individual model entries and entire model groups.
 /// Sheet bindings are passed in from the parent to avoid hanging .sheet on a Section inside a List.
 struct AgentLoopModelsSection: View {
@@ -67,7 +67,7 @@ struct AgentLoopModelsSection: View {
                 }
             }
         } footer: {
-            Text("Models and groups listed here can be invoked from the terminal via minis-model-use. Only these are visible to the agent.")
+            Text("Models and groups listed here can be invoked from the terminal via ze-model-use. Only these are visible to the agent.")
         }
     }
 

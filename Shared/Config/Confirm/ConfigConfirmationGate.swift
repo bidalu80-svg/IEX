@@ -5,7 +5,7 @@ import UserNotifications
 
 private let gateLogger = AppLogger(category: "ConfigConfirmGate")
 
-/// Funnels every minis-config write through user confirmation.
+/// Funnels every ze-config write through user confirmation.
 ///
 /// The gate is a single global queue: at most one ConfirmSheet shows
 /// at a time. Subsequent requests stack up so the agent can fire a
@@ -194,8 +194,8 @@ final class ConfigConfirmationGate: ObservableObject {
             content.body = caption
         } else {
             content.body = change.items.count > 1
-                ? "\(change.items.count) changes need your review — open Minis to approve or reject."
-                : "A change needs your review — open Minis to approve or reject."
+                ? "\(change.items.count) changes need your review — open Ze to approve or reject."
+                : "A change needs your review — open Ze to approve or reject."
         }
         content.sound = .default
         content.categoryIdentifier = Self.notifyCategoryId

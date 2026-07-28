@@ -1,10 +1,10 @@
 //
 //  MountedFoldersSettingsView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Settings screen for managing user-mounted external folders. Lets the user
 //  pick a folder from iOS Files (e.g. an Obsidian vault in iCloud Drive),
-//  give it a custom name, and mount it at /var/minis/mounts/<name>.
+//  give it a custom name, and mount it at /var/ze/mounts/<name>.
 //
 
 import SwiftUI
@@ -171,13 +171,13 @@ struct MountedFoldersSettingsView: View {
     /// Build the MountDetailView context for an external-mount entry.
     private func detailContext(for entry: MountedFolderEntry) -> MountDetailContext {
         // Host URL for Browse Files goes through the fakefs symlink so the
-        // breadcrumb shows /var/minis/mounts/<name>.
+        // breadcrumb shows /var/ze/mounts/<name>.
         let mountPath = RootfsManager.shared.dataPath
-            .appendingPathComponent("var/minis/mounts", isDirectory: true)
+            .appendingPathComponent("var/ze/mounts", isDirectory: true)
             .appendingPathComponent(entry.name)
         return MountDetailContext(
             kind: .external,
-            linuxPath: "/var/minis/mounts/\(entry.name)",
+            linuxPath: "/var/ze/mounts/\(entry.name)",
             sourceDisplayName: entry.sourceDisplayName,
             hostURL: mountPath,
             iconName: "externaldrive.fill",
@@ -257,7 +257,7 @@ private struct InfoBanner: View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Mount external folders", systemImage: "info.circle")
                 .font(.subheadline.weight(.semibold))
-            Text("Picked folders are bind-mounted at /var/minis/mounts/<name>. You can browse them in Browse Files and read/write them directly from the iSH shell, just like /var/minis/shared. Up to 10 folders can be mounted at a time.")
+            Text("Picked folders are bind-mounted at /var/ze/mounts/<name>. You can browse them in Browse Files and read/write them directly from the iSH shell, just like /var/ze/shared. Up to 10 folders can be mounted at a time.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -282,7 +282,7 @@ private struct MountedFolderRow: View {
                 accessBadge
                 Spacer()
             }
-            Text("/var/minis/mounts/\(entry.name)")
+            Text("/var/ze/mounts/\(entry.name)")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -358,7 +358,7 @@ private struct AddMountSheet: View {
                     TextField("name", text: $name)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    Text("This will be the folder name under /var/minis/mounts/")
+                    Text("This will be the folder name under /var/ze/mounts/")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

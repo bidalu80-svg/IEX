@@ -283,7 +283,7 @@ struct SyncedProviderConfig: Syncable {
 
 // MARK: - SyncedMCPServers
 
-/// [T-mcp-integration-ios] Whole-file sync of /var/minis/mcp-servers/servers.json
+/// [T-mcp-integration-ios] Whole-file sync of /var/ze/mcp-servers/servers.json
 /// (the MCP server list). One record per app; last-write-wins by updatedAt
 /// (the file mtime), aligned with how the other config files sync.
 struct SyncedMCPServers: Syncable {
@@ -326,7 +326,7 @@ struct SyncedMCPServers: Syncable {
 // (note/enabled/url/headers/command/args/env/startupTimeoutSeconds/...)
 // so fields added by a newer build round-trip through an older peer
 // without being stripped. Headers/env can hold literal tokens → the type
-// lives in the minis-secrets zone alongside ProviderConfigV2.
+// lives in the ze-secrets zone alongside ProviderConfigV2.
 struct SyncedMCPServer: Syncable {
     var id: String          // server name — also the CK recordName
     var entryJson: String   // full ServerEntry JSON, verbatim round-trip
@@ -642,7 +642,7 @@ struct SyncedDevice: Syncable {
 // One singleton record per iCloud account holding the full SOUL.md text
 // (frontmatter + body). LWW by updatedAt — SOUL.md is small and edited
 // rarely; per-field merging would not buy anything. The file lives at
-// <minisMemoryPersistentDir>/SOUL.md and is read/written by SoulStore.
+// <zeMemoryPersistentDir>/SOUL.md and is read/written by SoulStore.
 struct SyncedSoul: Syncable {
     /// Constant id — only one SOUL.md per app/account.
     var id: String = "soul"
@@ -670,7 +670,7 @@ struct SyncedSoul: Syncable {
 //
 // One singleton record per iCloud account holding the full GLOBAL.md text.
 // LWW by updatedAt (file mtime). Empty file is never pushed (builder returns nil).
-// Lives alongside SoulV2 in minis-shared zone.
+// Lives alongside SoulV2 in ze-shared zone.
 struct SyncedMemoryGlobal: Syncable {
     var id: String = "memory-global"   // constant — one record per account
     var contentMarkdown: String        // full GLOBAL.md text

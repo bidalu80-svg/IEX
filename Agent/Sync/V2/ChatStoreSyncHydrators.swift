@@ -320,7 +320,7 @@ enum ChatStoreSyncHydrators {
         let sessionId = String(parts[0])
         let relativePath = String(parts[1])
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let fileURL = library.appendingPathComponent("MinisChat/minis/\(sessionId)/\(relativePath)")
+        let fileURL = library.appendingPathComponent("ZeChat/ze/\(sessionId)/\(relativePath)")
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let fileSize = (attrs?[.size] as? Int) ?? 0
@@ -364,7 +364,7 @@ enum ChatStoreSyncHydrators {
             return
         }
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let destURL = library.appendingPathComponent("MinisChat/minis/\(sessionId)/\(relativePath)")
+        let destURL = library.appendingPathComponent("ZeChat/ze/\(sessionId)/\(relativePath)")
         let fm = FileManager.default
         let remoteFileUpdatedAt = dateField(record, "updatedAt") ?? record.updatedAt
         // [T-icloud-deleted-session-resurrection] Refuse to recreate a file
@@ -500,7 +500,7 @@ enum ChatStoreSyncHydrators {
 
     private static func buildProviderConfig() async -> PortableRecord? {
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let configURL = library.appendingPathComponent("MinisChat/provider-config.json")
+        let configURL = library.appendingPathComponent("ZeChat/provider-config.json")
         guard let data = try? Data(contentsOf: configURL),
               let json = String(data: data, encoding: .utf8) else { return nil }
         // Reuse v1's export — it already pulls API keys out of the
@@ -683,7 +683,7 @@ enum ChatStoreSyncHydrators {
 
     private static func buildEnvVars() async -> PortableRecord? {
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let envURL = library.appendingPathComponent("MinisChat/env-vars.json")
+        let envURL = library.appendingPathComponent("ZeChat/env-vars.json")
         guard let data = try? Data(contentsOf: envURL),
               let json = String(data: data, encoding: .utf8) else { return nil }
         let secrets: String = {
@@ -823,7 +823,7 @@ enum ChatStoreSyncHydrators {
         let device = SyncDevice(
             id: id,
             deviceName: stringField(record, "deviceName") ?? "Unknown",
-            zoneName: "minis-devices",
+            zoneName: "ze-devices",
             lastSeen: dateField(record, "lastSeen") ?? Date(),
             osVersion: stringField(record, "osVersion") ?? "",
             uploadTypes: (stringField(record, "uploadTypes") ?? "")
@@ -905,7 +905,7 @@ enum ChatStoreSyncHydrators {
     // MARK: - Memory Global (GLOBAL.md singleton)
 
     private static func buildMemoryGlobal() async -> PortableRecord? {
-        let url = AIChatViewModel.minisMemoryPersistentDir
+        let url = AIChatViewModel.zeMemoryPersistentDir
                     .appendingPathComponent("GLOBAL.md")
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path),
@@ -931,7 +931,7 @@ enum ChatStoreSyncHydrators {
         }
         let remoteUpdatedAt = dateField(record, "updatedAt") ?? record.updatedAt
 
-        let url = AIChatViewModel.minisMemoryPersistentDir
+        let url = AIChatViewModel.zeMemoryPersistentDir
                     .appendingPathComponent("GLOBAL.md")
         let fm = FileManager.default
 
@@ -1031,7 +1031,7 @@ enum ChatStoreSyncHydrators {
             return nil  // Too old — skip
         }
 
-        let url = AIChatViewModel.minisMemoryPersistentDir
+        let url = AIChatViewModel.zeMemoryPersistentDir
                     .appendingPathComponent("\(dateKey).md")
         guard let text = try? String(contentsOf: url, encoding: .utf8),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1063,7 +1063,7 @@ enum ChatStoreSyncHydrators {
             return
         }
 
-        let url = AIChatViewModel.minisMemoryPersistentDir
+        let url = AIChatViewModel.zeMemoryPersistentDir
                     .appendingPathComponent("\(dateKey).md")
         let fm = FileManager.default
 
@@ -1082,14 +1082,14 @@ enum ChatStoreSyncHydrators {
         //   serialised file will show both as separate `<!-- ts -->` blocks
         //   sharing the same timestamp (effectively "append the conflicting
         //   block to the end" once sorted). Hashing the content makes the
-        //   suffix deterministic — re-merging the same pair never produces
+        //   suffix deterzetic — re-merging the same pair never produces
         //   a third copy, so the file can't grow on each sync round.
         var merged: [String: MemoryEntry] = [:]
         for e in localEntries { merged[e.timestamp] = e }
         for e in remoteEntries {
             if let existing = merged[e.timestamp] {
                 if existing.content != e.content {
-                    // Conflict: deterministic suffix from content hash.
+                    // Conflict: deterzetic suffix from content hash.
                     let hashSuffix = String(abs(e.content.hashValue) % 100_000_000)
                     let conflictKey = "\(e.timestamp)#\(hashSuffix)"
                     if merged[conflictKey] == nil {

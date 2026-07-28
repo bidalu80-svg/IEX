@@ -1,6 +1,6 @@
 //
 //  SessionMCPsView.swift
-//  MinisApp
+//  ZeApp
 //
 //  Per-session MCP-server toggle sheet: override which MCP servers are active
 //  in a chat. Mirrors SessionSkillsView.

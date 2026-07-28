@@ -1,8 +1,8 @@
 //
 //  ModelUseOffload.h
-//  MinisApp
+//  ZeApp
 //
-//  Native offload handler for `minis-model-use`.
+//  Native offload handler for `ze-model-use`.
 //  Lists, searches, and invokes LLM models from the terminal.
 //
 

@@ -487,7 +487,7 @@ final class CrashReporter: NSObject, MXMetricManagerSubscriber {
         let dateStr = df.string(from: crashDate)
 
         var report = """
-        === Minis Crash Report ===
+        === Ze Crash Report ===
         Date:    \(dateStr)
         Type:    \(type)
         Build:   \(displayBuild)
@@ -654,7 +654,7 @@ final class CrashReporter: NSObject, MXMetricManagerSubscriber {
     private func pruneOldReports() {
         let fm = FileManager.default
         let dir = crashReportsDir
-        // Only prune crash reports (crash-*.log). Running logs (minis-*.log) now
+        // Only prune crash reports (crash-*.log). Running logs (ze-*.log) now
         // share this directory and are pruned by LoggingManager, not here.
         guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey])
             .filter({ $0.pathExtension == "log" && $0.lastPathComponent.hasPrefix("crash-") })

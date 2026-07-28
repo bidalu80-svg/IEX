@@ -1,11 +1,11 @@
 //
 //  MCPOAuthController.swift
-//  MinisApp
+//  ZeApp
 //
 //  [T-mcp-static-oauth] Native OAuth for MCP servers — Static mode (user-supplied
 //  Client ID + optional Client Secret, PKCE Authorization Code flow).
 //
-//  Ownership split with the in-guest minis-mcp-cli:
+//  Ownership split with the in-guest ze-mcp-cli:
 //    • Native (this file): interactive authorization (ASWebAuthenticationSession),
 //      token exchange, credential storage (Keychain, non-synchronizable), and
 //      materializing the "token bridge" file the guest transport reads.
@@ -19,7 +19,7 @@
 //       only the non-secret oauth config (endpoints/clientId). A peer device
 //       receives the server and simply shows "Not authorized" until the user
 //       authorizes there.
-//    2. The guest bridge file (<MinisConfig>/mcp-servers/oauth/<name>.json,
+//    2. The guest bridge file (<ZeConfig>/mcp-servers/oauth/<name>.json,
 //       chmod 600) duplicates access/refresh tokens + client credentials so the
 //       daemon can self-refresh while the app is backgrounded. It sits OUTSIDE
 //       servers.json and outside every sync fingerprint — container-local only.
@@ -44,7 +44,7 @@ struct MCPOAuthConfig: Codable, Hashable {
     var tokenEndpoint: String = ""
     /// Space-separated scopes, e.g. "openid email https://www.googleapis.com/auth/calendar".
     var scopes: String?
-    /// Custom redirect URI. Default minis-mcp://oauth/callback; Google installed
+    /// Custom redirect URI. Default ze-mcp://oauth/callback; Google installed
     /// apps need the reversed-client-id scheme (com.googleusercontent.apps.X:/oauth2redirect).
     var redirectURI: String?
 }
@@ -89,7 +89,7 @@ final class MCPOAuthController: NSObject, ObservableObject {
 
     // MARK: - Keychain (non-synchronizable — secrets never ride iCloud)
 
-    nonisolated private static let keychainService = "com.openminis.app.mcp-oauth"
+    nonisolated private static let keychainService = "com.ze.app.mcp-oauth"
 
     nonisolated private static func keychainSet(_ data: Data, account: String) {
         let match: [String: Any] = [
@@ -152,14 +152,14 @@ final class MCPOAuthController: NSObject, ObservableObject {
 
     // MARK: - CLI-seeded client secret [T-mcp-cli-oauth-flags]
 
-    /// `minis-mcp-cli add --oauth-client-secret` can't reach the Keychain from
+    /// `ze-mcp-cli add --oauth-client-secret` can't reach the Keychain from
     /// the guest, so it seeds <mcp-servers>/oauth/<name>.secret. Import it
     /// into the Keychain (the authority) and delete the file. Called when the
     /// server's edit form opens and before authorize — the seed is a handoff,
     /// not a storage location. Returns true when a seed was imported.
     @discardableResult
     static func importPendingSecretIfAny(server: String) -> Bool {
-        let url = AIChatViewModel.minisMcpServersPersistentDir
+        let url = AIChatViewModel.zeMcpServersPersistentDir
             .appendingPathComponent("oauth", isDirectory: true)
             .appendingPathComponent("\(server).secret")
         guard let data = try? Data(contentsOf: url),
@@ -227,9 +227,9 @@ final class MCPOAuthController: NSObject, ObservableObject {
     // MARK: - Guest bridge file
 
     /// Host URL of the guest-visible token bridge for `server`
-    /// (bind-mounted at /var/minis/mcp-servers/oauth/<name>.json).
+    /// (bind-mounted at /var/ze/mcp-servers/oauth/<name>.json).
     nonisolated static func bridgeFileURL(server: String) -> URL {
-        AIChatViewModel.minisMcpServersPersistentDir
+        AIChatViewModel.zeMcpServersPersistentDir
             .appendingPathComponent("oauth", isDirectory: true)
             .appendingPathComponent("\(server).json")
     }

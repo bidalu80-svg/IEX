@@ -1,6 +1,6 @@
 //
 //  ToolLiveSheet.swift
-//  MinisApp
+//  ZeApp
 //
 //  Expandable live tool preview — the floating toolbar above the input
 //  bar plus the full-screen sheet that shows tool arguments, streaming
@@ -17,7 +17,7 @@ import WebKit
 /// Detects http(s) URLs in a line of shell output and returns an
 /// AttributedString with each URL marked as a `.link` plus single
 /// underline. Tapping one routes through the SwiftUI `\.openURL`
-/// environment — callers override that to present MinisLinkPreviewView.
+/// environment — callers override that to present ZeLinkPreviewView.
 ///
 /// Uses NSDataDetector (the same engine UITextView uses for its built-in
 /// link detection) so it handles URLs with or without surrounding
@@ -174,7 +174,7 @@ fileprivate func attributedShellLine(_ text: String) -> AttributedString {
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else { continue }
         // NSDataDetector fabricates http:// for bare domains like "github.com/foo",
-        // which matches path fragments in shell output (e.g. "/Users/.../github.com/OpenMinis/...").
+        // which matches path fragments in shell output from hosted checkouts.
         // Require the matched substring itself to begin with an explicit http:// or https:// scheme.
         let matched = ns.substring(with: m.range)
         let lower = matched.lowercased()
@@ -415,7 +415,7 @@ struct ToolLiveSheet: View {
             secs = max(0, Date().timeIntervalSince(started))
             stillRunning = isLive
         }
-        return MinisStepTimestampFormatter.duration(seconds: secs, stillRunning: stillRunning)
+        return ZeStepTimestampFormatter.duration(seconds: secs, stillRunning: stillRunning)
     }
 
     var body: some View {
@@ -445,17 +445,17 @@ struct ToolLiveSheet: View {
         .onAppear {
             startBrowserTimer()
             if isLive && isCurrentShell { resourceMonitor.start() }
-            MinisOpenURLBroker.shared.toolSheetVisible = true
+            ZeOpenURLBroker.shared.toolSheetVisible = true
         }
         .onDisappear {
             stopBrowserTimer()
             resourceMonitor.stop()
-            MinisOpenURLBroker.shared.toolSheetVisible = false
+            ZeOpenURLBroker.shared.toolSheetVisible = false
         }
         // Auto-present an in-app browser preview when a shell tool emits an
-        // OSC MinisOpenURL marker while this sheet is visible.
+        // OSC ZeOpenURL marker while this sheet is visible.
         //
-        // Only intercepts http/https/about: URLs — `minis://` chat-resource
+        // Only intercepts http/https/about: URLs — `ze://` chat-resource
         // previews (images, markdown, QuickLook, ...) are left for
         // AIChatView to handle since this sheet cannot host file previews.
         //
@@ -463,10 +463,10 @@ struct ToolLiveSheet: View {
         // to new subscribers on first attach — without it, opening the
         // sheet after a previous OSC capture would immediately re-present
         // a stale URL.
-        .onReceive(MinisOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
-            guard MinisOpenURLBroker.isWebScheme(url.scheme) else { return }
+        .onReceive(ZeOpenURLBroker.shared.$pendingURL.dropFirst().compactMap { $0 }) { url in
+            guard ZeOpenURLBroker.isWebScheme(url.scheme) else { return }
             activeSheet = .linkPreview(url)
-            MinisOpenURLBroker.shared.consume()
+            ZeOpenURLBroker.shared.consume()
         }
         .onChange(of: isLive) { live in
             if live && isCurrentShell { resourceMonitor.start() } else { resourceMonitor.stop() }
@@ -501,7 +501,7 @@ struct ToolLiveSheet: View {
                     BrowserSheetView(pool: pool, isAgentBusy: false)
                 }
             case .linkPreview(let url):
-                MinisLinkPreviewView(url: url, browserPool: browserPool)
+                ZeLinkPreviewView(url: url, browserPool: browserPool)
             }
         }
     }
@@ -532,7 +532,7 @@ struct ToolLiveSheet: View {
                 // out to the step pill's trailing column (under the
                 // elapsed-duration "5s" text) so it lives next to where the
                 // user is already scanning timing info.
-                Text("Minis Computer")
+                Text("Ze Computer")
                     .font(.system(size: 15, weight: .semibold))
 
                 Spacer()
@@ -1078,7 +1078,7 @@ struct ToolLiveSheet: View {
 
     /// Editor-style preview for file_read / file_write tool results.
     /// - Parameter fileContent: The actual file content to display in the editor.
-    /// - Parameter toolResult: Optional tool result info (minis_url etc.) shown below the editor.
+    /// - Parameter toolResult: Optional tool result info (ze_url etc.) shown below the editor.
     // MARK: - File Edit Diff Helpers
 
     /// Extracts `old_string` and `new_string` from the tool input args JSON for file_edit.
@@ -1894,7 +1894,7 @@ struct ToolLiveSheet: View {
                                 .foregroundStyle(ChatColors.tertiaryText)
                         }
                         if let started = block.toolStartTime {
-                            Text(MinisStepTimestampFormatter.string(from: started))
+                            Text(ZeStepTimestampFormatter.string(from: started))
                                 .font(.system(size: 9, design: .monospaced))
                                 .foregroundStyle(ChatColors.tertiaryText.opacity(0.75))
                         }
@@ -1977,16 +1977,16 @@ struct ToolLiveSheet: View {
 
     private var toolTitle: String {
         switch block.kind {
-        case .shellTool: return "Minis is using Shell"
-        case .fileReadTool: return "Minis is reading File"
-        case .fileWriteTool: return "Minis is using Editor"
-        case .fileEditTool: return "Minis is editing File"
-        case .browserTool: return "Minis is using Browser"
-        case .readImageTool: return "Minis is reading Image"
-        case .memoryTool: return "Minis is using Memory"
-        case .info: return "Minis"
-        case .text: return "Minis"
-        case .thinking: return "Minis"
+        case .shellTool: return "Ze is using Shell"
+        case .fileReadTool: return "Ze is reading File"
+        case .fileWriteTool: return "Ze is using Editor"
+        case .fileEditTool: return "Ze is editing File"
+        case .browserTool: return "Ze is using Browser"
+        case .readImageTool: return "Ze is reading Image"
+        case .memoryTool: return "Ze is using Memory"
+        case .info: return "Ze"
+        case .text: return "Ze"
+        case .thinking: return "Ze"
         }
     }
 
@@ -2481,7 +2481,7 @@ private struct ToolStatusBar: View {
 /// pay the DateFormatter alloc on every recompose. Locale-independent
 /// numeric format ("posix" + HH:mm:ss) so a CJK locale renders the same
 /// glyphs as an English locale.
-enum MinisStepTimestampFormatter {
+enum ZeStepTimestampFormatter {
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")

@@ -1,6 +1,6 @@
 //
 //  ClipboardOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-clipboard` — read/write UIPasteboard.
 //

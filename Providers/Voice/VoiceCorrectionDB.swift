@@ -5,7 +5,7 @@ private let logger = AppLogger(category: "VoiceCorrection")
 
 /// SQLite store for voice-input smart correction (design §3, §11, §13).
 ///
-/// Its own database file — deliberately NOT sharing minis.db / provider-config.db —
+/// Its own database file — deliberately NOT sharing ze.db / provider-config.db —
 /// so "clear my voice-correction learning data" is a single file to wipe, and so a
 /// corrupt learning DB can never take the rest of the app down with it (design §3.1, §7).
 ///
@@ -34,11 +34,11 @@ actor VoiceCorrectionDB {
 
     // MARK: - File locations
 
-    /// Same MinisChat folder the other databases live in.
+    /// Same ZeChat folder the other databases live in.
     static func defaultURL() -> URL {
         let library = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        let base = library.appendingPathComponent("MinisChat", isDirectory: true)
+        let base = library.appendingPathComponent("ZeChat", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("voice-correction.db")
     }

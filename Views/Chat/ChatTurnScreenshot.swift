@@ -175,7 +175,7 @@ struct ChatScreenshotPreviewSheet: View {
             // [T-share-sheet-uti] Route through sanitizedShareURL for parity
             // with the other share entry points. `.png` is safe and the
             // helper will return nil here, leaving the original URL intact.
-            let safeURL = MinisShareSheet.sanitizedShareURL(url) ?? url
+            let safeURL = ZeShareSheet.sanitizedShareURL(url) ?? url
             DispatchQueue.main.async {
                 let avc = UIActivityViewController(activityItems: [safeURL], applicationActivities: nil)
                 guard let scene = UIApplication.shared.connectedScenes

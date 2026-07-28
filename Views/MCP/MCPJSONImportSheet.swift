@@ -1,6 +1,6 @@
 //
 //  MCPJSONImportSheet.swift
-//  MinisApp
+//  ZeApp
 //
 //  Paste an MCP server config (Claude-Desktop mcpServers JSON or compatible
 //  variants), preview the parsed servers, then commit. Mirrors the Skills

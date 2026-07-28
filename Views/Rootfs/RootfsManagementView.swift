@@ -1,6 +1,6 @@
 //
 //  RootfsManagementView.swift
-//  MinisApp
+//  ZeApp
 //
 //  UI for managing rootfs (reset, backup, restore)
 //

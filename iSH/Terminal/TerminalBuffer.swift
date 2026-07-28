@@ -1,6 +1,6 @@
 //
 //  TerminalBuffer.swift
-//  MinisApp
+//  ZeApp
 //
 //  Terminal screen buffer with character grid, scrollback, and cursor management
 //

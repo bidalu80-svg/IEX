@@ -393,11 +393,11 @@ extension AIChatViewModel {
             let timestamp = Int(Date().timeIntervalSince1970)
             let screenshotFilename = "takeover_\(timestamp).jpg"
             let sid = sessionId ?? "unknown"
-            let persistDir = Self.minisBrowserPersistentDir(for: sid)
+            let persistDir = Self.zeBrowserPersistentDir(for: sid)
             try? FileManager.default.createDirectory(at: persistDir, withIntermediateDirectories: true)
             let persistPath = persistDir.appendingPathComponent(screenshotFilename)
             try? data.write(to: persistPath)
-            let linuxPath = "\(Self.minisBrowserLinuxDir)/\(screenshotFilename)"
+            let linuxPath = "\(Self.zeBrowserLinuxDir)/\(screenshotFilename)"
 
             // Inject a user message with the takeover screenshot so the model sees the current state
             let takeoverNote = "[Browser takeover] The user manually operated the browser. Here is a screenshot of the current browser state after their interaction."

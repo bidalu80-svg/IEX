@@ -251,8 +251,8 @@ struct ChatMessageRow: View {
             .foregroundStyle(.secondary)
             // [T-browser-download-ux-v4] No .lineLimit(1).fixedSize() here:
             // fixedSize forced the text to its full ideal width, so a long
-            // systemInfo line (e.g. pre-v3 "Downloaded … to /var/minis/… —
-            // minis://…" rows persisted in history) overflowed BOTH screen
+            // systemInfo line (e.g. pre-v3 "Downloaded … to /var/ze/… —
+            // ze://…" rows persisted in history) overflowed BOTH screen
             // edges from this centered row. layoutPriority keeps the flexible
             // dividers from squeezing the text; past the available width the
             // text wraps (UIKit breaks unspaced tokens like paths/URLs
@@ -323,7 +323,7 @@ struct ChatMessageRow: View {
                     }
                 }
             }
-            .modifier(MinisOpenURLHandler())
+            .modifier(ZeOpenURLHandler())
             .contentShape(Rectangle())
             // [T-ios-usermsg-contextmenu-preview-shape] The hit-test shape above
             // stays a full Rectangle (so the whole row is long-pressable), but

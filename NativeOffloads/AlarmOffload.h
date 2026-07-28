@@ -1,6 +1,6 @@
 //
 //  AlarmOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-alarm` — AlarmKit (iOS 26+).
 //

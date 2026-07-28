@@ -22,7 +22,7 @@ final class ConfigRegistry {
     private var collections: [String: ConfigCollection] = [:]
     private var didRegisterBuiltins = false
 
-    /// Idempotent. Called from `MinisApp.onAppear`. Splitting initial
+    /// Idempotent. Called from `ZeApp.onAppear`. Splitting initial
     /// load from the singleton init avoids touching managers (whose
     /// own init may have side effects) before the app is ready.
     func registerBuiltinsIfNeeded() {
@@ -62,7 +62,7 @@ final class ConfigRegistry {
     }
 
     /// All registered top-level field paths (excluding hidden), used by
-    /// `minis-config list-all` and the `--help` topic enumerator.
+    /// `ze-config list-all` and the `--help` topic enumerator.
     func allVisibleFieldPaths() -> [String] {
         fields.values
             .filter { $0.access != .hidden }

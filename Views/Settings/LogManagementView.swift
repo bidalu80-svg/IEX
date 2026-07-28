@@ -50,7 +50,7 @@ struct LogManagementView: View {
     @State private var showShareSheet = false
 
     /// Selected top-level tab. Bound to a deep-link query string so
-    /// `minis://settings/logs?tab=config-audit` lands users straight on
+    /// `ze://settings/logs?tab=config-audit` lands users straight on
     /// the audit list. Stored as a String so the Picker can drive it.
     @State var initialTab: String = "logs"
     @State private var tab: String = "logs"
@@ -264,8 +264,8 @@ private struct LogTextView: UIViewRepresentable {
 private struct LogShareSheet: UIViewControllerRepresentable {
     let urls: [URL]
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        // [T-share-sheet-uti] See MinisShareSheet.sanitizedShareURL.
-        let safe = urls.map { MinisShareSheet.sanitizedShareURL($0) ?? $0 }
+        // [T-share-sheet-uti] See ZeShareSheet.sanitizedShareURL.
+        let safe = urls.map { ZeShareSheet.sanitizedShareURL($0) ?? $0 }
         return UIActivityViewController(activityItems: safe, applicationActivities: nil)
     }
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}

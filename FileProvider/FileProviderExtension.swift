@@ -2,23 +2,23 @@ import FileProvider
 import UniformTypeIdentifiers
 import os.log
 
-/// Replicated File Provider extension that exposes MinisFileProvider/ to the system Files app.
-/// Structure: Minis → { memory, skills, shared }
+/// Replicated File Provider extension that exposes ZeFileProvider/ to the system Files app.
+/// Structure: Ze → { memory, skills, shared }
 /// Uses the modern NSFileProviderReplicatedExtension protocol (iOS 16+).
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     let domain: NSFileProviderDomain
 
-    private static let log = OSLog(subsystem: "com.openminis.app.FileProvider", category: "Extension")
+    private static let log = OSLog(subsystem: "com.ze.app.FileProvider", category: "Extension")
 
     /// Root directory for all FileProvider-visible files in the App Group container.
     static var providerRoot: URL {
         let fm = FileManager.default
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
         let container = fm.containerURL(
-            forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
-        ) ?? library.appendingPathComponent("MinisChat/AppGroupFallback", isDirectory: true)
-        let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
+            forSecurityApplicationGroupIdentifier: "group.com.ze.app"
+        ) ?? library.appendingPathComponent("ZeChat/AppGroupFallback", isDirectory: true)
+        let url = container.appendingPathComponent("ZeFileProvider", isDirectory: true)
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -57,7 +57,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     /// Two historical locations exist:
     ///   1. `<providerRoot>/logs/` — original buggy location (leaked
     ///      into iOS Files).
-    ///   2. `<App Group>/MinisConfig/logs/` — second iteration; private
+    ///   2. `<App Group>/ZeConfig/logs/` — second iteration; private
     ///      to the app, but still grew unbounded with one log file
     ///      written per FileProvider invocation.
     /// Both are now dead — the extension no longer writes any file
@@ -72,9 +72,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             try? fm.removeItem(at: inProvider)
         }
 
-        // Location 2: under MinisConfig (private but still pure cruft).
-        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") {
-            let inConfig = container.appendingPathComponent("MinisConfig/logs", isDirectory: true)
+        // Location 2: under ZeConfig (private but still pure cruft).
+        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ze.app") {
+            let inConfig = container.appendingPathComponent("ZeConfig/logs", isDirectory: true)
             if fm.fileExists(atPath: inConfig.path, isDirectory: &isDir), isDir.boolValue {
                 try? fm.removeItem(at: inConfig)
             }
@@ -82,7 +82,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     /// Delete a residual `mounted-folders.json` file that the main app
-    /// already migrated to `MinisConfig/`. If both copies exist the main
+    /// already migrated to `ZeConfig/`. If both copies exist the main
     /// app prefers the current-location one and drops the legacy one,
     /// but if migration didn't run (e.g. extension launched first on a
     /// cold boot) we should still not expose the stale copy to Files.
@@ -90,10 +90,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let fm = FileManager.default
         let legacy = root.appendingPathComponent("mounted-folders.json")
         guard fm.fileExists(atPath: legacy.path) else { return }
-        // Only delete if the canonical copy already exists under MinisConfig —
+        // Only delete if the canonical copy already exists under ZeConfig —
         // otherwise we'd lose the data.
-        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else { return }
-        let canonical = container.appendingPathComponent("MinisConfig/mounted-folders.json")
+        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ze.app") else { return }
+        let canonical = container.appendingPathComponent("ZeConfig/mounted-folders.json")
         if fm.fileExists(atPath: canonical.path) {
             try? fm.removeItem(at: legacy)
         }

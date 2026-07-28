@@ -1,6 +1,6 @@
 //
 //  WeatherOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Native offload handler for `apple-weather` — WeatherKit.
 //

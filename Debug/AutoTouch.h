@@ -1,6 +1,6 @@
 //
 //  AutoTouch.h
-//  MinisApp
+//  ZeApp
 //
 //  Simulates touch events, text input, and scroll gestures using private UIKit APIs.
 //  DEBUG builds only — not for App Store submission.

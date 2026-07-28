@@ -5,8 +5,8 @@ private let auditLogger = AppLogger(category: "ConfigAudit")
 
 /// SQLite-backed rolling log of config changes.
 ///
-/// Storage: a dedicated `minis-config-audit.db` next to the chat db.
-/// Keeping it separate from `minis.db` means the audit table never
+/// Storage: a dedicated `ze-config-audit.db` next to the chat db.
+/// Keeping it separate from `ze.db` means the audit table never
 /// gets caught in sync-dirty queries and can be wiped independently
 /// if it ever corrupts. Capacity: most-recent **1000** rows; older
 /// rows are pruned in the same transaction as each insert.
@@ -25,9 +25,9 @@ final class ConfigAuditLog: ObservableObject {
 
     init() {
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let base = library.appendingPathComponent("MinisChat", isDirectory: true)
+        let base = library.appendingPathComponent("ZeChat", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        self.dbURL = base.appendingPathComponent("minis-config-audit.db")
+        self.dbURL = base.appendingPathComponent("ze-config-audit.db")
         openAndMigrate()
     }
 
@@ -151,7 +151,7 @@ final class ConfigAuditLog: ObservableObject {
     }
 
     /// Clear ALL entries. Surfaced via Logs UI as a manual action; not
-    /// callable through `minis-config` (would let the agent erase its
+    /// callable through `ze-config` (would let the agent erase its
     /// own trail).
     func clearAll() {
         guard db != nil else { return }

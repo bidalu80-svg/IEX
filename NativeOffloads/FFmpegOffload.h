@@ -1,6 +1,6 @@
 //
 //  FFmpegOffload.h
-//  MinisApp
+//  ZeApp
 //
 //  Bridges FFmpeg.framework's ffmpeg_main() to iSH native offload,
 //  so `ffmpeg` commands in the iSH shell execute natively via the
