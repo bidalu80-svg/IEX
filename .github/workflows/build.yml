@@ -56,6 +56,59 @@ jobs:
             'int native_offload_add_handler(const char *name, native_offload_handler_t handler);' \
             '#endif' \
             > "$UP2/deps/include/kernel/native_offload.h"
+          # stub kernel/fs.h (referenced by NativeOffloadUtils.m)
+          printf '%s\n' \
+            '#ifndef KERNEL_FS_H' \
+            '#define KERNEL_FS_H' \
+            '#define O_RDONLY_ 0' \
+            '#define O_WRONLY_ 1' \
+            '#define O_CREAT_ 64' \
+            '#define O_TRUNC_ 512' \
+            '#define O_NONBLOCK 2048' \
+            '#define O_APPEND_ 1024' \
+            '#define AT_PWD (-100)' \
+            '#define S_IFCHR 0020000' \
+            '#define TTY_CONSOLE_MAJOR 4' \
+            '#define TTY_ALTERNATE_MAJOR 5' \
+            '#define DEV_TTY_MINOR 0' \
+            '#define DEV_CONSOLE_MINOR 1' \
+            '#define DEV_PTMX_MINOR 2' \
+            '#define MEM_MAJOR 1' \
+            '#define DEV_NULL_MINOR 3' \
+            '#define DEV_ZERO_MINOR 5' \
+            '#define DEV_FULL_MINOR 7' \
+            '#define DEV_RANDOM_MINOR 8' \
+            '#define DEV_URANDOM_MINOR 9' \
+            '#define TTY_PSEUDO_SLAVE_MAJOR 136' \
+            '#endif' \
+            > "$UP2/deps/include/kernel/fs.h"
+          # stub fs/fd.h
+          printf '%s\n' \
+            '#ifndef FS_FD_H' \
+            '#define FS_FD_H' \
+            'struct fd;' \
+            'struct fd *generic_open(const char *path, int flags, int mode);' \
+            'void fd_close(struct fd *fd);' \
+            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+            '#endif' \
+            > "$UP2/deps/include/fs/fd.h"
+          # stub fs/path.h
+          printf '%s\n' \
+            '#ifndef FS_PATH_H' \
+            '#define FS_PATH_H' \
+            'int generic_mkdirat(int dirfd, const char *path, int mode);' \
+            'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
+            'int dev_make(int major, int minor);' \
+            'int create_stdio(const char *path, int major, int num);' \
+            '#endif' \
+            > "$UP2/deps/include/fs/path.h"
+          # stub ish/kernel/fs.h → replicate kernel/fs.h
+          mkdir -p "$UP2/deps/include/ish/kernel"
+          cp "$UP2/deps/include/kernel/fs.h" "$UP2/deps/include/ish/kernel/fs.h"
+          # stub ish/fs/
+          mkdir -p "$UP2/deps/include/ish/fs"
+          cp "$UP2/deps/include/fs/fd.h" "$UP2/deps/include/ish/fs/fd.h"
+          cp "$UP2/deps/include/fs/path.h" "$UP2/deps/include/ish/fs/path.h"
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
           echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
