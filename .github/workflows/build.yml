@@ -287,6 +287,25 @@ jobs:
             | tee build.log
           exit ${PIPESTATUS[0]}
 
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path '*/Build/Products/Debug-iphoneos/Minis.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "Minis.app was not found after the build."
+            exit 1
+          fi
+
+          IPA_STAGING="$RUNNER_TEMP/minis-ipa"
+          mkdir -p "$IPA_STAGING/Payload"
+          cp -R "$APP_PATH" "$IPA_STAGING/Payload/Minis.app"
+          ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Minis-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Minis-unsigned-ipa
+          path: Minis-unsigned.ipa
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
