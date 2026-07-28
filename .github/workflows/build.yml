@@ -158,6 +158,15 @@ jobs:
           done
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
+          # stub FFmpeg/FFmpeg.h (used by FFmpegOffload.m)
+          mkdir -p "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg"
+          printf '%s\n' \
+            '#ifndef FFMPEG_H' \
+            '#define FFMPEG_H' \
+            'int ffmpeg_main(int argc, char **argv);' \
+            'void ffmpeg_reset_statics(void);' \
+            '#endif' \
+            > "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg/FFmpeg.h"
 
           mkdir -p "$UP2/deps/libs"
           for lib in lish_emu lish lfakefs; do touch "$UP2/deps/libs/lib${lib}.a"; done
