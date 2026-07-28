@@ -2087,16 +2087,18 @@ struct ContentView: View {
 
         return VStack(spacing: 32) {
             Spacer()
-            // App icon / hero
-            Image(systemName: "sparkles")
-                .font(.system(size: 56))
-                .foregroundStyle(.tint)
+            // Ze assistant avatar / hero. Keep the same artwork as the
+            // first-chat welcome state and the assistant message header.
+            Image("ZeAssistantAvatar")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 76, height: 76)
                 .padding(.bottom, 4)
 
             VStack(spacing: 8) {
-                Text("Welcome to Ze")
+                Text("欢迎使用 Ze")
                     .font(.title2.bold())
-                Text("Your first On-Device Agent is almost ready.")
+                Text("您的本地智能体即将就绪。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -2107,8 +2109,8 @@ struct ContentView: View {
                 // Step 1 – Add Provider
                 setupStep(
                     number: 1,
-                    title: "Add a Provider",
-                    subtitle: hasProviders ? "Done" : "Configure an API key or sign in with OAuth",
+                    title: "添加服务商",
+                    subtitle: hasProviders ? "已完成" : "配置 API 密钥或使用 OAuth 登录",
                     isDone: hasProviders
                 ) {
                     if !hasProviders {
@@ -2119,8 +2121,8 @@ struct ContentView: View {
                 // Step 2 – Select Models
                 setupStep(
                     number: 2,
-                    title: "Select Models",
-                    subtitle: hasGroups ? "Done" : (hasProviders ? "Choose the models you want to use" : "Complete step 1 first"),
+                    title: "选择模型",
+                    subtitle: hasGroups ? "已完成" : (hasProviders ? "选择要使用的模型" : "请先完成第 1 步"),
                     isDone: hasGroups
                 ) {
                     if hasProviders && !hasGroups {
@@ -2131,8 +2133,8 @@ struct ContentView: View {
                 // Step 3 – Start chatting
                 setupStep(
                     number: 3,
-                    title: "Start a Conversation",
-                    subtitle: hasGroups ? "Tap the button below to begin" : "Complete step 2 first",
+                    title: "开始对话",
+                    subtitle: hasGroups ? "点击下方按钮开始" : "请先完成第 2 步",
                     isDone: false
                 ) {
                     if hasGroups {
@@ -4523,11 +4525,9 @@ private struct AppearanceSettingsView: View {
     @ObservedObject private var fontSettings = FontSettings.shared
 
     private let iconOptions: [AppIconOption] = [
-        AppIconOption(id: 0, title: "Automatic", subtitle: "Follows system", iconName: nil, imageName: "AlternateIcons/AppIcon-Light"),
-        AppIconOption(id: 1, title: "Light", subtitle: "Always light", iconName: "AppIcon-Light", imageName: "AlternateIcons/AppIcon-Light"),
-        AppIconOption(id: 2, title: "Dark", subtitle: "Always dark", iconName: "AppIcon-Dark", imageName: "AlternateIcons/AppIcon-Dark"),
-        AppIconOption(id: 3, title: "Light (Legacy)", subtitle: "Classic light icon", iconName: "AppIcon-LegacyLight", imageName: "AlternateIcons/AppIcon-LegacyLight"),
-        AppIconOption(id: 4, title: "Dark (Legacy)", subtitle: "Classic dark icon", iconName: "AppIcon-LegacyDark", imageName: "AlternateIcons/AppIcon-LegacyDark"),
+        AppIconOption(id: 0, title: "自动", subtitle: "跟随系统", iconName: nil, imageName: "ZeAssistantAvatar"),
+        AppIconOption(id: 2, title: "深色", subtitle: "始终深色", iconName: "AppIcon-Dark", imageName: "ZeAssistantAvatar"),
+        AppIconOption(id: 1, title: "浅色", subtitle: "始终浅色", iconName: "AppIcon-Light", imageName: "ZeAssistantAvatar"),
     ]
 
     var body: some View {
@@ -4663,13 +4663,9 @@ private struct AppearanceSettingsView: View {
                                         )
                                 }
                                 VStack(alignment: .leading, spacing: 2) {
-                                    // `option.title` / `option.subtitle` are fixed English
-                                    // keys ("Automatic", "Light", "Always light", etc.).
-                                    // Wrap in LocalizedStringKey so the catalog lookup kicks
-                                    // in — Text(String) would render them verbatim.
-                                    Text(LocalizedStringKey(option.title))
+                                    Text(option.title)
                                         .foregroundStyle(.primary)
-                                    Text(LocalizedStringKey(option.subtitle))
+                                    Text(option.subtitle)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -4684,9 +4680,9 @@ private struct AppearanceSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("App Icon")
+                    Text("应用图标")
                 } footer: {
-                    Text("\"Automatic\" uses the system icon which adapts to Dark Mode on iOS 18+.")
+                    Text("“自动”使用随系统外观适配的图标。")
                 }
             }
 
@@ -4734,6 +4730,13 @@ private struct AppearanceSettingsView: View {
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)
         .background(InteractivePopGestureDisabler())
+        .onAppear {
+            // The two legacy choices were removed. If an older install had one
+            // selected, return it to the automatic Ze assistant icon.
+            guard appIconMode > 2 else { return }
+            appIconMode = 0
+            UIApplication.shared.setAlternateIconName(nil)
+        }
     }
 }
 

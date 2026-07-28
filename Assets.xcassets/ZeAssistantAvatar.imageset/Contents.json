@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "iexa_assistant_avatar.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

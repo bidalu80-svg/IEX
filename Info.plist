@@ -225,24 +225,6 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>AppIcon-LegacyLight</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AlternateIcons/AppIcon-LegacyLight</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-			<key>AppIcon-LegacyDark</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AlternateIcons/AppIcon-LegacyDark</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
 		</dict>
 	</dict>
 	<key>CFBundleIcons~ipad</key>
@@ -272,24 +254,6 @@
 				<key>CFBundleIconFiles</key>
 				<array>
 					<string>AlternateIcons/AppIcon-Dark</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-			<key>AppIcon-LegacyLight</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AlternateIcons/AppIcon-LegacyLight</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-			<key>AppIcon-LegacyDark</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AlternateIcons/AppIcon-LegacyDark</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>

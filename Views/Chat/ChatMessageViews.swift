@@ -383,16 +383,10 @@ struct ChatMessageRow: View {
         VStack(alignment: .leading, spacing: 8) {
             // Assistant label
             HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color(red: 0.72, green: 0.69, blue: 0.59),
-                                     Color(red: 0.6, green: 0.6, blue: 0.55)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                Image("ZeAssistantAvatar")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 22, height: 22)
                 AssistantSoulName()
                     .font(.body.weight(.semibold))
                     .foregroundStyle(ChatColors.primaryText)

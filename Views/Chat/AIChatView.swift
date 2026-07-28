@@ -82,6 +82,7 @@ enum ChatColors {
     static let toolBorder = Color(UIColor.separator).opacity(0.5)
     static let accent = Color(UIColor.label)
     static let sendButton = Color(UIColor.label)
+    static let composerAction = Color(red: 0.12, green: 0.48, blue: 0.93)
     static let sendButtonDisabled = Color(UIColor.quaternaryLabel)
 }
 
@@ -488,12 +489,11 @@ struct AIChatView: View {
                         // land outside the popup card. Taps on the popup
                         // itself naturally fall through to the popup view
                         // because it sits on top in z-order.
-                        if vm.showSlashMenu || vm.showMentionMenu {
+                        if vm.showMentionMenu {
                             Color.clear
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if vm.showSlashMenu { vm.dismissSlashMenu() }
-                                    else if vm.showMentionMenu { vm.dismissMentionMenu() }
+                                    vm.dismissMentionMenu()
                                 }
                         }
                         VStack(spacing: 0) {
@@ -601,6 +601,7 @@ struct AIChatView: View {
         .environment(\.chatSessionId, vm.sessionId)
         .modifier(NavBarStyleModifier(topSafeAreaInset: $topSafeAreaInset))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(showsCompactToolbarNavigation)
         // [T-ios-navbar-toolbar-host] The ENTIRE toolbar now lives inside an
         // equatable-gated host child. Root cause of the mid-streaming "..."
         // menu refresh (4th attempt, this one from instrumentation): with
@@ -621,7 +622,19 @@ struct AIChatView: View {
         // .background position — the gate silently never engaged. EquatableView
         // wrapping is the only guaranteed path to ==.
         .background(
-            ChatToolbarHost(key: chatToolbarKey, title: {
+            ChatToolbarHost(key: chatToolbarKey, leading: {
+                Button {
+                    dismiss()
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Capsule().frame(width: 20, height: 2)
+                        Capsule().frame(width: 12, height: 2)
+                    }
+                    .frame(width: 24, height: 24, alignment: .leading)
+                    .foregroundStyle(ChatColors.primaryText)
+                }
+                .accessibilityLabel("会话列表")
+            }, title: {
                 chatNavPrincipalContent
             }, trailing: {
                 trailingMenu
@@ -1766,6 +1779,7 @@ struct AIChatView: View {
     private var chatToolbarKey: ChatToolbarKey {
         ChatToolbarKey(
             navTitle: navTitleKey,
+            showsCompactNavigation: showsCompactToolbarNavigation,
             messagesEmpty: vm.messages.isEmpty,
             hasSession: vm.sessionId != nil,
             isForcePulling: isForcePulling,
@@ -1777,6 +1791,12 @@ struct AIChatView: View {
             showFastModeToggle: activeModelSupportsFastMode,
             fastModeEnabled: codexFastModeEnabled
         )
+    }
+
+    /// On iPhone, replace the default back chevron with the Android-style
+    /// session-list button. The split-view layout keeps its native sidebar.
+    private var showsCompactToolbarNavigation: Bool {
+        hSizeClass == .compact
     }
 
     /// [T-codex-fast-mode] True when the session's active model can use Fast
@@ -2379,7 +2399,7 @@ struct AIChatView: View {
                 && vm.messages.isEmpty
                 && !vm.isLoadingSession
                 && (totalSessionCount ?? Int.max) == 0 {
-                EmptyChatDirectoryTimeline(onBrowse: { showFileBrowser = true })
+                EmptyChatWelcomeView()
                     .padding(.horizontal, 24)
             }
         }
@@ -2869,15 +2889,12 @@ struct AIChatView: View {
             .font(.system(size: 18, weight: .medium))
             .foregroundStyle(ChatColors.secondaryText)
             .frame(width: 34, height: 34)
-            .background(ChatColors.inputIconBg)
-            .clipShape(Circle())
-            .overlay(Circle().stroke(ChatColors.inputIconBorder, lineWidth: 0.5))
 
         if #available(iOS 17, *) {
             Menu {
-                Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
-                Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
-                Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+                Button { showCamera = true } label: { Label("拍摄照片", systemImage: "camera") }
+                Button { showPhotoPicker = true } label: { Label("选择照片或视频", systemImage: "photo.on.rectangle") }
+                Button { showDocumentPicker = true } label: { Label("添加文件", systemImage: "doc") }
             } label: {
                 icon
             }
@@ -2885,31 +2902,30 @@ struct AIChatView: View {
             Button { showAttachmentMenu = true } label: {
                 icon
             }
-            .confirmationDialog("Add Attachment", isPresented: $showAttachmentMenu) {
-                Button { showCamera = true } label: { Label("Take Photo", systemImage: "camera") }
-                Button { showPhotoPicker = true } label: { Label("Choose Photos & Videos", systemImage: "photo.on.rectangle") }
-                Button { showDocumentPicker = true } label: { Label("Add File", systemImage: "doc") }
+            .confirmationDialog("添加附件", isPresented: $showAttachmentMenu) {
+                Button { showCamera = true } label: { Label("拍摄照片", systemImage: "camera") }
+                Button { showPhotoPicker = true } label: { Label("选择照片或视频", systemImage: "photo.on.rectangle") }
+                Button { showDocumentPicker = true } label: { Label("添加文件", systemImage: "doc") }
             }
         }
     }
 
-    /// Bottom toolbar under the text field (+ / edit-exit / mic / send).
+    /// One-line ChatGPT-style composer controls.
     /// Returns AnyView to keep `inputBar`'s generic type compact; SwiftUI
     /// runtime demangle chokes on deep nested types otherwise.
     private var inputBottomRow: AnyView {
-        let row = HStack(spacing: 12) {
+        let row = HStack(spacing: 6) {
             attachmentMenuButton
             slashMenuButton
             if vm.editingMessageIndex != nil { editExitButton }
-            Spacer()
+            inputFieldOrWaveform
+                .frame(maxWidth: .infinity, alignment: .leading)
             // Mutually exclusive with editExitButton: while editing a past
             // message the exit capsule owns this row — showing both capsules
             // overflows the row and they render overlapped.
             if voiceInputActive, vm.editingMessageIndex == nil {
                 readAloudToolbarToggle
-                Spacer()
             }
-            micButtonContainer
             sendButton
         }
         return AnyView(row)
@@ -2941,62 +2957,39 @@ struct AIChatView: View {
                 VoiceOutputPreferences.isEnabled = true
             }
         } label: {
-            HStack(spacing: 5) {
-                // Fixed-width icon slot so the size stays constant when the glyph
-                // swaps between wave / slash.
-                Image(systemName: (on && !muted) ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    .font(.system(size: 12))
-                    .frame(width: 16)
-                Text("Read replies", comment: "Voice TTS toggle (compact)")
-                    .font(.subheadline)
-            }
+            Image(systemName: (on && !muted) ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.system(size: 17))
+                .frame(width: 34, height: 34)
             .foregroundStyle(on ? Color.accentColor : .secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule().fill(on ? Color.accentColor.opacity(0.15)
-                                  : Color.secondary.opacity(0.10))
-            )
-            .fixedSize()
         }
         .buttonStyle(.plain)
     }
 
-    /// `/` button that opens the slash command menu.
+    /// Slash commands remain available when typed, but their old picker is no
+    /// longer shown in the composer.
     private var slashMenuButton: some View {
         Button {
-            if vm.showSlashMenu {
-                vm.dismissSlashMenu()
-            } else {
-                vm.showSlashMenuOverInput()
-                inputFocused = true
-            }
+            inputFocused = true
         } label: {
-            Text("/")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .italic()
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(ChatColors.secondaryText)
                 .frame(width: 34, height: 34)
-                .background(ChatColors.inputIconBg)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(ChatColors.inputIconBorder, lineWidth: 0.5))
         }
+        .accessibilityLabel("命令")
     }
 
-    /// "Exit Edit Mode" capsule shown while editing a past message.
+    /// Exit edit control, kept icon-only to match the composer controls.
     private var editExitButton: some View {
         Button {
             vm.cancelEdit()
         } label: {
-            Text("Exit Edit Mode", comment: "Cancel message editing")
-                .font(.system(size: 13, weight: .medium))
+            Image(systemName: "xmark")
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ChatColors.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(ChatColors.inputIconBg)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(ChatColors.inputIconBorder, lineWidth: 0.5))
+                .frame(width: 34, height: 34)
         }
+        .accessibilityLabel("退出编辑")
     }
 
     /// Speech language badge shown only while recording.
@@ -3008,60 +3001,56 @@ struct AIChatView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(ChatColors.secondaryText)
                 .frame(width: 34, height: 34)
-                .background(ChatColors.inputIconBg)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(ChatColors.inputIconBorder, lineWidth: 0.5))
         }
     }
 
-    /// Mic button plus the attached language-picker sheet.
-    private var micButtonContainer: some View {
-        MicButton(speechManager: speechManager, inputFocused: $inputFocused, onTap: {
-            if voiceInputActive {
-                // Already in voice mode — the "T" button switches back to text.
-                // [T-ios-voice-keyboard-text-carry] Keep the transcript: the
-                // composer mirrors it, so clearing here would empty the input
-                // box and lose the dictated text on the way back to keyboard.
-                voiceVM.reset(clearTranscript: false)
-                withAnimation(.easeInOut(duration: 0.2)) { voiceInputActive = false }
-            } else {
-                // Mark the composition as voice-assisted (committed to the
-                // "voice" input-mode preference only at send time). Switch the
-                // composer into inline voice mode — the single voice entry point.
-                vm.voiceUsedInComposition = true
-                // Switching text→voice opens the panel expanded this one time;
-                // afterwards it resumes the remembered expand/compact state.
-                VoiceModePreference.shared.enteredFromText = true
-                withAnimation(.easeInOut(duration: 0.2)) { voiceInputActive = true }
-            }
-        }, isVoiceActive: voiceInputActive)
+    private func toggleVoiceInput() {
+        if voiceInputActive {
+            // Keep the transcript when returning to text so dictated content
+            // is not lost on the mode switch.
+            voiceVM.reset(clearTranscript: false)
+            withAnimation(.easeInOut(duration: 0.2)) { voiceInputActive = false }
+        } else {
+            vm.voiceUsedInComposition = true
+            VoiceModePreference.shared.enteredFromText = true
+            withAnimation(.easeInOut(duration: 0.2)) { voiceInputActive = true }
+        }
     }
 
-    /// Send / Enqueue / Stop circular button.
+    /// Blue composer action: voice when empty, send/queue/stop otherwise.
     @ViewBuilder
     private var sendButton: some View {
         if vm.isProcessing && canEnqueue {
             Button { performEnqueue() } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(ChatColors.sendButton)
+                composerActionIcon("arrow.up")
             }
             .keyboardShortcut(.return, modifiers: .command)
         } else if vm.isProcessing {
             Button { vm.cancel() } label: {
-                Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.red)
+                composerActionIcon("stop.fill")
             }
         } else {
-            Button { performSend() } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(canSend ? ChatColors.sendButton : ChatColors.sendButtonDisabled)
+            if hasComposerContent {
+                Button { performSend() } label: {
+                    composerActionIcon("arrow.up", isEnabled: canSend)
+                }
+                .disabled(!canSend)
+                .keyboardShortcut(.return, modifiers: .command)
+            } else {
+                Button { toggleVoiceInput() } label: {
+                    composerActionIcon("waveform")
+                }
+                .accessibilityLabel(voiceInputActive ? "退出语音输入" : "语音输入")
             }
-            .disabled(!canSend)
-            .keyboardShortcut(.return, modifiers: .command)
         }
+    }
+
+    private func composerActionIcon(_ systemName: String, isEnabled: Bool = true) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 36, height: 36)
+            .background(ChatColors.composerAction.opacity(isEnabled ? 1 : 0.45), in: Circle())
     }
 
     /// Either the multi-line text field or the audio waveform, depending on
@@ -3071,7 +3060,6 @@ struct AIChatView: View {
     /// where `AIChatView.inputBar.getter` blew the stack via
     /// `__swift_instantiateConcreteTypeFromMangledNameV2`).
     private var inputFieldOrWaveform: AnyView {
-        let topPadding: CGFloat = (vm.attachments.isEmpty && vm.loadingVideoCount == 0) ? 16 : 11
         if voiceInputActive {
             return AnyView(
                 // [voice-correction §6] Recent conversation turns, straight from the
@@ -3120,9 +3108,8 @@ struct AIChatView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, topPadding)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 6)
             return AnyView(waveform)
         }
         let field = PastableTextView(
@@ -3130,11 +3117,7 @@ struct AIChatView: View {
             isFocused: $inputFocused,
             hasSelection: $inputHasSelection,
             isScrollable: $inputIsScrollable,
-            // `String(localized:)` with an interpolation extracts the
-            // `%@` form ("Message %@ (@ to mention files)") as the lookup
-            // key in Localizable.xcstrings, so translators get one
-            // parameterized entry per locale instead of one per soul name.
-            placeholder: String(localized: "Message \(soulName) (@ to mention files)"),
+            placeholder: "询问Ze助手",
             onPasteImage: { image in vm.addImageAttachment(image) },
             onPasteFile: { url in vm.addFileAttachment(from: url) },
             onReturnKey: handleReturnKey,
@@ -3161,9 +3144,8 @@ struct AIChatView: View {
             desiredCaret: vm.pendingCaret
         )
         .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 16)
-        .padding(.top, topPadding)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 6)
         return AnyView(field)
     }
 
@@ -3208,7 +3190,7 @@ struct AIChatView: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .tint(.yellow)
-                    Text("Waiting for other tasks to complete...")
+                    Text("正在等待其他任务完成…")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -3231,13 +3213,11 @@ struct AIChatView: View {
                     .padding(.top, 8)
                 }
 
-                inputFieldOrWaveform
-
                 inputBottomRow
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(Capsule())
             .onTapGesture { inputFocused = true }
             .onReceive(speechManager.$recognizedText) { text in
                 guard speechManager.state == .recording || !text.isEmpty else { return }
@@ -3283,10 +3263,10 @@ struct AIChatView: View {
             // kept so any child views (text view, attachments) still get
             // clipped to the rounded rect.
             .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(ChatColors.inputBg)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(Capsule(style: .continuous))
             .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
             .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             .frame(maxWidth: maxContentWidth)
@@ -3621,11 +3601,7 @@ struct AIChatView: View {
     @ViewBuilder
     private var inputPopupOverlay: some View {
         ZStack {
-            if vm.showSlashMenu && !vm.filteredSlashCommands.isEmpty {
-                popupOverlayContainer(onDismiss: { vm.dismissSlashMenu() }) {
-                    slashCommandMenu
-                }
-            } else if vm.showMentionMenu {
+            if vm.showMentionMenu {
                 popupOverlayContainer(onDismiss: { vm.dismissMentionMenu() }) {
                     mentionMenu
                 }
@@ -4082,6 +4058,14 @@ struct AIChatView: View {
         vm.isProcessing && !vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Determines the send glyph independently of readiness: a draft always
+    /// remains an upward-arrow action, while the waveform appears only when
+    /// the composer is genuinely empty.
+    private var hasComposerContent: Bool {
+        !vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !vm.attachments.isEmpty
+    }
+
     /// Whether the composer actually holds something worth moving to another
     /// session — non-blank text or at least one attachment. Gates the
     /// "Move to…" pill so it never appears over an empty composer.
@@ -4467,6 +4451,7 @@ private struct NavTitleKey: Equatable {
 /// ToolbarContent builder — never re-runs.
 private struct ChatToolbarKey: Equatable {
     let navTitle: NavTitleKey
+    let showsCompactNavigation: Bool
     let messagesEmpty: Bool
     let hasSession: Bool
     let isForcePulling: Bool
@@ -4491,8 +4476,9 @@ private struct ChatToolbarKey: Equatable {
 /// recreated by every parent pass (excluded from ==, same pattern as
 /// EquatableByValue/ChatTrailingMenu) so a key change always renders through
 /// the freshest parent state.
-private struct ChatToolbarHost<Title: View, Trailing: View>: View, Equatable {
+private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View, Equatable {
     let key: ChatToolbarKey
+    @ViewBuilder let leading: () -> Leading
     @ViewBuilder let title: () -> Title
     @ViewBuilder let trailing: () -> Trailing
 
@@ -4519,6 +4505,7 @@ private struct ChatToolbarHost<Title: View, Trailing: View>: View, Equatable {
                 if l.fallbackPulse != r.fallbackPulse { diffs.append("fallbackPulse") }
                 if l.titleLocked != r.titleLocked { diffs.append("titleLocked") }
             }
+            if lhs.key.showsCompactNavigation != rhs.key.showsCompactNavigation { diffs.append("showsCompactNavigation") }
             if lhs.key.messagesEmpty != rhs.key.messagesEmpty { diffs.append("messagesEmpty") }
             if lhs.key.hasSession != rhs.key.hasSession { diffs.append("hasSession") }
             if lhs.key.isForcePulling != rhs.key.isForcePulling { diffs.append("isForcePulling") }
@@ -4546,6 +4533,9 @@ private struct ChatToolbarHost<Title: View, Trailing: View>: View, Equatable {
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
             .toolbar {
+                if key.showsCompactNavigation {
+                    ToolbarItem(placement: .topBarLeading) { leading() }
+                }
                 ToolbarItem(placement: .principal) { title() }
                 ToolbarItem(placement: .topBarTrailing) { trailing() }
             }
@@ -4743,7 +4733,7 @@ private struct ChatTrailingMenu: View, Equatable {
             }
             #endif
         } label: {
-            Image(systemName: "ellipsis")
+            Image(systemName: "gearshape")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(ChatColors.primaryText)
         }
@@ -4824,7 +4814,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     func makeUIView(context: Context) -> UIButton {
         let button = UIButton(type: .system)
         let cfg = UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-        button.setImage(UIImage(systemName: "ellipsis", withConfiguration: cfg), for: .normal)
+        button.setImage(UIImage(systemName: "gearshape", withConfiguration: cfg), for: .normal)
         button.tintColor = UIColor(ChatColors.primaryText)
         button.showsMenuAsPrimaryAction = true
         button.accessibilityLabel = String(localized: "More options")
@@ -5651,72 +5641,29 @@ private struct StatRow: View {
     }
 }
 
-// MARK: - Empty Chat Directory Timeline
+// MARK: - Empty Chat Welcome
 
-/// Onboarding view rendered in the center of a New Chat (no messages yet).
-/// Shows the per-session vs cross-session directory layout under
-/// `/var/ze/` as a 2-column folder grid so the user understands what's
-/// available before typing.
-///
-/// Source-of-truth for the descriptions: AIChatViewModel.swift system-prompt
-/// directory listing (`Shared directory /var/ze/ ...`). Keep them aligned
-/// when either side changes.
-private struct EmptyChatDirectoryTimeline: View {
-    var onBrowse: () -> Void
-
+/// Android-inspired first-chat welcome state. The input bar remains owned by
+/// AIChatView; this view only occupies the empty message area and deliberately
+/// avoids putting the workspace explanation in front of a first-time user.
+private struct EmptyChatWelcomeView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "lightbulb")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(ChatColors.secondaryText)
-                Text("Workspace layout")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(ChatColors.secondaryText)
-            }
-            Text("Each chat gets its own **workspace**, **attachments**, **offloads**, and **browser** folders — wiped when the session ends.")
-                .font(.system(size: 12))
+        VStack(spacing: 18) {
+            Image("ZeAssistantAvatar")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 84, height: 84)
+
+            Text("有什么我可以帮到你的吗？")
+                .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(ChatColors.primaryText)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("All chats share **shared**, **skills**, **memory**, and **mounts** — persistent across sessions.")
-                .font(.system(size: 12))
-                .foregroundStyle(ChatColors.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button(action: onBrowse) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Browse Chat Files")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundStyle(ChatColors.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule().fill(ChatColors.secondaryBg)
-                    )
-                    .overlay(
-                        Capsule().stroke(ChatColors.toolBorder, lineWidth: 0.5)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.top, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 460, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(ChatColors.secondaryBg.opacity(0.6))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(ChatColors.toolBorder, lineWidth: 0.5)
-        )
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.bottom, 40)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("有什么我可以帮到你的吗？")
     }
 }
 
