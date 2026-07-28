@@ -65,6 +65,7 @@ jobs:
 
           mkdir -p "$UP2/deps/resources"
           touch "$UP2/deps/resources/RootfsPatch.bundle"
+          touch "$UP2/deps/resources/alpine-rootfs.zip"
 
       - name: Resolve SPM dependencies
         run: |
