@@ -120,6 +120,7 @@ class AlarmListViewModel: ObservableObject {
 
     @available(iOS 26.0, *)
     private func _loadImpl() {
+#if canImport(AlarmKit)
         AlarmOffloadBridge.listAlarms { [weak self] arr, err in
             DispatchQueue.main.async {
                 self?.isLoading = false
@@ -134,6 +135,7 @@ class AlarmListViewModel: ObservableObject {
                 self?.alarms = dicts.map { AlarmItem(dict: $0) }
             }
         }
+#endif
     }
 
     func delete(id: String) {
@@ -144,7 +146,9 @@ class AlarmListViewModel: ObservableObject {
 
     @available(iOS 26.0, *)
     private func _cancelImpl(id: String) {
+#if canImport(AlarmKit)
         AlarmOffloadBridge.cancelAlarm(withId: id) { _, _ in }
+#endif
     }
 
     func clearAll() {
@@ -156,9 +160,11 @@ class AlarmListViewModel: ObservableObject {
 
     @available(iOS 26.0, *)
     private func _clearAllImpl(ids: [String]) {
+#if canImport(AlarmKit)
         for id in ids {
             AlarmOffloadBridge.cancelAlarm(withId: id) { _, _ in }
         }
+#endif
     }
 
     /// Group alarms by week for sectioned display.
