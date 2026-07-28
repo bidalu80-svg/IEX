@@ -334,13 +334,13 @@ jobs:
               '</dict>' \
               '</plist>' \
               > "$FRAMEWORK_DIR/Info.plist"
-            FRAMEWORK_OBJECT="$UP2/deps/libs/native_stub.o"
+            FRAMEWORK_OBJECTS=("$UP2/deps/libs/native_stub.o")
             if [ "$fw" = "FFmpeg" ]; then
-              FRAMEWORK_OBJECT="$UP2/deps/libs/ffmpeg_stub.o"
+              FRAMEWORK_OBJECTS=("$UP2/deps/libs/ffmpeg_stub.o" "$UP2/deps/libs/native_stub.o")
             fi
             xcrun --sdk iphoneos clang \
               -target arm64-apple-ios16.0 \
-              -dynamiclib "$FRAMEWORK_OBJECT" "$UP2/deps/libs/native_stub.o" \
+              -dynamiclib "${FRAMEWORK_OBJECTS[@]}" \
               -install_name "@rpath/$fw.framework/$fw" \
               -o "$FRAMEWORK_DIR/$fw"
             actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
