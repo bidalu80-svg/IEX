@@ -84,12 +84,10 @@ jobs:
             > "$UP2/deps/include/kernel/fs.h"
           # stub fs/fd.h
           printf '%s\n' \
-            '#ifndef FS_FD_H' \
-            '#define FS_FD_H' \
+            '#ifndef FS_FD_H' '#define FS_FD_H' \
+            '#include <sys/types.h>' \
             'struct fd;' \
-            'struct fd *generic_open(const char *path, int flags, int mode);' \
             'void fd_close(struct fd *fd);' \
-            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
             '#endif' \
             > "$UP2/deps/include/fs/fd.h"
           # stub fs/path.h
@@ -112,9 +110,9 @@ jobs:
           # stub ish/kernel/task.h — struct task, pid_get_task, MAX_PID
           printf '%s\n' \
             '#ifndef STUB_TASK_H' '#define STUB_TASK_H' \
-            '#include <sys/types.h>' '#include <stdint.h>' \
+            '#include <sys/types.h>' '#include <stdint.h>' '#include <pthread.h>' \
             'typedef unsigned long dword_t;' 'typedef pid_t pid_t_;' \
-            'struct task { pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; };' \
+            'struct task { pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; pthread_t thread; };' \
             'struct task_group { pid_t pgid; void *fs_context; };' \
             'struct fd_table { struct fd *files[256]; };' \
             'extern struct task *current;' \
@@ -127,7 +125,8 @@ jobs:
             '#ifndef STUB_CALLS_H' '#define STUB_CALLS_H' \
             '#include <sys/types.h>' '#include <stdint.h>' \
             'typedef unsigned long dword_t;' \
-            'struct fd { int real_fd; };' \
+            'struct fd_ops { ssize_t (*read)(struct fd *fd, void *buf, size_t size); ssize_t (*write)(struct fd *fd, const void *buf, size_t size); };' \
+            'struct fd { int real_fd; const struct fd_ops *ops; };' \
             'struct winsize_ { unsigned short row, col, xpixel, ypixel; };' \
             'void fd_close(struct fd *fd);' \
             'struct fd *adhoc_fd_create(const void *ops);' \
@@ -161,11 +160,64 @@ jobs:
             '#ifndef STUB_INIT_H' '#define STUB_INIT_H' \
             'struct task;' \
             'int become_new_init_child(void);' \
+            'int become_first_process(void);' \
             'int do_execve(const char *path, int argc, const char *argv, const char *envp);' \
             'int task_start(struct task *t);' \
+            'int mount_root(void *fs, const char *path);' \
+            'int do_mount(void *fs, const char *type, const char *target, const char *opts, unsigned long flags);' \
+            'extern int fakefs;' \
+            'extern int procfs;' \
+            'extern int devptsfs;' \
             '#endif' \
             > "$UP2/deps/include/ish/kernel/init.h"
-          for h in ish/fs/real.h ish/fs/fake.h ish/fs/tty.h ish/fs/dev.h ish/emu/cpu.h; do
+          # stub ish/fs/tty.h — tty driver types and functions
+          printf '%s\n' \
+            '#ifndef STUB_TTY_H' '#define STUB_TTY_H' \
+            '#include <sys/types.h>' '#include <stdbool.h>' \
+            'struct tty;' \
+            'struct tty_driver_ops {' \
+            '  int (*init)(struct tty *tty);' \
+            '  int (*write)(struct tty *tty, const void *buf, size_t len, bool blocking);' \
+            '  void (*cleanup)(struct tty *tty);' \
+            '};' \
+            'struct tty_driver { const struct tty_driver_ops *ops; };' \
+            '#define DEFINE_TTY_DRIVER(name, ops, major, count) struct tty_driver name = { .ops = ops }' \
+            'void tty_input(struct tty *tty, const void *buf, size_t len, bool blocking);' \
+            'void tty_set_winsize(struct tty *tty, struct winsize_ ws);' \
+            'struct tty *pty_open_fake(struct tty_driver *driver);' \
+            'extern struct tty_driver *tty_drivers[];' \
+            'void set_console_device(int major, int minor);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/tty.h"
+          # stub ish/fs/fake.h — fakefs functions
+          printf '%s\n' \
+            '#ifndef STUB_FAKE_H' '#define STUB_FAKE_H' \
+            '#include <sys/types.h>' '#include <stdbool.h>' '#include <stdint.h>' \
+            'void fakefs_set_rootfs_data_path(const char *path);' \
+            'int fakefs_bind_mount(const char *linux_path, const char *host_path, bool read_only);' \
+            'int fakefs_bind_unmount(const char *linux_path);' \
+            'void FsApplyOverlay(void);' \
+            'struct fakefs_change_event { const char *linux_path; int op; int64_t timestamp_ns; uint64_t fs_context; };' \
+            'typedef void (*fakefs_change_consumer_t)(const struct fakefs_change_event *batch, int count);' \
+            'void fakefs_install_change_consumer(fakefs_change_consumer_t consumer);' \
+            'uint64_t fakefs_change_dropped_count(void);' \
+            'void fakefs_set_path_translate_hook(void *hook);' \
+            'void fakefs_set_path_reverse_hook(void *hook);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/fake.h"
+          # stub ish/fs/dev.h — device functions
+          printf '%s\n' \
+            '#ifndef STUB_DEV_H' '#define STUB_DEV_H' \
+            '#include "ish/fs/tty.h"' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/dev.h"
+          # stub ish/emu/cpu.h — cpu throttle hook
+          printf '%s\n' \
+            '#ifndef STUB_CPU_H' '#define STUB_CPU_H' \
+            'void ish_set_timer_tick_hook(int (*hook)(void));' \
+            '#endif' \
+            > "$UP2/deps/include/ish/emu/cpu.h"
+          for h in ish/fs/real.h; do
             printf '%s\n' \
               '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
               '#define STUB_'"$(echo "$h" | tr '/.' '__')" \
