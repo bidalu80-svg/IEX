@@ -277,6 +277,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
+            OTHER_LDFLAGS="-Wl,-undefined,dynamic_lookup" \
             | tee build.log
           exit ${PIPESTATUS[0]}
 
