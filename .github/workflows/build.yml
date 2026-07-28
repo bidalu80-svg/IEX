@@ -88,6 +88,13 @@ jobs:
             '#include <sys/types.h>' \
             'struct fd;' \
             'void fd_close(struct fd *fd);' \
+            'struct fd *generic_open(const char *path, int flags, int mode);' \
+            '#ifndef IS_ERR' \
+            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+            '#endif' \
+            '#ifndef PTR_ERR' \
+            '#define PTR_ERR(p) ((int)(long)(p))' \
+            '#endif' \
             '#endif' \
             > "$UP2/deps/include/fs/fd.h"
           # stub fs/path.h
