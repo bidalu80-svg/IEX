@@ -24,69 +24,39 @@ jobs:
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
-      - name: Create missing external dependencies
+      - name: Create stub deps
         shell: bash
         run: |
-          # The project references files outside the repo (part of a larger monorepo).
-          # Create stubs so we can test Swift compilation.
-
           ROOT="$PWD"
           OUTER="$(pwd)/../.."
 
-          # --- scripts/ ---
           mkdir -p "$OUTER/scripts"
           echo 'IyEvYmluL2Jhc2gKT1VUPSR7U1JDUk9PVDotJFBXRH0vR2VuZXJhdGVkL0RlYnVnU2tpbGxHZW5lcmF0ZWQuc3dpZnQKbWtkaXIgLXAgIiQoZGlybmFtZSAiJE9VVCIpIgpjYXQgPiAiJE9VVCIgPDwgJ1NUVUInCiNpZiBERUJVRwplbnVtIERlYnVnU2tpbGxHZW5lcmF0ZWQgewogICAgc3RhdGljIGxldCBza2lsbE1hcmtkb3duQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50UHl0aG9uQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50Tm9kZUI2NCA9ICIiCiAgICBzdGF0aWMgbGV0IGNsaWVudEJhc2hCNjQgPSAiIgp9CiNlbmRpZgpTVFVC' | base64 -d > "$OUTER/scripts/gen_debug_skill.sh"
           chmod +x "$OUTER/scripts/gen_debug_skill.sh"
 
-          # --- shared/bashism/ (two JSON files) ---
           mkdir -p "$OUTER/shared/bashism"
           echo '[]' > "$OUTER/shared/bashism/bashism_rules.json"
           echo '[]' > "$OUTER/shared/bashism/bashism_test_vectors.json"
 
-          # --- Generated/ ---
           mkdir -p "$ROOT/Generated"
           printf '#if DEBUG\nenum DebugSkillGenerated {\n    static let skillMarkdownB64 = ""\n    static let clientPythonB64 = ""\n    static let clientNodeB64 = ""\n    static let clientBashB64 = ""\n}\n#endif\n' > "$ROOT/Generated/DebugSkillGenerated.swift"
 
-          # --- deps/include/ish/ (headers used by bridging header) ---
           mkdir -p "$OUTER/deps/include/ish/fs"
-          # Minimal stub ish.h umbrella header
-          cat > "$OUTER/deps/include/ish/ish.h" << 'STUB'
-#ifndef ISH_H
-#define ISH_H
-#include <stdint.h>
-#include <stdbool.h>
-#include <sys/types.h>
-struct tcb;
-struct task;
-struct mount;
-#endif
-STUB
-          cat > "$OUTER/deps/include/fs/devices.h" << 'STUB'
-#ifndef DEVICES_H
-#define DEVICES_H
-#endif
-STUB
+          echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$OUTER/deps/include/ish/ish.h"
+          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$OUTER/deps/include/fs/devices.h"
+          for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$OUTER/deps/include/ish/$f"; done
 
-          # stub deps/include headers needed by native offload ObjC files
-          for hdr in ish/kernel.h ish/emu.h ish/interrupt.h ish/task.h ish/thread.h; do
-            touch "$OUTER/deps/include/$hdr"
-          done
-
-          # --- deps/libs/ (stub .a files, needed for library search paths) ---
           mkdir -p "$OUTER/deps/libs"
-          for lib in lish_emu lish lfakefs; do
-            touch "$OUTER/deps/libs/lib${lib}.a"
-          done
+          for lib in lish_emu lish lfakefs; do touch "$OUTER/deps/libs/lib${lib}.a"; done
 
-          # --- build/frameworks/ + deps/frameworks/ (stub directories for resource copy) ---
           for fw in slirp.0 ffi.8 gmodule-2.0.0 pixman-1.0 zstd.1 iconv.2 gio-2.0.0 intl.8 gthread-2.0.0 qemu-aarch64-softmmu gobject-2.0.0 glib-2.0.0 jpeg.62 gstnet-1.0.0 opus.0 gstcheck-1.0.0 gstcontroller-1.0.0 png16.16 json-glib-1.0.0 gcrypt.20 virglrenderer.1 gstbase-1.0.0 ssl.1.1 gstrtsp-1.0.0 EGL gstreamer-1.0.0 gstsdp-1.0.0 epoxy.0 crypto.1.1 gstvideo-1.0.0 swtpm.0 phodav-3.0.0 gstfft-1.0.0 gstaudio-1.0.0 gstpbutils-1.0.0 gstallocators-1.0.0 gstapp-1.0.0 gpg-error.0 gstrtp-1.0.0 gstriff-1.0.0 GLESv2 gsttag-1.0.0 soup-3.0.0; do
             mkdir -p "$OUTER/build/frameworks/$fw.framework"
           done
+
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
             mkdir -p "$OUTER/deps/frameworks/$fw.framework/Headers"
           done
 
-          # --- deps/resources ---
           mkdir -p "$OUTER/deps/resources"
           touch "$OUTER/deps/resources/RootfsPatch.bundle"
 
