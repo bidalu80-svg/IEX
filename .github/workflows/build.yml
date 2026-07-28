@@ -41,7 +41,8 @@ jobs:
           mkdir -p "$ROOT/Generated"
           printf '#if DEBUG\nenum DebugSkillGenerated {\n    static let skillMarkdownB64 = ""\n    static let clientPythonB64 = ""\n    static let clientNodeB64 = ""\n    static let clientBashB64 = ""\n}\n#endif\n' > "$ROOT/Generated/DebugSkillGenerated.swift"
 
-          mkdir -p "$OUTER/deps/include/ish/fs"
+          mkdir -p "$OUTER/deps/include/ish"
+          mkdir -p "$OUTER/deps/include/fs"
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$OUTER/deps/include/ish/ish.h"
           echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$OUTER/deps/include/fs/devices.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$OUTER/deps/include/ish/$f"; done
