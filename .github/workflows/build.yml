@@ -188,7 +188,7 @@ jobs:
             '  void (*cleanup)(struct tty *tty);' \
             '};' \
             'struct tty_driver { const struct tty_driver_ops *ops; };' \
-            '#define DEFINE_TTY_DRIVER(name, ops, major, count) struct tty_driver name = { .ops = ops }' \
+            '#define DEFINE_TTY_DRIVER(name, driver_ops, major, count) struct tty_driver name = { .ops = driver_ops }' \
             'void tty_input(struct tty *tty, const void *buf, size_t len, bool blocking);' \
             'void tty_set_winsize(struct tty *tty, struct winsize_ ws);' \
             'struct tty *pty_open_fake(struct tty_driver *driver);' \
