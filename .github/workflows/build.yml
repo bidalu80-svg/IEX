@@ -257,8 +257,38 @@ jobs:
           done
 
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
-            mkdir -p "$UP2/deps/frameworks/$fw.framework/Headers"
-            libtool -static -o "$UP2/deps/frameworks/$fw.framework/$fw" "$UP2/deps/libs/native_stub.o"
+            FRAMEWORK_DIR="$UP2/deps/frameworks/$fw.framework"
+            mkdir -p "$FRAMEWORK_DIR/Headers"
+            # Xcode embeds these as dynamic frameworks.  A bare static archive
+            # is not a valid installable framework and its temporary CI object
+            # paths can survive into LC_ID_DYLIB, which breaks re-signing.
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0">' \
+              '<dict>' \
+              '  <key>CFBundleDevelopmentRegion</key><string>en</string>' \
+              '  <key>CFBundleExecutable</key><string>'"$fw"'</string>' \
+              '  <key>CFBundleIdentifier</key><string>com.openminis.ci.stub.'"$fw"'</string>' \
+              '  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>' \
+              '  <key>CFBundleName</key><string>'"$fw"'</string>' \
+              '  <key>CFBundlePackageType</key><string>FMWK</string>' \
+              '  <key>CFBundleShortVersionString</key><string>1.0</string>' \
+              '  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>' \
+              '  <key>CFBundleVersion</key><string>1</string>' \
+              '  <key>MinimumOSVersion</key><string>16.0</string>' \
+              '</dict>' \
+              '</plist>' \
+              > "$FRAMEWORK_DIR/Info.plist"
+            xcrun --sdk iphoneos clang \
+              -target arm64-apple-ios16.0 \
+              -dynamiclib "$UP2/deps/libs/native_stub.o" \
+              -install_name "@rpath/$fw.framework/$fw" \
+              -o "$FRAMEWORK_DIR/$fw"
+            actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
+            expected_install_name="@rpath/$fw.framework/$fw"
+            test "$actual_install_name" = "$expected_install_name"
+            plutil -lint "$FRAMEWORK_DIR/Info.plist"
           done
 
           mkdir -p "$UP2/deps/resources"
@@ -299,6 +329,23 @@ jobs:
           mkdir -p "$IPA_STAGING/Payload"
           cp -R "$APP_PATH" "$IPA_STAGING/Payload/Minis.app"
           ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Minis-unsigned.ipa"
+
+      - name: Audit unsigned IPA bundle
+        run: |
+          test -f Minis-unsigned.ipa
+          IPA_AUDIT="$RUNNER_TEMP/minis-ipa-audit"
+          rm -rf "$IPA_AUDIT"
+          mkdir -p "$IPA_AUDIT"
+          ditto -x -k Minis-unsigned.ipa "$IPA_AUDIT"
+          APP_AUDIT="$IPA_AUDIT/Payload/Minis.app"
+          test -d "$APP_AUDIT"
+          for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
+            FRAMEWORK_DIR="$APP_AUDIT/Frameworks/$fw.framework"
+            test -f "$FRAMEWORK_DIR/Info.plist"
+            actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
+            expected_install_name="@rpath/$fw.framework/$fw"
+            test "$actual_install_name" = "$expected_install_name"
+          done
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
