@@ -109,50 +109,63 @@ jobs:
           cp "$UP2/deps/include/fs/fd.h" "$UP2/deps/include/ish/fs/fd.h"
           cp "$UP2/deps/include/fs/path.h" "$UP2/deps/include/ish/fs/path.h"
           cp "$UP2/deps/include/fs/devices.h" "$UP2/deps/include/ish/fs/devices.h"
-          for h in ish/kernel/init.h ish/kernel/calls.h ish/kernel/task.h ish/kernel/signal.h ish/fs/real.h ish/fs/fake.h ish/fs/tty.h ish/fs/dev.h ish/emu/cpu.h; do
+          # stub ish/kernel/task.h — struct task, pid_get_task
+          printf '%s\n' \
+            '#ifndef STUB_TASK_H' '#define STUB_TASK_H' \
+            '#include <sys/types.h>' '#include <stdint.h>' \
+            'typedef unsigned long dword_t;' 'typedef pid_t pid_t_;' \
+            'struct task { pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; };' \
+            'struct task_group { void *fs_context; };' \
+            'struct fd_table { struct fd *files[256]; };' \
+            'extern struct task *current;' \
+            'struct task *pid_get_task(dword_t pid);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/task.h"
+          # stub ish/kernel/calls.h — fd/path/fs functions
+          printf '%s\n' \
+            '#ifndef STUB_CALLS_H' '#define STUB_CALLS_H' \
+            '#include <sys/types.h>' '#include <stdint.h>' \
+            'typedef unsigned long dword_t;' \
+            'struct fd { int real_fd; };' \
+            'struct winsize_ { unsigned short row, col, xpixel, ypixel; };' \
+            'void fd_close(struct fd *fd);' \
+            'struct fd *adhoc_fd_create(const void *ops);' \
+            'extern const void *realfs_fdops;' \
+            'int generic_open(const char *path, int flags, int mode);' \
+            'int generic_mkdirat(int dirfd, const char *path, int mode);' \
+            'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
+            'int dev_make(int major, int minor);' \
+            'int create_stdio(const char *path, int major, int num);' \
+            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+            '#define PTR_ERR(p) ((int)(long)(p))' \
+            '#define ENVP_APPEND(kv) do{}while(0)' \
+            '#define KERNEL_ENVP_APPEND(kv) do{}while(0)' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/calls.h"
+          # stub ish/kernel/signal.h — siginfo_, send_signal
+          printf '%s\n' \
+            '#ifndef STUB_SIGNAL_H' '#define STUB_SIGNAL_H' \
+            '#include <sys/types.h>' \
+            'struct siginfo_ { int si_signo; };' \
+            'void send_signal(struct task *t, struct siginfo_ info);' \
+            'void lock(void *lock);' 'void unlock(void *lock);' \
+            'extern void *pids_lock;' \
+            '#define SIGINFO_NIL {}' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/signal.h"
+          # stub ish/kernel/init.h — process functions
+          printf '%s\n' \
+            '#ifndef STUB_INIT_H' '#define STUB_INIT_H' \
+            'struct task;' \
+            'int become_new_init_child(struct task *t);' \
+            'int do_execve(struct task *t, const char *path, ...);' \
+            'int task_start(struct task *t);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/init.h"
+          for h in ish/fs/real.h ish/fs/fake.h ish/fs/tty.h ish/fs/dev.h ish/emu/cpu.h; do
             printf '%s\n' \
               '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
               '#define STUB_'"$(echo "$h" | tr '/.' '__')" \
-              '#include <sys/types.h>' \
-              '#include <stdint.h>' \
-              'typedef unsigned long dword_t;' \
-              'typedef pid_t pid_t_;' \
-              'struct task {' \
-              '  pid_t pid;' \
-              '  struct task *parent;' \
-              '  struct task_group *group;' \
-              '  struct fd_table *files;' \
-              '};' \
-              'struct task_group { void *fs_context; };' \
-              'struct fd_table { struct fd *files[256]; };' \
-              'struct fd { int real_fd; };' \
-              'struct winsize_ { unsigned short row, col, xpixel, ypixel; };' \
-              'struct siginfo_ { int si_signo; };' \
-              'struct tty; struct tty_driver; struct tty_driver_ops;' \
-              'struct sigaction; struct timespec; struct pollfd; struct rusage;' \
-              'struct tty *pty_open_fake(struct tty_driver *drv);' \
-              'extern struct task *current;' \
-              'struct task *pid_get_task(dword_t pid);' \
-              'int generic_mkdirat(int dirfd, const char *path, int mode);' \
-              'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
-              'int dev_make(int major, int minor);' \
-              'int create_stdio(const char *path, int major, int num);' \
-              'int generic_open(const char *path, int flags, int mode);' \
-              'void fd_close(struct fd *fd);' \
-              'struct fd *adhoc_fd_create(const void *ops);' \
-              'int become_new_init_child(struct task *t);' \
-              'int do_execve(struct task *t, const char *path, ...);' \
-              'int task_start(struct task *t);' \
-              'void send_signal(struct task *t, struct siginfo_ info);' \
-              'void lock(void *lock);' \
-              'void unlock(void *lock);' \
-              'extern void *pids_lock;' \
-              '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
-              '#define PTR_ERR(p) ((int)(long)(p))' \
-              'extern const void *realfs_fdops;' \
-              '#define ENVP_APPEND(kv) do{}while(0)' \
-              '#define KERNEL_ENVP_APPEND(kv) do{}while(0)' \
-              '#define SIGINFO_NIL {}' \
               '#endif' \
               > "$UP2/deps/include/$h"
           done
