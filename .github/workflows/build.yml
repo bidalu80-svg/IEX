@@ -365,8 +365,10 @@ jobs:
           for package in ninja llvm libarchive pkg-config; do
             brew list "$package" >/dev/null 2>&1 || brew install "$package"
           done
-          python3 -m pip install --user meson
-          export PATH="$(python3 -m site --user-base)/bin:$(brew --prefix llvm)/bin:$PATH"
+          MESON_VENV="$RUNNER_TEMP/meson-venv"
+          python3 -m venv "$MESON_VENV"
+          "$MESON_VENV/bin/pip" install meson
+          export PATH="$MESON_VENV/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
 
           OPENMINIS_DIR="$RUNNER_TEMP/OpenMinis"
           git clone --depth 1 --recurse-submodules --shallow-submodules \
