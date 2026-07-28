@@ -48,6 +48,14 @@ jobs:
           # deps/ + build/ are referenced as ../../deps/ and ../../build/ (2 levels up)
           mkdir -p "$UP2/deps/include/ish"
           mkdir -p "$UP2/deps/include/fs"
+          mkdir -p "$UP2/deps/include/kernel"
+          printf '%s\n' \
+            '#ifndef NATIVE_OFFLOAD_H' \
+            '#define NATIVE_OFFLOAD_H' \
+            'typedef int (*native_offload_handler_t)(int argc, char **argv, int stdin_fd, int stdout_fd, int stderr_fd);' \
+            'int native_offload_add_handler(const char *name, native_offload_handler_t handler);' \
+            '#endif' \
+            > "$UP2/deps/include/kernel/native_offload.h"
           echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
           echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
           for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
