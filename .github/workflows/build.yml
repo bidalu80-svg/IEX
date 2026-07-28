@@ -20,42 +20,18 @@ jobs:
         run: |
           xcode-select -p
           xcodebuild -version
-          ls /Applications | grep Xcode
 
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
-      - name: Create stub scripts for CI
+      - name: Create stub gen_debug_skill.sh
+        shell: bash
         run: |
-          SCRIPTS_DIR="$(pwd)/../../scripts"
-          mkdir -p "$SCRIPTS_DIR"
-          cat > "$SCRIPTS_DIR/gen_debug_skill.sh" << 'GENEOF'
-#!/bin/bash
-OUT="${SRCROOT:-$PWD}/Generated/DebugSkillGenerated.swift"
-mkdir -p "$(dirname "$OUT")"
-cat > "$OUT" << 'STUBEOF'
-#if DEBUG
-enum DebugSkillGenerated {
-    static let skillMarkdownB64 = ""
-    static let clientPythonB64 = ""
-    static let clientNodeB64 = ""
-    static let clientBashB64 = ""
-}
-#endif
-STUBEOF
-GENEOF
-          chmod +x "$SCRIPTS_DIR/gen_debug_skill.sh"
+          mkdir -p "$(pwd)/../../scripts"
+          echo 'IyEvYmluL2Jhc2gKT1VUPSR7U1JDUk9PVDotJFBXRH0vR2VuZXJhdGVkL0RlYnVnU2tpbGxHZW5lcmF0ZWQuc3dpZnQKbWtkaXIgLXAgIiQoZGlybmFtZSAiJE9VVCIpIgpjYXQgPiAiJE9VVCIgPDwgJ1NUVUInCiNpZiBERUJVRwplbnVtIERlYnVnU2tpbGxHZW5lcmF0ZWQgewogICAgc3RhdGljIGxldCBza2lsbE1hcmtkb3duQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50UHl0aG9uQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50Tm9kZUI2NCA9ICIiCiAgICBzdGF0aWMgbGV0IGNsaWVudEJhc2hCNjQgPSAiIgp9CiNlbmRpZgpTVFVC' | base64 -d > "$(pwd)/../../scripts/gen_debug_skill.sh"
+          chmod +x "$(pwd)/../../scripts/gen_debug_skill.sh"
           mkdir -p Generated
-          cat > Generated/DebugSkillGenerated.swift << 'GENEOF'
-#if DEBUG
-enum DebugSkillGenerated {
-    static let skillMarkdownB64 = ""
-    static let clientPythonB64 = ""
-    static let clientNodeB64 = ""
-    static let clientBashB64 = ""
-}
-#endif
-GENEOF
+          printf '#if DEBUG\nenum DebugSkillGenerated {\n    static let skillMarkdownB64 = ""\n    static let clientPythonB64 = ""\n    static let clientNodeB64 = ""\n    static let clientBashB64 = ""\n}\n#endif\n' > Generated/DebugSkillGenerated.swift
 
       - name: Resolve SPM dependencies
         run: |
