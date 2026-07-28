@@ -10,14 +10,17 @@ on:
 jobs:
   build:
     name: Build Minis.app
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+      - name: Show Xcode version
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          ls /Applications | grep Xcode
 
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
@@ -35,7 +38,7 @@ jobs:
             -project Minis.xcodeproj \
             -scheme Minis \
             -configuration Debug \
-            -destination 'generic/platform=iOS' \
+            -destination generic/platform=iOS \
             -clonedSourcePackagesDirPath .spm \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
