@@ -107,6 +107,7 @@ jobs:
           cp "$UP2/deps/include/kernel/fs.h" "$UP2/deps/include/ish/kernel/fs.h"
           cp "$UP2/deps/include/fs/fd.h" "$UP2/deps/include/ish/fs/fd.h"
           cp "$UP2/deps/include/fs/path.h" "$UP2/deps/include/ish/fs/path.h"
+          cp "$UP2/deps/include/fs/devices.h" "$UP2/deps/include/ish/fs/devices.h"
           for h in ish/kernel/init.h ish/kernel/calls.h ish/kernel/task.h ish/kernel/signal.h ish/fs/real.h ish/fs/fake.h ish/fs/tty.h ish/fs/dev.h ish/emu/cpu.h; do
             printf '%s\n' \
               '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
