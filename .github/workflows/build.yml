@@ -313,6 +313,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
+            ENABLE_DEBUG_DYLIB=NO \
             OTHER_LDFLAGS="-Wl,-undefined,dynamic_lookup" \
             | tee build.log
           exit ${PIPESTATUS[0]}
@@ -339,6 +340,14 @@ jobs:
           ditto -x -k Minis-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Minis.app"
           test -d "$APP_AUDIT"
+          # Xcode 16 Debug builds may split the executable into a tiny
+          # launcher plus Minis.debug.dylib.  Third-party re-signers often do
+          # not sign that auxiliary dylib, so reject that launch-only layout.
+          test ! -e "$APP_AUDIT/Minis.debug.dylib"
+          if otool -L "$APP_AUDIT/Minis" | grep -Fq '@rpath/Minis.debug.dylib'; then
+            echo "The app still depends on Minis.debug.dylib."
+            exit 1
+          fi
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
             FRAMEWORK_DIR="$APP_AUDIT/Frameworks/$fw.framework"
             test -f "$FRAMEWORK_DIR/Info.plist"
