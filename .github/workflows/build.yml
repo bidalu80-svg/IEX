@@ -362,7 +362,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          for package in ninja llvm libarchive pkg-config; do
+          for package in ninja llvm lld libarchive pkg-config; do
             brew list "$package" >/dev/null 2>&1 || brew install "$package"
           done
           MESON_VENV="$RUNNER_TEMP/meson-venv"
