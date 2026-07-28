@@ -113,10 +113,23 @@ jobs:
             printf '%s\n' \
               '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
               '#define STUB_'"$(echo "$h" | tr '/.' '__')" \
-              'struct task; struct tty; struct tty_driver; struct tty_driver_ops;' \
-              'struct fd; struct winsize_; struct siginfo_; struct sigaction;' \
-              'struct timespec; struct pollfd; struct rusage;' \
+              '#include <sys/types.h>' \
+              '#include <stdint.h>' \
               'typedef unsigned long dword_t;' \
+              'typedef pid_t pid_t_;' \
+              'struct task {' \
+              '  pid_t pid;' \
+              '  struct task *parent;' \
+              '  struct task_group *group;' \
+              '  struct fd_table *files;' \
+              '};' \
+              'struct task_group { void *fs_context; };' \
+              'struct fd_table { struct fd *files[256]; };' \
+              'struct fd { int real_fd; };' \
+              'struct winsize_ { unsigned short row, col, xpixel, ypixel; };' \
+              'struct siginfo_ { int si_signo; };' \
+              'struct tty; struct tty_driver; struct tty_driver_ops;' \
+              'struct sigaction; struct timespec; struct pollfd; struct rusage;' \
               'struct tty *pty_open_fake(struct tty_driver *drv);' \
               'extern struct task *current;' \
               'struct task *pid_get_task(dword_t pid);' \
@@ -127,6 +140,13 @@ jobs:
               'int generic_open(const char *path, int flags, int mode);' \
               'void fd_close(struct fd *fd);' \
               'struct fd *adhoc_fd_create(const void *ops);' \
+              'int become_new_init_child(struct task *t);' \
+              'int do_execve(struct task *t, const char *path, ...);' \
+              'int task_start(struct task *t);' \
+              'void send_signal(struct task *t, struct siginfo_ info);' \
+              'void lock(void *lock);' \
+              'void unlock(void *lock);' \
+              'extern void *pids_lock;' \
               '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
               '#define PTR_ERR(p) ((int)(long)(p))' \
               'extern const void *realfs_fdops;' \
