@@ -138,7 +138,7 @@ jobs:
             'void fd_close(struct fd *fd);' \
             'struct fd *adhoc_fd_create(const void *ops);' \
             'extern const void *realfs_fdops;' \
-            'int generic_open(const char *path, int flags, int mode);' \
+            'struct fd *generic_open(const char *path, int flags, int mode);' \
             'int generic_mkdirat(int dirfd, const char *path, int mode);' \
             'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
             'int dev_make(int major, int minor);' \
@@ -181,7 +181,7 @@ jobs:
           printf '%s\n' \
             '#ifndef STUB_TTY_H' '#define STUB_TTY_H' \
             '#include <sys/types.h>' '#include <stdbool.h>' \
-            'struct tty;' \
+            'struct tty { int num; };' \
             'struct tty_driver_ops {' \
             '  int (*init)(struct tty *tty);' \
             '  int (*write)(struct tty *tty, const void *buf, size_t len, bool blocking);' \
@@ -205,7 +205,7 @@ jobs:
             'int fakefs_bind_unmount(const char *linux_path);' \
             'void FsApplyOverlay(void);' \
             'struct fakefs_change_event { const char *linux_path; int op; int64_t timestamp_ns; uint64_t fs_context; };' \
-            'typedef void (*fakefs_change_consumer_t)(const struct fakefs_change_event *batch, int count);' \
+            'typedef void (^fakefs_change_consumer_t)(const struct fakefs_change_event *batch, int count);' \
             'void fakefs_install_change_consumer(fakefs_change_consumer_t consumer);' \
             'uint64_t fakefs_change_dropped_count(void);' \
             'void fakefs_set_path_translate_hook(void *hook);' \
