@@ -130,7 +130,7 @@ jobs:
           # stub ish/kernel/calls.h — fd/path/fs functions
           printf '%s\n' \
             '#ifndef STUB_CALLS_H' '#define STUB_CALLS_H' \
-            '#include <sys/types.h>' '#include <stdint.h>' \
+            '#include <sys/types.h>' '#include <stdint.h>' '#include "ish/kernel/fs.h"' \
             'typedef unsigned long dword_t;' \
             'struct fd_ops { ssize_t (*read)(struct fd *fd, void *buf, size_t size); ssize_t (*write)(struct fd *fd, const void *buf, size_t size); };' \
             'struct fd { int real_fd; const struct fd_ops *ops; };' \
@@ -145,6 +145,7 @@ jobs:
             'int create_stdio(const char *path, int major, int num);' \
             '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
             '#define PTR_ERR(p) ((int)(long)(p))' \
+            '#define _ENAMETOOLONG 36' \
             '#define ENVP_APPEND(kv) do{}while(0)' \
             '#define KERNEL_ENVP_APPEND(kv) do{}while(0)' \
             '#endif' \
