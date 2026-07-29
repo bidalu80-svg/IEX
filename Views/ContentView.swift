@@ -4523,12 +4523,16 @@ private struct AppearanceSettingsView: View {
     /// block-mount time in ThinkingBlockView.
     @AppStorage("chat.autoExpandThinking") private var autoExpandThinking: Bool = true
     @ObservedObject private var fontSettings = FontSettings.shared
+    @Environment(\.colorScheme) private var colorScheme
 
-    private let iconOptions: [AppIconOption] = [
-        AppIconOption(id: 0, title: "自动", subtitle: "跟随系统", iconName: nil, imageName: "ZeAssistantAvatar"),
-        AppIconOption(id: 2, title: "深色", subtitle: "始终深色", iconName: "AppIcon-Dark", imageName: "ZeAssistantAvatar"),
-        AppIconOption(id: 1, title: "浅色", subtitle: "始终浅色", iconName: "AppIcon-Light", imageName: "ZeAssistantAvatar"),
-    ]
+    private var iconOptions: [AppIconOption] {
+        [
+            AppIconOption(id: 0, title: "自动", subtitle: "跟随系统", iconName: nil,
+                          imageName: colorScheme == .dark ? "ZeAppIconDark" : "ZeAppIconLight"),
+            AppIconOption(id: 2, title: "深色", subtitle: "始终深色", iconName: "AppIcon-Dark", imageName: "ZeAppIconDark"),
+            AppIconOption(id: 1, title: "浅色", subtitle: "始终浅色", iconName: "AppIcon-Light", imageName: "ZeAppIconLight"),
+        ]
+    }
 
     var body: some View {
         List {
@@ -4607,7 +4611,7 @@ private struct AppearanceSettingsView: View {
             Section {
                 Toggle(String(localized: "Expand Thinking While Streaming"), isOn: $autoExpandThinking)
             } header: {
-                Text("Deep Thinking")
+                Text("思考过程")
             } footer: {
                 Text("When on, a new thinking block expands automatically while the model is reasoning and collapses when it finishes. When off, thinking blocks stay collapsed — tap one to read it.")
             }
@@ -4644,7 +4648,7 @@ private struct AppearanceSettingsView: View {
                         Button {
                             guard appIconMode != option.id else { return }
                             appIconMode = option.id
-                            UIApplication.shared.setAlternateIconName(option.iconName) { error in
+                            UIApplication.shared.setAlternateIconName(resolvedIconName(for: option)) { error in
                                 if let error = error {
                                     print("[AppIcon] Failed to set icon: \(error.localizedDescription)")
                                 }
@@ -4732,11 +4736,22 @@ private struct AppearanceSettingsView: View {
         .background(InteractivePopGestureDisabler())
         .onAppear {
             // The two legacy choices were removed. If an older install had one
-            // selected, return it to the automatic Ze assistant icon.
-            guard appIconMode > 2 else { return }
-            appIconMode = 0
-            UIApplication.shared.setAlternateIconName(nil)
+            // selected, return it to the automatic Ze icon.
+            if appIconMode > 2 {
+                appIconMode = 0
+            }
+            if appIconMode == 0 {
+                UIApplication.shared.setAlternateIconName(resolvedIconName(for: iconOptions[0]))
+            }
         }
+        .onChange(of: colorScheme) { _ in
+            guard appIconMode == 0 else { return }
+            UIApplication.shared.setAlternateIconName(resolvedIconName(for: iconOptions[0]))
+        }
+    }
+
+    private func resolvedIconName(for option: AppIconOption) -> String? {
+        option.id == 0 && colorScheme == .dark ? "AppIcon-Dark" : option.iconName
     }
 }
 

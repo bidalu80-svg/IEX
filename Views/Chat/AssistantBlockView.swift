@@ -132,12 +132,14 @@ struct AssistantBlockView: View {
 // MARK: - Shimmer Overlay (continuous diagonal shine via offset animation)
 
 /// A diagonal shimmer band that sweeps from top-leading to bottom-trailing.
-/// Uses a single stable gradient with an animated offset rather than rebuilding
-/// gradient stops every frame — avoids a CAGradientLayer colorspace teardown
-/// race during CATransaction flush (EXC_BAD_ACCESS at encode_colorspace).
+/// Its offset is time-driven, so a collection-view cell cannot retain a
+/// stopped repeat-forever animation after it has been reused for another tool.
 struct ShimmerOverlay: View {
     @Environment(\.colorScheme) private var colorScheme
-    @State private var offsetX: CGFloat = -1.0
+    let isActive: Bool
+    @State private var startedAt = Date()
+
+    private let sweepDuration: TimeInterval = 2.8
 
     private var peakOpacity: CGFloat {
         colorScheme == .light ? 0.75 : 0.25
@@ -166,25 +168,29 @@ struct ShimmerOverlay: View {
 
     var body: some View {
         GeometryReader { geo in
-            let diag = geo.size.width + geo.size.height
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        stops: stableStops,
-                        startPoint: UnitPoint(x: 0, y: 1),
-                        endPoint: UnitPoint(x: 1, y: 0)
-                    )
-                )
-                .frame(width: diag, height: geo.size.height)
-                .offset(x: offsetX * geo.size.width)
-                .onAppear {
-                    withAnimation(
-                        .linear(duration: 2.8)
-                        .repeatForever(autoreverses: false)
-                    ) {
-                        offsetX = 1.0
-                    }
+            let travelWidth = geo.size.width + geo.size.height
+            if isActive {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                    let elapsed = timeline.date.timeIntervalSince(startedAt)
+                    let phase = CGFloat((elapsed / sweepDuration).truncatingRemainder(dividingBy: 1.0))
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                stops: stableStops,
+                                startPoint: UnitPoint(x: 0, y: 1),
+                                endPoint: UnitPoint(x: 1, y: 0)
+                            )
+                        )
+                        .frame(width: travelWidth, height: geo.size.height)
+                        .offset(x: (-1.0 + phase * 2.0) * travelWidth)
                 }
+            } else {
+                Color.clear
+            }
+        }
+        .onAppear { startedAt = Date() }
+        .onChange(of: isActive) { active in
+            if active { startedAt = Date() }
         }
         .clipped()
     }
@@ -373,13 +379,9 @@ struct ToolCapsuleView: View {
             .background(Color(UIColor.systemGray6))
             .clipShape(Capsule())
             .overlay(
-                Group {
-                    if isActive {
-                        ShimmerOverlay()
-                            .clipShape(Capsule())
-                            .allowsHitTesting(false)
-                    }
-                }
+                ShimmerOverlay(isActive: isActive)
+                    .clipShape(Capsule())
+                    .allowsHitTesting(false)
             )
             .overlay(
                 Capsule()
@@ -724,28 +726,27 @@ struct ThinkingBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
-                Image("ThinkingIcon")
-                    .resizable()
-                    .frame(width: 14, height: 14)
-                    .foregroundStyle(.blue)
-                Text(String(localized: "Deep Thinking"))
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.purple)
+                Text("思考过程")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(.purple)
                 if isStreaming {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.blue)
+                        .tint(.purple)
                 }
                 if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
                     let charCount = max(block.content.count, block.thinkingContentBuffer.count)
                     Text(charCount > 1000 ? "\(charCount / 1000)K" : "\(charCount)")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.blue.opacity(0.6))
+                        .foregroundStyle(.purple.opacity(0.65))
                 }
                 Spacer()
                 Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.blue.opacity(0.5))
+                    .foregroundStyle(.purple.opacity(0.6))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -796,7 +797,7 @@ struct ThinkingBlockView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             if isTruncated {
-                                Text("Showing last \(displayContent.count / 1000)K of \(total / 1000)K characters", comment: "Thinking window truncation hint")
+                                Text("仅显示最后 \(displayContent.count / 1000)K / \(total / 1000)K 个字符", comment: "Thinking window truncation hint")
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 12)
@@ -848,11 +849,11 @@ struct ThinkingBlockView: View {
         .onDisappear {
             ThinkingHitchMonitor.shared.stop(owner: block.id)
         }
-        .background(Color.blue.opacity(0.06))
+        .background(Color.purple.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.blue.opacity(0.15), lineWidth: 0.5)
+                .stroke(Color.purple.opacity(0.15), lineWidth: 0.5)
         )
         .task(id: block.id) {
             // One-shot per-block auto-expand. Runs when this cell first hosts
@@ -958,7 +959,7 @@ struct ThinkingLevelSheetView: View {
                     }
                 }
             }
-            .navigationTitle(String(localized: "Thinking Intensity"))
+            .navigationTitle("思考过程强度")
             .navigationBarTitleDisplayMode(.inline)
         }
     }
@@ -968,16 +969,15 @@ struct ThinkingLevelSheetView: View {
             onSelect(level)
         } label: {
             HStack {
-                Image("ThinkingIcon")
-                    .resizable()
-                    .frame(width: 16, height: 16)
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 16, weight: .semibold))
                     .opacity(level == .off ? 0.4 : 1.0)
                 Text(level.displayName)
                     .foregroundStyle(.primary)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .foregroundStyle(.blue)
+                    .foregroundStyle(.purple)
                         .fontWeight(.semibold)
                 }
             }
