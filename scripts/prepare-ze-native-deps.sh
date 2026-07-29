@@ -79,7 +79,7 @@ mkdir -p "$output_dir/include/ish/deps"
 cp "$ish_dir/deps/config.h" "$output_dir/include/ish/deps/"
 
 native_build="$ish_dir/build-native"
-meson setup "$native_build" \
+meson setup "$native_build" "$ish_dir" \
     --buildtype=release \
     -Dlog='' \
     -Dkernel=ish \
