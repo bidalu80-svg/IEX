@@ -4740,6 +4740,12 @@ private struct AppearanceSettingsView: View {
         } message: {
             Text(appIconChangeError ?? "")
         }
+        .onChange(of: colorScheme) { _ in
+            guard appIconMode == 0 else { return }
+            // Automatic mode uses the primary AppIcon, whose light/dark slots
+            // are selected by iOS. Do not pin it to an alternate icon here.
+            setAppIcon(iconOptions[0])
+        }
     }
 
     private func setAppIcon(_ option: AppIconOption) {
