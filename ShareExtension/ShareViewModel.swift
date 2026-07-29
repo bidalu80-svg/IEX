@@ -61,6 +61,54 @@ final class ShareViewModel {
 
     // MARK: - Processors
 
+    /// Reads a file-provider URL while its temporary share-sheet grant is
+    /// active and gives the provider a chance to materialize cloud content.
+    private func readSharedFile<T>(from url: URL, _ body: (URL) throws -> T) throws -> T {
+        let startedScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if startedScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        var coordinationError: NSError?
+        var result: Result<T, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+            do {
+                result = .success(try body(readableURL))
+            } catch {
+                result = .failure(error)
+            }
+        }
+
+        if let coordinationError {
+            throw coordinationError
+        }
+        guard let result else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return try result.get()
+    }
+
+    /// Copies an externally owned file before the share extension releases it.
+    private func stageSharedFile(from sourceURL: URL, named fileName: String) -> Bool {
+        guard let dir = SharedContainerStore.sharedFileDirectory else { return false }
+        let destination = dir.appendingPathComponent(fileName)
+        do {
+            try readSharedFile(from: sourceURL) { readableURL in
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: readableURL, to: destination)
+            }
+            pendingItems.append(.init(kind: .attachment, value: fileName))
+            return true
+        } catch {
+            NSLog("[ShareExt] failed to stage %@: %@", sourceURL.lastPathComponent, error.localizedDescription)
+            return false
+        }
+    }
+
     private func processURL(_ provider: NSItemProvider) async {
         guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier),
               let url = item as? URL else { return }
@@ -76,31 +124,28 @@ final class ShareViewModel {
 
     /// Copy a local file URL to the shared container as an attachment.
     private func copyFileToShared(from url: URL) async {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
         // If it's an image, process through image pipeline for JPEG conversion
         let ext = url.pathExtension.lowercased()
         if ["jpg", "jpeg", "png", "gif", "webp", "heic"].contains(ext),
-           let data = try? Data(contentsOf: url),
+           let data = try? readSharedFile(from: url) { try Data(contentsOf: $0) },
            let image = UIImage(data: data) {
             let fileName = "shared-image-\(UUID().uuidString.prefix(8)).jpg"
             if let dir = SharedContainerStore.sharedFileDirectory,
                let jpegData = image.jpegData(compressionQuality: 0.85) {
                 let fileURL = dir.appendingPathComponent(fileName)
-                try? jpegData.write(to: fileURL)
-                pendingItems.append(.init(kind: .attachment, value: fileName))
+                do {
+                    try jpegData.write(to: fileURL, options: .atomic)
+                    pendingItems.append(.init(kind: .attachment, value: fileName))
+                } catch {
+                    NSLog("[ShareExt] failed to write image %@: %@", url.lastPathComponent, error.localizedDescription)
+                }
             }
             return
         }
 
         // General file copy
         let fileName = "shared-\(UUID().uuidString.prefix(8))_\(url.lastPathComponent)"
-        if let dir = SharedContainerStore.sharedFileDirectory {
-            let destURL = dir.appendingPathComponent(fileName)
-            try? FileManager.default.copyItem(at: url, to: destURL)
-            pendingItems.append(.init(kind: .attachment, value: fileName))
-        }
+        _ = stageSharedFile(from: url, named: fileName)
     }
 
     private func processText(_ provider: NSItemProvider) async {
@@ -126,7 +171,8 @@ final class ShareViewModel {
                 image = uiImage
             } else if let imageData = item as? Data {
                 image = UIImage(data: imageData)
-            } else if let url = item as? URL, let data = try? Data(contentsOf: url) {
+            } else if let url = item as? URL,
+                      let data = try? readSharedFile(from: url) { try Data(contentsOf: $0) } {
                 image = UIImage(data: data)
             }
 
@@ -135,8 +181,12 @@ final class ShareViewModel {
                 if let dir = SharedContainerStore.sharedFileDirectory,
                    let jpegData = image.jpegData(compressionQuality: 0.85) {
                     let fileURL = dir.appendingPathComponent(fileName)
-                    try? jpegData.write(to: fileURL)
-                    pendingItems.append(.init(kind: .attachment, value: fileName))
+                    do {
+                        try jpegData.write(to: fileURL, options: .atomic)
+                        pendingItems.append(.init(kind: .attachment, value: fileName))
+                    } catch {
+                        NSLog("[ShareExt] failed to write shared image: %@", error.localizedDescription)
+                    }
                 }
             }
         }
@@ -146,31 +196,17 @@ final class ShareViewModel {
         guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.movie.identifier),
               let url = item as? URL else { return }
 
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
         let ext = url.pathExtension.lowercased()
         let suffix = ext.isEmpty ? "mov" : ext
         let fileName = "shared-video-\(UUID().uuidString.prefix(8)).\(suffix)"
-        if let dir = SharedContainerStore.sharedFileDirectory {
-            let destURL = dir.appendingPathComponent(fileName)
-            try? FileManager.default.copyItem(at: url, to: destURL)
-            pendingItems.append(.init(kind: .attachment, value: fileName))
-        }
+        _ = stageSharedFile(from: url, named: fileName)
     }
 
     private func processFile(_ provider: NSItemProvider) async {
         guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.item.identifier),
               let url = item as? URL else { return }
 
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
         let fileName = "shared-\(UUID().uuidString.prefix(8))_\(url.lastPathComponent)"
-        if let dir = SharedContainerStore.sharedFileDirectory {
-            let destURL = dir.appendingPathComponent(fileName)
-            try? FileManager.default.copyItem(at: url, to: destURL)
-            pendingItems.append(.init(kind: .attachment, value: fileName))
-        }
+        _ = stageSharedFile(from: url, named: fileName)
     }
 }

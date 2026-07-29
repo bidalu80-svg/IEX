@@ -543,6 +543,9 @@ struct AIChatView: View {
                                 }
                         }
                         VStack(spacing: 0) {
+                            // Attachments expand away from the composer without
+                            // changing the tool-status bar's anchor.
+                            attachmentPreviewTray
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
                             #if DEBUG
@@ -2363,7 +2366,7 @@ struct AIChatView: View {
                 },
                 maxContentWidth: maxContentWidth ?? 0,
                 floatingBarHeight: floatingBarHeight,
-                inputBarHeight: inputBarHeight
+                inputBarHeight: inputBarHeight + attachmentTrayHeight
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
@@ -2424,7 +2427,7 @@ struct AIChatView: View {
                 .padding(.trailing, 4)
                 .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .trailing)
                 .padding(.horizontal, 12)
-                .padding(.bottom, inputBarHeight + (hasFloatingPreview ? 80 : 12))
+                .padding(.bottom, inputBarHeight + attachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12))
                 .animation(.easeInOut(duration: 0.2), value: vm.isNearBottom)
                 .animation(.easeInOut(duration: 0.2), value: vm.isAtFirstTurn)
                 .animation(.easeInOut(duration: 0.2), value: hasFloatingPreview)
@@ -2444,7 +2447,7 @@ struct AIChatView: View {
             .padding(.trailing, 4)
             .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .trailing)
             .padding(.horizontal, 12)
-            .padding(.bottom, inputBarHeight + (hasFloatingPreview ? 80 : 12) + 92)
+            .padding(.bottom, inputBarHeight + attachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12) + 92)
             .animation(.easeInOut(duration: 0.2), value: hasFloatingPreview)
             .capsuleProtectedFrame("downloadButton")
         }
@@ -2810,8 +2813,8 @@ struct AIChatView: View {
                         zeLogger.error("[Drop] provider[\(index)] loadItem fileURL failed to parse — item type: \(type(of: item))")
                         return
                     }
-                    zeLogger.info("[Drop] provider[\(index)] fileURL loaded: \(url.path)")
-                    DispatchQueue.main.async { vm.addFileAttachment(from: url) }
+                    guard let stagedURL = stageDroppedFile(url, index: index) else { return }
+                    DispatchQueue.main.async { vm.addFileAttachment(from: stagedURL) }
                 }
                 continue
             }
@@ -2846,19 +2849,35 @@ struct AIChatView: View {
                         zeLogger.error("[Drop] provider[\(index)] loadFileRepresentation returned nil URL")
                         return
                     }
-                    let tmp = FileManager.default.temporaryDirectory
-                        .appendingPathComponent(UUID().uuidString.prefix(8) + "_" + url.lastPathComponent)
-                    do {
-                        try FileManager.default.copyItem(at: url, to: tmp)
-                        zeLogger.info("[Drop] provider[\(index)] file copied to: \(tmp.path)")
-                        DispatchQueue.main.async { vm.addFileAttachment(from: tmp) }
-                    } catch {
-                        zeLogger.error("[Drop] provider[\(index)] copyItem failed: \(error.localizedDescription)")
-                    }
+                    guard let stagedURL = stageDroppedFile(url, index: index) else { return }
+                    DispatchQueue.main.async { vm.addFileAttachment(from: stagedURL) }
                 }
                 continue
             }
             zeLogger.info("[Drop] provider[\(index)] NO handler matched — dropped")
+        }
+    }
+
+    /// `NSItemProvider` owns these URLs and may revoke them as soon as its
+    /// completion handler returns. Copy while that handler is still active.
+    private func stageDroppedFile(_ sourceURL: URL, index: Int) -> URL? {
+        let fileManager = FileManager.default
+        let name = sourceURL.lastPathComponent.isEmpty ? "attachment" : sourceURL.lastPathComponent
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString.prefix(8))_\(name)")
+
+        do {
+            try SecurityScopedDocumentAccess.read(from: sourceURL) { readableURL in
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.copyItem(at: readableURL, to: destination)
+            }
+            zeLogger.info("[Drop] provider[\(index)] file staged: \(destination.path)")
+            return destination
+        } catch {
+            zeLogger.error("[Drop] provider[\(index)] failed to stage \(sourceURL.lastPathComponent): \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -3190,8 +3209,6 @@ struct AIChatView: View {
             }
 
             VStack(spacing: 8) {
-                attachmentPreviewTray
-
                 VStack(spacing: 0) {
                     inputBottomRow
                         .padding(.horizontal, 10)
@@ -3900,10 +3917,17 @@ struct AIChatView: View {
             // The first layout pass has no preference value yet. Keep one
             // attachment row visible until the grid reports its real height;
             // otherwise a zero-height ScrollView hides pending attachments.
-            .frame(height: min(max(attachmentGridHeight, 76), 160))
+            .frame(height: attachmentTrayHeight)
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
             .padding(.horizontal, 12)
         }
+    }
+
+    /// The attachment tray is outside `inputBar` so it does not push the tool
+    /// status UI upward. Its height must still be reserved by the message list.
+    private var attachmentTrayHeight: CGFloat {
+        guard !vm.attachments.isEmpty || vm.loadingVideoCount > 0 else { return 0 }
+        return min(max(attachmentGridHeight, 76), 160)
     }
 
     /// Attachment grid extracted to help the Swift type-checker.

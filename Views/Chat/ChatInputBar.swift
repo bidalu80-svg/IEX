@@ -839,6 +839,28 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         }
     }
 
+    /// NSItemProvider file URLs are valid only for the duration of their
+    /// completion handler. Stage them before hopping back to the main queue.
+    private func stageIncomingFile(_ sourceURL: URL) -> URL? {
+        let fileManager = FileManager.default
+        let name = sourceURL.lastPathComponent.isEmpty ? "attachment" : sourceURL.lastPathComponent
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString.prefix(8))_\(name)")
+
+        do {
+            try SecurityScopedDocumentAccess.read(from: sourceURL) { readableURL in
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.copyItem(at: readableURL, to: destination)
+            }
+            return destination
+        } catch {
+            pasteLog.error("[Paste] failed to stage incoming file \(sourceURL.lastPathComponent): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - UIDropInteractionDelegate
 
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: any UIDropSession) -> Bool {
@@ -887,20 +909,18 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
 
                 if let fileTypeID {
                     if UTType(fileTypeID)?.conforms(to: .fileURL) == true {
-                        // File URL — load the URL directly
+                        // Copy the provider-owned URL before its callback ends.
                         provider.loadItem(forTypeIdentifier: fileTypeID) { [weak self] data, _ in
                             guard let data = data as? Data,
-                                  let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                            DispatchQueue.main.async { self?.onPasteFile?(url) }
+                                  let url = URL(dataRepresentation: data, relativeTo: nil),
+                                  let stagedURL = self?.stageIncomingFile(url) else { return }
+                            DispatchQueue.main.async { self?.onPasteFile?(stagedURL) }
                         }
                     } else {
                         // Non-URL file content — load via file representation
                         provider.loadFileRepresentation(forTypeIdentifier: fileTypeID) { [weak self] url, _ in
-                            guard let url else { return }
-                            let tmp = FileManager.default.temporaryDirectory
-                                .appendingPathComponent(UUID().uuidString.prefix(8) + "_" + url.lastPathComponent)
-                            try? FileManager.default.copyItem(at: url, to: tmp)
-                            DispatchQueue.main.async { self?.onPasteFile?(tmp) }
+                            guard let url, let stagedURL = self?.stageIncomingFile(url) else { return }
+                            DispatchQueue.main.async { self?.onPasteFile?(stagedURL) }
                         }
                     }
                     continue
@@ -1047,7 +1067,9 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
             if !fileURLs.isEmpty {
                 for url in fileURLs {
                     pasteLog.debug("[Paste] pasting file URL \(url.lastPathComponent)")
-                    onPasteFile?(url)
+                    if let stagedURL = stageIncomingFile(url) {
+                        onPasteFile?(stagedURL)
+                    }
                 }
                 return
             }
@@ -1063,11 +1085,8 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
             for provider in fileProviders {
                 pasteLog.debug("[Paste] loading file from itemProvider")
                 provider.loadFileRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { [weak self] url, error in
-                    guard let url else { return }
-                    let tmp = FileManager.default.temporaryDirectory
-                        .appendingPathComponent(UUID().uuidString.prefix(8) + "_" + url.lastPathComponent)
-                    try? FileManager.default.copyItem(at: url, to: tmp)
-                    DispatchQueue.main.async { self?.onPasteFile?(tmp) }
+                    guard let url, let stagedURL = self?.stageIncomingFile(url) else { return }
+                    DispatchQueue.main.async { self?.onPasteFile?(stagedURL) }
                 }
             }
             return
