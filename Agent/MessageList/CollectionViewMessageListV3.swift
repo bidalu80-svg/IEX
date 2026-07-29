@@ -154,26 +154,19 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
 
 // MARK: - V3 Bridged Cell Views (no GeometryReader)
 
-/// Header: "✦ Ze" label at the top of each assistant turn.
+/// Header avatar and Ze label at the top of each assistant turn.
 /// Name comes from SOUL.md (user-editable in Soul Settings); the
-/// sparkles glyph is fixed — custom emoji is no longer supported,
-/// matching the Soul Settings UI.
+/// assistant avatar is fixed for a consistent Ze identity.
 private struct BridgedAssistantHeaderV3: View {
     @ObservedObject var message: ChatMessage
     var maxWidth: CGFloat = 0
     @State private var soulMeta: SoulMetadata = SoulStore.cachedMetadata
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color(red: 0.72, green: 0.69, blue: 0.59),
-                                 Color(red: 0.6, green: 0.6, blue: 0.55)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            Image("ZeAssistantAvatar")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 22, height: 22)
             Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(ChatColors.primaryText)

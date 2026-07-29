@@ -532,7 +532,7 @@ struct ToolLiveSheet: View {
                 // out to the step pill's trailing column (under the
                 // elapsed-duration "5s" text) so it lives next to where the
                 // user is already scanning timing info.
-                Text("Ze Computer")
+                Text("Ze 主机")
                     .font(.system(size: 15, weight: .semibold))
 
                 Spacer()
@@ -718,7 +718,7 @@ struct ToolLiveSheet: View {
         case .memoryTool: Image(systemName: "brain.head.profile")
         case .info: Image(systemName: "arrow.triangle.2.circlepath")
         case .text: Image(systemName: "text.alignleft")
-        case .thinking: Image("ThinkingIcon")
+        case .thinking: Image(systemName: "brain.head.profile")
         }
     }
 
@@ -867,7 +867,7 @@ struct ToolLiveSheet: View {
                     .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
                     .contextMenu {
                         Button { UIPasteboard.general.image = image } label: {
-                            Label("Copy Image", systemImage: "doc.on.doc")
+                            Label("复制图片", systemImage: "doc.on.doc")
                         }
                     }
                     .padding(.horizontal, 12)
@@ -881,7 +881,7 @@ struct ToolLiveSheet: View {
                                 Image(systemName: "globe")
                                     .font(.system(size: 12))
                                     .foregroundStyle(Color(UIColor.secondaryLabel))
-                                Text("Result")
+                                Text("结果")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(Color(UIColor.label))
                                     .lineLimit(1)
@@ -954,7 +954,7 @@ struct ToolLiveSheet: View {
                             Image(systemName: "globe")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Color(UIColor.secondaryLabel))
-                            Text("Result")
+                            Text("结果")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(Color(UIColor.label))
                                 .lineLimit(1)
@@ -1581,13 +1581,13 @@ struct ToolLiveSheet: View {
                 Button {
                     revealedChunkCount = min(revealedChunkCount + Self.lazyRenderBatchChunks, totalChunks)
                 } label: {
-                    Label("Load more (\(nextBatch * Self.lazyRenderChunkLines) lines)", systemImage: "chevron.down")
+                    Label("加载更多（\(nextBatch * Self.lazyRenderChunkLines) 行）", systemImage: "chevron.down")
                         .font(.system(size: 13, weight: .medium))
                 }
                 Button {
                     revealedChunkCount = totalChunks
                 } label: {
-                    Text("Load all")
+                    Text("加载全部")
                         .font(.system(size: 13, weight: .medium))
                 }
             }
@@ -1843,7 +1843,7 @@ struct ToolLiveSheet: View {
                         Image(systemName: "globe")
                             .font(.system(size: 32))
                             .foregroundStyle(ChatColors.tertiaryText)
-                        Text("Loading...")
+                        Text("加载中…")
                             .font(.system(size: 13))
                             .foregroundStyle(ChatColors.tertiaryText)
                     }
@@ -1922,7 +1922,7 @@ struct ToolLiveSheet: View {
                         Circle()
                             .fill(.green)
                             .frame(width: 7, height: 7)
-                        Text("Live")
+                        Text("实时")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(ChatColors.primaryText)
                     }
@@ -1977,13 +1977,13 @@ struct ToolLiveSheet: View {
 
     private var toolTitle: String {
         switch block.kind {
-        case .shellTool: return "Ze is using Shell"
-        case .fileReadTool: return "Ze is reading File"
-        case .fileWriteTool: return "Ze is using Editor"
-        case .fileEditTool: return "Ze is editing File"
-        case .browserTool: return "Ze is using Browser"
-        case .readImageTool: return "Ze is reading Image"
-        case .memoryTool: return "Ze is using Memory"
+        case .shellTool: return "Ze 正在使用终端"
+        case .fileReadTool: return "Ze 正在读取文件"
+        case .fileWriteTool: return "Ze 正在编辑文件"
+        case .fileEditTool: return "Ze 正在修改文件"
+        case .browserTool: return "Ze 正在使用浏览器"
+        case .readImageTool: return "Ze 正在读取图片"
+        case .memoryTool: return "Ze 正在使用记忆"
         case .info: return "Ze"
         case .text: return "Ze"
         case .thinking: return "Ze"
@@ -2019,7 +2019,7 @@ struct ToolLiveSheet: View {
         case .memoryTool: return .pink
         case .info: return .secondary
         case .text: return .primary
-        case .thinking: return .blue
+        case .thinking: return .purple
         }
     }
 
@@ -2359,7 +2359,7 @@ private struct ToolPreviewThumbnail: View {
         case .memoryTool: return .pink
         case .info: return .secondary
         case .text: return .primary
-        case .thinking: return .blue
+        case .thinking: return .purple
         }
     }
 

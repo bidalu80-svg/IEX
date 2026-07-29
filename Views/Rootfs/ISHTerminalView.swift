@@ -368,8 +368,12 @@ class ISHTerminalViewModel: ObservableObject {
         stepStart = CFAbsoluteTimeGetCurrent()
         // Start as login shell (-l) so /etc/profile and /etc/profile.d/*.sh
         // are sourced, enabling command history and line editing.
-        let err = ISHKernel.shared.executeCommand(["/bin/sh", "-l"])
-        logger.info("[StartShell] executeCommand(/bin/sh -l): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
+        // Repair the hostname on every terminal open so legacy rootfs images
+        // cannot leak their previous hostname into PS1.
+        let err = ISHKernel.shared.executeCommand([
+            "/bin/sh", "-lc", "printf 'ze\\n' > /etc/hostname; hostname ze; exec /bin/sh -l"
+        ])
+        logger.info("[StartShell] executeCommand(hostname=ze, /bin/sh -l): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
         if err < 0 {
             let msg = "Failed to start shell: \(err)\r\n"
             if let data = msg.data(using: .utf8) {

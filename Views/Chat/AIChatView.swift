@@ -489,11 +489,12 @@ struct AIChatView: View {
                         // land outside the popup card. Taps on the popup
                         // itself naturally fall through to the popup view
                         // because it sits on top in z-order.
-                        if vm.showMentionMenu {
+                        if vm.showSlashMenu || vm.showMentionMenu {
                             Color.clear
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    vm.dismissMentionMenu()
+                                    if vm.showSlashMenu { vm.dismissSlashMenu() }
+                                    else { vm.dismissMentionMenu() }
                                 }
                         }
                         VStack(spacing: 0) {
@@ -2155,13 +2156,12 @@ struct AIChatView: View {
         // The caller only renders this when `level.isEnabled` (thinking on), so
         // the badge always shows a real level name — no "Off" placeholder here.
         HStack(spacing: 2) {
-            Image("ThinkingIcon")
-                .resizable()
-                .frame(width: 6, height: 6)
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 7, weight: .semibold))
             Text(level.displayName)
                 .font(.system(size: 8, weight: .medium))
         }
-        .foregroundStyle(ChatColors.secondaryText)
+        .foregroundStyle(.purple)
         .padding(.horizontal, 4)
         .padding(.vertical, 1)
         .background(Capsule().fill(Color.secondary.opacity(0.10)))
@@ -2233,7 +2233,7 @@ struct AIChatView: View {
                     // 菊花 came back".
                     LoadingDotsView(dotSize: 9, color: ChatColors.secondaryText)
                         .frame(height: 20)
-                    Text("Booting Kernel")
+                    Text("正在启动内核")
                         .font(.subheadline)
                         .foregroundStyle(ChatColors.secondaryText)
                 }
@@ -2915,8 +2915,10 @@ struct AIChatView: View {
     /// runtime demangle chokes on deep nested types otherwise.
     private var inputBottomRow: AnyView {
         let row = HStack(spacing: 6) {
-            attachmentMenuButton
-            slashMenuButton
+            HStack(spacing: 0) {
+                attachmentMenuButton
+                slashMenuButton
+            }
             if vm.editingMessageIndex != nil { editExitButton }
             inputFieldOrWaveform
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2965,13 +2967,18 @@ struct AIChatView: View {
         .buttonStyle(.plain)
     }
 
-    /// Slash commands remain available when typed, but their old picker is no
-    /// longer shown in the composer.
+    /// The secondary composer icon opens the command picker without injecting a slash into the
+    /// visible text field. Typed slash commands retain their existing parser.
     private var slashMenuButton: some View {
         Button {
-            inputFocused = true
+            if vm.showSlashMenu {
+                vm.dismissSlashMenu()
+            } else {
+                vm.showSlashMenuOverInput()
+                inputFocused = true
+            }
         } label: {
-            Image(systemName: "bolt.fill")
+            Image(systemName: "paperclip")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(ChatColors.secondaryText)
                 .frame(width: 34, height: 34)
@@ -3601,7 +3608,11 @@ struct AIChatView: View {
     @ViewBuilder
     private var inputPopupOverlay: some View {
         ZStack {
-            if vm.showMentionMenu {
+            if vm.showSlashMenu && !vm.filteredSlashCommands.isEmpty {
+                popupOverlayContainer(onDismiss: { vm.dismissSlashMenu() }) {
+                    slashCommandMenu
+                }
+            } else if vm.showMentionMenu {
                 popupOverlayContainer(onDismiss: { vm.dismissMentionMenu() }) {
                     mentionMenu
                 }
@@ -3943,9 +3954,8 @@ struct AIChatView: View {
                 HStack(spacing: 8) {
                     Group {
                         if cmd.id == "thinking" {
-                            Image("ThinkingIcon")
-                                .resizable()
-                                .frame(width: 16, height: 16)
+                            Image(systemName: "brain.head.profile")
+                                .font(.system(size: 16, weight: .semibold))
                         } else {
                             Image(systemName: cmd.icon)
                                 .font(.system(size: 14, weight: .medium))
@@ -3956,19 +3966,19 @@ struct AIChatView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         let isThinkingActive = cmd.id == "thinking" && thinkingLevel.isEnabled && thinkingSupported
                         let titleColor: Color = isThinkingActive
-                            ? .blue : (isSelected ? .white : ChatColors.primaryText)
+                            ? .purple : (isSelected ? .white : ChatColors.primaryText)
                         let subtitleText = (cmd.id == "thinking" && !thinkingSupported)
-                            ? String(localized: "Not supported by current model")
+                            ? "当前模型不支持"
                             : cmd.subtitle
                         let subtitleColor: Color = (cmd.id == "thinking" && !thinkingSupported)
                             ? .secondary
-                            : (isThinkingActive ? .blue.opacity(0.7) : (isSelected ? .white.opacity(0.7) : ChatColors.secondaryText))
+                            : (isThinkingActive ? .purple.opacity(0.7) : (isSelected ? .white.opacity(0.7) : ChatColors.secondaryText))
                         // [T-slash-picker-product-rules] Title + subtitle
                         // each clamped to a single line. Long skill names
                         // and descriptions used to wrap and pump the row
                         // height past 60pt, which then snowballed into a
                         // multi-screen picker.
-                        Text("/\(cmd.title.lowercased())")
+                        Text((cmd.isSkill || cmd.isMCP) ? "/\(cmd.title)" : cmd.displayTitle)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(titleColor)
                             .lineLimit(1)
@@ -4003,7 +4013,7 @@ struct AIChatView: View {
                 return isSelected ? .white.opacity(0.8) : ChatColors.secondaryText
             }
             if !thinkingSupported { return .secondary }
-            return thinkingLevel.isEnabled ? .blue : (isSelected ? .white.opacity(0.8) : ChatColors.secondaryText)
+            return thinkingLevel.isEnabled ? .purple : (isSelected ? .white.opacity(0.8) : ChatColors.secondaryText)
         }
 
         private var thinkingLevelPicker: some View {
@@ -4031,7 +4041,7 @@ struct AIChatView: View {
                         isHighlighted
                             ? (isClampedHighlight
                                 ? Color.orange.opacity(0.75)
-                                : Color.blue)
+                                : Color.purple)
                             : Color.clear
                     )
                     .contentShape(Rectangle())
@@ -4725,11 +4735,11 @@ private struct ChatTrailingMenu: View, Equatable {
 
             Button { onCopyRequests() } label: {
                 let n = LastAPIRequestBody.shared.getAll().count
-                Label("Copy Requests (\(n))", systemImage: "arrow.up.doc")
+                Label("复制请求记录 (\(n))", systemImage: "arrow.up.doc")
             }
 
             Button { onCopySessionData() } label: {
-                Label("Copy Session Data", systemImage: "tray.and.arrow.up")
+                Label("复制会话数据", systemImage: "tray.and.arrow.up")
             }
             #endif
         } label: {
@@ -4939,9 +4949,9 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
         tailGroup.append(UIDeferredMenuElement.uncached { completion in
             let n = LastAPIRequestBody.shared.getAll().count
             completion([
-                UIAction(title: "Copy Requests (\(n))",
+                UIAction(title: "复制请求记录 (\(n))",
                          image: UIImage(systemName: "arrow.up.doc")) { _ in coordinator.parent.onCopyRequests() },
-                UIAction(title: "Copy Session Data",
+                UIAction(title: "复制会话数据",
                          image: UIImage(systemName: "tray.and.arrow.up")) { _ in coordinator.parent.onCopySessionData() },
             ])
         })
@@ -5548,35 +5558,35 @@ private struct TokenUsageSheet: View {
             List {
                 let s = vm.sessionTokenStats
 
-                Section("Context") {
-                    StatRow(label: "Context Used", value: formatted(s.context), icon: "text.alignleft")
+                Section("上下文") {
+                    StatRow(label: "已用上下文", value: formatted(s.context), icon: "text.alignleft")
                     if let window = vm.currentModelContextWindow {
-                        StatRow(label: "Context Window", value: formatted(window), icon: "arrow.left.and.right")
+                        StatRow(label: "上下文窗口", value: formatted(window), icon: "arrow.left.and.right")
                     }
                     if let maxOut = vm.currentModelMaxOutputTokens {
-                        StatRow(label: "Max Output", value: formatted(maxOut), icon: "arrow.up.to.line")
+                        StatRow(label: "最大输出", value: formatted(maxOut), icon: "arrow.up.to.line")
                     }
                 }
 
                 if let thinkingInfo = vm.currentModelThinkingInfo {
-                    Section("Thinking") {
-                        StatRow(label: "Thinking", value: thinkingInfo.enabled ? "On" : "Off", icon: "lightbulb", customIcon: Image("ThinkingIcon"))
+                    Section("思考过程") {
+                        StatRow(label: "思考过程", value: thinkingInfo.enabled ? "开启" : "关闭", icon: "brain.head.profile", customIcon: Image(systemName: "brain.head.profile"))
                         if thinkingInfo.enabled {
-                            StatRow(label: "Level", value: thinkingInfo.level, icon: "slider.horizontal.3")
+                            StatRow(label: "强度", value: thinkingInfo.level, icon: "slider.horizontal.3")
                         }
-                        StatRow(label: "Supported", value: thinkingInfo.supported ? "Yes" : "No", icon: "checkmark.circle")
+                        StatRow(label: "模型支持", value: thinkingInfo.supported ? "支持" : "不支持", icon: "checkmark.circle")
                     }
                 }
 
-                Section("Tokens (Session Total)") {
+                Section("Token（本次会话）") {
                     let inputTotal = s.input + s.cacheRead + s.cacheWrite
-                    StatRow(label: "Input (incl. cache)", value: formatted(inputTotal), icon: "arrow.down.circle")
-                    StatRow(label: "Output", value: formatted(s.output), icon: "arrow.up.circle")
+                    StatRow(label: "输入（含缓存）", value: formatted(inputTotal), icon: "arrow.down.circle")
+                    StatRow(label: "输出", value: formatted(s.output), icon: "arrow.up.circle")
                 }
 
-                Section("Cache (Session Total)") {
-                    StatRow(label: "Cache Read", value: formatted(s.cacheRead), icon: "arrow.triangle.2.circlepath")
-                    StatRow(label: "Cache Write", value: formatted(s.cacheWrite), icon: "square.and.arrow.down")
+                Section("缓存（本次会话）") {
+                    StatRow(label: "缓存读取", value: formatted(s.cacheRead), icon: "arrow.triangle.2.circlepath")
+                    StatRow(label: "缓存写入", value: formatted(s.cacheWrite), icon: "square.and.arrow.down")
                     // [T-ios-token-usage-cache-hit-rate] Cache hit rate = cache read
                     // over total input (incl. cache) — the same denominator as the
                     // "Input (incl. cache)" row above (input + cacheRead + cacheWrite).
@@ -5584,24 +5594,24 @@ private struct TokenUsageSheet: View {
                     let totalInput = s.input + s.cacheRead + s.cacheWrite
                     if totalInput > 0 && s.cacheRead > 0 {
                         let hitRate = Double(s.cacheRead) / Double(totalInput) * 100
-                        StatRow(label: "Cache Hit Rate", value: String(format: "%.1f%%", hitRate), icon: "percent")
+                        StatRow(label: "缓存命中率", value: String(format: "%.1f%%", hitRate), icon: "percent")
                     }
                 }
 
-                Section("Speed") {
+                Section("速度") {
                     let speed = vm.sessionOutputTokensPerSecond
-                    StatRow(label: "Output Speed", value: speed > 0 ? String(format: "%.1f tok/s", speed) : "—", icon: "speedometer")
+                    StatRow(label: "输出速度", value: speed > 0 ? String(format: "%.1f token/s", speed) : "—", icon: "speedometer")
                 }
 
-                Section("Agent Loop") {
-                    StatRow(label: "Total Loops", value: "\(s.loopCount)", icon: "repeat")
+                Section("智能体循环") {
+                    StatRow(label: "循环次数", value: "\(s.loopCount)", icon: "repeat")
                 }
             }
-            .navigationTitle("Session Token Usage")
+            .navigationTitle("会话 Token 使用情况")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
             }
         }

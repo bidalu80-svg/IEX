@@ -7,7 +7,11 @@ extension AIChatViewModel {
     struct SlashCommand: Identifiable {
         let id: String
         let icon: String
+        /// Stable command token used by slash parsing and command execution.
         let title: String
+        /// User-facing label. Built-in command names stay Chinese here while
+        /// their underlying slash tokens remain compatible.
+        let displayTitle: String
         let subtitle: String
         /// True when this row comes from a user-installed Skill (vs. one of
         /// the built-in commands). Skill rows fill the composer with
@@ -22,10 +26,12 @@ extension AIChatViewModel {
         /// the picker can tag/icon them distinctly ([mcp] / wrench).
         let isMCP: Bool
 
-        init(id: String, icon: String, title: String, subtitle: String, isSkill: Bool = false, isMCP: Bool = false) {
+        init(id: String, icon: String, title: String, displayTitle: String? = nil,
+             subtitle: String, isSkill: Bool = false, isMCP: Bool = false) {
             self.id = id
             self.icon = icon
             self.title = title
+            self.displayTitle = displayTitle ?? title
             self.subtitle = subtitle
             self.isSkill = isSkill
             self.isMCP = isMCP
@@ -33,48 +39,30 @@ extension AIChatViewModel {
     }
 
     static let availableSlashCommands: [SlashCommand] = [
-        SlashCommand(id: "clear", icon: "trash", title: "Clear", subtitle: "Clear all messages in this session"),
-        SlashCommand(id: "compact", icon: "arrow.down.right.and.arrow.up.left", title: "Compact", subtitle: "Compress conversation history into summary"),
-        SlashCommand(id: "memory", icon: "brain.head.profile", title: "Memory", subtitle: "Toggle memory writes on/off (reads unaffected)"),
-        SlashCommand(id: "thinking", icon: "lightbulb", title: "Thinking", subtitle: "Toggle deep thinking mode on/off"),
+        SlashCommand(id: "clear", icon: "trash", title: "clear", displayTitle: "清空会话", subtitle: "清空当前会话中的所有消息"),
+        SlashCommand(id: "compact", icon: "arrow.down.right.and.arrow.up.left", title: "compact", displayTitle: "压缩上下文", subtitle: "将会话历史压缩为摘要"),
+        SlashCommand(id: "memory", icon: "brain.head.profile", title: "memory", displayTitle: "记忆", subtitle: "开关记忆写入，不影响读取"),
+        SlashCommand(id: "thinking", icon: "brain.head.profile", title: "thinking", displayTitle: "思考过程", subtitle: "开关思考过程模式"),
     ]
 
-    /// Show slash menu without replacing existing input text.
-    ///
-    /// Two modes:
-    /// 1. Input is empty → set text to "/" so the existing
-    ///    `updateSlashMenuState()` text-driven path opens the menu naturally.
-    /// 2. Input already has text → save text + caret, then PREPEND "/ "
-    ///    (slash + space) to the front so the visible composer looks like
-    ///    the user just typed `/` at the start, then place the caret right
-    ///    after the slash so the slash menu's text-driven filter sees an
-    ///    empty filter. On dismiss / execute we strip the "/ " back off
-    ///    and restore the saved caret (see dismissSlashMenu /
-    ///    executeSlashCommand).
+    /// Open the command picker from the lightning button without writing a
+    /// slash into the visible composer. Existing draft text is saved so built-
+    /// in actions can run without destroying the user's message.
     func showSlashMenuOverInput() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            inputText = "/"
-            // updateSlashMenuState() in inputText didSet flips showSlashMenu
+            savedInputBeforeSlash = nil
+            savedCaretBeforeSlash = nil
         } else {
-            // Save original state.
             savedInputBeforeSlash = inputText
             savedCaretBeforeSlash = inputCaret
-            // Prepend "/ " so the cursor visually anchors at start and the
-            // composer reads "/<user’s text>" with a single space separator.
-            inputText = "/ " + inputText
-            // Caret right after the slash so the user types in the menu's
-            // filter slot (and the standard text-driven menu logic kicks in
-            // — same as if they had typed `/` at the start themselves).
-            pendingCaret = 1
-            showSlashMenu = true
-            slashFilter = ""
-            slashMenuSelectedIndex = -1
         }
+        showSlashMenu = true
+        slashFilter = ""
+        slashMenuSelectedIndex = -1
     }
 
-    /// Dismiss slash menu, restoring saved input + caret if any. Strips the
-    /// "/ " prefix that `showSlashMenuOverInput` injected.
+    /// Dismiss slash menu, restoring a saved input + caret when one exists.
     func dismissSlashMenu() {
         if let saved = savedInputBeforeSlash {
             inputText = saved
@@ -166,8 +154,10 @@ extension AIChatViewModel {
         let filter = slashFilter.lowercased()
         var commands = Self.availableSlashCommands.map { cmd -> SlashCommand in
             if cmd.id == "memory" {
-                let status = memoryEnabled ? "on" : "off"
-                return SlashCommand(id: cmd.id, icon: cmd.icon, title: cmd.title, subtitle: "Writes \(status) — tap to toggle")
+                let status = memoryEnabled ? "已开启" : "已关闭"
+                return SlashCommand(id: cmd.id, icon: cmd.icon, title: cmd.title,
+                                    displayTitle: cmd.displayTitle,
+                                    subtitle: "记忆写入\(status)，点击切换")
             }
             return cmd
         }
@@ -204,7 +194,7 @@ extension AIChatViewModel {
                         desc = ""
                     }
                 }
-                let sub = desc.isEmpty ? "Skill · v\(skill.version)" : desc
+                let sub = desc.isEmpty ? "技能 · v\(skill.version)" : desc
                 return SlashCommand(
                     id: "skill:\(skill.id)",
                     icon: "puzzlepiece.extension",
@@ -261,7 +251,10 @@ extension AIChatViewModel {
             }
             return Array((builtins + rankByUsage(skills) + rankByUsage(mcps)).prefix(100))
         }
-        return commands.filter { $0.title.lowercased().contains(filter) }
+        return commands.filter {
+            $0.title.lowercased().contains(filter)
+                || $0.displayTitle.lowercased().contains(filter)
+        }
     }
 
     /// [T-slash-picker-recent] Per-slash-command last-used timestamp,

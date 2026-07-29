@@ -230,20 +230,18 @@ struct ModelGroupDetailView: View {
                     }
                 )) {
                     HStack {
-                        Image("ThinkingIcon")
-                            .resizable()
-                            .renderingMode(.template)
+                        Image(systemName: "brain.head.profile")
                             .foregroundStyle(.white)
-                            .frame(width: 11, height: 11)
+                            .font(.system(size: 11, weight: .semibold))
                             .frame(width: 21, height: 21)
                             .background(.purple, in: Circle())
-                        Text("Enable Reasoning")
+                        Text("启用思考过程")
                     }
                 }
 
                 if group.defaultThinkingLevel != nil {
                     let maxLevel = groupMaxThinkingLevel(group)
-                    Picker("Intensity", selection: Binding(
+                    Picker("强度", selection: Binding(
                         get: { group.defaultThinkingLevel ?? .medium },
                         set: { level in
                             var updated = group

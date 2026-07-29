@@ -310,7 +310,7 @@ final class AgentLiveActivityManager {
         case "read_image":                      return "photo"
         case "memory":                          return "brain.head.profile"
         case "text":                            return "bubble.left"
-        case "thinking":                        return "lightbulb.max"
+        case "thinking":                        return "brain.head.profile"
         case "code_interpret":                  return "chevron.left.forwardslash.chevron.right"
         default:                                return "ellipsis.circle"
         }
@@ -318,17 +318,17 @@ final class AgentLiveActivityManager {
 
     static func displayName(forTool toolName: String) -> String {
         switch toolName {
-        case "browser", "browser_use":          return "Browser"
-        case "shell", "shell_execute":          return "Shell"
-        case "file_read":                       return "Read File"
-        case "file_write":                      return "Write File"
-        case "file_edit":                       return "Edit File"
-        case "read_image":                      return "Read Image"
-        case "memory":                          return "Memory"
-        case "text":                            return "Responding"
-        case "thinking":                        return "Thinking"
-        case "code_interpret":                  return "Code"
-        default:                                return "Working"
+        case "browser", "browser_use":          return "浏览器"
+        case "shell", "shell_execute":          return "终端"
+        case "file_read":                       return "读取文件"
+        case "file_write":                      return "写入文件"
+        case "file_edit":                       return "编辑文件"
+        case "read_image":                      return "读取图片"
+        case "memory":                          return "记忆"
+        case "text":                            return "正在回复"
+        case "thinking":                        return "思考过程"
+        case "code_interpret":                  return "代码"
+        default:                                return "正在处理"
         }
     }
 
