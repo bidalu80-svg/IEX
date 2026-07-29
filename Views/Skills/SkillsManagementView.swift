@@ -226,14 +226,22 @@ private struct ImportSkillSheet: View {
         case url = "URL"
         case paste = "Paste"
         case file = "File"
+
+        var displayName: String {
+            switch self {
+            case .url: "链接"
+            case .paste: "粘贴"
+            case .file: "文件"
+            }
+        }
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Picker("Import Method", selection: $importMode) {
+                Picker("导入方式", selection: $importMode) {
                     ForEach(ImportMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        Text(mode.displayName).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -243,7 +251,7 @@ private struct ImportSkillSheet: View {
 
                 switch importMode {
                 case .url:
-                    Section("GitHub URL") {
+                    Section("GitHub 链接") {
                         TextField("", text: $urlText, prompt: Text("github.com/user/repo/blob/main/SKILL.md").foregroundColor(.secondary))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -252,15 +260,15 @@ private struct ImportSkillSheet: View {
                     }
 
                 case .paste:
-                    Section("SKILL.md Content") {
+                    Section("SKILL.md 内容") {
                         TextEditor(text: $pastedContent)
                             .font(.system(.caption, design: .monospaced))
                             .frame(minHeight: 200)
                     }
 
                 case .file:
-                    Section(footer: Text(String(localized: "Supports SKILL.md, .skill, and .zip files."))) {
-                        Button(String(localized: "Choose File…")) {
+                    Section(footer: Text("支持 SKILL.md、.skill 和 .zip 格式的文件。")) {
+                        Button("选择文件…") {
                             showFilePicker = true
                         }
                     }
@@ -274,7 +282,7 @@ private struct ImportSkillSheet: View {
                     }
                 }
             }
-            .navigationTitle(String(localized: "Import Skill"))
+            .navigationTitle("导入技能")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -289,7 +297,7 @@ private struct ImportSkillSheet: View {
             }
             .overlay {
                 if isImporting {
-                    ProgressView("Importing…")
+                    ProgressView("正在导入…")
                         .padding()
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }

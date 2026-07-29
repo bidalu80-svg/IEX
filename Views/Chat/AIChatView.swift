@@ -12,49 +12,6 @@ import WebKit
 
 private let zeLogger = AppLogger(category: "ZeURL")
 
-/// Imports a copy and delivers it through UIKit's document-picker delegate.
-/// SwiftUI's `fileImporter` can leave its completion handler uncalled after
-/// the user taps Open, so the attachment flow must not depend on that layer.
-private struct ChatAttachmentDocumentPicker: UIViewControllerRepresentable {
-    let onPick: ([URL]) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // `.item` intentionally accepts unknown extensions as well as common
-        // document types. Attachments are copied into the app sandbox before
-        // use, so providers never need to grant a long-lived in-place lease.
-        let picker = UIDocumentPickerViewController(forImporting: [.item], asCopy: true)
-        picker.allowsMultipleSelection = true
-        picker.shouldShowFileExtensions = true
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick, onCancel: onCancel)
-    }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        private let onPick: ([URL]) -> Void
-        private let onCancel: () -> Void
-
-        init(onPick: @escaping ([URL]) -> Void, onCancel: @escaping () -> Void) {
-            self.onPick = onPick
-            self.onCancel = onCancel
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            onPick(urls)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onCancel()
-        }
-    }
-}
-
 /// Wrapper that resolves an AIChatViewModel from the cache.
 /// Used as @StateObject so SwiftUI creates it once per AIChatView lifetime,
 /// but the underlying `vm` is the cached (possibly still-running) instance.
@@ -1126,14 +1083,18 @@ struct AIChatView: View {
                 }
             }
         }
-        .sheet(isPresented: $showDocumentPicker) {
-            ChatAttachmentDocumentPicker { urls in
-                showDocumentPicker = false
+        .fileImporter(
+            isPresented: $showDocumentPicker,
+            allowedContentTypes: [.image, .pdf, .plainText, .json, .sourceCode, .presentation, .spreadsheet, .data],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
                 for url in urls {
                     vm.addFileAttachment(from: url)
                 }
-            } onCancel: {
-                showDocumentPicker = false
+            case .failure(let error):
+                zeLogger.error("File import failed: \(error.localizedDescription)")
             }
         }
         .onAppear {
