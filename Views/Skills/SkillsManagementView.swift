@@ -376,19 +376,21 @@ private struct SkillFileDocumentPicker: UIViewControllerRepresentable {
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-            let ext = url.pathExtension.lowercased()
-            if ext == "zip" || ext == "skill" {
-                // Copy to temp so we can access after security scope ends
-                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
-                try? FileManager.default.removeItem(at: tmp)
-                if let _ = try? FileManager.default.copyItem(at: url, to: tmp) {
-                    onImport(.archiveURL(tmp))
+            do {
+                let picked: SkillFilePickResult = try SecurityScopedDocumentAccess.read(from: url) { readableURL in
+                    let ext = readableURL.pathExtension.lowercased()
+                    if ext == "zip" || ext == "skill" {
+                        // Archives must outlive the picker security scope.
+                        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(readableURL.lastPathComponent)
+                        try? FileManager.default.removeItem(at: tmp)
+                        try FileManager.default.copyItem(at: readableURL, to: tmp)
+                        return .archiveURL(tmp)
+                    }
+                    return .text(try String(contentsOf: readableURL, encoding: .utf8))
                 }
-            } else if let content = try? String(contentsOf: url, encoding: .utf8) {
-                onImport(.text(content))
+                onImport(picked)
+            } catch {
+                AppLogger(category: "Skills").error("Failed to read selected skill file: \(error.localizedDescription)")
             }
         }
     }

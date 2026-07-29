@@ -1,5 +1,43 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
+
+/// Native open-in-place picker for provider exports. Keeping this delegate
+/// alive in the presented controller avoids SwiftUI's `fileImporter` result
+/// being lost when a parent sheet re-renders during dismissal.
+struct ProviderJSONDocumentPicker: UIViewControllerRepresentable {
+    let onResult: (Result<URL, Error>) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: false)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onResult: onResult) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onResult: (Result<URL, Error>) -> Void
+
+        init(onResult: @escaping (Result<URL, Error>) -> Void) {
+            self.onResult = onResult
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else {
+                onResult(.failure(CocoaError(.fileNoSuchFile)))
+                return
+            }
+            onResult(.success(url))
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onResult(.failure(CancellationError()))
+        }
+    }
+}
 
 // MARK: - AI Data Sharing Consent
 
@@ -241,8 +279,11 @@ struct AddProviderView: View {
                 }
             }
         }
-        .fileImporter(isPresented: $showImportFile, allowedContentTypes: [.json]) { result in
-            handleImport(result)
+        .sheet(isPresented: $showImportFile) {
+            ProviderJSONDocumentPicker { result in
+                showImportFile = false
+                handleImport(result)
+            }
         }
         .alert(String(localized: "Import"), isPresented: $showImportResult) {
             Button("OK") {
@@ -262,13 +303,7 @@ struct AddProviderView: View {
         importSucceeded = false
         switch result {
         case .success(let url):
-            guard url.startAccessingSecurityScopedResource() else {
-                importMessage = String(localized: "Cannot access the selected file.")
-                showImportResult = true
-                return
-            }
-            defer { url.stopAccessingSecurityScopedResource() }
-            guard let data = try? Data(contentsOf: url),
+            guard let data = try? SecurityScopedDocumentAccess.read(from: url) { try Data(contentsOf: $0) },
                   let json = String(data: data, encoding: .utf8) else {
                 importMessage = String(localized: "Failed to read file.")
                 showImportResult = true

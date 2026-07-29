@@ -1295,17 +1295,17 @@ class FileBrowserViewModel: ObservableObject {
         let destDir = currentPath.resolvingSymlinksInPath()
         var failCount = 0
         for url in urls {
-            guard url.startAccessingSecurityScopedResource() else { failCount += 1; continue }
-            defer { url.stopAccessingSecurityScopedResource() }
             let destURL = destDir.appendingPathComponent(url.lastPathComponent)
             do {
-                if fm.fileExists(atPath: destURL.path) {
-                    try MountedFolderCoordinator.remove(at: destURL)
-                    if let destLinux = linuxPath(for: destURL) {
-                        RootfsManager.shared.removeFakefsPath(destLinux)
+                try SecurityScopedDocumentAccess.read(from: url) { readableURL in
+                    if fm.fileExists(atPath: destURL.path) {
+                        try MountedFolderCoordinator.remove(at: destURL)
+                        if let destLinux = linuxPath(for: destURL) {
+                            RootfsManager.shared.removeFakefsPath(destLinux)
+                        }
                     }
+                    try MountedFolderCoordinator.copy(from: readableURL, to: destURL)
                 }
-                try MountedFolderCoordinator.copy(from: url, to: destURL)
                 RootfsManager.shared.registerSubtreeInMetaDB(hostRoot: destURL)
                 Self.tracePotentialFPWrite(op: "import", destURL: destURL, srcURL: url)
             } catch {

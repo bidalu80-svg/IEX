@@ -4,6 +4,42 @@ import UniformTypeIdentifiers
 
 private let logger = AppLogger(category: "AIChatVM")
 
+/// Reads a file returned by UIDocumentPicker while its security scope is active.
+///
+/// Some document providers return a local URL for which
+/// `startAccessingSecurityScopedResource()` is false even though the URL is
+/// readable. Treating that boolean as authorization and returning early makes
+/// a valid user selection look like a no-op. Coordinating the read also asks
+/// iCloud-backed providers to materialize the file before it is consumed.
+enum SecurityScopedDocumentAccess {
+    static func read<T>(from url: URL, _ body: (URL) throws -> T) throws -> T {
+        let startedScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if startedScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        var coordinationError: NSError?
+        var result: Result<T, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinatedURL in
+            do {
+                result = .success(try body(coordinatedURL))
+            } catch {
+                result = .failure(error)
+            }
+        }
+
+        if let coordinationError {
+            throw coordinationError
+        }
+        guard let result else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return try result.get()
+    }
+}
+
 // MARK: - Attachment Management
 
 extension AIChatViewModel {
@@ -175,10 +211,9 @@ extension AIChatViewModel {
         let fileName = sourceURL.lastPathComponent
         let destURL = dir.appendingPathComponent("\(UUID().uuidString.prefix(8))_\(fileName)")
         do {
-            // sourceURL may be security-scoped
-            let accessed = sourceURL.startAccessingSecurityScopedResource()
-            defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
-            try fm.copyItem(at: sourceURL, to: destURL)
+            try SecurityScopedDocumentAccess.read(from: sourceURL) { readableURL in
+                try fm.copyItem(at: readableURL, to: destURL)
+            }
 
             if let date = originalDate {
                 try? fm.setAttributes([.creationDate: date, .modificationDate: date], ofItemAtPath: destURL.path)

@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Lists all configured provider instances grouped by provider type.
 /// Replaces the old ProvidersView for the new multi-instance model.
@@ -122,16 +121,12 @@ struct ProviderInstancesView: View {
                 AddProviderView()
             }
         }
-        .fileImporter(isPresented: $showImportFile, allowedContentTypes: [.json]) { result in
+        .sheet(isPresented: $showImportFile) {
+            ProviderJSONDocumentPicker { result in
+                showImportFile = false
             switch result {
             case .success(let url):
-                guard url.startAccessingSecurityScopedResource() else {
-                    importMessage = String(localized: "Cannot access the selected file.")
-                    showImportResult = true
-                    return
-                }
-                defer { url.stopAccessingSecurityScopedResource() }
-                guard let data = try? Data(contentsOf: url),
+                guard let data = try? SecurityScopedDocumentAccess.read(from: url) { try Data(contentsOf: $0) },
                       let json = String(data: data, encoding: .utf8) else {
                     importMessage = String(localized: "Failed to read file.")
                     showImportResult = true
@@ -143,8 +138,11 @@ struct ProviderInstancesView: View {
                     importMessage = String(localized: "Invalid provider configuration file.")
                 }
                 showImportResult = true
+            case .failure(let error) where error is CancellationError:
+                break
             case .failure:
                 break
+            }
             }
         }
         .alert(String(localized: "Import"), isPresented: $showImportResult) {
