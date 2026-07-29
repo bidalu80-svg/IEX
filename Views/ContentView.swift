@@ -2333,9 +2333,7 @@ struct ContentView: View {
                 if !fabDidDrag { openSession(Self.makeNewSessionId()) }
             } label: {
                 Circle()
-                    .fill(Color(UIColor { $0.userInterfaceStyle == .dark
-                        ? UIColor(red: 80/255, green: 76/255, blue: 66/255, alpha: 1)
-                        : UIColor(red: 183/255, green: 175/255, blue: 150/255, alpha: 1) }))
+                    .fill(Color(uiColor: .systemBlue))
                     .overlay {
                         Image(systemName: {
                             if #available(iOS 17.0, *) { return "bubble.left.and.text.bubble.right" }
