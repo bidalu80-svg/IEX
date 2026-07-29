@@ -48,6 +48,11 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var streamInterruptCount: Int = 0
     /// Accumulated token usage for this assistant turn.
     @Published var usage: TokenUsage?
+    /// Timestamp of the first model-stream request for this assistant turn.
+    /// Kept in memory only because it is meaningful for the live response UI.
+    var firstTokenRequestStartedAt: Date?
+    /// Time from the first model-stream request to its first output block.
+    @Published var firstTokenLatency: TimeInterval?
     /// Structured metadata for user-attached files (images & documents).
     @Published var attachments: [AttachmentMeta] = []
     /// Raw input attachments for preview before queue drain (cache URLs still valid).

@@ -719,7 +719,7 @@ struct ThinkingBlockView: View {
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.purple)
-                Text("思考过程")
+                Text("思考")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.purple)
                 if isStreaming {

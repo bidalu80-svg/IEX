@@ -587,6 +587,12 @@ struct AIChatView: View {
             kernelBootOverlay
         }
         .background(ChatColors.background)
+        .background(alignment: .topLeading) {
+            if showsCompactToolbarNavigation {
+                CompactChatInteractivePopEnabler()
+                    .frame(width: 0, height: 0)
+            }
+        }
         .onDrop(of: [.image, .movie, .fileURL, .data], isTargeted: $isDropTargeted) { providers in
             handleDropProviders(providers)
             return true
@@ -2358,12 +2364,7 @@ struct AIChatView: View {
                         Button {
                             vm.forceScrollToTop.send()
                         } label: {
-                            // arrow.up.to.line: "jump to a top anchor" reads truer
-                            // for the turn-walk / scroll-to-top action than a plain
-                            // chevron, and distinguishes it from the down button's
-                            // chevron.down. Available since iOS 16 (both our legacy
-                            // and iOS 26 floors).
-                            scrollFloatingButtonLabel("arrow.up.to.line")
+                            scrollFloatingButtonLabel("chevron.up")
                         }
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     }
@@ -2826,7 +2827,7 @@ struct AIChatView: View {
     private var attachmentMenuButton: some View {
         let icon = Image(systemName: "plus")
             .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(ChatColors.secondaryText)
+            .foregroundStyle(ChatColors.primaryText)
             .frame(width: 34, height: 34)
 
         if #available(iOS 17, *) {
@@ -2919,7 +2920,7 @@ struct AIChatView: View {
         } label: {
             Image(systemName: "paperclip")
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(ChatColors.secondaryText)
+                .foregroundStyle(ChatColors.primaryText)
                 .frame(width: 34, height: 34)
         }
         .accessibilityLabel("命令")
@@ -4634,6 +4635,79 @@ private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View
                 ToolbarItem(placement: .principal) { title() }
                 ToolbarItem(placement: .topBarTrailing) { trailing() }
             }
+    }
+}
+
+/// Restores UIKit's interactive left-edge pop after the standard back button
+/// is replaced with the compact session-list control. UIKit owns the progress,
+/// completion threshold, and cancellation, so the transition tracks the finger.
+private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> MarkerView {
+        let view = MarkerView()
+        view.isUserInteractionEnabled = false
+        view.onAttach = { [weak coordinator = context.coordinator] marker in
+            coordinator?.enable(from: marker)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: MarkerView, context: Context) {
+        context.coordinator.enable(from: uiView)
+    }
+
+    static func dismantleUIView(_ uiView: MarkerView, coordinator: Coordinator) {
+        coordinator.cancelPendingEnable()
+    }
+
+    final class Coordinator {
+        private weak var navigationController: UINavigationController?
+        private var pendingEnable: DispatchWorkItem?
+
+        func enable(from marker: UIView) {
+            guard let navigationController = nearestNavigationController(from: marker) else { return }
+            self.navigationController = navigationController
+            pendingEnable?.cancel()
+
+            // SwiftUI applies `navigationBarBackButtonHidden` during the same
+            // layout pass. Enabling on the next main-loop turn lets that update
+            // settle first, while retaining UIKit's own gesture delegate.
+            let work = DispatchWorkItem { [weak self, weak navigationController] in
+                guard let self,
+                      let navigationController,
+                      let currentNavigationController = self.navigationController,
+                      currentNavigationController === navigationController else { return }
+                navigationController.interactivePopGestureRecognizer?.isEnabled = true
+            }
+            pendingEnable = work
+            DispatchQueue.main.async(execute: work)
+        }
+
+        func cancelPendingEnable() {
+            pendingEnable?.cancel()
+            pendingEnable = nil
+        }
+
+        private func nearestNavigationController(from view: UIView) -> UINavigationController? {
+            var responder: UIResponder? = view
+            while let current = responder {
+                if let navigationController = current as? UINavigationController {
+                    return navigationController
+                }
+                responder = current.next
+            }
+            return nil
+        }
+    }
+
+    final class MarkerView: UIView {
+        var onAttach: ((UIView) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onAttach?(self)
+        }
     }
 }
 

@@ -232,6 +232,21 @@ extension AIChatViewModel {
         var lastToolInputStreamUpdate: Date = .distantPast
         var lastToolInputScroll: Date = .distantPast
         var currentStreamingToolId: String? = nil
+        var hasRecordedFirstToken = false
+
+        func recordFirstTokenIfNeeded() async {
+            guard !hasRecordedFirstToken else { return }
+            hasRecordedFirstToken = true
+            let receivedAt = Date()
+            await MainActor.run {
+                guard msgIdx < self.messages.count else { return }
+                let message = self.messages[msgIdx]
+                guard message.firstTokenLatency == nil else { return }
+                let requestStartedAt = message.firstTokenRequestStartedAt ?? receivedAt
+                message.firstTokenLatency = max(0, receivedAt.timeIntervalSince(requestStartedAt))
+            }
+        }
+
         /// Per-tool-id ring of the most recent `accumulated` snapshots seen
         /// in `.toolInputDelta`. Capped to the last 10 entries to bound
         /// memory. Drained into `ToolEntry.inputChunkRing` on
@@ -288,6 +303,7 @@ extension AIChatViewModel {
 
             switch event {
             case .contentBlockStart(let start):
+                await recordFirstTokenIfNeeded()
                 // Model started producing output — clear the "thinking" indicator
                 await MainActor.run {
                     guard msgIdx < messages.count else { return }

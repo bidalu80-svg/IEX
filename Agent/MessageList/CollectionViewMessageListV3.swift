@@ -161,6 +161,8 @@ private struct BridgedAssistantHeaderV3: View {
     @ObservedObject var message: ChatMessage
     var maxWidth: CGFloat = 0
     @State private var soulMeta: SoulMetadata = SoulStore.cachedMetadata
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         HStack(spacing: 6) {
             Image("ZeAssistantAvatar")
@@ -170,7 +172,13 @@ private struct BridgedAssistantHeaderV3: View {
             Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(ChatColors.primaryText)
+            if let firstTokenLatency = message.firstTokenLatency {
+                FirstTokenLatencyPill(seconds: firstTokenLatency)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .leading)))
+            }
         }
+        .transaction { $0.disablesAnimations = false }
+        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: message.firstTokenLatency)
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
             soulMeta = SoulStore.cachedMetadata
         }
@@ -182,6 +190,29 @@ private struct BridgedAssistantHeaderV3: View {
         .padding(.horizontal, 16)
         .opacity(message.isCompactedHistory ? 0.5 : 1.0)
         .accessibilityIdentifier("assistantHeader")
+    }
+}
+
+private struct FirstTokenLatencyPill: View {
+    let seconds: TimeInterval
+
+    private var durationText: String {
+        seconds < 0.1 ? "<0.1秒" : String(format: "%.1f秒", seconds)
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "timer")
+                .font(.system(size: 9, weight: .medium))
+            Text("首字 \(durationText)")
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+        }
+        .foregroundStyle(ChatColors.secondaryText)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityLabel("首字耗时 \(durationText)")
     }
 }
 

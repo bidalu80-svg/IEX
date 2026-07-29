@@ -2554,6 +2554,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // Clear the error on the existing assistant message
         lastMsg.error = nil
         lastMsg.streamInterruptCount = 0
+        lastMsg.firstTokenRequestStartedAt = nil
+        lastMsg.firstTokenLatency = nil
 
         // Remove blocks from the incomplete/interrupted iteration.
         // committedBlockCount tracks how many blocks were fully committed before the
@@ -3033,6 +3035,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let isAsst = inBounds && messages[r].role == .assistant
             if inBounds, isAsst {
                 messages[r].isAwaitingModelResponse = true
+                messages[r].firstTokenRequestStartedAt = nil
+                messages[r].firstTokenLatency = nil
             } else {
                 // [RetryDiag] resumeAt points outside the array or at a non-
                 // assistant row — an off-by-one in the caller's index math. The
@@ -4615,6 +4619,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             AgentRequestTrace.shared.step("streamAgentMessage.call", detail: "maxTokens=\(provider.defaultMaxTokens)")
             #endif
             let iterationStreamStart = Date()
+            if msgIdx < messages.count, messages[msgIdx].firstTokenRequestStartedAt == nil {
+                messages[msgIdx].firstTokenRequestStartedAt = iterationStreamStart
+            }
             let prevEntryId = activeEntryId
             fallbackReasons.removeAll()
             // Phase B: route through effectiveAgentHistory() so compact summary is
