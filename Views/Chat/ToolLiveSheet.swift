@@ -216,6 +216,7 @@ struct FloatingToolBar: View {
     var onTakeoverDone: (() -> Void)?
     @State private var selectedIdx: Int? = nil
     @State private var expanded = false
+    @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
 
     private var displayedIdx: Int {
@@ -241,29 +242,39 @@ struct FloatingToolBar: View {
     }
 
     var body: some View {
-        // Collapsed: thumbnail (optional) + status bar
-        ZStack(alignment: .bottomTrailing) {
-            ToolStatusBar(
-                block: displayedBlock,
-                toolBlocks: toolBlocks,
-                displayedIdx: displayedIdx,
-                expanded: $expanded,
-                selectedIdx: $selectedIdx,
-                trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
-            )
+        Group {
+            if toolStatusBarEnabled {
+                // Combined mode or status-bar-only mode. The trailing inset is
+                // reserved only when the preview card is also visible.
+                ZStack(alignment: .bottomTrailing) {
+                    ToolStatusBar(
+                        block: displayedBlock,
+                        toolBlocks: toolBlocks,
+                        displayedIdx: displayedIdx,
+                        expanded: $expanded,
+                        selectedIdx: $selectedIdx,
+                        trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
+                    )
 
-            if toolPreviewEnabled {
-                ToolPreviewThumbnail(
-                    block: displayedBlock,
-                    snapshot: displayedSnapshot,
-                    browserPool: browserPool,
-                    onTap: { withAnimation { expanded = true } }
-                )
-                .offset(x: -10)
+                    if toolPreviewEnabled {
+                        previewThumbnail
+                            .offset(x: -10)
+                    }
+                }
+            } else if toolPreviewEnabled {
+                // Preview-card-only mode: keep the card anchored to the same
+                // trailing edge it occupies in the combined presentation.
+                HStack {
+                    Spacer(minLength: 0)
+                    previewThumbnail
+                }
+                .padding(.trailing, 10)
             }
         }
         // .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: -4)
         .animation(.easeInOut(duration: 0.15), value: displayedIdx)
+        .animation(.easeInOut(duration: 0.18), value: toolStatusBarEnabled)
+        .animation(.easeInOut(duration: 0.18), value: toolPreviewEnabled)
         .sheet(isPresented: $expanded) {
             ToolLiveSheet(
                 toolBlocks: toolBlocks,
@@ -274,6 +285,15 @@ struct FloatingToolBar: View {
                 onTakeoverDone: onTakeoverDone
             )
         }
+    }
+
+    private var previewThumbnail: some View {
+        ToolPreviewThumbnail(
+            block: displayedBlock,
+            snapshot: displayedSnapshot,
+            browserPool: browserPool,
+            onTap: { withAnimation { expanded = true } }
+        )
     }
 }
 

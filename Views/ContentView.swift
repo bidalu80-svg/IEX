@@ -4502,6 +4502,7 @@ private struct AppearanceSettingsView: View {
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
     @AppStorage("launchScreen") private var launchScreen: Int = 0  // 0=Auto, 1=Last Session, 2=New Chat, 3=Home
+    @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
     /// 0 = Return inserts a newline (default), 1 = Return sends the message.
     @AppStorage("returnKeyBehavior") private var returnKeyBehavior: Int = 0
@@ -4596,11 +4597,12 @@ private struct AppearanceSettingsView: View {
             }
 
             Section {
-                Toggle(String(localized: "Tool Preview Window"), isOn: $toolPreviewEnabled)
+                Toggle(String(localized: "Show Tool Status Bar"), isOn: $toolStatusBarEnabled)
+                Toggle(String(localized: "Show Preview Card"), isOn: $toolPreviewEnabled)
             } header: {
                 Text("Tool Status Bar")
             } footer: {
-                Text("Show a live preview thumbnail alongside the tool status bar during agent execution.")
+                Text("The tool status bar and preview card can be shown independently.")
             }
 
             // [T-thinking-auto-expand-toggle] Whether a NEW streaming thinking

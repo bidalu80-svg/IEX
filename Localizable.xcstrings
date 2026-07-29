@@ -66689,6 +66689,72 @@
         }
       }
     },
+    "Show Preview Card" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Preview Card"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示预览卡片"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示預覽卡片"
+          }
+        }
+      }
+    },
+    "Show Tool Status Bar" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Tool Status Bar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示工具浮条"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示工具浮條"
+          }
+        }
+      }
+    },
+    "The tool status bar and preview card can be shown independently." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The tool status bar and preview card can be shown independently."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具浮条和预览卡片可独立显示，也可以同时显示。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具浮條和預覽卡片可獨立顯示，也可以同時顯示。"
+          }
+        }
+      }
+    },
     "The URL is used verbatim. Include the full path up to (but not including) the endpoint, e.g. \"/chat/completions\"." : {
       "localizations" : {
         "de" : {

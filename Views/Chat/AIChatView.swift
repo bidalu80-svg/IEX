@@ -274,6 +274,8 @@ struct AIChatView: View {
     /// they've reached the trigger zone.
     private static let kSendSwipeArmFraction: CGFloat = 0.8
     @State private var floatingBarHeight: CGFloat = 0
+    @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
+    @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
     @State private var showFileBrowser = false
     // [T-browser-download-ux-v2] Downloads panel + "Show in Files" locate target.
     @State private var showDownloadsPanel = false
@@ -2441,7 +2443,7 @@ struct AIChatView: View {
         let allToolBlocks = vm.messages
             .filter { $0.role == .assistant && !$0.isCompactedHistory }
             .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
-        if !allToolBlocks.isEmpty {
+        if !allToolBlocks.isEmpty && (toolStatusBarEnabled || toolPreviewEnabled) {
             FloatingToolBar(toolBlocks: allToolBlocks, toolSnapshots: vm.toolSnapshots, browserPool: vm.browserTabPool, onBrowserTakeover: {
                 vm.browserTakeoverActive = true
             }, onTakeoverDone: {
@@ -4235,7 +4237,7 @@ struct AIChatView: View {
 
     /// Whether the floating tool preview is visible.
     private var hasFloatingPreview: Bool {
-        hasAnyToolBlocks
+        hasAnyToolBlocks && (toolStatusBarEnabled || toolPreviewEnabled)
     }
 
     /// Max content width — unconstrained in compact (portrait iPhone),
