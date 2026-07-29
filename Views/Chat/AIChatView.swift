@@ -3268,7 +3268,12 @@ struct AIChatView: View {
             }
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            // The attachment tray is the preceding sibling in the bottom
+            // stack. Do not leave the composer's normal top gutter between a
+            // pending attachment and this capsule; with no floating bar that
+            // gutter was the visible blank band above the input.
+            .padding(.top, hasPendingAttachmentPreviews ? 0 : 8)
+            .padding(.bottom, 8)
             // [T-ios-geometry-observer-crash] onGeometryChange replaces the
             // GeometryReader scaffold (async-renderer SIGTRAP — see the
             // floating-bar site). Fires with the initial value too, so the
@@ -3905,9 +3910,13 @@ struct AIChatView: View {
 
     /// Attachment previews sit above the composer capsule so files and photos
     /// never cover the text field or its placeholder in the long input layout.
+    private var hasPendingAttachmentPreviews: Bool {
+        !vm.attachments.isEmpty || vm.loadingVideoCount > 0
+    }
+
     @ViewBuilder
     private var attachmentPreviewTray: some View {
-        if !vm.attachments.isEmpty || vm.loadingVideoCount > 0 {
+        if hasPendingAttachmentPreviews {
             ScrollView(.vertical, showsIndicators: attachmentGridHeight > Self.attachmentTrayMaxHeight) {
                 inputAttachmentGrid
                     .background(GeometryReader { geo in
@@ -3927,7 +3936,7 @@ struct AIChatView: View {
     /// The attachment tray is outside `inputBar` so it does not push the tool
     /// status UI upward. Its height must still be reserved by the message list.
     private var attachmentTrayHeight: CGFloat {
-        guard !vm.attachments.isEmpty || vm.loadingVideoCount > 0 else { return 0 }
+        guard hasPendingAttachmentPreviews else { return 0 }
         let measuredHeight = attachmentGridHeight > 0
             ? attachmentGridHeight
             : Self.attachmentTrayOneRowHeight
