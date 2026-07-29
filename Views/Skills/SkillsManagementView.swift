@@ -366,7 +366,7 @@ private struct SkillFileDocumentPicker: UIViewControllerRepresentable {
         if let skillType = UTType(filenameExtension: "skill", conformingTo: .zip) {
             types.append(skillType)
         }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.delegate = context.coordinator
         return picker
     }

@@ -15,15 +15,16 @@ private let zeLogger = AppLogger(category: "ZeURL")
 /// Uses UIKit's document-picker delegate directly. The chat view is embedded
 /// in a deep NavigationStack/sheet hierarchy where SwiftUI's `fileImporter`
 /// completion can be dropped while the source view is temporarily removed.
-/// This opens the original provider URL in place; it does not request an
-/// import-as-copy picker.
+/// The picker asks Files to copy the selection before invoking the delegate.
+/// This prevents a re-signed build from losing access to an external provider
+/// URL while the picker sheet is being dismissed.
 private struct ChatAttachmentDocumentPicker: UIViewControllerRepresentable {
     let onPick: ([URL]) -> Void
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let types: [UTType] = [.image, .pdf, .plainText, .json, .sourceCode, .presentation, .spreadsheet, .data]
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.allowsMultipleSelection = true
         picker.shouldShowFileExtensions = true
         picker.delegate = context.coordinator

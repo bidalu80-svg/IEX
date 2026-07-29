@@ -1516,7 +1516,7 @@ private struct FileImportPicker: UIViewControllerRepresentable {
     var onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .item], asCopy: false)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .item], asCopy: true)
         picker.allowsMultipleSelection = true
         picker.delegate = context.coordinator
         return picker

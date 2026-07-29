@@ -241,15 +241,14 @@ final class MountedFoldersManager {
         }
     }
 
-    /// Add a new mount from a freshly-picked document picker URL.
-    /// The caller is responsible for presenting the picker; this takes the result URL.
-    /// The URL must currently have an active security scope (as it does right after picker callback).
+    /// Add a new mount from a folder URL and the security-scoped bookmark that
+    /// was created in the document picker callback.
     ///
     /// `userAllowWrite` is the user's intent: pass `true` to allow AI and shell
     /// to modify the folder, or `false` to mount it as an internally-locked
     /// read-only folder (even if the source itself is writable).
     @discardableResult
-    func add(pickedURL: URL, customName: String, userAllowWrite: Bool) throws -> MountedFolderEntry {
+    func add(pickedURL: URL, bookmark: Data, customName: String, userAllowWrite: Bool) throws -> MountedFolderEntry {
         let name = customName.trimmingCharacters(in: .whitespaces)
         guard MountedFolderEntry.isValidMountName(name) else { throw AddError.invalidName }
         guard isNameAvailable(name) else { throw AddError.nameTaken }
@@ -257,31 +256,31 @@ final class MountedFoldersManager {
             throw AddError.limitReached(Self.maxMountCount)
         }
 
-        // The picker gives us a URL with scope already active, but for safety
-        // re-start it; balanced stop in defer.
-        let startedHere = pickedURL.startAccessingSecurityScopedResource()
-        defer { if startedHere { pickedURL.stopAccessingSecurityScopedResource() } }
-
-        let bookmark: Data
+        let resolvedURL: URL
         do {
-            // iOS: do NOT pass .withSecurityScope (macOS-only).
-            bookmark = try pickedURL.bookmarkData(
+            var stale = false
+            resolvedURL = try URL(
+                resolvingBookmarkData: bookmark,
                 options: [],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
             )
         } catch {
             throw AddError.bookmarkFailed(error.localizedDescription)
         }
 
+        guard resolvedURL.startAccessingSecurityScopedResource() else {
+            throw AddError.scopeDenied
+        }
+        defer { resolvedURL.stopAccessingSecurityScopedResource() }
+
         // Probe writability by creating + deleting a tiny hidden file.
-        // This happens while the security scope is still active.
-        let writable = Self.probeWritable(at: pickedURL)
+        let writable = Self.probeWritable(at: resolvedURL)
 
         let entry = MountedFolderEntry(
             id: UUID(),
             name: name,
-            sourceDisplayName: Self.humanReadableSourceName(for: pickedURL),
+            sourceDisplayName: Self.humanReadableSourceName(for: resolvedURL),
             bookmark: bookmark,
             createdAt: Date(),
             isWritable: writable,
@@ -297,7 +296,7 @@ final class MountedFoldersManager {
         // Register the new mount with the iSH kernel bind-mount table so the
         // shell can read/write it directly (no-op if kernel not booted).
         pushExternalMountSnapshot()
-        mountLog.info("added mount '\(entry.name)' -> \(pickedURL.lastPathComponent)")
+        mountLog.info("added mount '\(entry.name)' -> \(resolvedURL.lastPathComponent)")
         return entry
     }
 

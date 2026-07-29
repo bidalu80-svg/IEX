@@ -2,14 +2,14 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Native open-in-place picker for provider exports. Keeping this delegate
-/// alive in the presented controller avoids SwiftUI's `fileImporter` result
-/// being lost when a parent sheet re-renders during dismissal.
+/// Native picker for provider exports. Files copies the selection before this
+/// delegate runs, so imports do not depend on a provider security scope after
+/// the sheet begins dismissing.
 struct ProviderJSONDocumentPicker: UIViewControllerRepresentable {
     let onResult: (Result<URL, Error>) -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: false)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
         picker.delegate = context.coordinator
         return picker
     }
