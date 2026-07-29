@@ -4681,7 +4681,7 @@ private struct AppearanceSettingsView: View {
                 } header: {
                     Text("应用图标")
                 } footer: {
-                    Text("“自动”使用随系统外观适配的图标。")
+                    Text("“自动”使用随系统外观适配的图标。第三方签名时，描述文件必须与应用的 Bundle ID 完全一致，否则 iOS 会拒绝切换。")
                 }
             }
 
@@ -4755,11 +4755,19 @@ private struct AppearanceSettingsView: View {
             return
         }
 
+        // SpringBoard rejects alternate-icon requests made while the app is
+        // inactive. This most often happens during an appearance transition or
+        // immediately after returning from a third-party signer.
+        guard UIApplication.shared.applicationState == .active else {
+            appIconChangeError = "请先让 Ze 保持在前台，再重新选择图标。"
+            return
+        }
+
         UIApplication.shared.setAlternateIconName(targetIconName) { error in
             DispatchQueue.main.async {
                 if let error {
                     self.syncAppIconModeWithSystem()
-                    self.appIconChangeError = error.localizedDescription
+                    self.appIconChangeError = self.appIconErrorMessage(for: error)
                     return
                 }
                 self.appIconMode = option.id
@@ -4776,6 +4784,27 @@ private struct AppearanceSettingsView: View {
         default:
             appIconMode = 0
         }
+    }
+
+    private func appIconErrorMessage(for error: Error) -> String {
+        guard containsOSStatusMinus54(error) else {
+            return error.localizedDescription
+        }
+
+        let bundleID = Bundle.main.bundleIdentifier ?? "未知"
+        return "系统拒绝了图标切换（OSStatus -54）。当前应用的运行 Bundle ID 是 \(bundleID)。请在全能签中使用 application-identifier 与该 Bundle ID 完全匹配的描述文件，并且签名时不要再修改 Bundle ID；第三方重签造成的身份不一致无法由 App 内部绕过。"
+    }
+
+    private func containsOSStatusMinus54(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        var checked = 0
+
+        while let nsError = current, checked < 6 {
+            if nsError.code == -54 { return true }
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+            checked += 1
+        }
+        return false
     }
 }
 

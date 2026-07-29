@@ -429,8 +429,12 @@ jobs:
           test -d "$APP_AUDIT"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.2"
           test -f "$APP_AUDIT/Assets.car"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light" "$APP_AUDIT/Info.plist"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark" "$APP_AUDIT/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
+          # Alternate icons are compiled by actool into Assets.car. Reject the
+          # obsolete loose-PNG directory so re-signers see one unambiguous icon
+          # declaration instead of two unrelated packaging mechanisms.
+          test ! -e "$APP_AUDIT/AlternateIcons"
           # Xcode 16 Debug builds may split the executable into a tiny
           # launcher plus Ze.debug.dylib.  Third-party re-signers often do
           # not sign that auxiliary dylib, so reject that launch-only layout.

@@ -61,7 +61,7 @@ struct EnhancedBackgroundSettingsView: View {
                 // `liveActivityPrivacyMode` so existing installs keep their setting.
                 Toggle("Task Status Privacy", isOn: $keepAlive.liveActivityPrivacyMode)
             } footer: {
-                Text("Hide session content on the Lock Screen, in the Dynamic Island and in notifications. Only the number of completed tasks and the elapsed time are shown — no session titles, tool status or reply content.")
+                Text("Keep session titles visible, but hide tool details and reply content on the Lock Screen, in the Dynamic Island and in notifications.")
             }
 
             Section {

@@ -758,19 +758,19 @@ final class AgentLiveActivityManager {
         return withPrivacyRedaction(s)
     }
 
-    /// [T-ios-live-activity-privacy-mode] Data-layer redaction: strip every
-    /// conversation-derived field (session title / tool status / tool icon /
-    /// last message) right before the state is pushed, so the widget degrades
-    /// to "task position + status + timer" without restructuring any view.
+    /// [T-ios-live-activity-privacy-mode] Data-layer redaction: retain the
+    /// session title requested by the user, but strip tool details and reply
+    /// content right before the state is pushed.
     /// The Soul name is NOT redacted (user-chosen persona label). Chained from
     /// `withAudioState`, which is the single decorator every LIVE state passes
     /// through (both `pushState` and the initial `Activity.request`), so no
     /// construction site needs editing and no live route can bypass it.
     ///
-    /// What deliberately survives redaction: `activeSessionCount`, `isCompleted`
-    /// / `allCompleted` (drive the "N sessions" vs "N completed" text and the
-    /// green checkmark), the audio-control fields, and `attributes.startDate`
-    /// (the elapsed timer lives there, not in ContentState).
+    /// What deliberately survives redaction: each session title,
+    /// `activeSessionCount`, `isCompleted` / `allCompleted` (drive the
+    /// "N sessions" vs "N completed" text and the green checkmark), the
+    /// audio-control fields, and `attributes.startDate` (the elapsed timer
+    /// lives there, not in ContentState).
     @available(iOS 16.2, *)
     private func withPrivacyRedaction(_ state: AgentActivityAttributes.ContentState) -> AgentActivityAttributes.ContentState {
         guard BackgroundKeepAliveManager.shared.liveActivityPrivacyMode else { return state }
@@ -779,17 +779,15 @@ final class AgentLiveActivityManager {
         // [T-ios-live-activity-privacy-duration] soulName deliberately survives
         // redaction now: it is the user's chosen Soul persona (an identity
         // label), not conversation content — forcing "Ze" made Privacy Mode
-        // gratuitously anonymous. The remaining redactions still strip
-        // everything conversation-derived.
+        // gratuitously anonymous. Session titles also survive so the Dynamic
+        // Island can identify the active conversation; tool details and reply
+        // content remain redacted.
         // Neutral icon for the Dynamic Island trailing/expanded glyphs, and never
         // let the minimal icon flip to a tool glyph (it would leak which tool ran).
         s.latestToolIcon = s.allCompleted ? "checkmark.circle.fill" : Self.privacyNeutralIcon
         s.minimalShowsTool = false
         s.sessions = s.sessions.map { snap in
             var redacted = snap
-            // "Agent Task" + the view's existing "1/2" index chip reads as
-            // "第 1/2 个智能体任务" — task position without task content.
-            redacted.title = Self.privacyTaskTitle
             // In-flight rows get a content-free "working" label; completed rows
             // show a content-free "Completed" beside the checkmark (the slot
             // where the reply summary appears outside Privacy Mode).
@@ -803,7 +801,6 @@ final class AgentLiveActivityManager {
 
     /// Neutral placeholders used by Privacy Mode. Localized so the redacted
     /// strings still match the user's language.
-    private static var privacyTaskTitle: String { String(localized: "Agent Task") }
     private static var privacyWorkingStatus: String { String(localized: "Working…") }
     private static var privacyCompletedStatus: String { String(localized: "Completed") }
     private static let privacyNeutralIcon = "circle.dashed"

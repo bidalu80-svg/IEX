@@ -64884,54 +64884,54 @@
       }
       }
     },
-    "Hide session content on the Lock Screen, in the Dynamic Island and in notifications. Only the number of completed tasks and the elapsed time are shown — no session titles, tool status or reply content." : {
+    "Keep session titles visible, but hide tool details and reply content on the Lock Screen, in the Dynamic Island and in notifications." : {
       "localizations" : {
       "de" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "Verbirgt Sitzungsinhalte auf dem Sperrbildschirm, in der Dynamic Island und in Mitteilungen. Es werden nur die Anzahl abgeschlossener Aufgaben und die verstrichene Zeit angezeigt – keine Sitzungstitel, Werkzeugstatus oder Antwortinhalte."
+          "value" : "Sitzungstitel bleiben sichtbar; Werkzeugdetails und Antwortinhalte werden auf dem Sperrbildschirm, in der Dynamic Island und in Mitteilungen ausgeblendet."
         }
       },
       "en" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "Hide session content on the Lock Screen, in the Dynamic Island and in notifications. Only the number of completed tasks and the elapsed time are shown — no session titles, tool status or reply content."
+          "value" : "Keep session titles visible, but hide tool details and reply content on the Lock Screen, in the Dynamic Island and in notifications."
         }
       },
       "fr" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "Masque le contenu des sessions sur l’écran verrouillé, dans la Dynamic Island et dans les notifications. Seuls le nombre de tâches terminées et le temps écoulé sont affichés — ni titre de session, ni statut d’outil, ni contenu de réponse."
+          "value" : "Conserve les titres de session visibles, mais masque les détails des outils et le contenu des réponses sur l’écran verrouillé, dans la Dynamic Island et dans les notifications."
         }
       },
       "ja" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "ロック画面、Dynamic Island、通知でセッションの内容を非表示にします。完了したタスク数と経過時間のみが表示され、セッション名やツールの状態、返信内容は表示されません。"
+          "value" : "セッションタイトルは表示したまま、ロック画面、Dynamic Island、通知ではツールの詳細と返信内容を非表示にします。"
         }
       },
       "ko" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "잠금 화면, 다이나믹 아일랜드, 알림에서 세션 내용을 숨깁니다. 완료된 작업 수와 경과 시간만 표시되며 세션 제목, 도구 상태, 응답 내용은 표시되지 않습니다."
+          "value" : "세션 제목은 표시하고 잠금 화면, 다이나믹 아일랜드 및 알림에서는 도구 세부 정보와 응답 내용을 숨깁니다."
         }
       },
       "ru" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "Скрывает содержимое сессий на заблокированном экране, в Dynamic Island и в уведомлениях. Отображаются только количество выполненных задач и затраченное время — без названий сессий, статуса инструментов и текста ответов."
+          "value" : "Названия сессий остаются видимыми, а сведения об инструментах и содержимое ответов скрываются на экране блокировки, в Dynamic Island и в уведомлениях."
         }
       },
       "zh-Hans" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "在锁定屏幕、灵动岛和通知中隐藏会话内容。仅显示已完成的任务数量和耗时，不显示会话标题、工具状态或回复内容。"
+          "value" : "保留会话标题，但在锁定屏幕、灵动岛和通知中隐藏工具详情与回复内容。"
         }
       },
       "zh-Hant" : {
         "stringUnit" : {
           "state" : "translated",
-          "value" : "在鎖定畫面、動態島和通知中隱藏工作階段內容。僅顯示已完成的任務數量和耗時，不顯示工作階段標題、工具狀態或回覆內容。"
+          "value" : "保留工作階段標題，但在鎖定畫面、動態島和通知中隱藏工具詳細資訊與回覆內容。"
         }
       }
       }

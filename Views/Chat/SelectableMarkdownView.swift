@@ -282,7 +282,11 @@ struct SelectableMarkdownTheme {
         UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : .black }
     }
     var codeBlockTextColor: UIColor {
-        UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.55, green: 0.95, blue: 0.55, alpha: 1) : .systemGreen }
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.83, green: 0.84, blue: 0.86, alpha: 1)
+                : UIColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
+        }
     }
     var inlineCodeBackground: UIColor { zeInlineCodeBackgroundColor }
     var inlineCodeColor: UIColor { .systemBlue }
@@ -1280,6 +1284,136 @@ private extension UIFont {
     }
 }
 
+// MARK: - Code Syntax Highlighting
+
+/// Lightweight syntax coloring matched to Iexa's source-code palette. The
+/// colors are dynamic UIColors, so an existing code block follows a live
+/// light/dark appearance change without rebuilding its parsing pipeline.
+private enum ZeCodeSyntaxHighlighter {
+    private final class CacheEntry: NSObject {
+        let value: NSAttributedString
+        init(_ value: NSAttributedString) { self.value = value }
+    }
+
+    private static let cache: NSCache<NSString, CacheEntry> = {
+        let cache = NSCache<NSString, CacheEntry>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 16 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func highlighted(
+        _ code: String,
+        language: String?,
+        font: UIFont,
+        baseColor: UIColor,
+        paragraphStyle: NSParagraphStyle
+    ) -> NSAttributedString {
+        let normalizedLanguage = language?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? "text"
+        let cacheKey = [
+            normalizedLanguage,
+            String(format: "%.2f", font.pointSize),
+            String(baseColor.hashValue),
+            String(code.utf8.count),
+            String(code.hashValue),
+        ].joined(separator: "|") as NSString
+        if let cached = cache.object(forKey: cacheKey) {
+            return cached.value
+        }
+
+        let palette = Palette()
+        let output = NSMutableAttributedString(string: code, attributes: [
+            .font: font,
+            .foregroundColor: palette.plain(fallback: baseColor),
+            .paragraphStyle: paragraphStyle,
+        ])
+        let fullRange = NSRange(code.startIndex..<code.endIndex, in: code)
+        guard fullRange.length > 0 else { return output }
+
+        apply(color: palette.comment, pattern: #"(?m)#.*$|//.*$"#, to: output)
+        apply(color: palette.comment, pattern: #"(?s)/\*.*?\*/"#, to: output)
+        apply(color: palette.string, pattern: #""(\\.|[^"])*"|'(\\.|[^'])*'"#, to: output)
+        apply(color: palette.number, pattern: #"\b\d+(\.\d+)?\b"#, to: output)
+
+        let keywords = keywordSet(for: normalizedLanguage)
+        if !keywords.isEmpty {
+            let escaped = keywords.map { NSRegularExpression.escapedPattern(for: $0) }
+            apply(
+                color: palette.keyword,
+                pattern: #"\b("# + escaped.joined(separator: "|") + #")\b"#,
+                to: output
+            )
+        }
+        apply(color: palette.type, pattern: #"\b([A-Z][A-Za-z0-9_]*)\b"#, to: output)
+        apply(color: palette.function, pattern: #"\b([a-zA-Z_][A-Za-z0-9_]*)\s*(?=\()"#, to: output)
+
+        let frozen = NSAttributedString(attributedString: output)
+        cache.setObject(CacheEntry(frozen), forKey: cacheKey, cost: min(code.utf8.count * 2, 1_048_576))
+        return frozen
+    }
+
+    private static func apply(color: UIColor, pattern: String, to output: NSMutableAttributedString) {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let source = output.string
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        for match in regex.matches(in: source, range: range) {
+            output.addAttribute(.foregroundColor, value: color, range: match.range)
+        }
+    }
+
+    private static func keywordSet(for language: String) -> [String] {
+        switch language {
+        case "swift":
+            return ["let", "var", "func", "struct", "class", "enum", "if", "else", "guard", "return", "import", "protocol", "extension"]
+        case "python", "py":
+            return ["def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "try", "except", "with", "as"]
+        case "javascript", "js", "typescript", "ts":
+            return ["const", "let", "var", "function", "class", "if", "else", "return", "import", "export", "async", "await"]
+        case "json", "jsonc":
+            return ["true", "false", "null"]
+        default:
+            return ["if", "else", "for", "while", "return", "class", "func", "def", "const", "let", "var", "import"]
+        }
+    }
+
+    private struct Palette {
+        func plain(fallback: UIColor) -> UIColor { fallback }
+
+        let keyword = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.63, green: 0.96, blue: 0.70, alpha: 1)
+                : UIColor(red: 0.69, green: 0.00, blue: 0.86, alpha: 1)
+        }
+        let string = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.93, green: 0.80, blue: 0.48, alpha: 1)
+                : UIColor(red: 0.64, green: 0.08, blue: 0.08, alpha: 1)
+        }
+        let number = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.76, green: 0.95, blue: 0.60, alpha: 1)
+                : UIColor(red: 0.04, green: 0.53, blue: 0.34, alpha: 1)
+        }
+        let comment = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.58, green: 0.69, blue: 0.61, alpha: 1)
+                : UIColor(red: 0.42, green: 0.45, blue: 0.49, alpha: 1)
+        }
+        let function = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.79, green: 0.95, blue: 0.67, alpha: 1)
+                : UIColor(red: 0.47, green: 0.37, blue: 0.15, alpha: 1)
+        }
+        let type = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.55, green: 0.93, blue: 0.82, alpha: 1)
+                : UIColor(red: 0.15, green: 0.50, blue: 0.60, alpha: 1)
+        }
+    }
+}
+
 // MARK: - Code Block Attachment
 
 final class CodeBlockAttachment: NSTextAttachment {
@@ -1409,11 +1543,13 @@ final class CodeBlockAttachment: NSTextAttachment {
         let codeStyle = NSMutableParagraphStyle()
         codeStyle.lineSpacing = 4
         codeStyle.lineBreakMode = .byClipping
-        let codeAttr = NSAttributedString(string: code, attributes: [
-            .font: theme.codeBlockFont,
-            .foregroundColor: theme.codeBlockTextColor,
-            .paragraphStyle: codeStyle,
-        ])
+        let codeAttr = ZeCodeSyntaxHighlighter.highlighted(
+            code,
+            language: language,
+            font: theme.codeBlockFont,
+            baseColor: theme.codeBlockTextColor,
+            paragraphStyle: codeStyle
+        )
         codeTextView.attributedText = codeAttr
 
         // Measure content size (unconstrained width)
@@ -1494,11 +1630,13 @@ final class CodeBlockAttachment: NSTextAttachment {
         let codeStyle = NSMutableParagraphStyle()
         codeStyle.lineSpacing = 4
         codeStyle.lineBreakMode = .byClipping
-        let codeAttr = NSAttributedString(string: code, attributes: [
-            .font: theme.codeBlockFont,
-            .foregroundColor: theme.codeBlockTextColor,
-            .paragraphStyle: codeStyle,
-        ])
+        let codeAttr = ZeCodeSyntaxHighlighter.highlighted(
+            code,
+            language: language,
+            font: theme.codeBlockFont,
+            baseColor: theme.codeBlockTextColor,
+            paragraphStyle: codeStyle
+        )
         codeTextView.attributedText = codeAttr
 
         let fitting = codeTextView.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))

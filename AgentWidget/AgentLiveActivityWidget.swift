@@ -365,19 +365,28 @@ struct CompactTrailingView: View {
     }
 }
 
-/// System-owned indeterminate progress indicator. Unlike a manually rotated
-/// shape, `ProgressView` lets WidgetKit/ActivityKit drive the animation at the
-/// refresh rate and power budget iOS permits for the Dynamic Island.
+/// iOS 18's rotating symbol effect is driven by the system and continues to
+/// animate in the Dynamic Island. Older systems retain the indeterminate
+/// progress view as a static-compatible fallback.
 @available(iOSApplicationExtension 16.2, *)
 private struct LiveActivitySpinner: View {
     var scale: CGFloat = 0.72
 
+    @ViewBuilder
     var body: some View {
-        ProgressView()
-            .progressViewStyle(.circular)
-            .tint(.blue)
-            .scaleEffect(scale)
-            .accessibilityLabel("任务运行中")
+        if #available(iOSApplicationExtension 18.0, *) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.blue)
+                .symbolEffect(.rotate, options: .repeating)
+                .scaleEffect(scale)
+                .accessibilityLabel("任务运行中")
+        } else {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(.blue)
+                .scaleEffect(scale)
+                .accessibilityLabel("任务运行中")
+        }
     }
 }
 
