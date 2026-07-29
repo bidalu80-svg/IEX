@@ -3854,7 +3854,10 @@ struct AIChatView: View {
                         Color.clear.preference(key: AttachmentGridHeightKey.self, value: geo.size.height)
                     })
             }
-            .frame(height: min(attachmentGridHeight, 160))
+            // The first layout pass has no preference value yet. Keep one
+            // attachment row visible until the grid reports its real height;
+            // otherwise a zero-height ScrollView hides pending attachments.
+            .frame(height: min(max(attachmentGridHeight, 76), 160))
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
             .padding(.horizontal, 12)
         }
