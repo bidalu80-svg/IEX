@@ -70,6 +70,45 @@ done < <(find "$ish_dir" -maxdepth 1 -type f \( -name '*.h' -o -name '*.inc' \) 
 for component in emu kernel fs util platform asbestos; do
     copy_headers "$ish_dir/$component" "$component/"
 done
+
+# The vendored iSH source has no checked-in public umbrella header. Generate
+# the same integration header expected by Ze's Swift bridging header.
+cat > "$output_dir/include/ish/ish.h" <<'EOF'
+#ifndef ISH_H
+#define ISH_H
+
+#include "misc.h"
+#include "debug.h"
+
+#include "kernel/init.h"
+#include "kernel/task.h"
+#include "kernel/calls.h"
+#include "kernel/fs.h"
+#include "kernel/memory.h"
+#include "kernel/signal.h"
+#include "kernel/errno.h"
+
+#include "fs/fd.h"
+#include "fs/stat.h"
+#include "fs/tty.h"
+#include "fs/fake.h"
+#include "fs/real.h"
+#include "fs/poll.h"
+#include "fs/dev.h"
+
+#include "emu/cpu.h"
+#include "emu/tlb.h"
+#include "emu/mmu.h"
+#if defined(GUEST_X86)
+#include "emu/float80.h"
+#endif
+
+#include "platform/platform.h"
+
+#endif /* ISH_H */
+EOF
+test -s "$output_dir/include/ish/ish.h"
+
 if [ -f "$ish_products/meson/cpu-offsets.h" ]; then
     cp "$ish_products/meson/cpu-offsets.h" "$output_dir/include/ish/"
 elif [ -f "$ish_products/cpu-offsets.h" ]; then
