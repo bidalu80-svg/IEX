@@ -285,7 +285,7 @@ struct SelectableMarkdownTheme {
         UIColor { traits in
             traits.userInterfaceStyle == .dark
                 ? UIColor(red: 0.83, green: 0.84, blue: 0.86, alpha: 1)
-                : UIColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
+                : .systemGreen
         }
     }
     var inlineCodeBackground: UIColor { zeInlineCodeBackgroundColor }
