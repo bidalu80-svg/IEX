@@ -3908,15 +3908,16 @@ struct AIChatView: View {
     @ViewBuilder
     private var attachmentPreviewTray: some View {
         if !vm.attachments.isEmpty || vm.loadingVideoCount > 0 {
-            ScrollView(.vertical, showsIndicators: true) {
+            ScrollView(.vertical, showsIndicators: attachmentGridHeight > Self.attachmentTrayMaxHeight) {
                 inputAttachmentGrid
                     .background(GeometryReader { geo in
                         Color.clear.preference(key: AttachmentGridHeightKey.self, value: geo.size.height)
                     })
             }
-            // The first layout pass has no preference value yet. Keep one
-            // attachment row visible until the grid reports its real height;
-            // otherwise a zero-height ScrollView hides pending attachments.
+            .scrollDisabled(attachmentGridHeight <= Self.attachmentTrayMaxHeight)
+            // Before the first preference update, reserve exactly one chip row.
+            // Afterwards use the grid's natural height, clipping only after two
+            // rows so a single photo or file stays flush with the bar below.
             .frame(height: attachmentTrayHeight)
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
             .padding(.horizontal, 12)
@@ -3927,8 +3928,17 @@ struct AIChatView: View {
     /// status UI upward. Its height must still be reserved by the message list.
     private var attachmentTrayHeight: CGFloat {
         guard !vm.attachments.isEmpty || vm.loadingVideoCount > 0 else { return 0 }
-        return min(max(attachmentGridHeight, 76), 160)
+        let measuredHeight = attachmentGridHeight > 0
+            ? attachmentGridHeight
+            : Self.attachmentTrayOneRowHeight
+        return min(measuredHeight, Self.attachmentTrayMaxHeight)
     }
+
+    /// Matches `InputAttachmentGridView`: a 64pt chip, 6pt top clearance for
+    /// its remove affordance, and 8pt between rows. Two complete rows are
+    /// visible; further rows are reachable by scrolling the tray.
+    private static let attachmentTrayOneRowHeight: CGFloat = 70
+    private static let attachmentTrayMaxHeight: CGFloat = 142
 
     /// Attachment grid extracted to help the Swift type-checker.
     @ViewBuilder
