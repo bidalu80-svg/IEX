@@ -1029,7 +1029,6 @@ struct TypingIndicator: View {
         [CGPoint(x: 5.67, y: -6.33), CGPoint(x: 2.19, y: 8.07), CGPoint(x: -8.00, y: -1.67)]
     ]
 }
-}
 
 // MARK: - Thinking Level Sheet
 
