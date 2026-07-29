@@ -1995,6 +1995,7 @@ struct AIChatView: View {
                                     .foregroundStyle(ChatColors.tertiaryText)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
+                            }
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 8, weight: .semibold))
                                 .foregroundStyle(ChatColors.tertiaryText)
