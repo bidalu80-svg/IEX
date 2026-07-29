@@ -140,10 +140,12 @@ struct SoulSettingsView: View {
     // the visual width of every other section on the page.
     private var previewCard: some View {
         HStack(alignment: .center, spacing: 12) {
-            // Header preview always shows the canonical sparkles glyph;
-            // user-customized emoji was removed in T-soul-md follow-up.
-            Text(SoulMetadata.default.displayEmoji)
-                .font(.system(size: 32))
+            // Keep the soul preview consistent with the assistant header and
+            // welcome state instead of rendering the old sparkles glyph.
+            Image("ZeAssistantAvatar")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name.isEmpty ? "Ze" : name)
                     .font(.title3.weight(.semibold))

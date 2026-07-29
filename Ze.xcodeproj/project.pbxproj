@@ -2168,6 +2168,7 @@
 				E51000041 /* Sources */,
 				E51000020 /* Frameworks */,
 				E51000042 /* Resources */,
+				E5VIC001 /* Copy Alternate App Icons */,
 				AA26BD2D2F2E659300AECF2D /* Copy Alpine Rootfs */,
 				AAF00F032F50A00000049557 /* Embed Frameworks */,
 				E5E000060 /* Embed Foundation Extensions */,
@@ -2408,6 +2409,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nif [ \"${CONFIGURATION}\" = \"Debug\" ]; then\n  bash \"$SRCROOT/../../scripts/gen_debug_skill.sh\"\nelse\n  # Release: emit an empty stub so the source file always compiles.\n  OUT=\"$SRCROOT/Generated/DebugSkillGenerated.swift\"\n  mkdir -p \"$SRCROOT/Generated\"\n  printf '#if DEBUG\\nenum DebugSkillGenerated {\\n    static let skillMarkdownB64 = \"\"\\n    static let clientPythonB64 = \"\"\\n    static let clientNodeB64 = \"\"\\n    static let clientBashB64 = \"\"\\n}\\n#endif\\n' > \"$OUT\"\nfi\n";
+		};
+		E5VIC001 /* Copy Alternate App Icons */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Alternate App Icons";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n# UIKit resolves alternate CFBundleIconFiles at the application bundle root.\ncp \"$SRCROOT/Resources/AlternateIcons/\"*.png \"$DEST/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

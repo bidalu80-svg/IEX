@@ -1758,7 +1758,7 @@ struct AIChatView: View {
         // the cap). This is a MITIGATION of the system snapshot behavior, not
         // a fix of it: the top-crop of the snapshot itself is UIKit-level and
         // out of SwiftUI's reach.
-        let cap = max(120, UIScreen.main.bounds.width - 140)
+        let cap = max(120, UIScreen.main.bounds.width - 180)
         if #available(iOS 19, *) {
             titleView
                 .frame(maxWidth: cap)
@@ -1904,7 +1904,7 @@ struct AIChatView: View {
         // 4 → 1 and group vertical padding 3 → 2 on legacy), so the stack's
         // total height — the thing the May-18/19/20 clip saga fought — is
         // unchanged and the top-clip fix does not regress.
-        return VStack(spacing: legacyLayout ? -3 : -2) {
+        return VStack(spacing: legacyLayout ? 0 : -2) {
             Button {
                 if let s = titlePillSession { titlePillEditSession = s }
             } label: {
@@ -1945,7 +1945,7 @@ struct AIChatView: View {
                     //                 This leaves visible clearance above the
                     //                 title instead of relying on clipping.
                     // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 11 : 16, weight: .semibold))
+                    .font(.system(size: legacyLayout ? 13 : 16, weight: .semibold))
                     .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)
@@ -1985,10 +1985,16 @@ struct AIChatView: View {
                                 .fill(isModelStatusAuthenticated ? Color.blue : Color.orange)
                                 .frame(width: 6, height: 6)
                             Text(modelName)
-                                .font(.caption2)
+                                .font(legacyLayout ? .system(size: 10, weight: .medium) : .caption2)
                                 .foregroundStyle(ChatColors.secondaryText)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
+                            if legacyLayout, let detail = resolved {
+                                Text("\u00b7 \(detail.providerLabel) \u00b7 \(detail.modelName)")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(ChatColors.tertiaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 8, weight: .semibold))
                                 .foregroundStyle(ChatColors.tertiaryText)
@@ -1998,7 +2004,7 @@ struct AIChatView: View {
                     .buttonStyle(.plain)
                 }
 
-                if let detail = resolved {
+                if !legacyLayout, let detail = resolved {
                     // Row 2 names the resolved provider and model. It remains
                     // tappable as part of the model-picker entry point.
                     HStack(spacing: 4) {
@@ -2087,7 +2093,7 @@ struct AIChatView: View {
         // OUTER stack shifts its rendered position downward without
         // resizing any individual row. iOS 26 leaves at 0 (liquid
         // glass centers correctly).
-        .padding(.top, legacyLayout ? 6 : 0)
+        .padding(.top, 0)
         // iOS 26+: fix height to match liquid-glass navbar; older OS: let it size naturally
         .modifier(NavTitleFrameModifier())
         // [T-navbar-title-fontsize] Lock the entire principal-toolbar
@@ -3997,6 +4003,7 @@ struct AIChatView: View {
                     let trackHeight: CGFloat = 18
                     let thumbDiameter: CGFloat = 26
                     let thumbX = thumbDiameter / 2 + displayProgress * (width - thumbDiameter)
+                    let trackY = (thumbDiameter - trackHeight) / 2
                     let fillWidth = (selectedLevel.isEnabled || dragProgress != nil)
                         ? max(trackHeight, thumbX)
                         : 0
@@ -4004,19 +4011,23 @@ struct AIChatView: View {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(Color.secondary.opacity(0.14))
+                            .frame(width: width, height: trackHeight)
+                            .offset(y: trackY)
 
                         Capsule()
                             .fill(Color.purple)
-                            .frame(width: fillWidth)
+                            .frame(width: fillWidth, height: trackHeight)
+                            .offset(y: trackY)
 
-                        if particlesVisible {
+                        if particlesVisible, fillWidth > thumbDiameter {
                             ThinkingSliderParticles(
                                 phase: particlePhase,
                                 width: max(fillWidth - thumbDiameter, 0),
                                 height: trackHeight
                             )
-                            .padding(.leading, thumbDiameter / 2)
+                            .frame(width: max(fillWidth - thumbDiameter, 0), height: trackHeight)
                             .clipShape(Capsule())
+                            .offset(x: thumbDiameter / 2, y: trackY)
                             .allowsHitTesting(false)
                         }
 
@@ -4024,10 +4035,9 @@ struct AIChatView: View {
                             .fill(.white)
                             .frame(width: thumbDiameter, height: thumbDiameter)
                             .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
-                            .offset(x: thumbX - thumbDiameter / 2)
+                            .position(x: thumbX, y: thumbDiameter / 2)
                     }
-                    .frame(height: trackHeight)
-                    .frame(maxHeight: .infinity)
+                    .frame(width: width, height: thumbDiameter, alignment: .leading)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -4045,7 +4055,7 @@ struct AIChatView: View {
                             }
                     )
                 }
-                .frame(width: 136, height: 30)
+                .frame(width: 136, height: 26)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("思考过程强度")
@@ -4394,7 +4404,10 @@ private struct NavTitleFrameModifier: ViewModifier {
             content
                 .frame(height: 46, alignment: .center)
         } else {
-            content
+            // Legacy navigation bars only have room for two compact rows.
+            // `titleView` folds the resolved provider/model into row two,
+            // so this fixed height stays below the status-bar clip boundary.
+            content.frame(height: 38, alignment: .center)
         }
     }
 }

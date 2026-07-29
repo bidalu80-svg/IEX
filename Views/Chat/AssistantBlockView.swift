@@ -129,9 +129,9 @@ struct AssistantBlockView: View {
     }
 }
 
-// MARK: - Shimmer Overlay (continuous diagonal shine via offset animation)
+// MARK: - Shimmer Overlay (continuous leading-to-trailing shine)
 
-/// A diagonal shimmer band that sweeps from top-leading to bottom-trailing.
+/// A narrow shimmer band that sweeps from leading to trailing.
 /// Its offset is time-driven, so a collection-view cell cannot retain a
 /// stopped repeat-forever animation after it has been reused for another tool.
 struct ShimmerOverlay: View {
@@ -139,36 +139,18 @@ struct ShimmerOverlay: View {
     let isActive: Bool
     @State private var startedAt = Date()
 
-    private let sweepDuration: TimeInterval = 2.8
+    private let sweepDuration: TimeInterval = 2.15
 
     private var peakOpacity: CGFloat {
         colorScheme == .light ? 0.75 : 0.25
     }
 
-    private func bell(_ x: CGFloat) -> CGFloat {
-        exp(-4.5 * x * x)
-    }
-
-    private var stableStops: [Gradient.Stop] {
-        let stepCount = 12
-        let bandRadius: CGFloat = 0.40
-        let center: CGFloat = 0.5
-        var stops: [Gradient.Stop] = []
-        stops.append(.init(color: .white.opacity(0), location: 0))
-        for i in 0...stepCount {
-            let frac = CGFloat(i) / CGFloat(stepCount)
-            let pos = center - bandRadius + frac * bandRadius * 2.0
-            let dist = (pos - center) / bandRadius
-            let alpha = bell(dist) * peakOpacity
-            stops.append(.init(color: .white.opacity(Double(alpha)), location: pos))
-        }
-        stops.append(.init(color: .white.opacity(0), location: 1))
-        return stops
-    }
-
     var body: some View {
         GeometryReader { geo in
-            let travelWidth = geo.size.width + geo.size.height
+            // This is a narrow highlight moving through the capsule's own
+            // coordinate space. The previous oversized full-width gradient
+            // spent most of its cycle covering the same middle pixels.
+            let bandWidth = max(52, geo.size.width * 0.42)
             if isActive {
                 // `.animation` only refreshes while SwiftUI already has an
                 // active animation. This overlay is deliberately time-driven,
@@ -178,16 +160,19 @@ struct ShimmerOverlay: View {
                 TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startedAt)
                     let phase = CGFloat((elapsed / sweepDuration).truncatingRemainder(dividingBy: 1.0))
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                stops: stableStops,
-                                startPoint: UnitPoint(x: 0, y: 1),
-                                endPoint: UnitPoint(x: 1, y: 0)
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [.white.opacity(0), .white.opacity(peakOpacity), .white.opacity(0)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                        .frame(width: travelWidth, height: geo.size.height)
-                        .offset(x: (-1.0 + phase * 2.0) * travelWidth)
+                            .frame(width: bandWidth, height: geo.size.height)
+                            .offset(x: -bandWidth + phase * (geo.size.width + bandWidth))
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
                 }
             } else {
                 Color.clear
