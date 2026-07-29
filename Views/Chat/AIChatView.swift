@@ -1990,7 +1990,7 @@ struct AIChatView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             if legacyLayout, let detail = resolved {
-                                Text("\u00b7 \(detail.providerLabel) \u00b7 \(detail.modelName)")
+                                Text("- \(detail.providerLabel) - \(detail.modelName)")
                                     .font(.system(size: 8))
                                     .foregroundStyle(ChatColors.tertiaryText)
                                     .lineLimit(1)
