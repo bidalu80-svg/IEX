@@ -546,6 +546,10 @@ struct AIChatView: View {
                             // Attachments expand away from the composer without
                             // changing the tool-status bar's anchor.
                             attachmentPreviewTray
+                                // Preview thumbnails draw as an overlay on the
+                                // status bar. Keep attachment tiles above that
+                                // overlay if their horizontal regions meet.
+                                .zIndex(1)
                             floatingToolPreview
                                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
                             #if DEBUG
@@ -2365,7 +2369,11 @@ struct AIChatView: View {
                     screenshotPreview = ChatScreenshotPreview(image: image)
                 },
                 maxContentWidth: maxContentWidth ?? 0,
-                floatingBarHeight: floatingBarHeight,
+                // The status bar's measured height is deliberately smaller
+                // than an overlaid preview thumbnail. Reserve the larger
+                // safety band for message content without using it to place
+                // attachment previews.
+                floatingBarHeight: hasFloatingPreview ? max(floatingBarHeight, 80) : 0,
                 inputBarHeight: inputBarHeight + attachmentTrayHeight
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.

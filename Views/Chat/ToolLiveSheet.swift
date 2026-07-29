@@ -244,31 +244,34 @@ struct FloatingToolBar: View {
     var body: some View {
         Group {
             if toolStatusBarEnabled {
-                // Combined mode or status-bar-only mode. The trailing inset is
-                // reserved only when the preview card is also visible.
-                ZStack(alignment: .bottomTrailing) {
-                    ToolStatusBar(
-                        block: displayedBlock,
-                        toolBlocks: toolBlocks,
-                        displayedIdx: displayedIdx,
-                        expanded: $expanded,
-                        selectedIdx: $selectedIdx,
-                        trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
-                    )
-
+                // The status bar establishes the bottom-stack height. The
+                // preview is an overlay so its taller thumbnail cannot push
+                // pending attachments above the status bar's actual top edge.
+                ToolStatusBar(
+                    block: displayedBlock,
+                    toolBlocks: toolBlocks,
+                    displayedIdx: displayedIdx,
+                    expanded: $expanded,
+                    selectedIdx: $selectedIdx,
+                    trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
+                )
+                .overlay(alignment: .bottomTrailing) {
                     if toolPreviewEnabled {
                         previewThumbnail
                             .offset(x: -10)
                     }
                 }
             } else if toolPreviewEnabled {
-                // Preview-card-only mode: keep the card anchored to the same
-                // trailing edge it occupies in the combined presentation.
-                HStack {
-                    Spacer(minLength: 0)
-                    previewThumbnail
-                }
-                .padding(.trailing, 10)
+                // A preview-only card remains tappable, but it is not a
+                // vertical spacer. With the status bar off, attachments must
+                // sit directly above the composer rather than above this card.
+                Color.clear
+                    .frame(height: 0)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .bottomTrailing) {
+                        previewThumbnail
+                            .offset(x: -10)
+                    }
             }
         }
         // .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: -4)
