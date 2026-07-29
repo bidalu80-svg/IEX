@@ -3146,76 +3146,66 @@ struct AIChatView: View {
                 .background(Color.yellow.opacity(0.08))
             }
 
-            VStack(spacing: 5) {
-                // Attachment preview chips — 3 per row
-                if !vm.attachments.isEmpty || vm.loadingVideoCount > 0 {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        inputAttachmentGrid
-                            .background(GeometryReader { geo in
-                                Color.clear.preference(key: AttachmentGridHeightKey.self, value: geo.size.height)
-                            })
-                    }
-                    .frame(height: min(attachmentGridHeight, 160))
-                    .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
-                    .padding(.top, 8)
-                }
+            VStack(spacing: 8) {
+                attachmentPreviewTray
 
-                inputBottomRow
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-            }
-            .contentShape(Capsule())
-            .onTapGesture { inputFocused = true }
-            .onReceive(speechManager.$recognizedText) { text in
-                guard speechManager.state == .recording || !text.isEmpty else { return }
-                // Append only the new delta to preserve existing input text
-                let newLength = text.count
-                if newLength > lastRecognizedLength {
-                    let delta = String(text.dropFirst(lastRecognizedLength))
-                    vm.inputText += delta
+                VStack(spacing: 0) {
+                    inputBottomRow
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                 }
-                lastRecognizedLength = newLength
-            }
-            .overlay(alignment: .topTrailing) {
-                // Only offer "Move to…" when there is actually something to
-                // move. hasInjectedShareContent is flipped true after EVERY
-                // share ingestion, even when the share produced no text and no
-                // attachments (e.g. an unrecognized item, or all items diverted
-                // to Provider-import). Gate on real movable content so the pill
-                // doesn't linger over an empty composer. [T-ios-moveto-empty-content]
-                if hasInjectedShareContent && hasMovableShareContent {
-                    Button { showMoveToSheet = true } label: {
-                        Label("Move to…", systemImage: "arrow.right.circle")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(ChatColors.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
+                .contentShape(Capsule())
+                .onTapGesture { inputFocused = true }
+                .onReceive(speechManager.$recognizedText) { text in
+                    guard speechManager.state == .recording || !text.isEmpty else { return }
+                    // Append only the new delta to preserve existing input text
+                    let newLength = text.count
+                    if newLength > lastRecognizedLength {
+                        let delta = String(text.dropFirst(lastRecognizedLength))
+                        vm.inputText += delta
                     }
-                    .padding(.top, 6)
-                    .padding(.trailing, 10)
+                    lastRecognizedLength = newLength
                 }
+                .overlay(alignment: .topTrailing) {
+                    // Only offer "Move to…" when there is actually something to
+                    // move. hasInjectedShareContent is flipped true after EVERY
+                    // share ingestion, even when the share produced no text and no
+                    // attachments (e.g. an unrecognized item, or all items diverted
+                    // to Provider-import). Gate on real movable content so the pill
+                    // doesn't linger over an empty composer. [T-ios-moveto-empty-content]
+                    if hasInjectedShareContent && hasMovableShareContent {
+                        Button { showMoveToSheet = true } label: {
+                            Label("Move to…", systemImage: "arrow.right.circle")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(ChatColors.secondaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.ultraThinMaterial)
+                                .clipShape(Capsule())
+                        }
+                        .padding(.top, 6)
+                        .padding(.trailing, 10)
+                    }
+                }
+                // [T-popup-white-patch 7a0e3d62] Paint the composer fill INSIDE
+                // a rounded shape rather than as a rectangular background +
+                // clipShape. With the previous `.background(.white).clipShape(...)`
+                // pair, the host CALayer carried a rectangular white backing
+                // color that the system text-selection / edit-menu pop
+                // animation snapshotted before the SwiftUI mask applied —
+                // exposing a white rectangle around the rounded corners during
+                // the animation. Filling the rounded shape directly leaves the
+                // host layer's backgroundColor at .clear, so the snapshot is
+                // already-rounded and the corners stay clean. clipShape is
+                // kept so the text view still gets clipped to the rounded rect.
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(ChatColors.inputBg)
+                )
+                .clipShape(Capsule(style: .continuous))
+                .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
+                .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             }
-            // [T-popup-white-patch 7a0e3d62] Paint the composer fill INSIDE
-            // a rounded shape rather than as a rectangular background +
-            // clipShape. With the previous `.background(.white).clipShape(...)`
-            // pair, the host CALayer carried a rectangular white backing
-            // color that the system text-selection / edit-menu pop
-            // animation snapshotted before the SwiftUI mask applied —
-            // exposing a white rectangle around the rounded corners during
-            // the animation. Filling the rounded shape directly leaves the
-            // host layer's backgroundColor at .clear, so the snapshot is
-            // already-rounded and the corners stay clean. clipShape is
-            // kept so any child views (text view, attachments) still get
-            // clipped to the rounded rect.
-            .background(
-                Capsule(style: .continuous)
-                    .fill(ChatColors.inputBg)
-            )
-            .clipShape(Capsule(style: .continuous))
-            .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
-            .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -3850,6 +3840,29 @@ struct AIChatView: View {
             case .memory:      return "archivebox.fill"
             case .mount:       return "externaldrive"
             }
+        }
+    }
+
+    /// Attachment previews sit above the composer capsule so files and photos
+    /// never cover the text field or its placeholder in the long input layout.
+    @ViewBuilder
+    private var attachmentPreviewTray: some View {
+        if !vm.attachments.isEmpty || vm.loadingVideoCount > 0 {
+            ScrollView(.vertical, showsIndicators: true) {
+                inputAttachmentGrid
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: AttachmentGridHeightKey.self, value: geo.size.height)
+                    })
+            }
+            .frame(height: min(attachmentGridHeight, 160))
+            .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
+            .padding(.vertical, 4)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(ChatColors.secondaryText.opacity(0.12), lineWidth: 0.5)
+            }
+            .padding(.horizontal, 12)
         }
     }
 
