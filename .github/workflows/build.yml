@@ -427,6 +427,10 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.2"
+          test -f "$APP_AUDIT/Assets.car"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light" "$APP_AUDIT/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark" "$APP_AUDIT/Info.plist"
           # Xcode 16 Debug builds may split the executable into a tiny
           # launcher plus Ze.debug.dylib.  Third-party re-signers often do
           # not sign that auxiliary dylib, so reject that launch-only layout.

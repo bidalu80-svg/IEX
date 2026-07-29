@@ -1944,8 +1944,10 @@ struct AIChatView: View {
                     //                 stable vertical band on some devices.
                     //                 This leaves visible clearance above the
                     //                 title instead of relying on clipping.
-                    // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 12 : 16, weight: .semibold))
+                    // Use the same compact title size on iOS 26. The previous
+                    // 16pt branch was still active on current devices, so the
+                    // legacy-only reduction never affected the visible title.
+                    .font(.system(size: 12, weight: .semibold))
                     .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)

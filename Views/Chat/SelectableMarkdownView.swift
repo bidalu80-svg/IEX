@@ -4924,7 +4924,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
         // Show "Copied" toast near the code
         let toast = UILabel()
-        toast.text = "Copied"
+        toast.text = String(localized: "Copied")
         toast.font = .systemFont(ofSize: 11, weight: .medium)
         toast.textColor = .white
         toast.backgroundColor = UIColor.black.withAlphaComponent(0.75)

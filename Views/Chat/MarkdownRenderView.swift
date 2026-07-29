@@ -546,7 +546,7 @@ final class MarkdownRenderView: UIView, UIGestureRecognizerDelegate {
         addSubview(flash)
 
         let toast = UILabel()
-        toast.text = "Copied"
+        toast.text = String(localized: "Copied")
         toast.font = .systemFont(ofSize: 11, weight: .medium)
         toast.textColor = .white
         toast.backgroundColor = UIColor.black.withAlphaComponent(0.75)

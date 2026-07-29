@@ -149,22 +149,26 @@ final class AgentLiveActivityManager {
         }
     }
 
-    /// [T-ios-live-activity-soft-finish] Soft-finish: when the last task ends,
-    /// DON'T tear the Live Activity down. Flip it to a "completed" resting state
-    /// (checkmark + each session's last message, carousel frozen) and leave it on
-    /// the Lock Screen / Dynamic Island. It's dismissed later — when the user taps
-    /// it and Ze comes to the foreground (see `dismissFinishedActivityOnForeground`).
-    /// Falls back to a hard end if there's no prior running snapshot to complete.
+    /// [T-ios-live-activity-finish-immediately] The final running task has ended,
+    /// so remove the Live Activity from the Lock Screen / Dynamic Island now.
+    /// Multi-session completion is handled separately by `markSessionCompleted`:
+    /// this method is called only when no other session remains active.
     func finishActivity(lastMessages: [String: String] = [:]) async {
         guard Self.isActivityKitAvailable else { return }
-        // Disabled → no soft-finish card; fall through to a hard end so any
-        // activity left over from before the switch was flipped is removed.
-        guard Self.isUserEnabled else {
-            if #available(iOS 16.2, *) { _endActivity() }
-            return
-        }
         if #available(iOS 16.2, *) {
-            await _finishActivity(lastMessages: lastMessages)
+            // Keep the labelled parameter for source compatibility with callers
+            // that already provide a final response summary. A completed resting
+            // card is intentionally no longer pushed: that was what made the
+            // island linger until the conversation was opened again.
+            _ = lastMessages
+            logger.info("[LiveActivity][finish] final task completed — ending activity immediately")
+            let endTasks = _endActivity()
+            // The caller owns the remaining iOS background-task time. Wait for
+            // ActivityKit to acknowledge every immediate dismissal before that
+            // time is released, otherwise suspension can strand the island.
+            for task in endTasks {
+                await task.value
+            }
         }
     }
 
@@ -997,7 +1001,8 @@ final class AgentLiveActivityManager {
     }
 
     @available(iOS 16.2, *)
-    private func _endActivity() {
+    @discardableResult
+    private func _endActivity() -> [Task<Void, Never>] {
         awaitingDismissal = false
         isFinishing = false
         lastPushedState = nil
@@ -1017,30 +1022,34 @@ final class AgentLiveActivityManager {
         let all = Activity<AgentActivityAttributes>.activities
         let allIds = all.map { $0.id }.joined(separator: ",")
         logger.info("[LiveActivity][end] currentActivity.id=\(currentId) systemActivities.count=\(all.count) systemIds=[\(allIds)]")
+        var endTasks: [Task<Void, Never>] = []
         for activity in all {
             let id = activity.id
-            Task {
+            let task = Task {
                 await activity.end(content, dismissalPolicy: .immediate)
                 await MainActor.run {
                     logger.info("[LiveActivity][end] ended id=\(id)")
                 }
             }
+            endTasks.append(task)
         }
 
         if let current = currentActivity as? Activity<AgentActivityAttributes>,
            !all.contains(where: { $0.id == current.id }) {
             let id = current.id
             logger.warning("[LiveActivity][end] currentActivity id=\(id) missing from systemActivities — ending directly")
-            Task {
+            let task = Task {
                 await current.end(content, dismissalPolicy: .immediate)
                 await MainActor.run {
                     logger.info("[LiveActivity][end] orphan currentActivity ended id=\(id)")
                 }
             }
+            endTasks.append(task)
         }
 
         currentActivity = nil
         startTime = nil
         carouselIndex = 0
+        return endTasks
     }
 }

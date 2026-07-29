@@ -242,14 +242,14 @@ struct FloatingToolBar: View {
 
     var body: some View {
         // Collapsed: thumbnail (optional) + status bar
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .bottomTrailing) {
             ToolStatusBar(
                 block: displayedBlock,
                 toolBlocks: toolBlocks,
                 displayedIdx: displayedIdx,
                 expanded: $expanded,
                 selectedIdx: $selectedIdx,
-                leadingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
+                trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
             )
 
             if toolPreviewEnabled {
@@ -259,7 +259,7 @@ struct FloatingToolBar: View {
                     browserPool: browserPool,
                     onTap: { withAnimation { expanded = true } }
                 )
-                .offset(x: 10)
+                .offset(x: -10)
             }
         }
         // .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: -4)
@@ -283,7 +283,7 @@ private struct CopyableURLCapsule: View {
     @State private var showCopied = false
 
     var body: some View {
-        Text(showCopied ? "Copied!" : url)
+        Text(showCopied ? String(localized: "Copied") : url)
             .font(.system(size: 12, weight: showCopied ? .semibold : .regular))
             .foregroundStyle(showCopied ? Color.white : Color(white: 0.35))
             .lineLimit(1)
@@ -2376,10 +2376,14 @@ private struct ToolStatusBar: View {
     let displayedIdx: Int
     @Binding var expanded: Bool
     @Binding var selectedIdx: Int?
-    var leadingInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 2) {
+            if toolBlocks.count > 1 {
+                stepNavigation
+            }
+
             statusIcon
 
             // [T-step-timestamp v2 aa8b1128] Inline HH:mm:ss prefix removed
@@ -2397,40 +2401,9 @@ private struct ToolStatusBar: View {
 
             Spacer(minLength: 1)
 
-            if toolBlocks.count > 1 {
-                HStack(spacing: 2) {
-                    Button {
-                        let prev = (selectedIdx ?? displayedIdx) - 1
-                        if prev >= 0 { withAnimation { selectedIdx = prev } }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(displayedIdx > 0 ? ChatColors.primaryText : ChatColors.tertiaryText)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(displayedIdx <= 0)
-
-                    Text("\(displayedIdx + 1)/\(toolBlocks.count)")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ChatColors.secondaryText)
-
-                    Button {
-                        let next = (selectedIdx ?? displayedIdx) + 1
-                        if next < toolBlocks.count { withAnimation { selectedIdx = next } }
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(displayedIdx < toolBlocks.count - 1 ? ChatColors.primaryText : ChatColors.tertiaryText)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(displayedIdx >= toolBlocks.count - 1)
-                }
-            }
         }
-        .padding(.leading, leadingInset > 0 ? leadingInset : 12)
-        .padding(.trailing, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, trailingInset > 0 ? trailingInset : 12)
         .padding(.vertical, 5)
         .frame(minHeight: 38)
         .frame(maxWidth: .infinity)
@@ -2441,6 +2414,38 @@ private struct ToolStatusBar: View {
                 .stroke(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
         )
         .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 0.75) : UIColor(white: 0, alpha: 0.12) }), radius: 8, x: 0, y: 4)
+    }
+
+    private var stepNavigation: some View {
+        HStack(spacing: 2) {
+            Button {
+                let prev = (selectedIdx ?? displayedIdx) - 1
+                if prev >= 0 { withAnimation { selectedIdx = prev } }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(displayedIdx > 0 ? ChatColors.primaryText : ChatColors.tertiaryText)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .disabled(displayedIdx <= 0)
+
+            Text("\(displayedIdx + 1)/\(toolBlocks.count)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(ChatColors.secondaryText)
+
+            Button {
+                let next = (selectedIdx ?? displayedIdx) + 1
+                if next < toolBlocks.count { withAnimation { selectedIdx = next } }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(displayedIdx < toolBlocks.count - 1 ? ChatColors.primaryText : ChatColors.tertiaryText)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .disabled(displayedIdx >= toolBlocks.count - 1)
+        }
     }
 
     @ViewBuilder

@@ -2934,7 +2934,14 @@
       }
     },
     "1. Open the verification page\n2. Enter this code to authorize Ze" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1. 打开验证页面\n2. 输入此代码以授权 Ze"
+          }
+        }
+      }
     },
     "4 MB" : {
 
@@ -5384,6 +5391,14 @@
       }
     },
     "Alibaba Bailian" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "阿里云百炼"
+          }
+        }
+      },
       "comment" : "Voice provider name"
     },
     "All %lld alarm(s) will be removed. This cannot be undone." : {
@@ -6346,7 +6361,14 @@
       }
     },
     "An http(s) Redirect URI must use localhost, e.g. %@." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "http(s) 重定向 URI 必须使用 localhost，例如 %@。"
+          }
+        }
+      }
     },
     "An unknown error occurred while deleting iCloud data." : {
       "extractionState" : "manual",
@@ -7707,7 +7729,14 @@
       }
     },
     "audio" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频"
+          }
+        }
+      }
     },
     "Audio" : {
       "extractionState" : "stale",
@@ -8161,22 +8190,64 @@
       }
     },
     "Authorization" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权"
+          }
+        }
+      }
     },
     "Authorization Endpoint (https://…/authorize)" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权端点（https://…/authorize）"
+          }
+        }
+      }
     },
     "Authorization Endpoint must be a valid https URL." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权端点必须是有效的 https URL。"
+          }
+        }
+      }
     },
     "Authorization failed: %@" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权失败：%@"
+          }
+        }
+      }
     },
     "Authorization was cancelled." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权已取消。"
+          }
+        }
+      }
     },
     "Authorize…" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权…"
+          }
+        }
+      }
     },
     "Authorized" : {
       "localizations" : {
@@ -13265,13 +13336,34 @@
       }
     },
     "Client ID" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "客户端 ID"
+          }
+        }
+      }
     },
     "Client ID is required." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "必须填写客户端 ID。"
+          }
+        }
+      }
     },
     "Client Secret (optional)" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "客户端密钥（可选）"
+          }
+        }
+      }
     },
     "Clipboard" : {
       "extractionState" : "stale",
@@ -14633,7 +14725,14 @@
       }
     },
     "Contacting Kimi…" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在连接 Kimi…"
+          }
+        }
+      }
     },
     "Contacts" : {
       "extractionState" : "stale",
@@ -16773,6 +16872,14 @@
       }
     },
     "Correct transcript with AI" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 AI 修正转写文本"
+          }
+        }
+      },
       "comment" : "Voice manual-correction button"
     },
     "Correction failed, original kept" : {
@@ -16881,7 +16988,14 @@
       }
     },
     "Could not build the authorization URL." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法生成授权 URL。"
+          }
+        }
+      }
     },
     "Could not import this provider configuration." : {
       "localizations" : {
@@ -16988,7 +17102,14 @@
       }
     },
     "Could not present the authorization page." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开授权页面。"
+          }
+        }
+      }
     },
     "Could not read file" : {
       "localizations" : {
@@ -21038,6 +21159,14 @@
       }
     },
     "Doubao (Volcano)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "豆包（火山引擎）"
+          }
+        }
+      },
       "comment" : "Voice provider name"
     },
     "Double-tap text to edit" : {
@@ -21104,7 +21233,15 @@
       }
     },
     "Downloads" : {
-      "comment" : "Downloads panel title"
+      "comment" : "Downloads panel title",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载"
+          }
+        }
+      }
     },
     "Drag to reorder. The first model is tried first." : {
       "localizations" : {
@@ -29750,6 +29887,14 @@
       }
     },
     "iFlytek (Xunfei)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "科大讯飞"
+          }
+        }
+      },
       "comment" : "Voice provider name"
     },
     "iFlytek needs App ID and API Secret — enter them as \"appId;apiKey;apiSecret\" in the API Key field." : {
@@ -29806,7 +29951,14 @@
       }
     },
     "image" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片"
+          }
+        }
+      }
     },
     "Image" : {
       "localizations" : {
@@ -32644,7 +32796,14 @@
       }
     },
     "Kimi Code Login" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi Code 登录"
+          }
+        }
+      }
     },
     "Kind" : {
       "localizations" : {
@@ -41585,6 +41744,14 @@
       }
     },
     "No downloads" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无下载"
+          }
+        }
+      },
       "comment" : "Empty downloads panel"
     },
     "No Environment Variables" : {
@@ -43548,9 +43715,24 @@
       }
     },
     "Not authorized" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未授权"
+          }
+        }
+      }
     },
     "not installed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未安装"
+          }
+        }
+      },
       "comment" : "voice pack not downloaded"
     },
     "Not logged in" : {
@@ -44444,7 +44626,14 @@
       }
     },
     "On" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开启"
+          }
+        }
+      }
     },
     "On it — opening Ze." : {
       "localizations" : {
@@ -45023,7 +45212,14 @@
       }
     },
     "Open verification page" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开验证页面"
+          }
+        }
+      }
     },
     "OpenAI / Compatible API" : {
       "localizations" : {
@@ -49866,7 +50062,14 @@
       }
     },
     "Re-authorize" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新授权"
+          }
+        }
+      }
     },
     "Re-import from File…" : {
       "extractionState" : "stale",
@@ -51193,7 +51396,14 @@
       }
     },
     "Redirect URI is invalid." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重定向 URI 无效。"
+          }
+        }
+      }
     },
     "Refresh" : {
       "localizations" : {
@@ -51300,7 +51510,14 @@
       }
     },
     "Refresh Tools" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新工具"
+          }
+        }
+      }
     },
     "Regenerate Title" : {
       "localizations" : {
@@ -56324,7 +56541,14 @@
       }
     },
     "Scopes (space-separated)" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权范围（用空格分隔）"
+          }
+        }
+      }
     },
     "Screenshot" : {
       "extractionState" : "stale",
@@ -59634,6 +59858,14 @@
       }
     },
     "Show in Files" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在“文件”中显示"
+          }
+        }
+      },
       "comment" : "Completed download row hint"
     },
     "Show in Files app" : {
@@ -60271,7 +60503,14 @@
       }
     },
     "Signed in to Kimi Code" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已登录 Kimi Code"
+          }
+        }
+      }
     },
     "Size" : {
       "localizations" : {
@@ -61839,7 +62078,14 @@
       }
     },
     "Standard OAuth Authorization Code + PKCE with your own app credentials. Register %@ as the Redirect URI in your OAuth client (Google: create a \"Web application\" or \"Desktop\" client — localhost redirects are accepted). Client Secret and tokens are stored in the device Keychain only — they never sync to iCloud, so other devices authorize separately." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用你自己的应用凭据执行标准 OAuth 授权码 + PKCE 流程。请在 OAuth 客户端中将 %@ 注册为重定向 URI（Google：创建“Web 应用”或“桌面”客户端，支持 localhost 重定向）。客户端密钥和令牌仅存储在设备钥匙串中，不会同步到 iCloud，因此其他设备需要单独授权。"
+          }
+        }
+      }
     },
     "Start" : {
       "extractionState" : "stale",
@@ -62170,7 +62416,14 @@
       }
     },
     "State mismatch in the OAuth callback." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OAuth 回调中的状态不匹配。"
+          }
+        }
+      }
     },
     "Status" : {
       "localizations" : {
@@ -64309,6 +64562,14 @@
       }
     },
     "Tap to view" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轻点查看"
+          }
+        }
+      },
       "comment" : "Completed download card"
     },
     "Working…" : {
@@ -66419,7 +66680,14 @@
       }
     },
     "The terminal engine isn't running yet. Open a chat or the terminal once, then retry." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端引擎尚未运行。请先打开一次对话或终端，然后重试。"
+          }
+        }
+      }
     },
     "The URL is used verbatim. Include the full path up to (but not including) the endpoint, e.g. \"/chat/completions\"." : {
       "localizations" : {
@@ -69690,16 +69958,44 @@
       }
     },
     "Token Endpoint (https://…/token)" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌端点（https://…/token）"
+          }
+        }
+      }
     },
     "Token Endpoint must be a valid https URL." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌端点必须是有效的 https URL。"
+          }
+        }
+      }
     },
     "Token endpoint returned no access_token." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌端点未返回 access_token。"
+          }
+        }
+      }
     },
     "Token exchange failed: %@" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌交换失败：%@"
+          }
+        }
+      }
     },
     "Token Usage" : {
       "localizations" : {
@@ -69962,7 +70258,14 @@
       }
     },
     "Tools" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具"
+          }
+        }
+      }
     },
     "Total Input (incl. Cache)" : {
       "localizations" : {
@@ -70812,7 +71115,14 @@
       }
     },
     "Unexpected CLI output (no JSON result). Check the server's connectivity." : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CLI 返回了意外输出（没有 JSON 结果）。请检查服务器连接。"
+          }
+        }
+      }
     },
     "Unknown" : {
       "localizations" : {
@@ -73450,7 +73760,14 @@
       }
     },
     "video" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "视频"
+          }
+        }
+      }
     },
     "Video generation" : {
       "localizations" : {
@@ -74410,7 +74727,14 @@
       }
     },
     "Waiting for authorization…" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待授权…"
+          }
+        }
+      }
     },
     "Waiting for other tasks to complete..." : {
       "localizations" : {
@@ -75873,6 +76197,14 @@
       }
     },
     "Xiaomi MiMo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "小米 MiMo"
+          }
+        }
+      },
       "comment" : "Voice provider name"
     },
     "Yesterday" : {

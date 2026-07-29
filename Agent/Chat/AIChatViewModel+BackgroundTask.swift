@@ -117,9 +117,8 @@ extension AIChatViewModel {
         logger.info("[BKA][BGTask] Ending id=\(self.backgroundTaskID.rawValue) remaining=\(remainingStr) sessions=\(SessionActivityTracker.shared.activeSessions.count) silentAudio=\(BackgroundKeepAliveManager.shared.silentAudioIsPlaying)")
 
         // Post local notification if task completed in background.
-        // Await Live Activity "completed" state update BEFORE posting the
-        // notification so the lock-screen capsule shows the checkmark when
-        // the notification arrives, not "Responding · streaming".
+        // Await the Live Activity's immediate dismissal BEFORE posting the
+        // completion notification and releasing the iOS background task.
         do {
             let sid = sessionId ?? ""
             let wasBackground = UIApplication.shared.applicationState != .active

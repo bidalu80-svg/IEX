@@ -212,9 +212,9 @@ class AlarmListViewModel: ObservableObject {
             let weekEnd = calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
             let title: String
             if weekStart == startOfThisWeek {
-                title = "This Week"
+                title = String(localized: "This Week")
             } else if weekStart == calendar.date(byAdding: .weekOfYear, value: 1, to: startOfThisWeek) {
-                title = "Next Week"
+                title = String(localized: "Next Week")
             } else {
                 title = "\(dateFormatter.string(from: weekStart)) – \(dateFormatter.string(from: weekEnd))"
             }

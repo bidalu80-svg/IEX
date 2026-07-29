@@ -10,9 +10,9 @@ enum OffloadPermissionLevel: Int, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .bypass: return "Bypass"
-        case .askOnce: return "Ask Once"
-        case .notAllowed: return "Not Allowed"
+        case .bypass: return String(localized: "Bypass")
+        case .askOnce: return String(localized: "Ask Once")
+        case .notAllowed: return String(localized: "Not Allowed")
         }
     }
 }
@@ -123,13 +123,13 @@ final class OffloadPermissionManager: ObservableObject {
 
     static let allCommands: [OffloadCommandInfo] = [
         // Privacy — user-configurable
-        .init(name: "apple-healthkit", displayLabel: "HealthKit", description: "Steps, heart rate, sleep, and other health records", category: .privacy, showInSettings: true),
-        .init(name: "apple-calendar", displayLabel: "Calendar", description: "Events, schedules, and calendar details", category: .privacy, showInSettings: true),
-        .init(name: "apple-reminders", displayLabel: "Reminders", description: "Tasks, due dates, and reminder lists", category: .privacy, showInSettings: true),
-        .init(name: "apple-photos", displayLabel: "Photos", description: "Photos, videos, and album metadata", category: .privacy, showInSettings: true),
-        .init(name: "apple-location", displayLabel: "Location", description: "Current GPS coordinates and location history", category: .privacy, showInSettings: true),
-        .init(name: "apple-homekit", displayLabel: "HomeKit", description: "Smart home devices, rooms, and scenes", category: .privacy, showInSettings: true),
-        .init(name: "apple-clipboard", displayLabel: "Clipboard", description: "Text and images copied to the clipboard", category: .privacy, showInSettings: true),
+        .init(name: "apple-healthkit", displayLabel: String(localized: "HealthKit"), description: String(localized: "Steps, heart rate, sleep, and other health records"), category: .privacy, showInSettings: true),
+        .init(name: "apple-calendar", displayLabel: String(localized: "Calendar"), description: String(localized: "Events, schedules, and calendar details"), category: .privacy, showInSettings: true),
+        .init(name: "apple-reminders", displayLabel: String(localized: "Reminders"), description: String(localized: "Tasks, due dates, and reminder lists"), category: .privacy, showInSettings: true),
+        .init(name: "apple-photos", displayLabel: String(localized: "Photos"), description: String(localized: "Photos, videos, and album metadata"), category: .privacy, showInSettings: true),
+        .init(name: "apple-location", displayLabel: String(localized: "Location"), description: String(localized: "Current GPS coordinates and location history"), category: .privacy, showInSettings: true),
+        .init(name: "apple-homekit", displayLabel: String(localized: "HomeKit"), description: String(localized: "Smart home devices, rooms, and scenes"), category: .privacy, showInSettings: true),
+        .init(name: "apple-clipboard", displayLabel: String(localized: "Clipboard"), description: String(localized: "Text and images copied to the clipboard"), category: .privacy, showInSettings: true),
         // Media — no personal data, always bypass
         .init(name: "apple-speak", displayLabel: "Speak", description: "", category: .media, showInSettings: false),
         .init(name: "apple-speech", displayLabel: "Speech", description: "", category: .media, showInSettings: false),

@@ -727,19 +727,19 @@ struct ThinkingBlockView: View {
                         .controlSize(.mini)
                         .tint(.purple)
                 }
+                Spacer()
                 if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
                     let charCount = max(block.content.count, block.thinkingContentBuffer.count)
                     Text(charCount > 1000 ? "\(charCount / 1000)K" : "\(charCount)")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.purple.opacity(0.65))
                 }
-                Spacer()
                 Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.purple.opacity(0.6))
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
             .onTapGesture {
                 // Mark before flipping so any concurrent stream-end collapse

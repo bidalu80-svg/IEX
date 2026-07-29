@@ -722,7 +722,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             logger.info("[BackgroundKeepAlive] Deactivating keep-alive")
             stopUpdateTimer()
             isActive = false
-            // [T-ios-live-activity-soft-finish] STOP LOCATION FIRST, fully, before
+            // [T-ios-live-activity-finish-immediately] STOP LOCATION FIRST, fully, before
             // touching the Live Activity. The old order (end Live Activity, then
             // tear down location) let the probe-retract race surface a "ghost"
             // location arrow right as the task ended — it appeared and couldn't be
@@ -733,9 +733,8 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             evaluateBackgroundActivitySession()
             retractOrphanedLocationSession(caller: "deactivate")
             evaluateSilentAudio(caller: "reevaluate-deactivate")
-            // THEN soft-finish the Live Activity: flip to a completed state
-            // (checkmark + last message) and leave it on screen; it's dismissed
-            // when the user taps it and Ze foregrounds.
+            // The final task is complete, so remove the Live Activity from the
+            // Lock Screen / Dynamic Island immediately.
             Task { await AgentLiveActivityManager.shared.finishActivity() }
         }
     }
