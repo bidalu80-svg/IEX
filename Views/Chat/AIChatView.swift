@@ -1939,13 +1939,13 @@ struct AIChatView: View {
                     //                 total stack height instead, so it
                     //                 naturally has breathing room above
                     //                 and below.
-                    //   2026-07-29: 12 → 11pt. The three-line principal
-                    //                 item still exceeded the legacy navbar's
+                    //   2026-07-29: 13 → 12pt. This two-line principal
+                    //                 item stays within the legacy navbar's
                     //                 stable vertical band on some devices.
                     //                 This leaves visible clearance above the
                     //                 title instead of relying on clipping.
                     // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 13 : 16, weight: .semibold))
+                    .font(.system(size: legacyLayout ? 12 : 16, weight: .semibold))
                     .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)
@@ -4002,14 +4002,14 @@ struct AIChatView: View {
                 GeometryReader { proxy in
                     let width = proxy.size.width
                     let trackHeight: CGFloat = 18
-                    let thumbDiameter: CGFloat = 26
+                    let thumbDiameter: CGFloat = 22
                     let thumbX = thumbDiameter / 2 + displayProgress * (width - thumbDiameter)
                     let trackY = (thumbDiameter - trackHeight) / 2
                     let fillWidth = (selectedLevel.isEnabled || dragProgress != nil)
                         ? max(trackHeight, thumbX)
                         : 0
 
-                    ZStack(alignment: .leading) {
+                    ZStack(alignment: .topLeading) {
                         Capsule()
                             .fill(Color.secondary.opacity(0.14))
                             .frame(width: width, height: trackHeight)
