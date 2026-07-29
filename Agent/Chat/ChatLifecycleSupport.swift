@@ -131,7 +131,17 @@ final class SessionActivityTracker: ObservableObject {
         Self.mirrorLock.unlock()
     }
 
-    func setActive(_ sessionId: String, source: String = #function) {
+    func setActive(_ sessionId: String, title: String? = nil, source: String = #function) {
+        // Seed the title before publishing `activeSessions`. The keep-alive
+        // subscriber starts the Live Activity synchronously from that publish;
+        // filling this first prevents its initial frame from falling back to
+        // “Agent Task” while the database title lookup is still in flight.
+        if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            var info = sessionToolInfo[sessionId] ?? SessionToolInfo()
+            info.title = title
+            sessionToolInfo[sessionId] = info
+        }
         let wasPresent = activeSessions.contains(sessionId)
         activeSessions.insert(sessionId)
         syncMirror()

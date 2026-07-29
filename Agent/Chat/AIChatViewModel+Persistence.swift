@@ -977,7 +977,14 @@ extension AIChatViewModel {
         // cleared in the $isProcessing sink's inactive branch.
         if isProcessing {
             let src = "vm=\(vmInstanceId) ensureSession draft=\(draftId ?? "nil")→real"
-            SessionActivityTracker.shared.setActive(session.id, source: src)
+            let immediateTitle = messages
+                .first(where: { $0.role == .user })
+                .flatMap { Self.fallbackTitle(fromFirstUserMessage: $0.content) }
+            SessionActivityTracker.shared.setActive(
+                session.id,
+                title: immediateTitle,
+                source: src
+            )
             if let did = draftId {
                 SessionActivityTracker.shared.setDraftAlias(draft: did, real: session.id)
                 SessionActivityTracker.shared.setInactive(did, source: src + " (migrate off draftId)")

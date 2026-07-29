@@ -14,10 +14,12 @@ struct AgentLiveActivityWidget: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 3) {
-                        Image(systemName: "sparkles")
+                        Image(systemName: "cpu.fill")
                             .font(.caption2)
+                            .foregroundStyle(.green)
                         Text(context.state.soulName.isEmpty ? "Ze" : context.state.soulName)
                             .font(.caption.bold())
+                            .foregroundStyle(.green)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -38,13 +40,10 @@ struct AgentLiveActivityWidget: Widget {
                         .background(.green.opacity(0.18), in: Capsule())
                         .padding(.trailing, 8)
                     } else {
-                        HStack(spacing: 3) {
-                            Text("\(context.state.activeSessionCount)")
-                                .font(.caption.bold())
-                                .contentTransition(.numericText())
-                            Text(context.state.activeSessionCount == 1 ? "session" : "sessions")
-                                .font(.caption.bold())
-                        }
+                        Text("\(context.state.activeSessionCount)个会话")
+                            .font(.caption.bold())
+                            .foregroundStyle(.green)
+                            .contentTransition(.numericText())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.white.opacity(0.15), in: Capsule())
@@ -61,6 +60,7 @@ struct AgentLiveActivityWidget: Widget {
                                     .padding(.trailing, 5)
                                 Text(session.title)
                                     .font(.callout.bold())
+                                    .foregroundStyle(.green)
                                     .lineLimit(1)
                                 if context.state.activeSessionCount > 1 {
                                     Text("\(context.state.carouselIndex + 1)/\(context.state.activeSessionCount)")
@@ -122,16 +122,7 @@ struct AgentLiveActivityWidget: Widget {
                                 }
                             } else {
                                 HStack(spacing: 5) {
-                                    Image(systemName: session.toolIcon)
-                                        .font(.caption)
-                                        .foregroundStyle(.blue)
-                                        .id(session.toolIcon)
-                                        .transition(.opacity.animation(.easeInOut(duration: 0.35)))
-                                    Text(session.toolStatus)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .contentTransition(.interpolate)
+                                    LiveActivitySpinner()
                                     Spacer()
                                     if !context.state.privacyMode {
                                         Text("Loop \(session.loopIteration)")
@@ -150,8 +141,10 @@ struct AgentLiveActivityWidget: Widget {
                 HStack(spacing: 3) {
                     Image(systemName: "list.bullet.circle")
                         .font(.callout)
+                        .foregroundStyle(.green)
                     Text("\(context.state.activeSessionCount)")
                         .font(.callout.bold())
+                        .foregroundStyle(.green)
                         .contentTransition(.numericText())
                 }
             } compactTrailing: {
@@ -244,13 +237,9 @@ struct AgentLockScreenView: View {
                     .padding(.vertical, 2)
                     .background(.green.opacity(0.18), in: Capsule())
                 } else {
-                    HStack(spacing: 3) {
-                        Text("\(state.activeSessionCount)")
-                            .font(.caption.bold())
-                            .contentTransition(.numericText())
-                        Text(state.activeSessionCount == 1 ? "session" : "sessions")
-                            .font(.caption.bold())
-                    }
+                    Text("\(state.activeSessionCount)个会话")
+                        .font(.caption.bold())
+                        .contentTransition(.numericText())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(.white.opacity(0.15), in: Capsule())
@@ -372,12 +361,23 @@ struct CompactTrailingView: View {
     let state: AgentActivityAttributes.ContentState
 
     var body: some View {
-        let icon = state.currentSession?.toolIcon ?? "ellipsis.circle"
-        Image(systemName: icon)
-            .font(.body)
-            .foregroundStyle(.blue)
-            .id(icon)
-            .transition(.opacity.animation(.easeInOut(duration: 0.35)))
+        LiveActivitySpinner(scale: 0.85)
+    }
+}
+
+/// System-owned indeterminate progress indicator. Unlike a manually rotated
+/// shape, `ProgressView` lets WidgetKit/ActivityKit drive the animation at the
+/// refresh rate and power budget iOS permits for the Dynamic Island.
+@available(iOSApplicationExtension 16.2, *)
+private struct LiveActivitySpinner: View {
+    var scale: CGFloat = 0.72
+
+    var body: some View {
+        ProgressView()
+            .progressViewStyle(.circular)
+            .tint(.blue)
+            .scaleEffect(scale)
+            .accessibilityLabel("任务运行中")
     }
 }
 

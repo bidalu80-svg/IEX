@@ -256,7 +256,7 @@ func downsampleImageData(_ data: Data, maxPixelSize: CGFloat = 2048) -> UIImage?
 /// site) so the two can never drift. Light stays EXACTLY .systemGray6
 /// (#F2F2F7); dark lifts to #3A3A3C (systemGray4's dark value) — systemGray6
 /// resolves to #1C1C1E in dark, indistinguishable from the near-black chat
-/// background, which made inline code read as bare orange text.
+/// background, which made inline code read as bare colored text.
 private let zeInlineCodeBackgroundColor = UIColor { traits in
     traits.userInterfaceStyle == .dark
         ? UIColor(red: 0x3A / 255.0, green: 0x3A / 255.0, blue: 0x3C / 255.0, alpha: 1)
@@ -285,7 +285,7 @@ struct SelectableMarkdownTheme {
         UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.55, green: 0.95, blue: 0.55, alpha: 1) : .systemGreen }
     }
     var inlineCodeBackground: UIColor { zeInlineCodeBackgroundColor }
-    var inlineCodeColor: UIColor { .systemOrange }
+    var inlineCodeColor: UIColor { .systemBlue }
     var blockquoteBarColor: UIColor { UIColor.systemOrange.withAlphaComponent(0.5) }
     var tableBorderColor: UIColor { UIColor.label.withAlphaComponent(0.25) }
 

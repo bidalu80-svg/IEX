@@ -330,7 +330,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 let src = "vm=\(self.vmInstanceId) isProcessing=\(processing)"
                 logger.info("🔄SESSION [vm=\(self.vmInstanceId)] isProcessing=\(processing) key=\(activeKey) draftId=\(self.draftId ?? "nil") sessionId=\(self.sessionId ?? "nil")")
                 if processing {
-                    SessionActivityTracker.shared.setActive(activeKey, source: src)
+                    let immediateTitle = self.messages
+                        .first(where: { $0.role == .user })
+                        .flatMap { Self.fallbackTitle(fromFirstUserMessage: $0.content) }
+                    SessionActivityTracker.shared.setActive(
+                        activeKey,
+                        title: immediateTitle,
+                        source: src
+                    )
                     if let sid = self.sessionId {
                         Task {
                             if let session = await ChatStore.shared.getSession(sid),
