@@ -281,8 +281,8 @@ struct AddProviderView: View {
         }
         .sheet(isPresented: $showImportFile) {
             ProviderJSONDocumentPicker { result in
-                showImportFile = false
                 handleImport(result)
+                showImportFile = false
             }
         }
         .alert(String(localized: "Import"), isPresented: $showImportResult) {

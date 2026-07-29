@@ -312,10 +312,14 @@ private struct ImportSkillSheet: View {
                             _ = try SkillStore.shared.importFromArchive(at: url)
                             try? FileManager.default.removeItem(at: url)
                         }
+                        showFilePicker = false
                         dismiss()
                     } catch {
                         errorMessage = error.localizedDescription
+                        showFilePicker = false
                     }
+                } onCancel: {
+                    showFilePicker = false
                 }
             }
         }
@@ -354,6 +358,7 @@ private enum SkillFilePickResult {
 
 private struct SkillFileDocumentPicker: UIViewControllerRepresentable {
     let onImport: (SkillFilePickResult) -> Void
+    let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         var types: [UTType] = [.plainText, .zip]
@@ -368,11 +373,16 @@ private struct SkillFileDocumentPicker: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
 
-    func makeCoordinator() -> Coordinator { Coordinator(onImport: onImport) }
+    func makeCoordinator() -> Coordinator { Coordinator(onImport: onImport, onCancel: onCancel) }
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onImport: (SkillFilePickResult) -> Void
-        init(onImport: @escaping (SkillFilePickResult) -> Void) { self.onImport = onImport }
+        let onCancel: () -> Void
+
+        init(onImport: @escaping (SkillFilePickResult) -> Void, onCancel: @escaping () -> Void) {
+            self.onImport = onImport
+            self.onCancel = onCancel
+        }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
@@ -392,6 +402,10 @@ private struct SkillFileDocumentPicker: UIViewControllerRepresentable {
             } catch {
                 AppLogger(category: "Skills").error("Failed to read selected skill file: \(error.localizedDescription)")
             }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
         }
     }
 }
@@ -698,6 +712,9 @@ private struct SkillDetailView: View {
                 } catch {
                     updateError = error.localizedDescription
                 }
+                showFilePicker = false
+            } onCancel: {
+                showFilePicker = false
             }
         }
         .alert(String(localized: "Delete Skill"), isPresented: $showDeleteConfirm) {

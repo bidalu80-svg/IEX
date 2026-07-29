@@ -123,26 +123,26 @@ struct ProviderInstancesView: View {
         }
         .sheet(isPresented: $showImportFile) {
             ProviderJSONDocumentPicker { result in
-                showImportFile = false
-            switch result {
-            case .success(let url):
-                guard let data = try? SecurityScopedDocumentAccess.read(from: url) { try Data(contentsOf: $0) },
-                      let json = String(data: data, encoding: .utf8) else {
-                    importMessage = String(localized: "Failed to read file.")
+                defer { showImportFile = false }
+                switch result {
+                case .success(let url):
+                    guard let data = try? SecurityScopedDocumentAccess.read(from: url) { try Data(contentsOf: $0) },
+                          let json = String(data: data, encoding: .utf8) else {
+                        importMessage = String(localized: "Failed to read file.")
+                        showImportResult = true
+                        return
+                    }
+                    if let label = store.importInstanceJSON(json) {
+                        importMessage = String(localized: "Imported provider \"\(label)\" successfully.")
+                    } else {
+                        importMessage = String(localized: "Invalid provider configuration file.")
+                    }
                     showImportResult = true
-                    return
+                case .failure(let error) where error is CancellationError:
+                    break
+                case .failure:
+                    break
                 }
-                if let label = store.importInstanceJSON(json) {
-                    importMessage = String(localized: "Imported provider \"\(label)\" successfully.")
-                } else {
-                    importMessage = String(localized: "Invalid provider configuration file.")
-                }
-                showImportResult = true
-            case .failure(let error) where error is CancellationError:
-                break
-            case .failure:
-                break
-            }
             }
         }
         .alert(String(localized: "Import"), isPresented: $showImportResult) {

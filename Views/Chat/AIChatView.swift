@@ -1128,10 +1128,13 @@ struct AIChatView: View {
         }
         .sheet(isPresented: $showDocumentPicker) {
             ChatAttachmentDocumentPicker { urls in
-                showDocumentPicker = false
+                zeLogger.info("[DocumentPicker] chat selected count=\(urls.count)")
                 for url in urls {
                     vm.addFileAttachment(from: url)
                 }
+                // Keep the security-scoped URL alive until the file copy has
+                // completed, then remove the SwiftUI sheet.
+                showDocumentPicker = false
             } onCancel: {
                 showDocumentPicker = false
             }
