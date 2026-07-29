@@ -7,6 +7,8 @@ struct AssistantBlockView: View {
     @ObservedObject var block: AssistantBlock
     @ObservedObject var message: ChatMessage
     let isActiveMessage: Bool
+    /// Current session reasoning level, already clamped to the active model.
+    var thinkingLevel: ThinkingLevel = .off
     var commandStartTime: Date?
     var onStop: (() -> Void)?
     var onTapBlank: ((CGPoint) -> Void)?
@@ -35,7 +37,8 @@ struct AssistantBlockView: View {
         case .thinking:
             ThinkingBlockView(
                 block: block,
-                isStreaming: isActiveMessage && message.blocks.last?.id == block.id
+                isStreaming: isActiveMessage && message.blocks.last?.id == block.id,
+                thinkingLevel: thinkingLevel
             )
             .padding(.vertical, 2)
         case .shellTool:
@@ -692,6 +695,7 @@ final class ThinkingHitchMonitor {
 struct ThinkingBlockView: View {
     @ObservedObject var block: AssistantBlock
     let isStreaming: Bool
+    let thinkingLevel: ThinkingLevel
 
     /// Bind to block.isThinkingExpanded so state survives cell reuse and triggers cell re-sizing.
     private var isExpanded: Binding<Bool> {
@@ -701,9 +705,10 @@ struct ThinkingBlockView: View {
         )
     }
 
-    init(block: AssistantBlock, isStreaming: Bool) {
+    init(block: AssistantBlock, isStreaming: Bool, thinkingLevel: ThinkingLevel = .off) {
         self.block = block
         self.isStreaming = isStreaming
+        self.thinkingLevel = thinkingLevel
         // Auto-expand-on-stream is handled in `.onAppear` (gated by block.id)
         // rather than from `init`. Mutating @Published from a SwiftUI view
         // initializer fires for every cell-reuse pass and was reaching the
@@ -722,6 +727,19 @@ struct ThinkingBlockView: View {
                 Text("思考")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.purple)
+                if thinkingLevel.isEnabled {
+                    Text(thinkingLevelCompactLabel)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.purple.opacity(0.82))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.purple.opacity(0.10), in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(.purple.opacity(0.16), lineWidth: 0.5)
+                        }
+                        .accessibilityLabel("思考强度 \(thinkingLevelCompactLabel)")
+                }
                 if isStreaming {
                     ProgressView()
                         .controlSize(.mini)
@@ -882,6 +900,18 @@ struct ThinkingBlockView: View {
             AppLogger(category: "ThinkingCollapse").info("[ThinkingCollapse] post block=\(block.id.uuidString.prefix(8)) expanded=\(newValue) userToggled=\(block.thinkingUserToggled) streaming=\(isStreaming)")
             NotificationCenter.default.post(name: .thinkingBlockToggled,
                                             object: block.id)
+        }
+    }
+
+    private var thinkingLevelCompactLabel: String {
+        switch thinkingLevel {
+        case .off: return ""
+        case .low: return "低"
+        case .medium: return "中"
+        case .high: return "高"
+        case .xhigh: return "超高"
+        case .max: return "最高"
+        case .ultra: return "极限"
         }
     }
 }

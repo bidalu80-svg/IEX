@@ -987,6 +987,8 @@ final class MessageListViewController: UIViewController {
 /// verbatim as the ObservedObject across its bridged cell views.
 final class CellStateBridgeV2: ObservableObject {
     @Published var isActiveMessage: Bool = false
+    /// The current session's effective, model-clamped reasoning intensity.
+    @Published var thinkingLevel: ThinkingLevel = .off
     @Published var commandStartTime: Date?
     @Published var onStop: (() -> Void)?
     @Published var onRetry: (() -> Void)?

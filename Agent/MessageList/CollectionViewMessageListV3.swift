@@ -244,6 +244,7 @@ private struct BridgedAssistantBlockV3: View {
             block: block,
             message: message,
             isActiveMessage: bridge.isActiveMessage,
+            thinkingLevel: bridge.thinkingLevel,
             commandStartTime: bridge.isActiveMessage ? bridge.commandStartTime : nil,
             onStop: bridge.isActiveMessage ? bridge.onStop : nil,
             onTapBlank: { _ in
@@ -1184,6 +1185,7 @@ extension CollectionViewMessageListV3 {
             let isActive = isLast && vm.isProcessing
 
             bridge.isActiveMessage = isActive
+            bridge.thinkingLevel = vm.currentThinkingLevel
             bridge.commandStartTime = vm.commandStartTime
             bridge.onStop = isActive ? { [weak self] in self?.onStop?() } : nil
             bridge.browserPool = vm.browserTabPool
