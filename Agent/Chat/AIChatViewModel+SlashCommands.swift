@@ -41,7 +41,7 @@ extension AIChatViewModel {
     static let availableSlashCommands: [SlashCommand] = [
         SlashCommand(id: "clear", icon: "trash", title: "clear", displayTitle: "清空会话", subtitle: "清空当前会话中的所有消息"),
         SlashCommand(id: "compact", icon: "arrow.down.right.and.arrow.up.left", title: "compact", displayTitle: "压缩上下文", subtitle: "将会话历史压缩为摘要"),
-        SlashCommand(id: "memory", icon: "brain.head.profile", title: "memory", displayTitle: "记忆", subtitle: "开关记忆写入，不影响读取"),
+        SlashCommand(id: "memory", icon: "archivebox.fill", title: "memory", displayTitle: "记忆", subtitle: "开关记忆写入，不影响读取"),
         SlashCommand(id: "thinking", icon: "brain.head.profile", title: "thinking", displayTitle: "思考过程", subtitle: "开关思考过程模式"),
     ]
 
@@ -399,7 +399,7 @@ extension AIChatViewModel {
                 Task { await ChatStore.shared.setMemoryEnabled(sessionId: sid, enabled: memoryEnabled) }
             }
             let status = memoryEnabled ? "enabled" : "disabled"
-            appendSystemInfo("Memory writes \(status). Reads are unaffected.", icon: "brain.head.profile")
+            appendSystemInfo("Memory writes \(status). Reads are unaffected.", icon: "archivebox.fill")
         case "clear":
             clearChatConfirmRequested = true
         default:

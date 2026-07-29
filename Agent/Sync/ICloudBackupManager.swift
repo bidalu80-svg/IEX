@@ -41,7 +41,7 @@ final class ICloudBackupManager: ObservableObject {
         var systemImage: String {
             switch self {
             case .sessions: return "bubble.left.and.bubble.right"
-            case .skillsAndMemories: return "brain.head.profile"
+            case .skillsAndMemories: return "archivebox.fill"
             case .full: return "archivebox"
             }
         }

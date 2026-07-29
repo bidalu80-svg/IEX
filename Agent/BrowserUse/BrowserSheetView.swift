@@ -234,7 +234,7 @@ struct BrowserSheetView: View {
 
     private var navigationTitle: String {
         let title = manager?.pageTitle ?? ""
-        return title.isEmpty ? "Browser" : title
+        return title.isEmpty ? "浏览器" : title
     }
 
     // MARK: - Tab Bar
@@ -296,7 +296,9 @@ struct BrowserSheetView: View {
         if !title.isEmpty { return String(title.prefix(20)) }
         let url = tab.manager.currentURL
         if !url.isEmpty { return String(url.prefix(20)) }
-        return "Tab \(tab.id)"
+        // Tab ids are zero-based implementation details; present a one-based,
+        // localized label when a blank tab has no page title or URL yet.
+        return "标签页 \(tab.id + 1)"
     }
 }
 

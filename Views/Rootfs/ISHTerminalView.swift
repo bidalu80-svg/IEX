@@ -368,12 +368,14 @@ class ISHTerminalViewModel: ObservableObject {
         stepStart = CFAbsoluteTimeGetCurrent()
         // Start as login shell (-l) so /etc/profile and /etc/profile.d/*.sh
         // are sourced, enabling command history and line editing.
-        // Repair the hostname on every terminal open so legacy rootfs images
-        // cannot leak their previous hostname into PS1.
+        // iSH does not grant sethostname(2) to the guest. Setting it here prints
+        // an error and leaves legacy rootfs hostnames unchanged, so keep the
+        // terminal identity in the shell prompt instead. This also fixes rootfs
+        // images that already persisted the old hostname without mutating them.
         let err = ISHKernel.shared.executeCommand([
-            "/bin/sh", "-lc", "printf 'ze\\n' > /etc/hostname; hostname ze; exec /bin/sh -l"
+            "/bin/sh", "-lc", "export PS1='root@ze:\\w# '; exec /bin/sh"
         ])
-        logger.info("[StartShell] executeCommand(hostname=ze, /bin/sh -l): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
+        logger.info("[StartShell] executeCommand(prompt=root@ze, /bin/sh): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
         if err < 0 {
             let msg = "Failed to start shell: \(err)\r\n"
             if let data = msg.data(using: .utf8) {

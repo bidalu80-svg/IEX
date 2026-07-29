@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "iexa_assistant_avatar.png",
+      "filename" : "iexa_assistant_avatar_padded.png",
       "idiom" : "universal",
       "scale" : "1x"
     }

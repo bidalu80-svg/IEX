@@ -4524,6 +4524,7 @@ private struct AppearanceSettingsView: View {
     @AppStorage("chat.autoExpandThinking") private var autoExpandThinking: Bool = true
     @ObservedObject private var fontSettings = FontSettings.shared
     @Environment(\.colorScheme) private var colorScheme
+    @State private var appIconChangeError: String?
 
     private var iconOptions: [AppIconOption] {
         [
@@ -4646,13 +4647,7 @@ private struct AppearanceSettingsView: View {
                 Section {
                     ForEach(iconOptions) { option in
                         Button {
-                            guard appIconMode != option.id else { return }
-                            appIconMode = option.id
-                            UIApplication.shared.setAlternateIconName(resolvedIconName(for: option)) { error in
-                                if let error = error {
-                                    print("[AppIcon] Failed to set icon: \(error.localizedDescription)")
-                                }
-                            }
+                            setAppIcon(option)
                         } label: {
                             HStack(spacing: 14) {
                                 if let img = UIImage(named: option.imageName) {
@@ -4735,23 +4730,46 @@ private struct AppearanceSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(InteractivePopGestureDisabler())
         .onAppear {
-            // The two legacy choices were removed. If an older install had one
-            // selected, return it to the automatic Ze icon.
-            if appIconMode > 2 {
-                appIconMode = 0
-            }
-            if appIconMode == 0 {
-                UIApplication.shared.setAlternateIconName(resolvedIconName(for: iconOptions[0]))
-            }
+            syncAppIconModeWithSystem()
         }
-        .onChange(of: colorScheme) { _ in
-            guard appIconMode == 0 else { return }
-            UIApplication.shared.setAlternateIconName(resolvedIconName(for: iconOptions[0]))
+        .alert("无法切换应用图标", isPresented: Binding(
+            get: { appIconChangeError != nil },
+            set: { if !$0 { appIconChangeError = nil } }
+        )) {
+            Button("好", role: .cancel) { appIconChangeError = nil }
+        } message: {
+            Text(appIconChangeError ?? "")
         }
     }
 
-    private func resolvedIconName(for option: AppIconOption) -> String? {
-        option.id == 0 && colorScheme == .dark ? "AppIcon-Dark" : option.iconName
+    private func setAppIcon(_ option: AppIconOption) {
+        let targetIconName = option.iconName
+        guard UIApplication.shared.alternateIconName != targetIconName else {
+            appIconMode = option.id
+            return
+        }
+
+        UIApplication.shared.setAlternateIconName(targetIconName) { error in
+            DispatchQueue.main.async {
+                if let error {
+                    self.syncAppIconModeWithSystem()
+                    self.appIconChangeError = error.localizedDescription
+                    return
+                }
+                self.appIconMode = option.id
+            }
+        }
+    }
+
+    private func syncAppIconModeWithSystem() {
+        switch UIApplication.shared.alternateIconName {
+        case "AppIcon-Light":
+            appIconMode = 1
+        case "AppIcon-Dark":
+            appIconMode = 2
+        default:
+            appIconMode = 0
+        }
     }
 }
 
@@ -4897,7 +4915,7 @@ private struct SettingsSheet: View {
                         Label {
                             Text("Memory")
                         } icon: {
-                            Image(systemName: "brain.head.profile")
+                            Image(systemName: "archivebox.fill")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.white)
                                 .frame(width: 21, height: 21)

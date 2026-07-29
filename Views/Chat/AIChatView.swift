@@ -331,7 +331,6 @@ struct AIChatView: View {
     /// True while unsent share-extension content is in the input bar.
     @State private var hasInjectedShareContent = false
     @State private var showModelPicker = false
-    @State private var showThinkingLevelSheet = false
     @State private var showSessionSkills = false
     @State private var showSessionMCPs = false
     @State private var showSessionMemory = false
@@ -1837,10 +1836,8 @@ struct AIChatView: View {
             isGroupBound: display.isGroupBound(for: vm.sessionId),
             showFastBolt: codexFastModeEnabled && activeModelSupportsFastMode,
             resolvedText: resolved.map { "\($0.providerLabel) · \($0.modelName)" },
-            hasBinding: vm.sessionId != nil && configStore.binding(for: vm.sessionId!) != nil,
-            hasProviders: !configStore.instances.isEmpty,
-            showThinkingBadge: !vm.availableThinkingLevels.isEmpty && vm.currentThinkingLevel.isEnabled,
-            thinkingLevelName: vm.currentThinkingLevel.displayName,
+            isModelStatusAuthenticated: vm.sessionId != nil && configStore.binding(for: vm.sessionId!) != nil
+                || !configStore.instances.isEmpty,
             fallbackTrigger: vm.fallbackTrigger,
             fallbackPulse: fallbackPulseOpacity,
             titleLocked: titleIsVisuallyLocked
@@ -1852,10 +1849,8 @@ struct AIChatView: View {
         let modelName = display.displayName(for: vm.sessionId)
         let isGroupBound = display.isGroupBound(for: vm.sessionId)
         let resolved = display.resolvedDetail(for: vm.sessionId)
-        let hasBinding = vm.sessionId != nil && configStore.binding(for: vm.sessionId!) != nil
-        let hasProviders = !configStore.instances.isEmpty
-
-        let isAuthed = hasBinding || hasProviders
+        let isModelStatusAuthenticated = (vm.sessionId != nil && configStore.binding(for: vm.sessionId!) != nil)
+            || !configStore.instances.isEmpty
 
         let legacyLayout = !ProcessInfo.processInfo.isiOSAppOnMac && {
             if #available(iOS 26, *) { return false }
@@ -1944,13 +1939,14 @@ struct AIChatView: View {
                     //                 total stack height instead, so it
                     //                 naturally has breathing room above
                     //                 and below.
-                    //   2026-07-28: 13 → 12pt + minimumScaleFactor 0.85 →
-                    //                 0.80 after the title still sat too
-                    //                 close to the status-bar / Dynamic Island
-                    //                 crop on the affected layout.
+                    //   2026-07-29: 12 → 11pt. The three-line principal
+                    //                 item still exceeded the legacy navbar's
+                    //                 stable vertical band on some devices.
+                    //                 This leaves visible clearance above the
+                    //                 title instead of relying on clipping.
                     // iOS 26 path unchanged (16pt works inside liquid-glass).
-                    .font(.system(size: legacyLayout ? 12 : 16, weight: .semibold))
-                    .minimumScaleFactor(legacyLayout ? 0.80 : 1.0)
+                    .font(.system(size: legacyLayout ? 11 : 16, weight: .semibold))
+                    .minimumScaleFactor(legacyLayout ? 0.85 : 1.0)
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -1971,30 +1967,23 @@ struct AIChatView: View {
             .buttonStyle(.plain)
             .disabled(!canEditTitle)
 
-            // [T-navbar-group-provider-gap 2026-07-25] Legacy row gap 1 → -1:
-            // on iOS 16-18 the provider·model line (row 2) sat flush against
-            // the navbar band's bottom edge (field screenshot: group name and
-            // row 2 had a visibly larger gap than row 2 had bottom clearance).
-            // Tightening ONLY the group↔provider gap moves row 2 up inside
-            // the band, giving the last line breathing room from the bottom.
-            // -1 still leaves ~2pt visual space (caption2's descender zone +
-            // the 9pt row's cap headroom); the calibrated title↔group overlap
-            // (outer -3) and the group pill's vertical padding are untouched.
-            // iOS 26 keeps spacing 1 — the liquid-glass band has no crowding.
-            VStack(spacing: legacyLayout ? -1 : 1) {
+            // Keep the two model lines compact, but with real line separation.
+            // Together with the smaller legacy title and zero vertical inset,
+            // this keeps the principal item below the status-bar clip boundary.
+            VStack(spacing: legacyLayout ? -2 : 1) {
                 HStack(spacing: 4) {
                     Button {
                         showModelPicker = true
                     } label: {
                         HStack(spacing: 4) {
-                            Circle()
-                                .fill(isAuthed ? Color.green : Color.orange)
-                                .frame(width: 6, height: 6)
                             if isGroupBound {
                                 Image(systemName: "square.stack.3d.up")
                                     .font(.system(size: 8))
                                     .foregroundStyle(ChatColors.tertiaryText)
                             }
+                            Circle()
+                                .fill(isModelStatusAuthenticated ? Color.blue : Color.orange)
+                                .frame(width: 6, height: 6)
                             Text(modelName)
                                 .font(.caption2)
                                 .foregroundStyle(ChatColors.secondaryText)
@@ -2010,13 +1999,8 @@ struct AIChatView: View {
                 }
 
                 if let detail = resolved {
-                    // Row 2: "provider · model" + the thinking-level badge as a
-                    // SEPARATE tappable sibling (not nested in the model-picker
-                    // Button) so the badge opens ThinkingLevelSheetView while the
-                    // text still opens the model picker — mirroring how row 1's
-                    // model-name Button and badge were laid out. The model name
-                    // truncates first (layoutPriority(-1) + lineLimit(1)); the
-                    // badge keeps its intrinsic size and always shows in full.
+                    // Row 2 names the resolved provider and model. It remains
+                    // tappable as part of the model-picker entry point.
                     HStack(spacing: 4) {
                         // [T-codex-fast-mode] Circular-background ⚡ badge in
                         // front of the resolved model line (row 3) while Fast
@@ -2064,31 +2048,11 @@ struct AIChatView: View {
                                 .layoutPriority(-1)
                         }
                         .buttonStyle(.plain)
-                        // Show the badge only when the model supports thinking
-                        // AND thinking is actually enabled. When the level is Off
-                        // a grey "Off" pill read as ambiguous (users couldn't tell
-                        // it meant "thinking disabled"), so we hide the badge
-                        // entirely rather than render a placeholder. The picker
-                        // still lists Off, so users can turn thinking back off from
-                        // there.
-                        if !vm.availableThinkingLevels.isEmpty, vm.currentThinkingLevel.isEnabled {
-                            thinkingLevelBadge
-                                .fixedSize()
-                                // Match the model-name line's descender
-                                // clearance so the badge sits on the same
-                                // baseline band and isn't clipped at the
-                                // navbar's bottom cutoff.
-                                // [T-navbar-title-model-gap] Match the
-                                // provider text's legacy clearance.
-                                .padding(.bottom, legacyLayout ? 1 : 4)
-                        }
                     }
                 }
             }
             .padding(.horizontal, 8)
-            // [T-navbar-title-model-gap] 3 → 2 on legacy: part of the
-            // height-neutral trade that funds the wider title→model gap.
-            .padding(.vertical, legacyLayout ? 2 : 3)
+            .padding(.vertical, legacyLayout ? 0 : 3)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.red.opacity(0.35 * fallbackPulseOpacity))
@@ -2143,42 +2107,6 @@ struct AIChatView: View {
         .blur(radius: titleIsVisuallyLocked ? 8 : 0)
         .allowsHitTesting(!titleIsVisuallyLocked)
         .animation(.easeInOut(duration: 0.15), value: titleIsVisuallyLocked)
-    }
-
-    @ViewBuilder
-    private var thinkingLevelBadge: some View {
-        let level = vm.currentThinkingLevel
-        // Sits on nav-bar row 2 (the 9pt "provider · model" line). Kept a
-        // touch smaller than that text (8pt / 6px icon) so it stays the most
-        // compact label in the title and never larger than the "is thinking…"
-        // intensity pill in the message list.
-        //
-        // The caller only renders this when `level.isEnabled` (thinking on), so
-        // the badge always shows a real level name — no "Off" placeholder here.
-        HStack(spacing: 2) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 7, weight: .semibold))
-            Text(level.displayName)
-                .font(.system(size: 8, weight: .medium))
-        }
-        .foregroundStyle(.purple)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
-        .background(Capsule().fill(Color.secondary.opacity(0.10)))
-        .onTapGesture {
-            showThinkingLevelSheet = true
-        }
-        .sheet(isPresented: $showThinkingLevelSheet) {
-            ThinkingLevelSheetView(
-                currentLevel: level,
-                availableLevels: vm.availableThinkingLevels,
-                onSelect: { newLevel in
-                    vm.setThinkingLevel(newLevel)
-                    showThinkingLevelSheet = false
-                }
-            )
-            .presentationDetents([.medium])
-        }
     }
 
     /// True when the current session's navbar title must render blurred —
@@ -3907,7 +3835,7 @@ struct AIChatView: View {
             case .attachments: return "paperclip"
             case .shared:      return "folder.badge.person.crop"
             case .skills:      return "sparkles"
-            case .memory:      return "brain.head.profile"
+            case .memory:      return "archivebox.fill"
             case .mount:       return "externaldrive"
             }
         }
@@ -4017,40 +3945,185 @@ struct AIChatView: View {
         }
 
         private var thinkingLevelPicker: some View {
-            let maxAvailable = availableLevels.last
-            let isClamped = thinkingLevel.isEnabled && maxAvailable != nil && thinkingLevel > (maxAvailable ?? thinkingLevel)
+            ThinkingIntensitySlider(
+                levels: availableLevels,
+                selectedLevel: thinkingLevel,
+                onSelect: { onSetThinkingLevel?($0) }
+            )
+        }
+    }
 
-            return HStack(spacing: 0) {
-                ForEach(availableLevels, id: \.self) { level in
-                    let isExactMatch = thinkingLevel == level
-                    let isClampedHighlight = isClamped && level == maxAvailable
-                    let isHighlighted = isExactMatch || isClampedHighlight
+    /// Drag-selectable thinking control. The model only receives a new level
+    /// when the gesture ends, which keeps provider configuration writes out of
+    /// the drag's frame-by-frame update path.
+    private struct ThinkingIntensitySlider: View {
+        let levels: [ThinkingLevel]
+        let selectedLevel: ThinkingLevel
+        let onSelect: (ThinkingLevel) -> Void
 
-                    HStack(spacing: 1) {
-                        Text(level.displayName)
-                            .font(.system(size: 11, weight: isHighlighted ? .bold : .regular))
-                        if isClampedHighlight {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 8, weight: .bold))
+        @State private var dragProgress: CGFloat?
+        @State private var particlesVisible = false
+        @State private var particlePhase: CGFloat = -0.2
+        @State private var particleRun = 0
+
+        private var selectedIndex: Int? {
+            levels.firstIndex(of: selectedLevel)
+        }
+
+        private var restingProgress: CGFloat {
+            guard let selectedIndex, levels.count > 1 else {
+                return selectedLevel.isEnabled ? 1 : 0
+            }
+            return CGFloat(selectedIndex) / CGFloat(levels.count - 1)
+        }
+
+        private var displayProgress: CGFloat {
+            min(max(dragProgress ?? restingProgress, 0), 1)
+        }
+
+        private var visibleLabel: String {
+            selectedLevel.isEnabled ? selectedLevel.displayName : "关闭"
+        }
+
+        var body: some View {
+            HStack(spacing: 6) {
+                Text(visibleLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(selectedLevel.isEnabled ? .purple : .secondary)
+                    .frame(width: 28, alignment: .trailing)
+
+                GeometryReader { proxy in
+                    let width = proxy.size.width
+                    let trackHeight: CGFloat = 18
+                    let thumbDiameter: CGFloat = 26
+                    let thumbX = thumbDiameter / 2 + displayProgress * (width - thumbDiameter)
+                    let fillWidth = (selectedLevel.isEnabled || dragProgress != nil)
+                        ? max(trackHeight, thumbX)
+                        : 0
+
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.14))
+
+                        Capsule()
+                            .fill(Color.purple)
+                            .frame(width: fillWidth)
+
+                        if particlesVisible {
+                            ThinkingSliderParticles(
+                                phase: particlePhase,
+                                width: max(fillWidth - thumbDiameter, 0),
+                                height: trackHeight
+                            )
+                            .padding(.leading, thumbDiameter / 2)
+                            .clipShape(Capsule())
+                            .allowsHitTesting(false)
                         }
+
+                        Circle()
+                            .fill(.white)
+                            .frame(width: thumbDiameter, height: thumbDiameter)
+                            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+                            .offset(x: thumbX - thumbDiameter / 2)
                     }
-                    .foregroundStyle(isHighlighted ? .white : .secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .background(
-                        isHighlighted
-                            ? (isClampedHighlight
-                                ? Color.orange.opacity(0.75)
-                                : Color.purple)
-                            : Color.clear
-                    )
+                    .frame(height: trackHeight)
+                    .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .onTapGesture { onSetThinkingLevel?(isHighlighted ? .off : level) }
-                    .id(level)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                dragProgress = normalizedProgress(value.location.x, width: width)
+                            }
+                            .onEnded { value in
+                                let progress = normalizedProgress(value.location.x, width: width)
+                                let level = level(for: progress)
+                                dragProgress = nil
+                                onSelect(level)
+                                if let maxLevel = levels.last, level == maxLevel {
+                                    triggerMaxParticles()
+                                }
+                            }
+                    )
+                }
+                .frame(width: 136, height: 30)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("思考过程强度")
+            .accessibilityValue(visibleLabel)
+            .accessibilityAdjustableAction { direction in
+                guard !levels.isEmpty else { return }
+                let current = selectedIndex ?? 0
+                let next: Int
+                switch direction {
+                case .increment: next = min(current + 1, levels.count - 1)
+                case .decrement: next = max(current - 1, 0)
+                @unknown default: return
+                }
+                let level = levels[next]
+                onSelect(level)
+                if let maxLevel = levels.last, level == maxLevel {
+                    triggerMaxParticles()
                 }
             }
-            .background(Color.secondary.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .task(id: particleRun) {
+                guard particlesVisible else { return }
+                try? await Task.sleep(nanoseconds: 3_200_000_000)
+                guard !Task.isCancelled else { return }
+                particlesVisible = false
+            }
+        }
+
+        private func normalizedProgress(_ x: CGFloat, width: CGFloat) -> CGFloat {
+            guard width > 26 else { return 0 }
+            return min(max((x - 13) / (width - 26), 0), 1)
+        }
+
+        private func level(for progress: CGFloat) -> ThinkingLevel {
+            guard levels.count > 1 else { return levels.first ?? .medium }
+            let index = Int((progress * CGFloat(levels.count - 1)).rounded())
+            return levels[min(max(index, 0), levels.count - 1)]
+        }
+
+        private func triggerMaxParticles() {
+            particlesVisible = true
+            particlePhase = -0.2
+            particleRun += 1
+            withAnimation(.linear(duration: 1.05).repeatForever(autoreverses: false)) {
+                particlePhase = 1.2
+            }
+        }
+    }
+
+    /// Small white dots that drift and bounce only while the maximum-intensity
+    /// effect is active. Keeping this as a separate View avoids re-evaluating
+    /// the whole slash-command row for every animation frame.
+    private struct ThinkingSliderParticles: View {
+        let phase: CGFloat
+        let width: CGFloat
+        let height: CGFloat
+
+        var body: some View {
+            ZStack(alignment: .leading) {
+                ForEach(0..<7, id: \.self) { index in
+                    let travel = wrappedPhase(phase + CGFloat(index) * 0.17)
+                    Circle()
+                        .fill(.white.opacity(0.82 - Double(index % 3) * 0.12))
+                        .frame(width: index.isMultiple(of: 3) ? 4 : 3,
+                               height: index.isMultiple(of: 3) ? 4 : 3)
+                        .offset(x: travel * width, y: bounce(for: travel, index: index))
+                }
+            }
+            .frame(width: width, height: height, alignment: .leading)
+        }
+
+        private func wrappedPhase(_ value: CGFloat) -> CGFloat {
+            let remainder = value.truncatingRemainder(dividingBy: 1)
+            return remainder < 0 ? remainder + 1 : remainder
+        }
+
+        private func bounce(for travel: CGFloat, index: Int) -> CGFloat {
+            let direction: CGFloat = index.isMultiple(of: 2) ? 1 : -1
+            return CGFloat(sin(Double(travel * .pi))) * 4 * direction
         }
     }
 
@@ -4438,10 +4511,7 @@ private struct NavTitleKey: Equatable {
     /// Fast Mode is enabled on a Codex OAuth model.
     let showFastBolt: Bool
     let resolvedText: String?
-    let hasBinding: Bool
-    let hasProviders: Bool
-    let showThinkingBadge: Bool
-    let thinkingLevelName: String
+    let isModelStatusAuthenticated: Bool
     let fallbackTrigger: Int
     /// The fallback-pulse @State lives on AIChatView but is RENDERED inside
     /// the gated titleView — each discrete set (6 over ~1.75s) must pierce
@@ -4507,10 +4577,7 @@ private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View
                 if l.modelName != r.modelName { diffs.append("modelName") }
                 if l.isGroupBound != r.isGroupBound { diffs.append("isGroupBound") }
                 if l.resolvedText != r.resolvedText { diffs.append("resolvedText") }
-                if l.hasBinding != r.hasBinding { diffs.append("hasBinding") }
-                if l.hasProviders != r.hasProviders { diffs.append("hasProviders") }
-                if l.showThinkingBadge != r.showThinkingBadge { diffs.append("showThinkingBadge") }
-                if l.thinkingLevelName != r.thinkingLevelName { diffs.append("thinkingLevelName") }
+                if l.isModelStatusAuthenticated != r.isModelStatusAuthenticated { diffs.append("isModelStatusAuthenticated") }
                 if l.fallbackTrigger != r.fallbackTrigger { diffs.append("fallbackTrigger") }
                 if l.fallbackPulse != r.fallbackPulse { diffs.append("fallbackPulse") }
                 if l.titleLocked != r.titleLocked { diffs.append("titleLocked") }
@@ -4689,7 +4756,7 @@ private struct ChatTrailingMenu: View, Equatable {
 
             if memoryEnabled {
                 Button { onMemories() } label: {
-                    Label(String(localized: "Memories in Session"), systemImage: "brain.head.profile")
+                    Label(String(localized: "Memories in Session"), systemImage: "archivebox.fill")
                 }
             }
 
@@ -4907,7 +4974,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
         ]
         if key.memoryEnabled {
             sessionGroup.append(UIAction(title: String(localized: "Memories in Session"),
-                                         image: UIImage(systemName: "brain.head.profile")) { _ in coordinator.parent.onMemories() })
+                                         image: UIImage(systemName: "archivebox.fill")) { _ in coordinator.parent.onMemories() })
         }
         sessionGroup.append(UIAction(title: String(localized: "Speak Responses"),
                                      image: UIImage(systemName: "speaker.wave.2"),

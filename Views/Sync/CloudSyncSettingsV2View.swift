@@ -250,7 +250,7 @@ struct CloudSyncSettingsV2View: View {
         case .skills:       return "puzzlepiece.fill"
         case .providers:    return "link"
         case .envVars:      return "rectangle.stack.fill"
-        case .memory:       return "brain.head.profile"
+        case .memory:       return "archivebox.fill"
         }
     }
 

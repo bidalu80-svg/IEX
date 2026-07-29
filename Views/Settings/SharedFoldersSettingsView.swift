@@ -216,7 +216,7 @@ final class SharedFoldersViewModel: ObservableObject {
                 displayName: String(localized: "Memory"),
                 linuxPath: "/var/ze/memory",
                 hostURL: root.appendingPathComponent("memory", isDirectory: true),
-                iconName: "brain.head.profile",
+                iconName: "archivebox.fill",
                 iconColor: .pink,
                 isWritableFromFiles: false
             ),

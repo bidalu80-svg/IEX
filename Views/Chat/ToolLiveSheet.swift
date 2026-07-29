@@ -715,7 +715,7 @@ struct ToolLiveSheet: View {
         case .fileEditTool: Image(systemName: "square.and.pencil")
         case .browserTool: Image(systemName: "globe")
         case .readImageTool: Image(systemName: "photo")
-        case .memoryTool: Image(systemName: "brain.head.profile")
+        case .memoryTool: Image(systemName: "archivebox.fill")
         case .info: Image(systemName: "arrow.triangle.2.circlepath")
         case .text: Image(systemName: "text.alignleft")
         case .thinking: Image(systemName: "brain.head.profile")
@@ -1384,7 +1384,7 @@ struct ToolLiveSheet: View {
                 VStack(spacing: 0) {
                     // Title bar
                     HStack(spacing: 6) {
-                        Image(systemName: "brain.head.profile")
+                        Image(systemName: "archivebox.fill")
                             .font(.system(size: 12))
                             .foregroundStyle(.pink.opacity(0.6))
                         Text(action)

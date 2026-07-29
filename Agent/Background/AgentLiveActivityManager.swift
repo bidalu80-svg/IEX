@@ -308,7 +308,7 @@ final class AgentLiveActivityManager {
         case "file_write":                      return "doc.text.fill"
         case "file_edit":                       return "pencil.line"
         case "read_image":                      return "photo"
-        case "memory":                          return "brain.head.profile"
+        case "memory":                          return "archivebox.fill"
         case "text":                            return "bubble.left"
         case "thinking":                        return "brain.head.profile"
         case "code_interpret":                  return "chevron.left.forwardslash.chevron.right"

@@ -1,0 +1,12 @@
+# The desktop source snapshot includes tests and stale local build outputs.
+# Ze's CI needs neither; keeping them out preserves a reproducible vendor tree.
+ish/kernel/offload_tests/
+ish/deps/libarchive/libarchive/test/
+ish/tests/
+ish/benchmark/
+ish/docs/
+ish/.github/
+**/*.lo
+**/*.o
+**/*.a
+**/*.dylib

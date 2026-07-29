@@ -63,7 +63,7 @@ struct AssistantBlockView: View {
                             commandStartTime: commandStartTime, onStop: onStop,
                             toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
         case .memoryTool:
-            ToolCapsuleView(block: block, icon: "brain.head.profile", accentColor: .pink,
+            ToolCapsuleView(block: block, icon: "archivebox.fill", accentColor: .pink,
                             commandStartTime: commandStartTime, onStop: onStop,
                             toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
         case .info:
@@ -170,7 +170,12 @@ struct ShimmerOverlay: View {
         GeometryReader { geo in
             let travelWidth = geo.size.width + geo.size.height
             if isActive {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                // `.animation` only refreshes while SwiftUI already has an
+                // active animation. This overlay is deliberately time-driven,
+                // so that schedule rendered a single frame in reused tool
+                // cells and left the shine parked in the middle. A periodic
+                // schedule keeps the phase advancing from left to right.
+                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startedAt)
                     let phase = CGFloat((elapsed / sweepDuration).truncatingRemainder(dividingBy: 1.0))
                     Rectangle()
@@ -899,47 +904,131 @@ struct ThinkingBlockView: View {
 // MARK: - Typing Indicator
 
 struct TypingIndicator: View {
-    @State private var dotOffsets: [Bool] = [false, false, false]
-    /// Live Soul name so the indicator reads "<custom name> is thinking…" when
-    /// the user has renamed the assistant in Soul settings. Updates via
-    /// `.soulMdChanged` Notification — same wiring used by `AssistantSoulName`.
-    @State private var soulName: String = {
-        let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "Ze" : n
-    }()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var motionStartedAt = Date()
+
+    private let waveDotSpacing: CGFloat = 5.6
 
     var body: some View {
-        // The thinking-level badge that used to trail this indicator was
-        // removed — the nav-bar title (AIChatView.thinkingLevelBadge) is now
-        // the single place that shows and changes the thinking level, so a
-        // duplicate here was redundant. ThinkingLevelSheetView is unchanged;
-        // it's still presented from the nav-bar badge.
-        HStack(spacing: 0) {
-            Text("\(soulName) is thinking")
-            ForEach(0..<3, id: \.self) { i in
-                Text(".")
-                    .offset(y: dotOffsets[i] ? -3 : 1)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
-            let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            soulName = n.isEmpty ? "Ze" : n
-        }
-        .font(.system(size: 15, weight: .medium))
-        .foregroundStyle(ChatColors.tertiaryText)
-        .padding(.top, 0)
-        .onAppear {
-            for i in 0..<3 {
-                withAnimation(
-                    .easeInOut(duration: 0.4)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(i) * 0.15)
-                ) {
-                    dotOffsets[i] = true
+        Group {
+            if reduceMotion {
+                indicator(elapsed: 0)
+            } else {
+                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+                    indicator(elapsed: max(0, timeline.date.timeIntervalSince(motionStartedAt)))
                 }
             }
         }
+        .frame(width: 34, height: 24, alignment: .leading)
+        .accessibilityLabel("正在等待回复")
+        .onAppear {
+            motionStartedAt = .now
+        }
     }
+
+    private func indicator(elapsed: TimeInterval) -> some View {
+        Canvas { context, size in
+            for index in 0..<3 {
+                let point = dotPoint(index: index, elapsed: elapsed)
+                let diameter: CGFloat = 3.4
+                let center = CGPoint(x: size.width / 2 + point.x, y: size.height / 2 + point.y)
+                let rect = CGRect(
+                    x: center.x - diameter / 2,
+                    y: center.y - diameter / 2,
+                    width: diameter,
+                    height: diameter
+                )
+                context.fill(Path(ellipseIn: rect), with: .color(ChatColors.tertiaryText.opacity(0.94)))
+            }
+        }
+        .frame(width: 34, height: 24)
+    }
+
+    private func dotPoint(index: Int, elapsed: TimeInterval) -> CGPoint {
+        if reduceMotion {
+            return CGPoint(x: CGFloat(index - 1) * waveDotSpacing, y: 0)
+        }
+
+        let lineDuration: TimeInterval = 3.0
+        let handoffDuration: TimeInterval = 0.80
+        if elapsed < lineDuration {
+            return waveLinePoint(index: index, elapsed: elapsed)
+        }
+
+        let handoffElapsed = elapsed - lineDuration
+        if handoffElapsed < handoffDuration {
+            return handoffPoint(index: index, elapsed: handoffElapsed)
+        }
+        return trianglePoint(index: index, elapsed: handoffElapsed - handoffDuration)
+    }
+
+    private func waveLinePoint(index: Int, elapsed: TimeInterval) -> CGPoint {
+        let phaseOffset = [3.86, 2.32, 1.31][index]
+        let phase = phaseOffset + ((elapsed - 3.0) / 1.220) * .pi * 2
+        return CGPoint(
+            x: CGFloat(index - 1) * waveDotSpacing,
+            y: CGFloat(sin(phase)) * 4.55
+        )
+    }
+
+    private func handoffPoint(index: Int, elapsed: TimeInterval) -> CGPoint {
+        keyframedPoint(index: index, elapsed: elapsed, duration: 0.80, keyframes: Self.handoffKeyframes)
+    }
+
+    private func trianglePoint(index: Int, elapsed: TimeInterval) -> CGPoint {
+        let pulsePhase = .pi * ((elapsed + 0.012) / 0.581)
+        let radius = CGFloat(8.45 * abs(cos(pulsePhase)))
+        let orientation = -0.535 - 0.305 * cos(pulsePhase)
+        let angle = orientation + Double(index) * (.pi * 2 / 3)
+        return CGPoint(x: CGFloat(cos(angle)) * radius, y: CGFloat(sin(angle)) * radius)
+    }
+
+    private func keyframedPoint(
+        index: Int,
+        elapsed: TimeInterval,
+        duration: TimeInterval,
+        keyframes: [[CGPoint]]
+    ) -> CGPoint {
+        let position = min(1, max(0, elapsed / duration)) * Double(keyframes.count - 1)
+        let segment = min(keyframes.count - 2, Int(position))
+        let progress = CGFloat(position - Double(segment))
+        let p0 = keyframes[max(0, segment - 1)][index]
+        let p1 = keyframes[segment][index]
+        let p2 = keyframes[segment + 1][index]
+        let p3 = keyframes[min(keyframes.count - 1, segment + 2)][index]
+        return CGPoint(
+            x: catmullRom(p0.x, p1.x, p2.x, p3.x, progress: progress),
+            y: catmullRom(p0.y, p1.y, p2.y, p3.y, progress: progress)
+        )
+    }
+
+    private func catmullRom(
+        _ previous: CGFloat,
+        _ start: CGFloat,
+        _ end: CGFloat,
+        _ next: CGFloat,
+        progress: CGFloat
+    ) -> CGFloat {
+        let t2 = progress * progress
+        let t3 = t2 * progress
+        let linear = (-previous + end) * progress
+        let quadratic = (2 * previous - 5 * start + 4 * end - next) * t2
+        let cubic = (-previous + 3 * start - 3 * end + next) * t3
+        return 0.5 * (2 * start + linear + quadratic + cubic)
+    }
+
+    private static let handoffKeyframes: [[CGPoint]] = [
+        [CGPoint(x: -5.67, y: -3.00), CGPoint(x: 0.33, y: 3.33), CGPoint(x: 5.60, y: 4.40)],
+        [CGPoint(x: -5.81, y: -4.07), CGPoint(x: 1.00, y: 1.33), CGPoint(x: 5.60, y: 4.40)],
+        [CGPoint(x: -5.93, y: -2.19), CGPoint(x: 1.00, y: -1.67), CGPoint(x: 5.84, y: 3.49)],
+        [CGPoint(x: -4.59, y: 2.85), CGPoint(x: -1.15, y: -3.93), CGPoint(x: 5.92, y: 0.39)],
+        [CGPoint(x: 0.67, y: 6.14), CGPoint(x: -5.33, y: -2.33), CGPoint(x: 3.76, y: -4.00)],
+        [CGPoint(x: 6.43, y: 3.33), CGPoint(x: -6.07, y: 3.52), CGPoint(x: -1.26, y: -6.19)],
+        [CGPoint(x: 7.83, y: -2.25), CGPoint(x: -2.33, y: 7.33), CGPoint(x: -5.50, y: -4.92)],
+        [CGPoint(x: 6.46, y: -5.42), CGPoint(x: 1.00, y: 8.33), CGPoint(x: -7.50, y: -2.92)],
+        [CGPoint(x: 5.67, y: -6.33), CGPoint(x: 2.19, y: 8.07), CGPoint(x: -8.00, y: -1.67)]
+    ]
+}
 }
 
 // MARK: - Thinking Level Sheet
