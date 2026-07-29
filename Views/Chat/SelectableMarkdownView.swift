@@ -282,11 +282,7 @@ struct SelectableMarkdownTheme {
         UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : .black }
     }
     var codeBlockTextColor: UIColor {
-        UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.83, green: 0.84, blue: 0.86, alpha: 1)
-                : UIColor(red: 0.04, green: 0.04, blue: 0.04, alpha: 1)
-        }
+        UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.55, green: 0.95, blue: 0.55, alpha: 1) : .systemGreen }
     }
     var inlineCodeBackground: UIColor { zeInlineCodeBackgroundColor }
     var inlineCodeColor: UIColor { .systemBlue }
@@ -1286,51 +1282,24 @@ private extension UIFont {
 
 // MARK: - Code Syntax Highlighting
 
-/// Lightweight syntax coloring matched to Iexa's source-code palette. The
-/// colors are dynamic UIColors, so an existing code block follows a live
-/// light/dark appearance change without rebuilding its parsing pipeline.
+/// Lightweight syntax coloring matched to Iexa's source-code palette while
+/// retaining the code block's existing TextKit layout attributes.
 private enum ZeCodeSyntaxHighlighter {
-    private final class CacheEntry: NSObject {
-        let value: NSAttributedString
-        init(_ value: NSAttributedString) { self.value = value }
-    }
-
-    private static let cache: NSCache<NSString, CacheEntry> = {
-        let cache = NSCache<NSString, CacheEntry>()
-        cache.countLimit = 128
-        cache.totalCostLimit = 16 * 1_024 * 1_024
-        return cache
-    }()
-
-    static func highlighted(
-        _ code: String,
-        language: String?,
-        font: UIFont,
-        baseColor: UIColor,
-        paragraphStyle: NSParagraphStyle
-    ) -> NSAttributedString {
+    /// Keeps every existing layout attribute intact and only overlays
+    /// foreground colors on recognized source tokens.
+    static func applyingColors(to source: NSAttributedString, language: String?) -> NSAttributedString {
+        let code = source.string
         let normalizedLanguage = language?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? "text"
-        let cacheKey = [
-            normalizedLanguage,
-            String(format: "%.2f", font.pointSize),
-            String(baseColor.hashValue),
-            String(code.utf8.count),
-            String(code.hashValue),
-        ].joined(separator: "|") as NSString
-        if let cached = cache.object(forKey: cacheKey) {
-            return cached.value
-        }
-
-        let palette = Palette()
-        let output = NSMutableAttributedString(string: code, attributes: [
-            .font: font,
-            .foregroundColor: palette.plain(fallback: baseColor),
-            .paragraphStyle: paragraphStyle,
-        ])
+        let output = NSMutableAttributedString(attributedString: source)
         let fullRange = NSRange(code.startIndex..<code.endIndex, in: code)
         guard fullRange.length > 0 else { return output }
+        // A fenced `text` block is prose, not source code. Applying identifier
+        // rules to it turns ordinary capitalized words into fake type names.
+        guard supportsSyntaxHighlighting(normalizedLanguage) else { return output }
+
+        let palette = Palette()
 
         apply(color: palette.comment, pattern: #"(?m)#.*$|//.*$"#, to: output)
         apply(color: palette.comment, pattern: #"(?s)/\*.*?\*/"#, to: output)
@@ -1349,9 +1318,7 @@ private enum ZeCodeSyntaxHighlighter {
         apply(color: palette.type, pattern: #"\b([A-Z][A-Za-z0-9_]*)\b"#, to: output)
         apply(color: palette.function, pattern: #"\b([a-zA-Z_][A-Za-z0-9_]*)\s*(?=\()"#, to: output)
 
-        let frozen = NSAttributedString(attributedString: output)
-        cache.setObject(CacheEntry(frozen), forKey: cacheKey, cost: min(code.utf8.count * 2, 1_048_576))
-        return frozen
+        return output
     }
 
     private static func apply(color: UIColor, pattern: String, to output: NSMutableAttributedString) {
@@ -1378,39 +1345,19 @@ private enum ZeCodeSyntaxHighlighter {
         }
     }
 
-    private struct Palette {
-        func plain(fallback: UIColor) -> UIColor { fallback }
+    private static func supportsSyntaxHighlighting(_ language: String) -> Bool {
+        !["", "text", "plain", "plaintext", "txt", "markdown", "md"].contains(language)
+    }
 
-        let keyword = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.63, green: 0.96, blue: 0.70, alpha: 1)
-                : UIColor(red: 0.69, green: 0.00, blue: 0.86, alpha: 1)
-        }
-        let string = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.93, green: 0.80, blue: 0.48, alpha: 1)
-                : UIColor(red: 0.64, green: 0.08, blue: 0.08, alpha: 1)
-        }
-        let number = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.76, green: 0.95, blue: 0.60, alpha: 1)
-                : UIColor(red: 0.04, green: 0.53, blue: 0.34, alpha: 1)
-        }
-        let comment = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.58, green: 0.69, blue: 0.61, alpha: 1)
-                : UIColor(red: 0.42, green: 0.45, blue: 0.49, alpha: 1)
-        }
-        let function = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.79, green: 0.95, blue: 0.67, alpha: 1)
-                : UIColor(red: 0.47, green: 0.37, blue: 0.15, alpha: 1)
-        }
-        let type = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.55, green: 0.93, blue: 0.82, alpha: 1)
-                : UIColor(red: 0.15, green: 0.50, blue: 0.60, alpha: 1)
-        }
+    private struct Palette {
+        // Ze's code container is dark in both app appearances. Keep the
+        // reference app's dark token palette fixed here for legibility.
+        let keyword = UIColor(red: 0.63, green: 0.96, blue: 0.70, alpha: 1)
+        let string = UIColor(red: 0.93, green: 0.80, blue: 0.48, alpha: 1)
+        let number = UIColor(red: 0.76, green: 0.95, blue: 0.60, alpha: 1)
+        let comment = UIColor(red: 0.58, green: 0.69, blue: 0.61, alpha: 1)
+        let function = UIColor(red: 0.79, green: 0.95, blue: 0.67, alpha: 1)
+        let type = UIColor(red: 0.55, green: 0.93, blue: 0.82, alpha: 1)
     }
 }
 
@@ -1543,13 +1490,12 @@ final class CodeBlockAttachment: NSTextAttachment {
         let codeStyle = NSMutableParagraphStyle()
         codeStyle.lineSpacing = 4
         codeStyle.lineBreakMode = .byClipping
-        let codeAttr = ZeCodeSyntaxHighlighter.highlighted(
-            code,
-            language: language,
-            font: theme.codeBlockFont,
-            baseColor: theme.codeBlockTextColor,
-            paragraphStyle: codeStyle
-        )
+        let baseCodeAttr = NSAttributedString(string: code, attributes: [
+            .font: theme.codeBlockFont,
+            .foregroundColor: theme.codeBlockTextColor,
+            .paragraphStyle: codeStyle,
+        ])
+        let codeAttr = ZeCodeSyntaxHighlighter.applyingColors(to: baseCodeAttr, language: language)
         codeTextView.attributedText = codeAttr
 
         // Measure content size (unconstrained width)
@@ -1630,13 +1576,12 @@ final class CodeBlockAttachment: NSTextAttachment {
         let codeStyle = NSMutableParagraphStyle()
         codeStyle.lineSpacing = 4
         codeStyle.lineBreakMode = .byClipping
-        let codeAttr = ZeCodeSyntaxHighlighter.highlighted(
-            code,
-            language: language,
-            font: theme.codeBlockFont,
-            baseColor: theme.codeBlockTextColor,
-            paragraphStyle: codeStyle
-        )
+        let baseCodeAttr = NSAttributedString(string: code, attributes: [
+            .font: theme.codeBlockFont,
+            .foregroundColor: theme.codeBlockTextColor,
+            .paragraphStyle: codeStyle,
+        ])
+        let codeAttr = ZeCodeSyntaxHighlighter.applyingColors(to: baseCodeAttr, language: language)
         codeTextView.attributedText = codeAttr
 
         let fitting = codeTextView.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
