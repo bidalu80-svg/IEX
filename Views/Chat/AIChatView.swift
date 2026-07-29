@@ -3856,12 +3856,6 @@ struct AIChatView: View {
             }
             .frame(height: min(attachmentGridHeight, 160))
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
-            .padding(.vertical, 4)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(ChatColors.secondaryText.opacity(0.12), lineWidth: 0.5)
-            }
             .padding(.horizontal, 12)
         }
     }

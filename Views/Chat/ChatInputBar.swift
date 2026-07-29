@@ -155,7 +155,7 @@ private struct FlowLayout: Layout {
 
 struct AttachmentGridHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 struct TranscriptHeightKey: PreferenceKey {
