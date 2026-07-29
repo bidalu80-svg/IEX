@@ -579,12 +579,12 @@ private struct BridgedAssistantFooterV3: View {
 
     private func usageSummary(_ u: TokenUsage) -> String {
         var parts: [String] = []
-        if u.latestContextTokens > 0 { parts.append("ctx:\(fmtTok(u.latestContextTokens))") }
-        parts.append("in:\(fmtTok(u.inputTokens))")
-        parts.append("out:\(fmtTok(u.outputTokens))")
-        if u.cacheReadTokens > 0 { parts.append("cache:\(fmtTok(u.cacheReadTokens))") }
-        if u.cacheCreationTokens > 0 { parts.append("+cache:\(fmtTok(u.cacheCreationTokens))") }
-        return parts.joined(separator: " ")
+        if u.latestContextTokens > 0 { parts.append("上下文 \(fmtTok(u.latestContextTokens))") }
+        parts.append("输入 \(fmtTok(u.inputTokens))")
+        parts.append("输出 \(fmtTok(u.outputTokens))")
+        if u.cacheReadTokens > 0 { parts.append("缓存读取 \(fmtTok(u.cacheReadTokens))") }
+        if u.cacheCreationTokens > 0 { parts.append("缓存写入 \(fmtTok(u.cacheCreationTokens))") }
+        return parts.joined(separator: " · ")
     }
     private func fmtTok(_ c: Int) -> String {
         c >= 1000 ? (c >= 10000 ? "\(c/1000)k" : String(format: "%.1fk", Double(c)/1000)) : "\(c)"

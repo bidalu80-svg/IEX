@@ -576,17 +576,17 @@ struct ChatMessageRow: View {
     private func usageSummary(_ u: TokenUsage) -> String {
         var parts: [String] = []
         if u.latestContextTokens > 0 {
-            parts.append("ctx:\(formatTokenCount(u.latestContextTokens))")
+            parts.append("上下文 \(formatTokenCount(u.latestContextTokens))")
         }
-        parts.append("in:\(formatTokenCount(u.inputTokens))")
-        parts.append("out:\(formatTokenCount(u.outputTokens))")
+        parts.append("输入 \(formatTokenCount(u.inputTokens))")
+        parts.append("输出 \(formatTokenCount(u.outputTokens))")
         if u.cacheReadTokens > 0 {
-            parts.append("cache:\(formatTokenCount(u.cacheReadTokens))")
+            parts.append("缓存读取 \(formatTokenCount(u.cacheReadTokens))")
         }
         if u.cacheCreationTokens > 0 {
-            parts.append("+cache:\(formatTokenCount(u.cacheCreationTokens))")
+            parts.append("缓存写入 \(formatTokenCount(u.cacheCreationTokens))")
         }
-        return parts.joined(separator: " ")
+        return parts.joined(separator: " · ")
     }
 
     private func formatTokenCount(_ count: Int) -> String {
