@@ -5828,7 +5828,7 @@ struct CompactSummarySheet: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.uturn.backward")
-                            Text("Revert Compact")
+                            Text(String(localized: "Revert Compact"))
                         }
                         .font(.system(size: 15, weight: .medium))
                         .frame(maxWidth: .infinity)
@@ -5838,7 +5838,7 @@ struct CompactSummarySheet: View {
                     .foregroundStyle(.red)
                 }
             }
-            .navigationTitle("Compact Summary")
+            .navigationTitle(String(localized: "Compact Summary"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -5858,15 +5858,15 @@ struct CompactSummarySheet: View {
                     }
                 }
             }
-            .alert("Revert this compact?", isPresented: $showRevertConfirm) {
-                Button("Cancel", role: .cancel) {}
-                Button("Revert", role: .destructive) {
+            .alert(String(localized: "Revert this compact?"), isPresented: $showRevertConfirm) {
+                Button(String(localized: "Cancel"), role: .cancel) {}
+                Button(String(localized: "Revert"), role: .destructive) {
                     let action = onRevert
                     dismiss()
                     action?()
                 }
             } message: {
-                Text("The summary will be discarded and the messages it covered will become active again. This may push the conversation past the model's context window — if that happens, long-press a message to re-compact from that point.")
+                Text(String(localized: "The summary will be discarded and the messages it covered will become active again. This may push the conversation past the model's context window — if that happens, long-press a message to re-compact from that point."))
             }
         }
         .presentationDetents([.large])

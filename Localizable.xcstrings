@@ -77369,6 +77369,134 @@
           }
         }
       }
+    },
+    "%lld messages compacted" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 条消息已压缩"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已壓縮 %lld 則訊息"
+          }
+        }
+      }
+    },
+    "Compacting conversation..." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩对话..."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在壓縮對話..."
+          }
+        }
+      }
+    },
+    "Cannot compact while processing." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在处理，无法压缩。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在處理，無法壓縮。"
+          }
+        }
+      }
+    },
+    "Not enough messages to compact." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息数量不足，无法压缩。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "訊息數量不足，無法壓縮。"
+          }
+        }
+      }
+    },
+    "Cannot revert compact while a response is in progress." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在生成回复，无法还原压缩内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在產生回覆，無法還原壓縮內容。"
+          }
+        }
+      }
+    },
+    "Nothing to revert — no compact marker on this session." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可还原的压缩内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有可還原的壓縮內容。"
+          }
+        }
+      }
+    },
+    "Revert failed: marker not found in DB." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还原失败：本地数据库中未找到压缩标记。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原失敗：本機資料庫中找不到壓縮標記。"
+          }
+        }
+      }
+    },
+    "Cannot compact: boundary not in memory history." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法压缩：内存历史中未找到分界消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法壓縮：記憶體歷程中找不到分界訊息。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

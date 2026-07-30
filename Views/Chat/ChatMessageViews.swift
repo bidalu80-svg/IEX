@@ -364,7 +364,7 @@ struct ChatMessageRow: View {
                     Button(role: .destructive) {
                         onCompact()
                     } label: {
-                        Label("Compact Above", systemImage: "arrow.down.right.and.arrow.up.left")
+                        Label(String(localized: "Compact Above"), systemImage: "arrow.down.right.and.arrow.up.left")
                     }
                 }
             } preview: {
@@ -523,7 +523,7 @@ struct ChatMessageRow: View {
                             Button(role: .destructive) {
                                 onCompact()
                             } label: {
-                                Label("Compact Above", systemImage: "arrow.down.right.and.arrow.up.left")
+                                Label(String(localized: "Compact Above"), systemImage: "arrow.down.right.and.arrow.up.left")
                             }
                         }
                     }

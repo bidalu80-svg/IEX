@@ -206,14 +206,14 @@ extension AIChatViewModel {
     /// user types next — there is no "auto-keep last N user turns" magic.
     func compactAll() {
         guard !isProcessing else {
-            appendSystemInfo("Cannot compact while processing.", icon: "arrow.down.right.and.arrow.up.left")
+            appendSystemInfo(String(localized: "Cannot compact while processing."), icon: "arrow.down.right.and.arrow.up.left")
             return
         }
         let activeMessages = messages.filter {
             $0.role != .compactDivider && $0.role != .systemInfo && !$0.isCompactedHistory
         }
         guard activeMessages.count > 1 else {
-            appendSystemInfo("Not enough messages to compact.", icon: "arrow.down.right.and.arrow.up.left")
+            appendSystemInfo(String(localized: "Not enough messages to compact."), icon: "arrow.down.right.and.arrow.up.left")
             return
         }
         guard let lastActive = activeMessages.last else { return }
@@ -401,12 +401,12 @@ extension AIChatViewModel {
         guard let sessionId else { return }
         guard !isProcessing else {
             logger.info("[Compact] revert refused: session is processing")
-            appendSystemInfo("Cannot revert compact while a response is in progress.", icon: "arrow.uturn.backward")
+            appendSystemInfo(String(localized: "Cannot revert compact while a response is in progress."), icon: "arrow.uturn.backward")
             return
         }
         guard let marker = cachedLatestMarker else {
             logger.info("[Compact] revert: no marker to revert")
-            appendSystemInfo("Nothing to revert — no compact marker on this session.", icon: "arrow.uturn.backward")
+            appendSystemInfo(String(localized: "Nothing to revert — no compact marker on this session."), icon: "arrow.uturn.backward")
             return
         }
 
@@ -415,7 +415,7 @@ extension AIChatViewModel {
         let deleted = await ChatStore.shared.deleteCompactMarker(id: marker.id)
         guard deleted else {
             logger.error("[Compact] revert: deleteCompactMarker returned false (marker.id=\(marker.id.prefix(8)))")
-            appendSystemInfo("Revert failed: marker not found in DB.", icon: "arrow.uturn.backward")
+            appendSystemInfo(String(localized: "Revert failed: marker not found in DB."), icon: "arrow.uturn.backward")
             return
         }
 
@@ -456,7 +456,7 @@ extension AIChatViewModel {
                         allowDuringProcessing: Bool = false) async {
         guard allowDuringProcessing || !isProcessing else {
             logger.info("[Compact] Cannot compact while processing")
-            appendSystemInfo("Cannot compact while processing.", icon: "arrow.down.right.and.arrow.up.left")
+            appendSystemInfo(String(localized: "Cannot compact while processing."), icon: "arrow.down.right.and.arrow.up.left")
             return
         }
         guard !isCompacting else {
@@ -522,7 +522,7 @@ extension AIChatViewModel {
             logger.info("[Compact] compactAll with no resolvable boundary — compacting full agentHistory (\(self.agentHistory.count) entries)")
         } else {
             logger.error("[Compact] firstKeptMessageId=\(firstKeptMessageId?.prefix(8) ?? "nil") not present in agentHistory (count=\(self.agentHistory.count))")
-            appendSystemInfo("Cannot compact: boundary not in memory history.", icon: "arrow.down.right.and.arrow.up.left")
+            appendSystemInfo(String(localized: "Cannot compact: boundary not in memory history."), icon: "arrow.down.right.and.arrow.up.left")
             return
         }
 
@@ -587,7 +587,7 @@ extension AIChatViewModel {
         }
 
         // Insert a systemInfo loading message
-        let statusMsg = ChatMessage(role: .systemInfo, content: "Compacting conversation...")
+        let statusMsg = ChatMessage(role: .systemInfo, content: String(localized: "Compacting conversation..."))
         statusMsg.systemIcon = "arrow.down.right.and.arrow.up.left"
         statusMsg.isCompactLoading = true
         messages.append(statusMsg)
@@ -777,7 +777,14 @@ extension AIChatViewModel {
         let compactedUICount = messages[0..<dividerInsertIdx].filter {
             $0.role != .systemInfo && !$0.isCompactedHistory
         }.count
-        let divider = ChatMessage(role: .compactDivider, content: "\(compactedUICount) messages compacted")
+        let divider = ChatMessage(
+            role: .compactDivider,
+            content: String(
+                format: String(localized: "%lld messages compacted"),
+                locale: .current,
+                Int64(compactedUICount)
+            )
+        )
         divider.compactSummary = summary
         messages.insert(divider, at: dividerInsertIdx)
 
