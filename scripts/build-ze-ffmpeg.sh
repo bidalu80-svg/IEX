@@ -116,23 +116,42 @@ check_prerequisites() {
 fetch_ffmpeg_source() {
     local version="6.1.2"
     local tarball="ffmpeg-${version}.tar.xz"
-    local url="https://ffmpeg.org/releases/${tarball}"
+    local primary_url="https://ffmpeg.org/releases/${tarball}"
+    local fallback_tarball="ffmpeg-n${version}.tar.gz"
+    local fallback_url="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${version}.tar.gz"
     local tmp
     tmp="$(mktemp -d)"
 
     log_info "FFmpeg source not present — downloading ${version}..."
-    if ! curl -fL# "$url" -o "$tmp/$tarball"; then
-        rm -rf "$tmp"
-        log_error "Failed to download $url — check your network, or place the source at $FFMPEG_DIR manually."
+    if curl -fL# --connect-timeout 15 --max-time 90 "$primary_url" -o "$tmp/$tarball"; then
+        if ! tar -xf "$tmp/$tarball" -C "$tmp"; then
+            rm -rf "$tmp"
+            log_error "Failed to extract $tarball"
+        fi
+    else
+        log_warning "Primary FFmpeg release host unavailable; trying the official GitHub tag mirror..."
+        if ! curl -fL# --connect-timeout 15 --max-time 90 "$fallback_url" -o "$tmp/$fallback_tarball"; then
+            rm -rf "$tmp"
+            log_error "Failed to download $primary_url or $fallback_url — check your network, or place the source at $FFMPEG_DIR manually."
+        fi
+        if ! tar -xf "$tmp/$fallback_tarball" -C "$tmp"; then
+            rm -rf "$tmp"
+            log_error "Failed to extract $fallback_tarball"
+        fi
     fi
 
-    log_info "Extracting..."
-    if ! tar -xf "$tmp/$tarball" -C "$tmp"; then
+    local source_dir="$tmp/ffmpeg-${version}"
+    # GitHub's tag archive has a different top-level directory name than the
+    # release tarball, but both contain the same upstream n6.1.2 source.
+    if [ ! -d "$source_dir" ]; then
+        source_dir="$tmp/FFmpeg-n${version}"
+    fi
+    if [ ! -d "$source_dir" ]; then
         rm -rf "$tmp"
-        log_error "Failed to extract $tarball"
+        log_error "Downloaded FFmpeg archive did not contain its source directory"
     fi
 
-    mv "$tmp/ffmpeg-${version}" "$FFMPEG_DIR"
+    mv "$source_dir" "$FFMPEG_DIR"
     rm -rf "$tmp"
     log_success "FFmpeg ${version} source ready at $FFMPEG_DIR"
 }
