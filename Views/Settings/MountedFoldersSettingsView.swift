@@ -13,11 +13,8 @@ import UniformTypeIdentifiers
 
 private let mountUILogger = AppLogger(category: "MountedFoldersUI")
 
-/// Wrapper so we can drive the Add-Mount sheet via `.sheet(item:)`, which
-/// guarantees the URL is present when the sheet is constructed. Using two
-/// stacked `.sheet(isPresented:)` modifiers races on first pick: the
-/// AddMountSheet is built before `pendingPickedURL` has propagated, so its
-/// "Source path" section renders empty until the next attempt.
+/// Carries the selected folder through the picker-dismissal handoff into the
+/// Add-Mount confirmation sheet.
 private struct PendingMount: Identifiable {
     let id = UUID()
     let url: URL
@@ -33,9 +30,25 @@ private struct PickedFolder {
     let bookmark: Data
 }
 
+/// Keeps the Files picker and mount confirmation mutually exclusive under one
+/// SwiftUI sheet host. Separate `.sheet` modifiers can drop the second
+/// presentation while the first one is dismissing.
+private enum MountSheet: Identifiable {
+    case folderPicker(UUID)
+    case addMount(PendingMount)
+
+    var id: UUID {
+        switch self {
+        case .folderPicker(let id): return id
+        case .addMount(let mount): return mount.id
+        }
+    }
+}
+
 struct MountedFoldersSettingsView: View {
     @StateObject private var model = MountedFoldersViewModel()
-    @State private var showingPicker = false
+    @State private var activeSheet: MountSheet?
+    @State private var stagedMount: PendingMount?
     @State private var pendingMount: PendingMount?
     @State private var errorText: String?
 
@@ -105,73 +118,72 @@ struct MountedFoldersSettingsView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    showingPicker = true
+                    stagedMount = nil
+                    pendingMount = nil
+                    activeSheet = .folderPicker(UUID())
                 } label: {
                     Image(systemName: "plus")
                 }
                 .disabled(model.isAtCapacity)
             }
         }
-        .sheet(isPresented: $showingPicker) {
-            FolderPicker { result in
-                switch result {
-                case .success(let picked):
-                    let url = picked.url
-                    // FolderPicker invokes this only after its UIKit dismissal
-                    // completion. Keep the next presentation transaction separate.
-                    let mount = PendingMount(
-                        url: url,
-                        bookmark: picked.bookmark,
-                        name: Self.defaultMountName(for: url),
-                        allowWrite: true
-                    )
-                    showingPicker = false
-                    mountUILogger.info("FolderPicker captured bookmark for \(url.path)")
-                    DispatchQueue.main.async {
-                        mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
-                        pendingMount = mount
-                    }
-                case .failure(let error):
-                    showingPicker = false
-                    errorText = error.localizedDescription
-                }
-            } onCancel: {
-                showingPicker = false
-            }
-        }
-        .sheet(item: $pendingMount) { pending in
-            // IMPORTANT: read from the `pending` closure parameter, not from
-            // `pendingMount?.url` — the Optional state binding can be
-            // momentarily nil while SwiftUI re-routes the sheet, which blanks
-            // out the Source Path field.
-            AddMountSheet(
-                sourceURL: pending.url,
-                name: Binding(
-                    get: { pendingMount?.name ?? pending.name },
-                    set: { pendingMount?.name = $0 }
-                ),
-                allowWrite: Binding(
-                    get: { pendingMount?.allowWrite ?? pending.allowWrite },
-                    set: { pendingMount?.allowWrite = $0 }
-                ),
-                onCancel: {
-                    pendingMount = nil
-                },
-                onConfirm: {
-                    let current = pendingMount ?? pending
-                    do {
-                        _ = try model.add(
-                            pickedURL: current.url,
-                            bookmark: current.bookmark,
-                            customName: current.name,
-                            userAllowWrite: current.allowWrite
+        .sheet(item: $activeSheet, onDismiss: presentStagedMountAfterPickerDismissal) { sheet in
+            switch sheet {
+            case .folderPicker:
+                FolderPicker { result in
+                    switch result {
+                    case .success(let picked):
+                        let mount = PendingMount(
+                            url: picked.url,
+                            bookmark: picked.bookmark,
+                            name: Self.defaultMountName(for: picked.url),
+                            allowWrite: true
                         )
-                    } catch {
+                        // FolderPicker invokes this only after its UIKit dismissal
+                        // completion. Clearing this sole route now lets the sheet
+                        // host finish before `onDismiss` schedules Add Mount.
+                        stagedMount = mount
+                        activeSheet = nil
+                        mountUILogger.info("FolderPicker captured bookmark for \(picked.url.path)")
+                    case .failure(let error):
+                        activeSheet = nil
                         errorText = error.localizedDescription
                     }
-                    pendingMount = nil
+                } onCancel: {
+                    activeSheet = nil
                 }
-            )
+            case .addMount(let pending):
+                AddMountSheet(
+                    sourceURL: pending.url,
+                    name: Binding(
+                        get: { pendingMount?.name ?? pending.name },
+                        set: { pendingMount?.name = $0 }
+                    ),
+                    allowWrite: Binding(
+                        get: { pendingMount?.allowWrite ?? pending.allowWrite },
+                        set: { pendingMount?.allowWrite = $0 }
+                    ),
+                    onCancel: {
+                        pendingMount = nil
+                        activeSheet = nil
+                    },
+                    onConfirm: {
+                        let current = pendingMount ?? pending
+                        do {
+                            _ = try model.add(
+                                pickedURL: current.url,
+                                bookmark: current.bookmark,
+                                customName: current.name,
+                                userAllowWrite: current.allowWrite
+                            )
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
+                        pendingMount = nil
+                        activeSheet = nil
+                    }
+                )
+            }
         }
         .alert(String(localized: "Error"),
                isPresented: Binding(get: { errorText != nil },
@@ -206,6 +218,19 @@ struct MountedFoldersSettingsView: View {
             initialVisibleInFiles: true,
             isReadOnlyFromFiles: false
         )
+    }
+
+    /// The sole sheet host has fully dismissed the Files picker. A fresh main
+    /// queue turn keeps the Add-Mount route out of that dismissal transaction.
+    private func presentStagedMountAfterPickerDismissal() {
+        guard let mount = stagedMount else { return }
+        stagedMount = nil
+
+        DispatchQueue.main.async {
+            pendingMount = mount
+            activeSheet = .addMount(mount)
+            mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
+        }
     }
 
     /// Trivial / meaningless segments often appearing at the end of an iCloud
