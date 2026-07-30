@@ -484,14 +484,15 @@ struct AIChatView: View {
                                 }
                             }
                     }
+                }
+                .overlay(alignment: .top) {
                     if !isNavigationStatusCollapsed {
                         navigationStatusCapsule
                             .matchedGeometryEffect(
                                 id: "navigation-status-capsule",
                                 in: navigationStatusCapsuleNamespace
                             )
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 2)
+                            .padding(.top, 2)
                     }
                 }
                 .overlay(alignment: .bottom) {
@@ -2208,7 +2209,7 @@ struct AIChatView: View {
     /// the principal-title slot after collapse. A property animation, rather
     /// than a timeline renderer, keeps the three-dot wave on the compositor.
     private var navigationStatusCapsule: some View {
-        let dotColor = isNavigationStatusCollapsed ? ChatColors.primaryText : Color.blue
+        let dotColor = isNavigationStatusCollapsed ? Color.green : Color.blue
         return Button {
             withAnimation(.interpolatingSpring(stiffness: 310, damping: 28)) {
                 isNavigationStatusCollapsed.toggle()
