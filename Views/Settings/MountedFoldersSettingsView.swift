@@ -18,16 +18,8 @@ private let mountUILogger = AppLogger(category: "MountedFoldersUI")
 private struct PendingMount: Identifiable {
     let id = UUID()
     let url: URL
-    /// Created while the Files picker still owns the selected URL's scope.
-    /// The confirmation sheet can be shown later without losing that grant.
-    let bookmark: Data
     var name: String
     var allowWrite: Bool
-}
-
-private struct PickedFolder {
-    let url: URL
-    let bookmark: Data
 }
 
 struct MountedFoldersSettingsView: View {
@@ -113,27 +105,21 @@ struct MountedFoldersSettingsView: View {
         // Let UIDocumentPicker own its normal dismissal after a selection.
         // Calling dismiss on its delegate callback races Files' own transition
         // and can leave the picker on screen. This matches the proven
-        // OpenMinis handoff while retaining Ze's immediate bookmark capture.
+        // OpenMinis handoff. The delegate only returns the selected URL so
+        // Files can complete its own transition before bookmark generation.
         .sheet(isPresented: $showingPicker) {
-            FolderPicker { result in
-                switch result {
-                case .success(let picked):
-                    let mount = PendingMount(
-                        url: picked.url,
-                        bookmark: picked.bookmark,
-                        name: Self.defaultMountName(for: picked.url),
-                        allowWrite: true
-                    )
-                    mountUILogger.info("FolderPicker captured bookmark for \(picked.url.path)")
-                    // The picker is already dismissing itself. Scheduling the
-                    // confirmation separately avoids a presentation request in
-                    // the delegate callback's UIKit transition.
-                    DispatchQueue.main.async {
-                        pendingMount = mount
-                        mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
-                    }
-                case .failure(let error):
-                    errorText = error.localizedDescription
+            FolderPicker { url in
+                let mount = PendingMount(
+                    url: url,
+                    name: Self.defaultMountName(for: url),
+                    allowWrite: true
+                )
+                // The picker is already dismissing itself. Scheduling the
+                // confirmation separately avoids a presentation request in
+                // the delegate callback's UIKit transition.
+                DispatchQueue.main.async {
+                    pendingMount = mount
+                    mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
                 }
             } onCancel: {
                 showingPicker = false
@@ -158,7 +144,6 @@ struct MountedFoldersSettingsView: View {
                     do {
                         _ = try model.add(
                             pickedURL: current.url,
-                            bookmark: current.bookmark,
                             customName: current.name,
                             userAllowWrite: current.allowWrite
                         )
@@ -409,7 +394,7 @@ private struct AddMountSheet: View {
 // MARK: - Folder picker
 
 private struct FolderPicker: UIViewControllerRepresentable {
-    let onPick: (Result<PickedFolder, Error>) -> Void
+    let onPick: (URL) -> Void
     let onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
@@ -424,29 +409,17 @@ private struct FolderPicker: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick, onCancel: onCancel) }
 
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (Result<PickedFolder, Error>) -> Void
+        let onPick: (URL) -> Void
         let onCancel: () -> Void
 
-        init(onPick: @escaping (Result<PickedFolder, Error>) -> Void, onCancel: @escaping () -> Void) {
+        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
             self.onPick = onPick
             self.onCancel = onCancel
         }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
-            do {
-                // On iOS, a security-scoped bookmark uses empty options.
-                // It must be produced inside this delegate callback, before
-                // the picker revokes its temporary URL grant.
-                let bookmark = try url.bookmarkData(
-                    options: [],
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                )
-                onPick(.success(PickedFolder(url: url, bookmark: bookmark)))
-            } catch {
-                onPick(.failure(error))
-            }
+            onPick(url)
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
@@ -486,7 +459,22 @@ final class MountedFoldersViewModel: ObservableObject {
     }
 
     @discardableResult
-    func add(pickedURL: URL, bookmark: Data, customName: String, userAllowWrite: Bool) throws -> MountedFolderEntry {
+    func add(pickedURL: URL, customName: String, userAllowWrite: Bool) throws -> MountedFolderEntry {
+        // Match the working OpenMinis lifecycle: return promptly from Files'
+        // delegate, then create the bookmark when the user confirms the mount.
+        // The scope result is only used to balance stopAccessing; a false value
+        // is not treated as a cancelled/invalid picker selection.
+        let startedScope = pickedURL.startAccessingSecurityScopedResource()
+        defer {
+            if startedScope {
+                pickedURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        let bookmark = try pickedURL.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
         let entry = try MountedFoldersManager.shared.add(
             pickedURL: pickedURL,
             bookmark: bookmark,
