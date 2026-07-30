@@ -36,9 +36,6 @@ private struct PickedFolder {
 struct MountedFoldersSettingsView: View {
     @StateObject private var model = MountedFoldersViewModel()
     @State private var showingPicker = false
-    /// Kept separate from `pendingMount` until the Files picker has fully
-    /// dismissed. Presenting both sheets in one transaction is ignored by iOS.
-    @State private var pickedMountAwaitingPickerDismissal: PendingMount?
     @State private var pendingMount: PendingMount?
     @State private var errorText: String?
 
@@ -108,7 +105,6 @@ struct MountedFoldersSettingsView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    pickedMountAwaitingPickerDismissal = nil
                     showingPicker = true
                 } label: {
                     Image(systemName: "plus")
@@ -116,14 +112,14 @@ struct MountedFoldersSettingsView: View {
                 .disabled(model.isAtCapacity)
             }
         }
-        .sheet(isPresented: $showingPicker, onDismiss: presentPickedMountAfterPickerDismissal) {
+        .sheet(isPresented: $showingPicker) {
             FolderPicker { result in
                 switch result {
                 case .success(let picked):
                     let url = picked.url
-                    // The bookmark was created in the document-picker callback.
-                    // Stage the confirmation sheet until this picker is gone.
-                    pickedMountAwaitingPickerDismissal = PendingMount(
+                    // FolderPicker invokes this only after its UIKit dismissal
+                    // completion. Keep the next presentation transaction separate.
+                    let mount = PendingMount(
                         url: url,
                         bookmark: picked.bookmark,
                         name: Self.defaultMountName(for: url),
@@ -131,13 +127,15 @@ struct MountedFoldersSettingsView: View {
                     )
                     showingPicker = false
                     mountUILogger.info("FolderPicker captured bookmark for \(url.path)")
+                    DispatchQueue.main.async {
+                        mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
+                        pendingMount = mount
+                    }
                 case .failure(let error):
-                    pickedMountAwaitingPickerDismissal = nil
                     showingPicker = false
                     errorText = error.localizedDescription
                 }
             } onCancel: {
-                pickedMountAwaitingPickerDismissal = nil
                 showingPicker = false
             }
         }
@@ -208,19 +206,6 @@ struct MountedFoldersSettingsView: View {
             initialVisibleInFiles: true,
             isReadOnlyFromFiles: false
         )
-    }
-
-    /// `onDismiss` runs after the Files picker leaves the presentation
-    /// hierarchy. Deferring once more starts the confirmation sheet in a
-    /// distinct presentation transaction.
-    private func presentPickedMountAfterPickerDismissal() {
-        guard let pickedMount = pickedMountAwaitingPickerDismissal else { return }
-        pickedMountAwaitingPickerDismissal = nil
-
-        DispatchQueue.main.async {
-            mountUILogger.info("present pendingMount id=\(pickedMount.id.uuidString) url=\(pickedMount.url.path)")
-            pendingMount = pickedMount
-        }
     }
 
     /// Trivial / meaningless segments often appearing at the end of an iCloud
@@ -445,6 +430,7 @@ private struct FolderPicker: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onPick: (Result<PickedFolder, Error>) -> Void
         let onCancel: () -> Void
+        private var isDismissing = false
 
         init(onPick: @escaping (Result<PickedFolder, Error>) -> Void, onCancel: @escaping () -> Void) {
             self.onPick = onPick
@@ -453,6 +439,21 @@ private struct FolderPicker: UIViewControllerRepresentable {
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
+            handlePickedFolder(url, from: controller)
+        }
+
+        // Some single-selection Files picker configurations invoke this older
+        // delegate callback instead of `didPickDocumentsAt`. Handle both so
+        // tapping Files' Open button always enters the same handoff path.
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentAt url: URL) {
+            handlePickedFolder(url, from: controller)
+        }
+
+        private func handlePickedFolder(
+            _ url: URL,
+            from controller: UIDocumentPickerViewController
+        ) {
+            guard !isDismissing else { return }
             do {
                 // On iOS, a security-scoped bookmark uses empty options.
                 // It must be produced inside this delegate callback, before
@@ -462,14 +463,37 @@ private struct FolderPicker: UIViewControllerRepresentable {
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
-                onPick(.success(PickedFolder(url: url, bookmark: bookmark)))
+                let pick = onPick
+                dismissPicker(controller) {
+                    pick(.success(PickedFolder(url: url, bookmark: bookmark)))
+                }
             } catch {
-                onPick(.failure(error))
+                let pick = onPick
+                dismissPicker(controller) {
+                    pick(.failure(error))
+                }
             }
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onCancel()
+            let cancel = onCancel
+            dismissPicker(controller) {
+                cancel()
+            }
+        }
+
+        /// The next SwiftUI sheet must not be requested until Files has really
+        /// left the UIKit presentation hierarchy.
+        private func dismissPicker(
+            _ controller: UIDocumentPickerViewController,
+            completion: @escaping () -> Void
+        ) {
+            guard !isDismissing else { return }
+            isDismissing = true
+
+            controller.dismiss(animated: true) {
+                DispatchQueue.main.async(execute: completion)
+            }
         }
     }
 }
