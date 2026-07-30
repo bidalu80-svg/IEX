@@ -484,6 +484,15 @@ struct AIChatView: View {
                                 }
                             }
                     }
+                    if !isNavigationStatusCollapsed {
+                        navigationStatusCapsule
+                            .matchedGeometryEffect(
+                                id: "navigation-status-capsule",
+                                in: navigationStatusCapsuleNamespace
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 2)
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     // Tool preview + input bar stacked at the bottom.
@@ -1979,8 +1988,7 @@ struct AIChatView: View {
                         in: navigationStatusCapsuleNamespace
                     )
             } else {
-                ZStack {
-                    VStack(spacing: legacyLayout ? 0 : -2) {
+                VStack(spacing: legacyLayout ? 0 : -2) {
             Button {
                 if let s = titlePillSession { titlePillEditSession = s }
             } label: {
@@ -2164,16 +2172,6 @@ struct AIChatView: View {
                     withAnimation(.easeInOut(duration: 0.35)) { fallbackPulseOpacity = 0 }
                 }
             }
-                    }
-                    navigationStatusCapsule
-                        .matchedGeometryEffect(
-                            id: "navigation-status-capsule",
-                            in: navigationStatusCapsuleNamespace
-                        )
-                        .offset(
-                            x: 0,
-                            y: legacyLayout ? 11 : 18
-                        )
                 }
             }
         }
@@ -2226,13 +2224,13 @@ struct AIChatView: View {
                     endPoint: .trailing
                 )
                 .frame(width: 40, height: 14)
-                .mask(navigationStatusDotMask)
                 .offset(x: reduceMotion ? 0 : (isNavigationStatusDotPulsing ? 26 : -26))
                 .animation(
                     .linear(duration: 1.35).repeatForever(autoreverses: false),
                     value: isNavigationStatusDotPulsing
                 )
             }
+            .mask(navigationStatusDotMask)
             .frame(width: 40, height: 14)
             .background(Color(UIColor.secondarySystemBackground), in: Capsule())
             .overlay {
