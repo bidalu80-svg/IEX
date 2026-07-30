@@ -277,6 +277,11 @@ struct AIChatView: View {
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @Environment(\.dismiss) private var dismiss
     @State private var inputFocused: Bool = false
+    /// Collapses the verbose principal-title status into its three-dot capsule.
+    /// This belongs to the navbar's Equatable key so a user tap updates the
+    /// toolbar once, while streaming tokens still leave it untouched.
+    @State private var isNavigationStatusCollapsed = false
+    @Namespace private var navigationStatusCapsuleNamespace
     @State private var inputHasSelection: Bool = false
     @State private var inputIsScrollable: Bool = false
     @State private var inputBarHeight: CGFloat = 0
@@ -1898,7 +1903,8 @@ struct AIChatView: View {
                 || !configStore.instances.isEmpty,
             fallbackTrigger: vm.fallbackTrigger,
             fallbackPulse: fallbackPulseOpacity,
-            titleLocked: titleIsVisuallyLocked
+            titleLocked: titleIsVisuallyLocked,
+            isStatusCollapsed: isNavigationStatusCollapsed
         )
     }
 
@@ -1962,7 +1968,16 @@ struct AIChatView: View {
         // 4 → 1 and group vertical padding 3 → 2 on legacy), so the stack's
         // total height — the thing the May-18/19/20 clip saga fought — is
         // unchanged and the top-clip fix does not regress.
-        return VStack(spacing: legacyLayout ? 0 : -2) {
+        return Group {
+            if isNavigationStatusCollapsed {
+                navigationStatusCapsule
+                    .matchedGeometryEffect(
+                        id: "navigation-status-capsule",
+                        in: navigationStatusCapsuleNamespace
+                    )
+            } else {
+                HStack(spacing: 6) {
+                    VStack(spacing: legacyLayout ? 0 : -2) {
             Button {
                 if let s = titlePillSession { titlePillEditSession = s }
             } label: {
@@ -2146,6 +2161,13 @@ struct AIChatView: View {
                     withAnimation(.easeInOut(duration: 0.35)) { fallbackPulseOpacity = 0 }
                 }
             }
+                    navigationStatusCapsule
+                        .matchedGeometryEffect(
+                            id: "navigation-status-capsule",
+                            in: navigationStatusCapsuleNamespace
+                        )
+                }
+            }
         }
         // [T-navbar-title-clip 2026-05-21] Nudge the whole legacy title
         // stack down so the first row clears the status-bar / Dynamic
@@ -2174,6 +2196,35 @@ struct AIChatView: View {
         .blur(radius: titleIsVisuallyLocked ? 8 : 0)
         .allowsHitTesting(!titleIsVisuallyLocked)
         .animation(.easeInOut(duration: 0.15), value: titleIsVisuallyLocked)
+    }
+
+    /// The same control occupies the compact slot beside the full status and
+    /// the principal-title slot after collapse. Its fixed hit target prevents
+    /// the navbar from resizing around the three visual dots.
+    private var navigationStatusCapsule: some View {
+        Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                isNavigationStatusCollapsed.toggle()
+            }
+        } label: {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(index == 0 ? Color.blue : ChatColors.tertiaryText)
+                        .frame(width: 3.5, height: 3.5)
+                }
+            }
+            .frame(width: 30, height: 22)
+            .background(Color(UIColor.secondarySystemBackground), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(Color(UIColor.separator).opacity(0.7), lineWidth: 0.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .accessibilityLabel(isNavigationStatusCollapsed ? "显示会话状态" : "隐藏会话状态")
+        .accessibilityHint("双击切换完整会话状态信息")
     }
 
     /// True when the current session's navbar title must render blurred —
@@ -4646,6 +4697,8 @@ private struct NavTitleKey: Equatable {
     /// gate too. Without this field the chat body unblurred on unlock while
     /// the navbar title stayed frozen at blur 8 (user report 2026-07-24).
     let titleLocked: Bool
+    /// User-controlled compact state for the principal status display.
+    let isStatusCollapsed: Bool
 }
 
 /// [T-ios-navbar-toolbar-host] Combined display key for the WHOLE toolbar:

@@ -925,7 +925,7 @@ struct TypingIndicator: View {
     @State private var sweepOffset: CGFloat = -1
 
     private static let label = "Ze正在思考中"
-    private static let sweepDuration: TimeInterval = 4
+    private static let sweepDuration: TimeInterval = 3
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -960,7 +960,7 @@ struct TypingIndicator: View {
     }
 
     /// The transparent ends let the state reset outside the glyphs, so each
-    /// 4-second repeat reads as a continuous left-to-right highlight.
+    /// 3-second repeat reads as a continuous left-to-right highlight.
     private var sweepMask: some View {
         GeometryReader { proxy in
             LinearGradient(
