@@ -2164,6 +2164,7 @@ struct AIChatView: View {
                     withAnimation(.easeInOut(duration: 0.35)) { fallbackPulseOpacity = 0 }
                 }
             }
+                    }
                     navigationStatusCapsule
                         .matchedGeometryEffect(
                             id: "navigation-status-capsule",
