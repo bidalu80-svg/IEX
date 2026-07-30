@@ -2211,7 +2211,7 @@ struct AIChatView: View {
     /// than a timeline renderer, keeps the three-dot wave on the compositor.
     private var navigationStatusCapsule: some View {
         let dotColor = isNavigationStatusCollapsed ? ChatColors.primaryText : Color.blue
-        Button {
+        return Button {
             withAnimation(.interpolatingSpring(stiffness: 310, damping: 28)) {
                 isNavigationStatusCollapsed.toggle()
             }
