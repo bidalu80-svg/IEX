@@ -276,11 +276,14 @@ struct AIChatView: View {
     @ObservedObject private var fontSettings = FontSettings.shared
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var inputFocused: Bool = false
     /// Collapses the verbose principal-title status into its three-dot capsule.
     /// This belongs to the navbar's Equatable key so a user tap updates the
     /// toolbar once, while streaming tokens still leave it untouched.
-    @State private var isNavigationStatusCollapsed = false
+    @AppStorage("chatNavigationStatusCollapsed")
+    private var isNavigationStatusCollapsed = false
+    @State private var isNavigationStatusDotPulsing = false
     @Namespace private var navigationStatusCapsuleNamespace
     @State private var inputHasSelection: Bool = false
     @State private var inputIsScrollable: Bool = false
@@ -1976,7 +1979,7 @@ struct AIChatView: View {
                         in: navigationStatusCapsuleNamespace
                     )
             } else {
-                HStack(spacing: 6) {
+                ZStack {
                     VStack(spacing: legacyLayout ? 0 : -2) {
             Button {
                 if let s = titlePillSession { titlePillEditSession = s }
@@ -2161,11 +2164,14 @@ struct AIChatView: View {
                     withAnimation(.easeInOut(duration: 0.35)) { fallbackPulseOpacity = 0 }
                 }
             }
-                    }
                     navigationStatusCapsule
                         .matchedGeometryEffect(
                             id: "navigation-status-capsule",
                             in: navigationStatusCapsuleNamespace
+                        )
+                        .offset(
+                            x: 0,
+                            y: legacyLayout ? 11 : 18
                         )
                 }
             }
@@ -2199,23 +2205,34 @@ struct AIChatView: View {
         .animation(.easeInOut(duration: 0.15), value: titleIsVisuallyLocked)
     }
 
-    /// The same control occupies the compact slot beside the full status and
-    /// the principal-title slot after collapse. Its fixed hit target prevents
-    /// the navbar from resizing around the three visual dots.
+    /// The same control occupies the centered lower slot while expanded and
+    /// the principal-title slot after collapse. A property animation, rather
+    /// than a timeline renderer, keeps the three-dot wave on the compositor.
     private var navigationStatusCapsule: some View {
+        let dotColor = isNavigationStatusCollapsed ? ChatColors.primaryText : Color.blue
         Button {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            withAnimation(.interpolatingSpring(stiffness: 310, damping: 28)) {
                 isNavigationStatusCollapsed.toggle()
             }
         } label: {
-            HStack(spacing: 3) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(index == 0 ? Color.blue : ChatColors.tertiaryText)
-                        .frame(width: 3.5, height: 3.5)
-                }
+            ZStack {
+                navigationStatusDotMask
+                    .foregroundStyle(dotColor.opacity(0.34))
+
+                LinearGradient(
+                    colors: [.clear, dotColor, .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 40, height: 14)
+                .mask(navigationStatusDotMask)
+                .offset(x: reduceMotion ? 0 : (isNavigationStatusDotPulsing ? 26 : -26))
+                .animation(
+                    .linear(duration: 1.35).repeatForever(autoreverses: false),
+                    value: isNavigationStatusDotPulsing
+                )
             }
-            .frame(width: 30, height: 22)
+            .frame(width: 40, height: 14)
             .background(Color(UIColor.secondarySystemBackground), in: Capsule())
             .overlay {
                 Capsule()
@@ -2224,8 +2241,25 @@ struct AIChatView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Capsule())
+        .onAppear {
+            isNavigationStatusDotPulsing = !reduceMotion
+        }
+        .onChange(of: reduceMotion) { shouldReduceMotion in
+            isNavigationStatusDotPulsing = !shouldReduceMotion
+        }
+        .animation(.easeInOut(duration: 0.22), value: isNavigationStatusCollapsed)
         .accessibilityLabel(isNavigationStatusCollapsed ? "显示会话状态" : "隐藏会话状态")
         .accessibilityHint("双击切换完整会话状态信息")
+    }
+
+    private var navigationStatusDotMask: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { _ in
+                Circle()
+                    .frame(width: 3.3, height: 3.3)
+            }
+        }
+        .frame(width: 40, height: 14)
     }
 
     /// True when the current session's navbar title must render blurred —
