@@ -24,9 +24,9 @@ final class ICloudBackupManager: ObservableObject {
 
         var displayName: String {
             switch self {
-            case .sessions: return "Sessions"
-            case .skillsAndMemories: return "Skills & Memories"
-            case .full: return "Full Backup"
+            case .sessions: return String(localized: "Sessions")
+            case .skillsAndMemories: return String(localized: "Skills & Memories")
+            case .full: return String(localized: "Full Backup")
             }
         }
 
@@ -57,11 +57,11 @@ final class ICloudBackupManager: ObservableObject {
         var description: String {
             switch self {
             case .sessions:
-                return "Chat history, media attachments, and session workspace files"
+                return String(localized: "Chat history, media attachments, and session workspace files")
             case .skillsAndMemories:
-                return "Skills, memory logs, and skill configuration files"
+                return String(localized: "Skills, memory logs, and skill configuration files")
             case .full:
-                return "Complete backup including sessions, skills, and memories"
+                return String(localized: "Complete backup including sessions, skills, and memories")
             }
         }
     }

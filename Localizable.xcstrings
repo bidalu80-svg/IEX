@@ -77497,6 +77497,214 @@
           }
         }
       }
+    },
+    "1 session and all messages" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个会话及其全部消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個會話及其全部訊息"
+          }
+        }
+      }
+    },
+    "%lld sessions and all messages" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个会话及其全部消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個會話及其全部訊息"
+          }
+        }
+      }
+    },
+    "Releases Storage" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "释放空间"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "釋放空間"
+          }
+        }
+      }
+    },
+    "Skills & Memories" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能与记忆"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能與記憶"
+          }
+        }
+      }
+    },
+    "Full Backup" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完整备份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完整備份"
+          }
+        }
+      }
+    },
+    "Chat history, media attachments, and session workspace files" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天记录、媒体附件和会话工作区文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天記錄、媒體附件和會話工作區檔案"
+          }
+        }
+      }
+    },
+    "Skills, memory logs, and skill configuration files" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能、记忆日志和技能配置文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能、記憶日誌和技能設定檔"
+          }
+        }
+      }
+    },
+    "Complete backup including sessions, skills, and memories" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含会话、技能和记忆的完整备份"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含會話、技能和記憶的完整備份"
+          }
+        }
+      }
+    },
+    "Desktop Safari" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "桌面 Safari"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "桌面 Safari"
+          }
+        }
+      }
+    },
+    "Mobile Safari" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动 Safari"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "行動 Safari"
+          }
+        }
+      }
+    },
+    "Alpine APK" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alpine APK 镜像"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alpine APK 鏡像"
+          }
+        }
+      }
+    },
+    "Python pip" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Python pip 镜像"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Python pip 鏡像"
+          }
+        }
+      }
+    },
+    "Node.js npm" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Node.js npm 镜像"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Node.js npm 鏡像"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

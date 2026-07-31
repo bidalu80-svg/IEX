@@ -3184,8 +3184,8 @@ private struct DeleteConfirmSheet: View {
                         VStack(alignment: .leading, spacing: 16) {
                             // Sessions
                             infoRow(
-                                title: "Sessions",
-                                value: "\(info.sessionCount) session\(info.sessionCount == 1 ? "" : "s") and all messages"
+                                title: String(localized: "Sessions"),
+                                value: sessionSummary(for: info.sessionCount)
                             )
 
                             // Files
@@ -3213,7 +3213,7 @@ private struct DeleteConfirmSheet: View {
                             }
 
                             // Storage
-                            infoRow(title: "Releases Storage", value: info.formattedSize)
+                            infoRow(title: String(localized: "Releases Storage"), value: info.formattedSize)
                         }
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3262,6 +3262,13 @@ private struct DeleteConfirmSheet: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func sessionSummary(for count: Int) -> String {
+        if count == 1 {
+            return String(localized: "1 session and all messages")
+        }
+        return String(localized: "\(count) sessions and all messages")
     }
 }
 

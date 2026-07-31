@@ -16,9 +16,9 @@ enum MirrorCategory: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .alpine: return "Alpine APK"
-        case .pip: return "Python pip"
-        case .npm: return "Node.js npm"
+        case .alpine: return String(localized: "Alpine APK")
+        case .pip: return String(localized: "Python pip")
+        case .npm: return String(localized: "Node.js npm")
         }
     }
 

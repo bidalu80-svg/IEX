@@ -149,9 +149,9 @@ enum UserAgentProfile: String {
 
     var displayName: String {
         switch self {
-        case .desktopSafari: return "Desktop Safari"
-        case .mobileSafari: return "Mobile Safari"
-        case .custom: return "Custom"
+        case .desktopSafari: return String(localized: "Desktop Safari")
+        case .mobileSafari: return String(localized: "Mobile Safari")
+        case .custom: return String(localized: "Custom")
         }
     }
 
