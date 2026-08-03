@@ -5078,7 +5078,7 @@ private struct ChatTrailingMenu: View, Equatable {
             Divider()
 
             Button { onTokenUsage() } label: {
-                Label(String(localized: "Token Usage"), systemImage: "number")
+                Label(String(localized: "Token Usage"), systemImage: "chart.bar.fill")
             }
 
             #if DEBUG
@@ -5294,7 +5294,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
 
         var tailGroup: [UIMenuElement] = [
             UIAction(title: String(localized: "Token Usage"),
-                     image: UIImage(systemName: "number")) { _ in coordinator.parent.onTokenUsage() },
+                     image: UIImage(systemName: "chart.bar.fill")) { _ in coordinator.parent.onTokenUsage() },
         ]
         #if DEBUG
         tailGroup.append(UIDeferredMenuElement.uncached { completion in

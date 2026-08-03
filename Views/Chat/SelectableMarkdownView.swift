@@ -290,7 +290,7 @@ struct SelectableMarkdownTheme {
     }
     var inlineCodeBackground: UIColor { zeInlineCodeBackgroundColor }
     var inlineCodeColor: UIColor { .systemBlue }
-    var blockquoteBarColor: UIColor { UIColor.systemOrange.withAlphaComponent(0.5) }
+    var blockquoteBarColor: UIColor { UIColor.systemBlue.withAlphaComponent(0.5) }
     var tableBorderColor: UIColor { UIColor.label.withAlphaComponent(0.25) }
 
     func headingFont(level: Int) -> UIFont {

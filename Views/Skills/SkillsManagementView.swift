@@ -101,7 +101,7 @@ struct SkillsManagementView: View {
                 for id in ids { store.deleteSkill(id) }
             }
         }
-        .navigationTitle("Skills")
+        .navigationTitle(String(localized: "Skills"))
         .searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: Text(String(localized: "Search skills")))
         .onAppear { store.reload() }
@@ -115,13 +115,13 @@ struct SkillsManagementView: View {
                             Text(key.label).tag(key.rawValue)
                         }
                     } label: {
-                        Text("Sort By")
+                        Text(String(localized: "Sort By"))
                     }
                     Button {
                         sortAscending.toggle()
                     } label: {
                         Label(
-                            sortAscending ? "Ascending" : "Descending",
+                            String(localized: sortAscending ? "Ascending" : "Descending"),
                             systemImage: sortAscending ? "arrow.up" : "arrow.down"
                         )
                     }
@@ -475,13 +475,14 @@ private struct SkillDetailView: View {
 
     private static func relativeTime(_ date: Date) -> String {
         let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "just now" }
+        if seconds < 60 { return String(localized: "just now") }
         let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes) min ago" }
+        if minutes < 60 { return String(localized: "\(minutes) min ago") }
         let hours = minutes / 60
-        if hours < 24 { return "\(hours) hr ago" }
+        if hours < 24 { return String(localized: "\(hours) hr ago") }
         let days = hours / 24
-        return "\(days) day\(days == 1 ? "" : "s") ago"
+        if days == 1 { return String(localized: "\(days) day ago") }
+        return String(localized: "\(days) days ago")
     }
 
     /// Latest modification date across all files in the skill directory.
@@ -511,7 +512,7 @@ private struct SkillDetailView: View {
                         Text(String(localized: "Name"))
                         Spacer()
                         if isEditingName {
-                            TextField("Skill name", text: $editingName, onCommit: {
+                            TextField(String(localized: "Skill name"), text: $editingName, onCommit: {
                                 commitNameEdit()
                             })
                             .textFieldStyle(.roundedBorder)
@@ -531,14 +532,14 @@ private struct SkillDetailView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    LabeledContent("Version", value: skill.version)
+                    LabeledContent(String(localized: "Version"), value: skill.version)
                     if let modDate = latestFileModDate {
-                        LabeledContent("Last Modified") {
+                        LabeledContent(String(localized: "Last Modified")) {
                             Text(Self.relativeTime(modDate))
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    LabeledContent("Source") {
+                    LabeledContent(String(localized: "Source")) {
                         switch skill.importSource {
                         case .url(let url):
                             Text(url)
@@ -565,7 +566,7 @@ private struct SkillDetailView: View {
                     if case .url = skill.importSource {
                         Button { updateFromURL() } label: {
                             HStack {
-                                Label("Update from URL", systemImage: "arrow.triangle.2.circlepath")
+                                Label(String(localized: "Update from URL"), systemImage: "arrow.triangle.2.circlepath")
                                 Spacer()
                                 if isUpdating {
                                     ProgressView()
@@ -581,7 +582,7 @@ private struct SkillDetailView: View {
 
                     Button { showFilePicker = true } label: {
                         Label {
-                            Text("Update from File…")
+                            Text(String(localized: "Update from File…"))
                         } icon: {
                             SettingsActionIcon(systemImage: "doc.badge.arrow.up", color: .blue)
                         }
@@ -594,7 +595,7 @@ private struct SkillDetailView: View {
                     } label: {
                         HStack {
                             Label {
-                                Text("Rescan from Disk")
+                                Text(String(localized: "Rescan from Disk"))
                             } icon: {
                                 SettingsActionIcon(systemImage: "arrow.clockwise", color: .orange)
                             }
@@ -633,7 +634,7 @@ private struct SkillDetailView: View {
 
                 // ── Body preview ──────────────────────────────────────
                 if !bodyPreview.isEmpty {
-                    Section("Description") {
+                    Section(String(localized: "Description")) {
                         Text(bodyPreview)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
@@ -642,7 +643,7 @@ private struct SkillDetailView: View {
                 }
 
                 // ── File list ─────────────────────────────────────────
-                Section("Files") {
+                Section(String(localized: "Files")) {
                     ForEach(skillFiles, id: \.self) { relativePath in
                         NavigationLink {
                             SkillFileDetailView(skillId: skillId, relativePath: relativePath)
@@ -680,7 +681,7 @@ private struct SkillDetailView: View {
                 Text(String(localized: "Skill not found.")).foregroundStyle(.secondary)
             }
         }
-        .navigationTitle(skill?.name ?? "Skill")
+        .navigationTitle(skill?.name ?? String(localized: "Skill"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -864,14 +865,7 @@ private struct SkillDetailView: View {
     }
 
     private func refreshUpdatedAgo() {
-        guard let skill else { updatedAgoText = ""; return }
-        let elapsed = Date().timeIntervalSince(skill.updatedAt)
-        switch elapsed {
-        case ..<60:      updatedAgoText = "just now"
-        case ..<3600:    updatedAgoText = "\(Int(elapsed / 60)) min ago"
-        case ..<86400:   updatedAgoText = "\(Int(elapsed / 3600)) hr ago"
-        default:         updatedAgoText = "\(Int(elapsed / 86400)) days ago"
-        }
+        updatedAgoText = skill.map { Self.relativeTime($0.updatedAt) } ?? ""
     }
 }
 
@@ -955,7 +949,7 @@ struct ZeSkillsBrowserView: View {
                     .animation(.spring(response: 0.3), value: coordinator.hudState)
                 }
             }
-            .navigationTitle("Ze Skills")
+            .navigationTitle(String(localized: "Ze Skills"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
