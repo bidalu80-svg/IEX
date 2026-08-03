@@ -5101,7 +5101,7 @@ private struct SettingsSheet: View {
 
                 }
 
-                Section {
+                Section("About") {
                     NavigationLink {
                         AboutProjectView()
                     } label: {
