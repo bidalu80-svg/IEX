@@ -5098,6 +5098,20 @@ private struct SettingsSheet: View {
                                 .background(.gray, in: Circle())
                         }
                     }
+
+                    NavigationLink {
+                        AboutProjectView()
+                    } label: {
+                        Label {
+                            Text("About")
+                        } icon: {
+                            Image(systemName: "iphone")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.blue, in: Circle())
+                        }
+                    }
                 }
 
             }
@@ -5247,6 +5261,45 @@ private struct SettingsSheet: View {
         deepLink.pendingSettingsTarget = nil
     }
 
+}
+
+private struct AboutProjectView: View {
+    private var marketingVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                Spacer(minLength: 88)
+
+                Image("ZeAssistantAvatar")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 112, height: 112)
+
+                Text(String(format: String(localized: "Version %@"), marketingVersion))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Text(String(localized: "Author ID: BLANK"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Text(String(localized: "Ze Assistant is your portable assistant. The best privacy strategy is to let it run."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+
+                Spacer(minLength: 88)
+            }
+            .frame(maxWidth: .infinity, minHeight: 500)
+            .padding(.horizontal, 24)
+        }
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 }
 
 #Preview {

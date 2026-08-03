@@ -3564,6 +3564,28 @@
         }
       }
     },
+    "Author ID: BLANK" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Author ID: BLANK"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作者 ID：BLANK"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作者 ID：BLANK"
+          }
+        }
+      }
+    },
     "About %lld local records will upload to iCloud. Estimated time ~%lld hr depending on iCloud throttling. You can pause or cancel any time." : {
       "localizations" : {
         "en" : {
@@ -38401,6 +38423,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ze 正在思考"
+          }
+        }
+      }
+    },
+    "Ze Assistant is your portable assistant. The best privacy strategy is to let it run." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ze Assistant is your portable assistant. The best privacy strategy is to let it run."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ze助手是您的随身助手，最好的隐私策略给予运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ze 助手是您的隨身助手，最好的隱私策略給予運行"
           }
         }
       }
