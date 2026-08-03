@@ -77705,6 +77705,134 @@
           }
         }
       }
+    },
+    "Already compacted up to this point." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已压缩到这里，无法重复压缩。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已壓縮到這裡，無法重複壓縮。"
+          }
+        }
+      }
+    },
+    "Nothing to compact." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可压缩的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有可壓縮的內容。"
+          }
+        }
+      }
+    },
+    "Compaction cancelled." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消压缩。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消壓縮。"
+          }
+        }
+      }
+    },
+    "Compaction failed: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩失败：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "壓縮失敗：%@"
+          }
+        }
+      }
+    },
+    "Compaction failed: could not anchor marker to a persisted message." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩失败：无法将压缩标记关联到已保存的消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "壓縮失敗：無法將壓縮標記關聯到已儲存的訊息。"
+          }
+        }
+      }
+    },
+    "Compacting conversation... (splitting into parts)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩对话…（正在拆分内容）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在壓縮對話…（正在拆分內容）"
+          }
+        }
+      }
+    },
+    "Compacting conversation... (merging summaries)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩对话…（正在合并摘要）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在壓縮對話…（正在合併摘要）"
+          }
+        }
+      }
+    },
+    "Compacting conversation... (%lld chars)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩对话…（%lld 个字符）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在壓縮對話…（%lld 個字元）"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

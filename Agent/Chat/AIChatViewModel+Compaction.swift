@@ -627,7 +627,7 @@ extension AIChatViewModel {
                     logger.info("[Compact] prev marker found (v\(prev.version)); effectiveStartIdx=\(effectiveStartIdx) (prevAnchor/firstKept=\(prevId.prefix(8)) at idx=\(prevIdx))")
                 } else {
                     logger.info("[Compact] prev marker (id=\(prevId.prefix(8))) at idx=\(prevIdx) already covers our range (proposedStart=\(proposedStart) >= endExclusive=\(endExclusive)) — aborting")
-                    statusMsg.content = "Already compacted up to this point."
+                    statusMsg.content = String(localized: "Already compacted up to this point.")
                     statusMsg.isCompactLoading = false
                     return
                 }
@@ -636,7 +636,7 @@ extension AIChatViewModel {
 
         guard effectiveStartIdx < endExclusive else {
             logger.info("[Compact] empty effective range — aborting (effectiveStartIdx=\(effectiveStartIdx) endExclusive=\(endExclusive))")
-            statusMsg.content = "Nothing to compact."
+            statusMsg.content = String(localized: "Nothing to compact.")
             statusMsg.isCompactLoading = false
             return
         }
@@ -660,12 +660,16 @@ extension AIChatViewModel {
             try Task.checkCancellation()
         } catch is CancellationError {
             logger.info("[Compact] Cancelled by user")
-            statusMsg.content = "Compaction cancelled."
+            statusMsg.content = String(localized: "Compaction cancelled.")
             statusMsg.isCompactLoading = false
             return
         } catch {
             logger.error("[Compact] Summary generation failed: \(error)")
-            statusMsg.content = "Compaction failed: \(error.localizedDescription)"
+            statusMsg.content = String(
+                format: String(localized: "Compaction failed: %@"),
+                locale: .current,
+                error.localizedDescription
+            )
             statusMsg.isCompactLoading = false
             return
         }
@@ -699,7 +703,7 @@ extension AIChatViewModel {
         }
         guard let lastCompactedMessageId = lcmIdResolved else {
             logger.error("[Compact] Cannot write v2 marker: no agentHistory entry in [0..\(endExclusive)) has a persisted dbMessageId. Aborting compact.")
-            statusMsg.content = "Compaction failed: could not anchor marker to a persisted message."
+            statusMsg.content = String(localized: "Compaction failed: could not anchor marker to a persisted message.")
             statusMsg.isCompactLoading = false
             return
         }
@@ -900,7 +904,7 @@ extension AIChatViewModel {
             let secondHalf = Array(messages[mid...])
 
             logger.info("[Compact] Splitting \(messages.count) messages into \(firstHalf.count) + \(secondHalf.count) (depth=\(depth))")
-            statusMsg.content = "Compacting conversation... (splitting into parts)"
+            statusMsg.content = String(localized: "Compacting conversation... (splitting into parts)")
 
             let summary1 = try await generateCompactSummaryWithSplitting(messages: firstHalf, statusMsg: statusMsg, depth: depth + 1)
             try Task.checkCancellation()
@@ -908,7 +912,7 @@ extension AIChatViewModel {
             try Task.checkCancellation()
 
             // Merge the two summaries into one
-            statusMsg.content = "Compacting conversation... (merging summaries)"
+            statusMsg.content = String(localized: "Compacting conversation... (merging summaries)")
             let mergeInput = """
             Merge these partial summaries into a single cohesive context summary. \
             Frame everything as past events (what was asked, what was done) rather than as \
@@ -1038,7 +1042,11 @@ extension AIChatViewModel {
             switch chunk {
             case .text(let delta):
                 responseText += delta
-                statusMsg?.content = "Compacting conversation... (\(responseText.count) chars)"
+                statusMsg?.content = String(
+                    format: String(localized: "Compacting conversation... (%lld chars)"),
+                    locale: .current,
+                    Int64(responseText.count)
+                )
             case .finished, .usage, .started:
                 break
             }
