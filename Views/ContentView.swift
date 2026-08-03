@@ -5099,6 +5099,9 @@ private struct SettingsSheet: View {
                         }
                     }
 
+                }
+
+                Section {
                     NavigationLink {
                         AboutProjectView()
                     } label: {
@@ -5276,7 +5279,7 @@ private struct AboutProjectView: View {
                 Image("ZeAssistantAvatar")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 112, height: 112)
+                    .frame(width: 76, height: 76)
 
                 Text(String(format: String(localized: "Version %@"), marketingVersion))
                     .font(.subheadline)
