@@ -1942,6 +1942,147 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
     var agentHistory: [AgentMessage] = []
 
+    // MARK: - Assistant response feedback
+
+    /// Feedback is intentionally small and session-scoped. It is synthesized
+    /// into the next inference-only context, never into the persisted chat log.
+    private static let assistantResponseFeedbackDefaultsKey = "ze.assistantResponseFeedback.v1"
+    private static let maxAssistantResponseFeedbackRecords = 8
+    private var assistantResponseFeedbackSessionId: String?
+    private var assistantResponseFeedbackRecords: [String: AssistantResponseFeedbackRecord] = [:]
+    private var transientAssistantResponseFeedbackRecords: [String: AssistantResponseFeedbackRecord] = [:]
+
+    /// Returns the stored assessment for a rendered assistant message.
+    func replyFeedback(for message: ChatMessage) -> AssistantResponseFeedback? {
+        guard message.role == .assistant,
+              let fingerprint = Self.assistantResponseFingerprint(for: Self.replyText(for: message))
+        else { return nil }
+
+        if let sessionId {
+            loadAssistantResponseFeedbackIfNeeded(for: sessionId)
+            return assistantResponseFeedbackRecords[fingerprint]?.feedback
+        }
+        return transientAssistantResponseFeedbackRecords[fingerprint]?.feedback
+    }
+
+    /// Upserts or removes a reply assessment. The next model request receives
+    /// the recent records as private context through effectiveAgentHistory().
+    func recordReplyFeedback(for message: ChatMessage, feedback: AssistantResponseFeedback?) {
+        guard message.role == .assistant else { return }
+        let text = Self.replyText(for: message)
+        guard let fingerprint = Self.assistantResponseFingerprint(for: text) else { return }
+
+        if let sessionId {
+            loadAssistantResponseFeedbackIfNeeded(for: sessionId)
+            if let feedback {
+                assistantResponseFeedbackRecords[fingerprint] = AssistantResponseFeedbackRecord(
+                    fingerprint: fingerprint,
+                    responseExcerpt: Self.assistantResponseExcerpt(from: text),
+                    feedback: feedback,
+                    updatedAt: Date()
+                )
+            } else {
+                assistantResponseFeedbackRecords.removeValue(forKey: fingerprint)
+            }
+            persistAssistantResponseFeedback(for: sessionId)
+        } else if let feedback {
+            transientAssistantResponseFeedbackRecords[fingerprint] = AssistantResponseFeedbackRecord(
+                fingerprint: fingerprint,
+                responseExcerpt: Self.assistantResponseExcerpt(from: text),
+                feedback: feedback,
+                updatedAt: Date()
+            )
+        } else {
+            transientAssistantResponseFeedbackRecords.removeValue(forKey: fingerprint)
+        }
+    }
+
+    /// The recent, selected assessments to pass to the model for this VM.
+    func recentAssistantResponseFeedback() -> [AssistantResponseFeedbackRecord] {
+        let records: [AssistantResponseFeedbackRecord]
+        if let sessionId {
+            loadAssistantResponseFeedbackIfNeeded(for: sessionId)
+            records = Array(assistantResponseFeedbackRecords.values)
+        } else {
+            records = Array(transientAssistantResponseFeedbackRecords.values)
+        }
+        return records.sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    static func replyText(for message: ChatMessage) -> String {
+        let blockText = message.blocks.compactMap { block -> String? in
+            guard case .text = block.kind else { return nil }
+            return block.content
+        }.joined(separator: "\n\n")
+        return blockText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? message.content
+            : blockText
+    }
+
+    static func assistantResponseFingerprint(for text: String) -> String? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        // FNV-1a is deterministic, fast, and avoids adding a cryptographic
+        // dependency solely to keep feedback selection stable across reloads.
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in normalized.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx-%08llx", hash, UInt64(normalized.utf8.count))
+    }
+
+    static func assistantResponseExcerpt(from text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(normalized.prefix(360))
+    }
+
+    private func loadAssistantResponseFeedbackIfNeeded(for sessionId: String) {
+        guard assistantResponseFeedbackSessionId != sessionId else { return }
+        assistantResponseFeedbackSessionId = sessionId
+        guard let data = UserDefaults.standard.data(forKey: Self.assistantResponseFeedbackDefaultsKey) else {
+            assistantResponseFeedbackRecords = [:]
+            return
+        }
+        do {
+            let stored = try JSONDecoder().decode([String: [AssistantResponseFeedbackRecord]].self, from: data)
+            assistantResponseFeedbackRecords = Dictionary(
+                uniqueKeysWithValues: (stored[sessionId] ?? []).map { ($0.fingerprint, $0) }
+            )
+        } catch {
+            assistantResponseFeedbackRecords = [:]
+            logger.warning("[ReplyFeedback] Ignoring unreadable feedback records: \(error.localizedDescription)")
+        }
+    }
+
+    private func persistAssistantResponseFeedback(for sessionId: String) {
+        var stored: [String: [AssistantResponseFeedbackRecord]] = [:]
+        if let data = UserDefaults.standard.data(forKey: Self.assistantResponseFeedbackDefaultsKey) {
+            do {
+                stored = try JSONDecoder().decode([String: [AssistantResponseFeedbackRecord]].self, from: data)
+            } catch {
+                logger.warning("[ReplyFeedback] Replacing unreadable feedback records: \(error.localizedDescription)")
+            }
+        }
+
+        let records = assistantResponseFeedbackRecords.values
+            .sorted { $0.updatedAt > $1.updatedAt }
+        stored[sessionId] = Array(records.prefix(Self.maxAssistantResponseFeedbackRecords))
+
+        do {
+            UserDefaults.standard.set(
+                try JSONEncoder().encode(stored),
+                forKey: Self.assistantResponseFeedbackDefaultsKey
+            )
+        } catch {
+            logger.error("[ReplyFeedback] Failed to persist feedback records: \(error.localizedDescription)")
+        }
+    }
+
     #if DEBUG
     /// [T-ios-log-noise-reduction] High-water mark of how many agentHistory
     /// entries the Debug `📋 agentHistory[i]` dump has already printed. The

@@ -1418,11 +1418,42 @@ extension AIChatViewModel {
     }
 
     func effectiveAgentHistory() -> [AgentMessage] {
-        let result = effectiveAgentHistoryUncounted()
+        var result = effectiveAgentHistoryUncounted()
+        let feedback = recentAssistantResponseFeedback()
+        if !feedback.isEmpty,
+           let userIndex = result.indices.reversed().first(where: { index in
+               result[index].role == .user && result[index].parts.contains { part in
+                   if case .text = part { return true }
+                   return false
+               }
+           }) {
+            // Add feedback to a real user-text turn instead of a standalone
+            // message. This preserves provider role alternation and avoids
+            // disrupting a tool_result-only handoff.
+            result[userIndex].parts.insert(.text(Self.assistantResponseFeedbackContext(feedback)), at: 0)
+        }
         // One-line breadcrumb on every inference call so a "summary-only"
         // regression is visible in logs without scraping agent traces.
-        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil")")
+        logger.info("[Compact] effectiveAgentHistory: returning \(result.count) msg(s) from agentHistory.count=\(self.agentHistory.count) markerId=\(self.cachedLatestMarker?.id.prefix(8) ?? "nil") replyFeedback=\(feedback.count)")
         return result
+    }
+
+    private static func assistantResponseFeedbackContext(_ records: [AssistantResponseFeedbackRecord]) -> String {
+        let lines = records.map { record in
+            let sentiment = record.feedback == .positive ? "Positive" : "Negative"
+            // Keep a quoted answer from accidentally terminating the wrapper.
+            let excerpt = record.responseExcerpt
+                .replacingOccurrences(of: "<", with: "[")
+                .replacingOccurrences(of: ">", with: "]")
+            return "- \(sentiment): \"\(excerpt)\""
+        }.joined(separator: "\n")
+        return """
+        <assistant-response-feedback>
+        The user rated earlier assistant replies in this conversation. Positive means the reply met the user's expectation. Negative means it did not. Use this feedback to improve future answers. Do not mention these ratings unless the user asks.
+        \(lines)
+        </assistant-response-feedback>
+
+        """
     }
 
     func effectiveAgentHistoryUncounted() -> [AgentMessage] {

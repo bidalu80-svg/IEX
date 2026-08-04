@@ -163,6 +163,24 @@ enum ChatMessageRole {
     case systemInfo
 }
 
+/// A user's assessment of a completed assistant response. The assessment is
+/// kept separate from the rendered message so it can be added to a later model
+/// request without changing the conversation transcript.
+enum AssistantResponseFeedback: String, Codable, Equatable {
+    case positive
+    case negative
+}
+
+/// The small, session-scoped record retained for model-facing reply feedback.
+/// `fingerprint` is derived from reply text because ChatMessage UUIDs are
+/// recreated when a session is loaded from persistence.
+struct AssistantResponseFeedbackRecord: Codable, Equatable {
+    let fingerprint: String
+    let responseExcerpt: String
+    let feedback: AssistantResponseFeedback
+    let updatedAt: Date
+}
+
 /// Execution status of a tool block.
 enum ToolBlockStatus: Equatable {
     case streaming(bytes: Int)

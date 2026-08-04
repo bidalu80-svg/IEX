@@ -1015,6 +1015,12 @@ final class CellStateBridgeV2: ObservableObject {
     /// Token usage visibility — toggled by double-tap on block cells, read by footer.
     @Published var showUsage: Bool = false
     @Published var usageContentVisible: Bool = false
+    /// Selection for the reply action bar, restored from the session feedback store.
+    @Published var replyFeedback: AssistantResponseFeedback?
+    /// Sends a changed assessment to the view model for model-facing context.
+    @Published var onReplyFeedback: ((AssistantResponseFeedback?) -> Void)?
+    /// Set by the coordinator once this reply has fully completed.
+    @Published var showsCompletionActions: Bool = false
     /// Compact summary — presented from overlay outside cell tree for animation.
     var onShowCompactSummary: ((String) -> Void)?
 }

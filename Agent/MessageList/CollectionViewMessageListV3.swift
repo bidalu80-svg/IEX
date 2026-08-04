@@ -356,7 +356,7 @@ private struct BridgedAssistantBlockV3: View {
     }
 }
 
-/// Footer: typing indicator, error, resume banner, token usage.
+/// Footer: typing indicator, error, resume banner, token usage, reply actions.
 /// V3: No GeometryReader. Sheet moved to zero-size overlay to prevent
 /// inflated self-sizing from sheet-capable view modifiers.
 private struct BridgedAssistantFooterV3: View {
@@ -385,7 +385,16 @@ private struct BridgedAssistantFooterV3: View {
         let showError = message.error != nil
         let showResume = bridge.canResume && message.error == nil
         let showUsageRow = message.streamInterruptCount > 0 || bridge.showUsage
-        return showTyping || showError || showResume || showUsageRow
+        return showTyping || showError || showResume || showUsageRow || bridge.showsCompletionActions
+    }
+
+    private var replyText: String {
+        message.blocks
+            .compactMap { block in
+                if case .text = block.kind { return block.content }
+                return nil
+            }
+            .joined(separator: "\n\n")
     }
 
     var body: some View {
@@ -417,6 +426,10 @@ private struct BridgedAssistantFooterV3: View {
                     }
                     Spacer()
                 }
+            }
+
+            if bridge.showsCompletionActions {
+                completionActionBar
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -492,6 +505,68 @@ private struct BridgedAssistantFooterV3: View {
     }
 
     // MARK: - Footer sub-views
+
+    private var completionActionBar: some View {
+        HStack(spacing: 2) {
+            completionActionButton(
+                systemImage: "doc.on.doc",
+                accessibilityLabel: String(localized: "Copy")
+            ) {
+                UIPasteboard.general.string = replyText
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+
+            completionActionButton(
+                systemImage: bridge.replyFeedback == .positive ? "hand.thumbsup.fill" : "hand.thumbsup",
+                isSelected: bridge.replyFeedback == .positive,
+                accessibilityLabel: "点赞"
+            ) {
+                toggleFeedback(.positive)
+            }
+
+            completionActionButton(
+                systemImage: bridge.replyFeedback == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                isSelected: bridge.replyFeedback == .negative,
+                accessibilityLabel: "踩"
+            ) {
+                toggleFeedback(.negative)
+            }
+
+            completionActionButton(
+                systemImage: "arrow.clockwise",
+                accessibilityLabel: String(localized: "Retry"),
+                action: bridge.onRetry
+            )
+            .disabled(bridge.onRetry == nil)
+        }
+        .padding(.top, 1)
+    }
+
+    private func completionActionButton(
+        systemImage: String,
+        isSelected: Bool = false,
+        accessibilityLabel: String,
+        action: (() -> Void)?
+    ) -> some View {
+        Button {
+            action?()
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 32, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? Color.accentColor : ChatColors.secondaryText)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func toggleFeedback(_ feedback: AssistantResponseFeedback) {
+        let selectedFeedback: AssistantResponseFeedback? = bridge.replyFeedback == feedback ? nil : feedback
+        bridge.replyFeedback = selectedFeedback
+        bridge.onReplyFeedback?(selectedFeedback)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
 
     @ViewBuilder
     private func inlineError(_ error: String) -> some View {
@@ -1192,6 +1267,16 @@ extension CollectionViewMessageListV3 {
             bridge.toolSnapshots = vm.toolSnapshots
             bridge.autoRetryAttempt = isLast ? vm.autoRetryAttempt : 0
             bridge.autoRetryCountdown = isLast ? vm.autoRetryCountdown : 0
+            bridge.showsCompletionActions = message.role == .assistant
+                && !message.isCompactedHistory
+                && !vm.isProcessing
+                && message.error == nil
+                && Self.hasReplyText(message)
+            bridge.replyFeedback = bridge.showsCompletionActions ? vm.replyFeedback(for: message) : nil
+            bridge.onReplyFeedback = bridge.showsCompletionActions ? { [weak vm, weak message] feedback in
+                guard let vm, let message else { return }
+                vm.recordReplyFeedback(for: message, feedback: feedback)
+            } : nil
             // [T-ios-session-status-mismatch] Defense-in-depth: even if vm.canResume
             // is somehow stale-true and vm.isProcessing hasn't flipped yet, do NOT
             // show the "Interrupted — tap Resume" banner while SessionActivityTracker
@@ -1276,6 +1361,13 @@ extension CollectionViewMessageListV3 {
                 bridge.onCompact = { compact?(message.id) }
             } else {
                 bridge.onRetry = nil; bridge.onEdit = nil; bridge.onCompact = nil
+            }
+        }
+
+        private static func hasReplyText(_ message: ChatMessage) -> Bool {
+            message.blocks.contains { block in
+                guard case .text = block.kind else { return false }
+                return !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         }
 
@@ -2045,7 +2137,12 @@ extension CollectionViewMessageListV3 {
                     // double-tap), the toggle triggers a snapshot refresh
                     // which re-evaluates this condition.
                     let isLastAssistant = (message.id == messages.last(where: { $0.role == .assistant })?.id)
+                    let hasCompletionActions = !vm.isProcessing
+                        && !message.isCompactedHistory
+                        && message.error == nil
+                        && Self.hasReplyText(message)
                     let needsFooter = isLastAssistant
+                        || hasCompletionActions
                         || message.error != nil
                         || message.streamInterruptCount > 0
                         || (cellBridges[message.id]?.showUsage == true)
@@ -2091,6 +2188,10 @@ extension CollectionViewMessageListV3 {
                         let showsResume = isLastMsg && !hasError
                             && vm.canResume && !vm.isProcessing
                         let isActive = isLastMsg && vm.isProcessing
+                        let showsCompletionActions = !vm.isProcessing
+                            && !(footerMsg?.isCompactedHistory ?? true)
+                            && !hasError
+                            && footerMsg.map(Self.hasReplyText) == true
                         footerProminent = hasError || showsResume || isActive
                         layout.setFooterHug(!footerProminent, at: i)
                     }
@@ -2116,7 +2217,7 @@ extension CollectionViewMessageListV3 {
                         // closer to the real height keeps the first-display
                         // correction (and its scroll shift) small.
                         // (footerProminent computed above, pre-guard.)
-                        layout.setEstimatedHeight(footerProminent ? 48 : 4, at: i)
+                        layout.setEstimatedHeight(footerProminent ? 48 : (showsCompletionActions ? 36 : 4), at: i)
 
                     case .assistantBlock(let msgId, let blockId):
                         guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { continue }
