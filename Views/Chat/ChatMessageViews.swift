@@ -289,7 +289,6 @@ struct ChatMessageRow: View {
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 220, alignment: .leading)
 
             if let onWithdraw {
                 Button {
@@ -305,15 +304,6 @@ struct ChatMessageRow: View {
             }
         }
         .foregroundStyle(ChatColors.secondaryText)
-        .padding(.leading, 10)
-        .padding(.trailing, 3)
-        .padding(.vertical, 5)
-        .background(ChatColors.secondaryBg)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(ChatColors.secondaryText.opacity(0.14), lineWidth: 1)
-        }
         .accessibilityLabel(userDisplayText.isEmpty
             ? String(localized: "Queued")
             : "\(String(localized: "Queued")): \(userDisplayText)")

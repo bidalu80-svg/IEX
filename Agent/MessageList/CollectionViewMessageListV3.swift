@@ -2564,7 +2564,7 @@ extension CollectionViewMessageListV3 {
             // estimate in sync prevents a queued append from briefly allocating
             // the old multi-line bubble height and shifting the message list.
             if message.isQueued {
-                return attachH + 29
+                return attachH + 24
             }
 
             guard !text.isEmpty else {
