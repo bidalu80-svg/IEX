@@ -278,6 +278,47 @@ struct ChatMessageRow: View {
         return text
     }
 
+    /// A queued prompt is an insertion point in the active turn, not a normal
+    /// sent message. Keep it compact so it reads as a pending inline action.
+    private var queuedMessageIndicator: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 11, weight: .semibold))
+
+            Text(userDisplayText.isEmpty ? String(localized: "Queued") : userDisplayText)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 220, alignment: .leading)
+
+            if let onWithdraw {
+                Button {
+                    onWithdraw()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Cancel"))
+            }
+        }
+        .foregroundStyle(ChatColors.secondaryText)
+        .padding(.leading, 10)
+        .padding(.trailing, 3)
+        .padding(.vertical, 5)
+        .background(ChatColors.secondaryBg)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(ChatColors.secondaryText.opacity(0.14), lineWidth: 1)
+        }
+        .accessibilityLabel(userDisplayText.isEmpty
+            ? String(localized: "Queued")
+            : "\(String(localized: "Queued")): \(userDisplayText)")
+    }
+
     private var userRow: some View {
         HStack {
             Spacer(minLength: 60)
@@ -291,36 +332,18 @@ struct ChatMessageRow: View {
                     QueuedAttachmentPreview(attachments: message.inputAttachments)
                 }
 
-                if !userDisplayText.isEmpty {
-                    HStack(spacing: 6) {
-                        Text(userDisplayText)
-                            .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
-                            .foregroundStyle(message.isQueued ? ChatColors.secondaryText : ChatColors.primaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 18)
-                                    .fill(message.isQueued ? Color.clear : ChatColors.userBubble)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18)
-                                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                                    .foregroundStyle(ChatColors.secondaryText.opacity(0.5))
-                                    .opacity(message.isQueued ? 1 : 0)
-                            )
-
-                        if message.isQueued {
-                            if let onWithdraw {
-                                Button {
-                                    onWithdraw()
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 22))
-                                        .foregroundStyle(.red)
-                                }
-                            }
-                        }
-                    }
+                if message.isQueued {
+                    queuedMessageIndicator
+                } else if !userDisplayText.isEmpty {
+                    Text(userDisplayText)
+                        .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
+                        .foregroundStyle(ChatColors.primaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18)
+                                .fill(ChatColors.userBubble)
+                        )
                 }
             }
             .modifier(ZeOpenURLHandler())

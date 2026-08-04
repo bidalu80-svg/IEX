@@ -2559,6 +2559,14 @@ extension CollectionViewMessageListV3 {
                 attachH = rows * 70 + 6 /*VStack spacing*/
             }
 
+            // Queued prompts render as the compact inline insertion indicator
+            // in ChatMessageRow, never as a wrapped user bubble. Keeping this
+            // estimate in sync prevents a queued append from briefly allocating
+            // the old multi-line bubble height and shifting the message list.
+            if message.isQueued {
+                return attachH + 29
+            }
+
             guard !text.isEmpty else {
                 // Attachment-only message: return tiles height if any, else nil
                 // so the caller uses the coarse estimate (covers oddball cases).
