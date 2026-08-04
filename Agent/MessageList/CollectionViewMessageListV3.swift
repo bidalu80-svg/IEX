@@ -2179,6 +2179,7 @@ extension CollectionViewMessageListV3 {
                     // / typing indicator keep the full itemSpacing (user report
                     // 2026-07-21). Mirrors BridgedAssistantFooterV3's sections.
                     var footerProminent = false
+                    var showsCompletionActions = false
                     if case .assistantFooter(let footerMsgId) = item {
                         let footerMsg = messageIndex[footerMsgId].flatMap {
                             $0 < messages.count ? messages[$0] : nil
@@ -2188,7 +2189,7 @@ extension CollectionViewMessageListV3 {
                         let showsResume = isLastMsg && !hasError
                             && vm.canResume && !vm.isProcessing
                         let isActive = isLastMsg && vm.isProcessing
-                        let showsCompletionActions = !vm.isProcessing
+                        showsCompletionActions = !vm.isProcessing
                             && !(footerMsg?.isCompactedHistory ?? true)
                             && !hasError
                             && footerMsg.map(Self.hasReplyText) == true
