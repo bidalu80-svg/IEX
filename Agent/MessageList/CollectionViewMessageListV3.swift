@@ -509,7 +509,7 @@ private struct BridgedAssistantFooterV3: View {
     private var completionActionBar: some View {
         HStack(spacing: 2) {
             completionActionButton(
-                systemImage: "doc.on.doc",
+                systemImage: "square.on.square",
                 accessibilityLabel: String(localized: "Copy")
             ) {
                 UIPasteboard.general.string = replyText
