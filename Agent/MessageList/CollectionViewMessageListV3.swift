@@ -363,6 +363,13 @@ private struct BridgedAssistantFooterV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat
+    @State private var transientCompletionAction: CompletionAction?
+
+    private enum CompletionAction: Equatable {
+        case copy
+        case play
+        case retry
+    }
 
     // showUsage and usageContentVisible are on bridge, toggled by double-tap on block cells.
 
@@ -509,17 +516,25 @@ private struct BridgedAssistantFooterV3: View {
     private var completionActionBar: some View {
         HStack(spacing: 2) {
             completionActionButton(
-                systemImage: "doc.on.doc",
+                systemImage: transientCompletionAction == .copy ? "checkmark" : "rectangle.on.rectangle",
+                isSelected: transientCompletionAction == .copy,
+                selectedColor: .green,
                 accessibilityLabel: String(localized: "Copy")
             ) {
                 UIPasteboard.general.string = replyText
+                flashCompletionAction(.copy)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
 
             completionActionButton(
                 systemImage: "play",
+                symbolSize: 17,
+                isSelected: transientCompletionAction == .play,
                 accessibilityLabel: String(localized: "Read from Start"),
-                action: bridge.onReadAloud
+                action: {
+                    flashCompletionAction(.play)
+                    bridge.onReadAloud?()
+                }
             )
             .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
 
@@ -541,8 +556,12 @@ private struct BridgedAssistantFooterV3: View {
 
             completionActionButton(
                 systemImage: "arrow.clockwise",
+                isSelected: transientCompletionAction == .retry,
                 accessibilityLabel: String(localized: "Retry"),
-                action: bridge.onRetry
+                action: {
+                    flashCompletionAction(.retry)
+                    bridge.onRetry?()
+                }
             )
             .disabled(bridge.onRetry == nil)
         }
@@ -551,7 +570,9 @@ private struct BridgedAssistantFooterV3: View {
 
     private func completionActionButton(
         systemImage: String,
+        symbolSize: CGFloat = 14,
         isSelected: Bool = false,
+        selectedColor: Color = .accentColor,
         accessibilityLabel: String,
         action: (() -> Void)?
     ) -> some View {
@@ -559,13 +580,25 @@ private struct BridgedAssistantFooterV3: View {
             action?()
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: symbolSize, weight: .medium))
                 .frame(width: 32, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color.accentColor : ChatColors.secondaryText)
+        .foregroundStyle(isSelected ? selectedColor : ChatColors.secondaryText)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func flashCompletionAction(_ action: CompletionAction) {
+        withAnimation(.easeOut(duration: 0.12)) {
+            transientCompletionAction = action
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            guard transientCompletionAction == action else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                transientCompletionAction = nil
+            }
+        }
     }
 
     private func toggleFeedback(_ feedback: AssistantResponseFeedback) {
