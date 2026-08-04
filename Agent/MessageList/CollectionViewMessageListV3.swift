@@ -517,6 +517,13 @@ private struct BridgedAssistantFooterV3: View {
             }
 
             completionActionButton(
+                systemImage: "play",
+                accessibilityLabel: String(localized: "Read from Start"),
+                action: bridge.onReadAloud
+            )
+            .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
+
+            completionActionButton(
                 systemImage: bridge.replyFeedback == .positive ? "hand.thumbsup.fill" : "hand.thumbsup",
                 isSelected: bridge.replyFeedback == .positive,
                 accessibilityLabel: "点赞"
