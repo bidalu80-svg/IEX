@@ -225,10 +225,9 @@ final class PendingRecordChanges: @unchecked Sendable {
 final class CloudSyncEngine: ObservableObject {
     static let shared = CloudSyncEngine()
 
-    // Resolve the container from the app's signed entitlements. Explicit
-    // identifier construction can raise an Objective-C NSException before
-    // Swift can handle the unavailable-container case.
-    private lazy var container = CKContainer.default()
+    /// Set only after the default container was resolved through the
+    /// Objective-C exception bridge in start().
+    private var container: CKContainer?
     private let devicesZoneName = "devices"
 
     private var syncEngine: CKSyncEngine?
@@ -460,7 +459,13 @@ final class CloudSyncEngine: ObservableObject {
             syncStatus = .disabled
             return
         }
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            syncStatus = .error(CloudKitAvailability.unavailableMessage)
+            logger.error("[CloudSync] not starting: default CloudKit container is unavailable")
+            return
+        }
         guard syncEngine == nil else { return }
+        self.container = container
 
         logger.info("[CloudSync] Starting sync engine for device \(DeviceIdentity.zoneName)")
 
@@ -835,6 +840,9 @@ final class CloudSyncEngine: ObservableObject {
     ///
     /// Guarded by two UI confirmations — see CloudSyncSettingsView.
     func deleteAllCloudData() async throws {
+        guard let container = container ?? CloudKitAvailability.defaultContainer() else {
+            throw CloudKitAvailabilityError.containerUnavailable
+        }
         logger.warning("[CloudSync] Delete iCloud Data: STARTING destructive wipe")
         syncStatus = .syncing
 
@@ -1543,6 +1551,10 @@ final class CloudSyncEngine: ObservableObject {
     /// Subscribe to remote device zones so CKSyncEngine fetches their changes.
     /// Called outside delegate callbacks (e.g. from start or on foreground).
     func discoverDeviceZones() async {
+        guard let container else {
+            logger.error("[CloudSync] cannot discover zones: default CloudKit container is unavailable")
+            return
+        }
         do {
             // Run the network call off MainActor to avoid resume-hop CPU spike.
             let ownZoneName = DeviceIdentity.zoneName

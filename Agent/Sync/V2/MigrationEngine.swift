@@ -1,6 +1,38 @@
 import Foundation
+import CloudKit
 
 private let logger = AppLogger(category: "SyncMigration")
+
+/// CloudKit can raise an Objective-C exception while resolving the default
+/// container when a re-signed install does not have a usable iCloud container.
+/// Swift cannot catch NSException, so resolve it through the app's synchronous
+/// Objective-C exception bridge before any async CloudKit operation begins.
+enum CloudKitAvailability {
+    static func defaultContainer() -> CKContainer? {
+        var container: CKContainer?
+        var exceptionReason: NSString?
+        let resolved = ZeCatchObjCException({
+            container = CKContainer.default()
+        }, &exceptionReason)
+        guard resolved else {
+            let reason = exceptionReason as String? ?? "unknown Objective-C exception"
+            logger.error("[SyncMigration] CloudKit default container raised: \(reason)")
+            return nil
+        }
+        return container
+    }
+
+    static let unavailableMessage =
+        "当前签名未提供可用的 iCloud 容器，请使用包含 iCloud.com.ze.app CloudKit 权限的描述文件重新签名。"
+}
+
+enum CloudKitAvailabilityError: Error, LocalizedError {
+    case containerUnavailable
+
+    var errorDescription: String? {
+        CloudKitAvailability.unavailableMessage
+    }
+}
 
 /// Status of the v1 → v2 migration. Persisted to UserDefaults so it
 /// survives app restarts; the in-progress detail lives in
@@ -652,10 +684,10 @@ final class MigrationEngine {
     /// permanent failure. [T-ios-icloud-v1v2-migration-fails]
     @available(iOS 17.0, *)
     private static func countCloudSessionsV2() async -> Int? {
-        // Resolve the container from the app's signed entitlements. Explicit
-        // identifier construction can raise an Objective-C NSException before
-        // Swift can handle the unavailable-container case.
-        let container = CKContainer.default()
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            logger.error("[SyncMigration] CloudKit unavailable: default container could not be resolved")
+            return nil
+        }
         let zoneID = CKRecordZone.ID(zoneName: ICloudSharedZoneTransport.sharedZoneName)
         let query = CKQuery(recordType: "SessionV2", predicate: NSPredicate(value: true))
         do {
@@ -768,9 +800,11 @@ enum V1FetcherShim {
     /// stay on the server. Returns 0 if the zone is gone.
     @available(iOS 17.0, *)
     static func countOwnZone() async throws -> Int {
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            throw CloudKitAvailabilityError.containerUnavailable
+        }
         let myDeviceId = DeviceIdentity.deviceId
         let zoneID = CKRecordZone.ID(zoneName: "device-\(myDeviceId)")
-        let container = CKContainer.default()
         let db = container.privateCloudDatabase
 
         // v1 record types in the device-<id> zone, paired with a
@@ -843,7 +877,9 @@ enum V1FetcherShim {
     /// v1 zones are NOT touched — they belong to those devices.
     static func deleteOwnZone(zoneName: String) async throws {
         if #available(iOS 17.0, *) {
-            let container = CKContainer.default()
+            guard let container = CloudKitAvailability.defaultContainer() else {
+                throw CloudKitAvailabilityError.containerUnavailable
+            }
             let zoneID = CKRecordZone.ID(zoneName: zoneName)
             do {
                 _ = try await container.privateCloudDatabase.deleteRecordZone(withID: zoneID)
@@ -861,7 +897,9 @@ enum V1FetcherShim {
     /// the "iCloud Zones" inventory + per-zone delete control.
     @available(iOS 17.0, *)
     static func listAllZones() async throws -> [ZoneInfo] {
-        let container = CKContainer.default()
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            throw CloudKitAvailabilityError.containerUnavailable
+        }
         let zones = try await container.privateCloudDatabase.allRecordZones()
         let myDeviceId = DeviceIdentity.deviceId
         let myZoneName = "device-\(myDeviceId)"
