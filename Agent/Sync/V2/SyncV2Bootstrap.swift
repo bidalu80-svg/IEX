@@ -140,8 +140,8 @@ enum SyncV2Bootstrap {
             logger.debug("[SyncCore] v2 disabled (flag off) — staying on v1")
             return
         }
-        guard CloudKitAvailability.hasSignedContainerEntitlement else {
-            logger.error("[SyncCore] v2 disabled for this launch: signed CloudKit entitlement is missing")
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            logger.error("[SyncCore] v2 disabled for this launch: default CloudKit container is unavailable")
             return
         }
         guard #available(iOS 17.0, *) else {
@@ -173,7 +173,7 @@ enum SyncV2Bootstrap {
         logger.info("[SyncCore] v2 startup STEP=hydratorsRegistered")
 
         // 3. Wire transports (cheap — no network yet).
-        let transport = ICloudSharedZoneTransport()
+        let transport = ICloudSharedZoneTransport(container: container)
         SyncCore.shared.register(transport)
         // LAN skeleton stays unregistered (LANTransport.isImplemented = false).
         logger.info("[SyncCore] v2 startup STEP=transportRegistered")

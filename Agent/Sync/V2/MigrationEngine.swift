@@ -1,32 +1,25 @@
 import Foundation
-import Security
+import CloudKit
 
 private let logger = AppLogger(category: "SyncMigration")
 
-/// CloudKit may raise an Objective-C exception while resolving the default
-/// container when the installed signature does not carry a usable iCloud
-/// entitlement. Swift cannot catch that exception, so inspect the signed
-/// process entitlements before touching CKContainer at all.
+/// CloudKit can raise an Objective-C exception while resolving the default
+/// container when a re-signed install does not have a usable iCloud container.
+/// Swift cannot catch NSException, so resolve it through the app's synchronous
+/// Objective-C exception bridge before any async CloudKit operation begins.
 enum CloudKitAvailability {
-    static let requiredContainerIdentifier = "iCloud.com.ze.app"
-
-    static var hasSignedContainerEntitlement: Bool {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let containers = SecTaskCopyValueForEntitlement(
-                task,
-                "com.apple.developer.icloud-container-identifiers" as CFString,
-                nil
-              ) as? [String],
-              containers.contains(requiredContainerIdentifier),
-              let services = SecTaskCopyValueForEntitlement(
-                task,
-                "com.apple.developer.icloud-services" as CFString,
-                nil
-              ) as? [String]
-        else {
-            return false
+    static func defaultContainer() -> CKContainer? {
+        var container: CKContainer?
+        var exceptionReason: NSString?
+        let resolved = ZeCatchObjCException({
+            container = CKContainer.default()
+        }, &exceptionReason)
+        guard resolved else {
+            let reason = exceptionReason as String? ?? "unknown Objective-C exception"
+            logger.error("[SyncMigration] CloudKit default container raised: \(reason)")
+            return nil
         }
-        return services.contains("CloudKit")
+        return container
     }
 
     static let unavailableMessage =
@@ -34,7 +27,7 @@ enum CloudKitAvailability {
 }
 
 enum CloudKitAvailabilityError: Error, LocalizedError {
-    case missingSignedEntitlement
+    case containerUnavailable
 
     var errorDescription: String? {
         CloudKitAvailability.unavailableMessage
@@ -691,14 +684,10 @@ final class MigrationEngine {
     /// permanent failure. [T-ios-icloud-v1v2-migration-fails]
     @available(iOS 17.0, *)
     private static func countCloudSessionsV2() async -> Int? {
-        guard CloudKitAvailability.hasSignedContainerEntitlement else {
-            logger.error("[SyncMigration] CloudKit unavailable: signed container entitlement is missing")
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            logger.error("[SyncMigration] CloudKit unavailable: default container could not be resolved")
             return nil
         }
-        // Resolve the container from the app's signed entitlements. Explicit
-        // identifier construction can raise an Objective-C NSException before
-        // Swift can handle the unavailable-container case.
-        let container = CKContainer.default()
         let zoneID = CKRecordZone.ID(zoneName: ICloudSharedZoneTransport.sharedZoneName)
         let query = CKQuery(recordType: "SessionV2", predicate: NSPredicate(value: true))
         do {
@@ -811,12 +800,11 @@ enum V1FetcherShim {
     /// stay on the server. Returns 0 if the zone is gone.
     @available(iOS 17.0, *)
     static func countOwnZone() async throws -> Int {
-        guard CloudKitAvailability.hasSignedContainerEntitlement else {
-            throw CloudKitAvailabilityError.missingSignedEntitlement
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            throw CloudKitAvailabilityError.containerUnavailable
         }
         let myDeviceId = DeviceIdentity.deviceId
         let zoneID = CKRecordZone.ID(zoneName: "device-\(myDeviceId)")
-        let container = CKContainer.default()
         let db = container.privateCloudDatabase
 
         // v1 record types in the device-<id> zone, paired with a
@@ -889,10 +877,9 @@ enum V1FetcherShim {
     /// v1 zones are NOT touched — they belong to those devices.
     static func deleteOwnZone(zoneName: String) async throws {
         if #available(iOS 17.0, *) {
-            guard CloudKitAvailability.hasSignedContainerEntitlement else {
-                throw CloudKitAvailabilityError.missingSignedEntitlement
+            guard let container = CloudKitAvailability.defaultContainer() else {
+                throw CloudKitAvailabilityError.containerUnavailable
             }
-            let container = CKContainer.default()
             let zoneID = CKRecordZone.ID(zoneName: zoneName)
             do {
                 _ = try await container.privateCloudDatabase.deleteRecordZone(withID: zoneID)
@@ -910,10 +897,9 @@ enum V1FetcherShim {
     /// the "iCloud Zones" inventory + per-zone delete control.
     @available(iOS 17.0, *)
     static func listAllZones() async throws -> [ZoneInfo] {
-        guard CloudKitAvailability.hasSignedContainerEntitlement else {
-            throw CloudKitAvailabilityError.missingSignedEntitlement
+        guard let container = CloudKitAvailability.defaultContainer() else {
+            throw CloudKitAvailabilityError.containerUnavailable
         }
-        let container = CKContainer.default()
         let zones = try await container.privateCloudDatabase.allRecordZones()
         let myDeviceId = DeviceIdentity.deviceId
         let myZoneName = "device-\(myDeviceId)"

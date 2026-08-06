@@ -303,11 +303,8 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     // MARK: - Init
 
-    override init() {
-        // Resolve the container from the app's signed entitlements. Explicit
-        // identifier construction can raise an Objective-C NSException before
-        // Swift can handle the unavailable-container case.
-        self.container = CKContainer.default()
+    init(container: CKContainer) {
+        self.container = container
         let dir = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ZeChat/cloud-sync-v2", isDirectory: true)
@@ -1705,7 +1702,7 @@ extension ICloudSharedZoneTransport: CKSyncEngineDelegate {
         pendingV1Deletions.removeFirst(batch.count)
         v1DeleteInFlight = true
         Self.republishV1DeletePending(pendingV1Deletions.count)
-        let db = CKContainer.default().privateCloudDatabase
+        let db = container.privateCloudDatabase
         let op = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: batch)
         op.savePolicy = .changedKeys
         // Per-record completion lets us classify .unknownItem (already
