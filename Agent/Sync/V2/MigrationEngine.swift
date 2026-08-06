@@ -652,7 +652,10 @@ final class MigrationEngine {
     /// permanent failure. [T-ios-icloud-v1v2-migration-fails]
     @available(iOS 17.0, *)
     private static func countCloudSessionsV2() async -> Int? {
-        let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
+        // Resolve the container from the app's signed entitlements. Explicit
+        // identifier construction can raise an Objective-C NSException before
+        // Swift can handle the unavailable-container case.
+        let container = CKContainer.default()
         let zoneID = CKRecordZone.ID(zoneName: ICloudSharedZoneTransport.sharedZoneName)
         let query = CKQuery(recordType: "SessionV2", predicate: NSPredicate(value: true))
         do {
@@ -767,7 +770,7 @@ enum V1FetcherShim {
     static func countOwnZone() async throws -> Int {
         let myDeviceId = DeviceIdentity.deviceId
         let zoneID = CKRecordZone.ID(zoneName: "device-\(myDeviceId)")
-        let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
+        let container = CKContainer.default()
         let db = container.privateCloudDatabase
 
         // v1 record types in the device-<id> zone, paired with a
@@ -840,7 +843,7 @@ enum V1FetcherShim {
     /// v1 zones are NOT touched — they belong to those devices.
     static func deleteOwnZone(zoneName: String) async throws {
         if #available(iOS 17.0, *) {
-            let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
+            let container = CKContainer.default()
             let zoneID = CKRecordZone.ID(zoneName: zoneName)
             do {
                 _ = try await container.privateCloudDatabase.deleteRecordZone(withID: zoneID)
@@ -858,7 +861,7 @@ enum V1FetcherShim {
     /// the "iCloud Zones" inventory + per-zone delete control.
     @available(iOS 17.0, *)
     static func listAllZones() async throws -> [ZoneInfo] {
-        let container = CKContainer(identifier: ICloudSharedZoneTransport.containerIdentifier)
+        let container = CKContainer.default()
         let zones = try await container.privateCloudDatabase.allRecordZones()
         let myDeviceId = DeviceIdentity.deviceId
         let myZoneName = "device-\(myDeviceId)"

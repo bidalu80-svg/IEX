@@ -3205,7 +3205,7 @@ private struct DeleteConfirmSheet: View {
                                         }
                                     }
                                     if info.totalFileCount > info.fileNames.count {
-                                        Text("and \(info.totalFileCount - info.fileNames.count) more file\(info.totalFileCount - info.fileNames.count == 1 ? "" : "s")")
+                                        Text("还有 \(info.totalFileCount - info.fileNames.count) 个文件")
                                             .font(.caption)
                                             .foregroundStyle(.tertiary)
                                     }
@@ -3227,7 +3227,7 @@ private struct DeleteConfirmSheet: View {
                             onDelete()
                             dismiss()
                         } label: {
-                            Text("Delete (\(info.formattedSize))")
+                            Text("删除（\(info.formattedSize)）")
                                 .font(.body.bold())
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
@@ -3621,7 +3621,7 @@ private struct SessionContextMenu: View, Equatable {
                 Button {
                     actions.send(.unlockSession(key.sid))
                 } label: {
-                    Label("Remove \(BiometricAuth.biometryDisplayName) Lock", systemImage: "lock.open")
+                    Label("移除 \(BiometricAuth.biometryDisplayName) 锁定", systemImage: "lock.open")
                 }
             } else if SessionLockStore.shared.globalEnabled {
                 Button {
@@ -4572,7 +4572,7 @@ private struct AppearanceSettingsView: View {
             } header: {
                 Text("Launch Session")
             } footer: {
-                Text("Choose what to show when the app starts. \"Auto\" opens a new chat if the last session is older than 15 minutes.")
+                Text("选择 App 启动时显示的内容。“自动”会在上次会话超过 15 分钟时打开新聊天。")
             }
 
             Section {
@@ -4730,7 +4730,7 @@ private struct AppearanceSettingsView: View {
             } header: {
                 Text("Language")
             } footer: {
-                Text("Override the display language for this app. \"System\" follows your device language.")
+                Text("设置 App 的显示语言。“系统”会跟随设备语言。")
             }
         }
         .navigationTitle("Appearance")

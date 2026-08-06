@@ -414,7 +414,7 @@ private struct TestCard: View {
                     .frame(maxHeight: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
-                Text("Received \(data.count) bytes (couldn't decode preview)")
+                Text("已接收 \(data.count) 字节（无法解析预览）")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

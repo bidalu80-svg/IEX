@@ -53,6 +53,12 @@ final class ChatMessage: Identifiable, ObservableObject {
     var firstTokenRequestStartedAt: Date?
     /// Time from the first model-stream request to its first output block.
     @Published var firstTokenLatency: TimeInterval?
+    /// Total monotonic time spent generating this assistant turn, including
+    /// tool calls, provider fallback, and subsequent model requests.
+    @Published var taskDuration: TimeInterval?
+    /// Monotonic start point for the current assistant turn. This is transient
+    /// UI state and is intentionally not persisted or synced.
+    var taskDurationStartTime: TimeInterval?
     /// Structured metadata for user-attached files (images & documents).
     @Published var attachments: [AttachmentMeta] = []
     /// Raw input attachments for preview before queue drain (cache URLs still valid).

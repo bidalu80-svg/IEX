@@ -346,7 +346,7 @@ struct SyncMigrationDetailView: View {
                 } header: {
                     Text("Reclaim v1 space")
                 } footer: {
-                    Text("v1 records are deleted in batches of 100 as their v2 counterparts are confirmed saved, so iCloud usage doesn't double-up during migration.\n\n⚠️ Force-deleting the v1 zone permanently removes ALL legacy records from iCloud and CANNOT be undone. The cloud copy is gone for good. Only proceed if you've confirmed v2 push is at 100% AND every other device of yours has also finished migrating — peers that haven't yet may lose access to legacy data they hadn't received locally.")
+                    Text("v1 记录会在对应的 v2 记录确认保存后按每批 100 条删除，迁移期间不会让 iCloud 占用翻倍。\n\n⚠️ 强制删除 v1 区域会永久移除 iCloud 中的全部旧记录，且无法撤销。云端副本将永久消失。只有在确认 v2 推送达到 100%，并且你的其他设备也完成迁移后才应继续，否则尚未完成迁移的设备可能失去尚未拉取到本地的数据。")
                         .font(.caption)
                 }
 
@@ -417,7 +417,7 @@ struct SyncMigrationDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently deletes ALL legacy v1 records from iCloud. The cloud copy is gone for good — there is no undo. Other devices that haven't finished migrating yet will lose access to any legacy data they hadn't already pulled locally.\n\nOnly proceed if v2 push is at 100% AND every device of yours has finished migrating.")
+            Text("这会永久删除 iCloud 中的全部旧 v1 记录，云端副本将彻底消失且无法撤销。尚未完成迁移的其他设备会失去尚未拉取到本地的数据。\n\n只有在 v2 推送达到 100%，并且你的所有设备都完成迁移后才应继续。")
         }
         .sheet(isPresented: $showPauseDialog) {
             PauseSyncSheet { hours in

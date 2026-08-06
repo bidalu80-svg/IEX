@@ -504,7 +504,7 @@ struct UnifiedModelPicker: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(Text("Quick Test \(entry.model.displayName)"))
+        .accessibilityLabel(Text("快速测试 \(entry.model.displayName)"))
     }
 
     /// Nested multi-select picker for "Create group from models…". The voice

@@ -225,7 +225,10 @@ final class PendingRecordChanges: @unchecked Sendable {
 final class CloudSyncEngine: ObservableObject {
     static let shared = CloudSyncEngine()
 
-    private lazy var container = CKContainer(identifier: "iCloud.com.ze.app")
+    // Resolve the container from the app's signed entitlements. Explicit
+    // identifier construction can raise an Objective-C NSException before
+    // Swift can handle the unavailable-container case.
+    private lazy var container = CKContainer.default()
     private let devicesZoneName = "devices"
 
     private var syncEngine: CKSyncEngine?

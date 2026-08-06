@@ -36,10 +36,10 @@ private struct OffloadPermissionDialogContent: View {
                             .font(.system(size: 36))
                             .foregroundStyle(.orange)
 
-                        Text("Permission Request")
+                        Text("权限请求")
                             .font(.title3.bold())
 
-                        Text("The agent wants to use **\(request.commandName)**")
+                        Text("智能体请求使用 **\(request.commandName)**")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)

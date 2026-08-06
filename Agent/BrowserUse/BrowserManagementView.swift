@@ -67,7 +67,7 @@ struct BrowserManagementView: View {
             Text("User Agent")
         } footer: {
             let vp = pool.userAgentProfile.viewportSize
-            Text("Viewport: \(vp.width)×\(vp.height)")
+            Text("视口：\(vp.width)×\(vp.height)")
         }
     }
 
@@ -165,9 +165,9 @@ struct BrowserManagementView: View {
         } footer: {
             let vp = pool.resolvedViewportSize()
             if pool.customViewportWidth > 0 && pool.customViewportHeight > 0 {
-                Text("Using custom viewport \(vp.width)×\(vp.height). Tap Default to revert to the UA default.")
+                Text("当前使用自定义视口 \(vp.width)×\(vp.height)。轻点“默认”可恢复 User-Agent 默认值。")
             } else {
-                Text("Using UA default \(vp.width)×\(vp.height). Set a custom size to override.")
+                Text("当前使用 User-Agent 默认视口 \(vp.width)×\(vp.height)。设置自定义尺寸可覆盖默认值。")
             }
         }
         .onAppear {

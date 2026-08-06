@@ -273,7 +273,7 @@ struct MCPFormSheet: View {
             Text("Authentication")
         } footer: {
             if authMode == .oauthStatic {
-                Text("Standard OAuth Authorization Code + PKCE with your own app credentials. Register \(MCPOAuthController.defaultRedirectURI) as the Redirect URI in your OAuth client (Google: create a \"Web application\" or \"Desktop\" client — localhost redirects are accepted). Client Secret and tokens are stored in the device Keychain only — they never sync to iCloud, so other devices authorize separately.")
+                Text("使用标准 OAuth 授权码 + PKCE 和你自己的 App 凭据。请在 OAuth 客户端中将 \(MCPOAuthController.defaultRedirectURI) 注册为重定向 URI（Google 可创建“Web 应用”或“桌面”客户端，支持 localhost 重定向）。客户端密钥和令牌只存储在本机钥匙串中，不会同步到 iCloud，因此其他设备需要单独授权。")
             }
         }
     }

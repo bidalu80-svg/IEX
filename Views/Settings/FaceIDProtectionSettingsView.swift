@@ -26,7 +26,7 @@ struct FaceIDProtectionSettingsView: View {
                 Toggle(isOn: $appLockEnabled) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Lock App")
-                        Text("Require \(BiometricAuth.biometryDisplayName) to open Ze.")
+                        Text("打开 Ze 需要使用 \(BiometricAuth.biometryDisplayName)。")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
@@ -48,7 +48,7 @@ struct FaceIDProtectionSettingsView: View {
                     }
                 }
             } footer: {
-                Text("When enabled, \(BiometricAuth.biometryDisplayName) (or device passcode) is required every time you open the app.")
+                Text("开启后，每次打开 App 都需要使用 \(BiometricAuth.biometryDisplayName) 或设备密码。")
             }
 
             if appLockEnabled {
@@ -89,7 +89,7 @@ struct FaceIDProtectionSettingsView: View {
                     }
                 }
             } footer: {
-                Text("When enabled, locked sessions require \(BiometricAuth.biometryDisplayName) (or device passcode) before their contents are revealed.")
+                Text("开启后，查看锁定会话内容前需要使用 \(BiometricAuth.biometryDisplayName) 或设备密码。")
             }
 
             if enabled {

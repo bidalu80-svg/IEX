@@ -406,6 +406,10 @@ struct ChatMessageRow: View {
             }
             .padding(.top, 4)
 
+            if !isActiveMessage, let duration = message.taskDuration {
+                AssistantTaskDurationView(duration: duration)
+            }
+
             ForEach(message.blocks) { block in
                 AssistantBlockView(
                     block: block,
@@ -636,7 +640,7 @@ struct ChatMessageRow: View {
             Spacer()
 
             if autoRetryAttempt > 0 {
-                Text("Retry in \(autoRetryCountdown)s (\(autoRetryAttempt)/\(AIChatViewModel.retryDelays.count))")
+                Text("将在 \(autoRetryCountdown) 秒后重试（\(autoRetryAttempt)/\(AIChatViewModel.retryDelays.count)）")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
@@ -711,6 +715,36 @@ struct ChatMessageRow: View {
         }
     }
 
+}
+
+/// Lightweight Trae-style divider shown once a complete assistant turn has
+/// finished. It is shared by the SwiftUI row and the collection-view header.
+struct AssistantTaskDurationView: View {
+    let duration: TimeInterval
+
+    private var durationText: String {
+        let totalSeconds = max(1, Int(duration.rounded()))
+        if totalSeconds < 60 { return "\(totalSeconds)s" }
+        return "\(totalSeconds / 60)m \(String(format: "%02d", totalSeconds % 60))s"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(ChatColors.secondaryText.opacity(0.22))
+                .frame(height: 0.5)
+            Text("任务耗时 \(durationText)")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(ChatColors.secondaryText)
+                .monospacedDigit()
+                .fixedSize(horizontal: true, vertical: false)
+            Rectangle()
+                .fill(ChatColors.secondaryText.opacity(0.22))
+                .frame(height: 0.5)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("任务耗时 \(durationText)")
+    }
 }
 
 

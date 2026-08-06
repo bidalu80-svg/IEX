@@ -164,17 +164,24 @@ private struct BridgedAssistantHeaderV3: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image("ZeAssistantAvatar")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 22, height: 22)
-            Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(ChatColors.primaryText)
-            if let firstTokenLatency = message.firstTokenLatency {
-                FirstTokenLatencyPill(seconds: firstTokenLatency)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .leading)))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image("ZeAssistantAvatar")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 22, height: 22)
+                Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(ChatColors.primaryText)
+                if let firstTokenLatency = message.firstTokenLatency {
+                    FirstTokenLatencyPill(seconds: firstTokenLatency)
+                        .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .leading)))
+                }
+            }
+            if !message.isAwaitingModelResponse,
+               message.error == nil,
+               let duration = message.taskDuration {
+                AssistantTaskDurationView(duration: duration)
             }
         }
         .transaction { $0.disablesAnimations = false }
@@ -626,7 +633,7 @@ private struct BridgedAssistantFooterV3: View {
             }
             Spacer()
             if bridge.autoRetryAttempt > 0 {
-                Text("Retry in \(bridge.autoRetryCountdown)s (\(bridge.autoRetryAttempt)/\(AIChatViewModel.retryDelays.count))")
+                Text("将在 \(bridge.autoRetryCountdown) 秒后重试（\(bridge.autoRetryAttempt)/\(AIChatViewModel.retryDelays.count)）")
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(Color.secondary.opacity(0.12)).clipShape(Capsule())
