@@ -460,6 +460,11 @@ final class CloudSyncEngine: ObservableObject {
             syncStatus = .disabled
             return
         }
+        guard CloudKitAvailability.hasSignedContainerEntitlement else {
+            syncStatus = .error(CloudKitAvailability.unavailableMessage)
+            logger.error("[CloudSync] not starting: signed CloudKit entitlement is missing")
+            return
+        }
         guard syncEngine == nil else { return }
 
         logger.info("[CloudSync] Starting sync engine for device \(DeviceIdentity.zoneName)")
@@ -835,6 +840,9 @@ final class CloudSyncEngine: ObservableObject {
     ///
     /// Guarded by two UI confirmations — see CloudSyncSettingsView.
     func deleteAllCloudData() async throws {
+        guard CloudKitAvailability.hasSignedContainerEntitlement else {
+            throw CloudKitAvailabilityError.missingSignedEntitlement
+        }
         logger.warning("[CloudSync] Delete iCloud Data: STARTING destructive wipe")
         syncStatus = .syncing
 

@@ -140,6 +140,10 @@ enum SyncV2Bootstrap {
             logger.debug("[SyncCore] v2 disabled (flag off) — staying on v1")
             return
         }
+        guard CloudKitAvailability.hasSignedContainerEntitlement else {
+            logger.error("[SyncCore] v2 disabled for this launch: signed CloudKit entitlement is missing")
+            return
+        }
         guard #available(iOS 17.0, *) else {
             logger.warning("[SyncCore] v2 requires iOS 17+ — disabling")
             return
