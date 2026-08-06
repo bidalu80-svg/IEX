@@ -588,7 +588,7 @@ struct InlineVoiceInputView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
                     if let countdown = viewModel.retryCountdown {
-                        Text("Network error, retrying in \(countdown)s…")
+                        Text("网络错误，将在 \(countdown) 秒后重试…")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     } else if viewModel.canManualRetry {
@@ -821,7 +821,7 @@ struct InlineVoiceInputView: View {
                 .background(Circle().fill(ChatColors.inputIconBg))
                 .overlay(Circle().strokeBorder(ChatColors.inputIconBorder, lineWidth: 0.5))
         }
-        .accessibilityLabel(Text("Recognition language: \(VoiceLanguages.option(for: viewModel.language).label)", comment: "Inline voice language switch"))
+        .accessibilityLabel(Text("识别语言：\(VoiceLanguages.option(for: viewModel.language).label)", comment: "Inline voice language switch"))
     }
 
     // MARK: - Voice correction — design §15.3

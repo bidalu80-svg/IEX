@@ -134,7 +134,7 @@ struct ICloudBackupView: View {
             }
         } message: {
             if let entry = showRestoreConfirm {
-                Text("This will replace your current \(entry.category.displayName.lowercased()) data with the backup from \(entry.date.formatted(date: .abbreviated, time: .shortened)). This cannot be undone.")
+                Text("这会用 \(entry.date.formatted(date: .abbreviated, time: .shortened)) 的备份替换当前 \(entry.category.displayName) 数据，此操作无法撤销。")
             }
         }
         .alert("Error", isPresented: .init(

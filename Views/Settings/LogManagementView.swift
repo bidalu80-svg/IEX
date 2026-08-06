@@ -171,7 +171,7 @@ struct LogManagementView: View {
                         }
                     }
                 } footer: {
-                    Text("Total log storage: \(vm.format(vm.totalSize))")
+                    Text("日志总占用：\(vm.format(vm.totalSize))")
                 }
             }
         }
@@ -196,7 +196,7 @@ struct LogManagementView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will delete \(vm.format(vm.totalSize)) of log files. This action cannot be undone.")
+            Text("将删除 \(vm.format(vm.totalSize)) 的日志文件，此操作无法撤销。")
         }
     }
 }

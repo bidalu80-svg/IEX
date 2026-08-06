@@ -18,7 +18,7 @@ struct AppLockOverlay: View {
                     Text("Ze is Locked")
                         .font(.title2.bold())
 
-                    Text("Tap to unlock with \(BiometricAuth.biometryDisplayName)")
+                    Text("轻点以使用 \(BiometricAuth.biometryDisplayName) 解锁")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 

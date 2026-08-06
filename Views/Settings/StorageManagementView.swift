@@ -250,7 +250,7 @@ struct SessionStorageDetailView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This will delete \(formatter.string(fromByteCount: totalFileSize)) of files. This action cannot be undone.")
+            Text("将删除 \(formatter.string(fromByteCount: totalFileSize)) 的文件，此操作无法撤销。")
         }
     }
 

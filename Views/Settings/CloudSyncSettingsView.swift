@@ -43,7 +43,7 @@ struct CloudSyncSettingsView: View {
                 }
             }
         } message: {
-            Text("This will permanently delete everything Ze has uploaded to your iCloud account, across ALL of your devices:\n\n• Chat sessions & messages\n• Session files & attachments\n• Skills\n• Provider configurations\n• Environment variables\n\nThis device's local data will NOT be deleted — only the cloud copy. After the wipe, this device will re-upload its local content to a fresh iCloud zone.")
+            Text("这会永久删除 Ze 上传到 iCloud 的全部内容，包括你所有设备上的：\n\n• 聊天会话和消息\n• 会话文件与附件\n• 技能\n• Provider 配置\n• 环境变量\n\n本机数据不会删除，只会清除云端副本。清除后，本机会把本地内容重新上传到新的 iCloud 区域。")
         }
         .alert("Are you absolutely sure?", isPresented: $showDeleteCloudStep2) {
             Button("Cancel", role: .cancel) {}
@@ -51,7 +51,7 @@ struct CloudSyncSettingsView: View {
                 performDeleteCloudData()
             }
         } message: {
-            Text("This action cannot be undone. All Ze data stored in iCloud will be erased immediately. Other devices signed into the same iCloud account will lose their synced copies on the next sync.\n\nLocal data on this device is safe.")
+            Text("此操作无法撤销，iCloud 中的 Ze 数据会立即删除。使用同一 iCloud 账号的其他设备将在下次同步时失去云端副本。\n\n本机数据不受影响。")
         }
         .alert("iCloud Data Deleted", isPresented: $showDeleteCloudDone) {
             Button("OK", role: .cancel) {}
@@ -248,7 +248,7 @@ struct CloudSyncSettingsView: View {
                     Task { await engine.forceFullSync() }
                 }
             } message: {
-                Text("This will re-download all sync data from iCloud, which may take 10–30 seconds and consume significant network traffic. Wi-Fi is recommended.\n\nYour local sessions, skills, and files are not affected.")
+                Text("这会从 iCloud 重新下载全部同步数据，可能需要 10–30 秒并消耗较多流量，建议使用 Wi-Fi。\n\n本地会话、技能和文件不会受到影响。")
             }
         }
     }
@@ -413,7 +413,7 @@ private struct DeviceSyncSection: View {
                             Text(device.osVersion)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                            Text("Last seen: \(Self.relativeTime(device.lastSeen))")
+                            Text("上次在线：\(Self.relativeTime(device.lastSeen))")
                                 .font(.caption2).foregroundStyle(.tertiary)
                         }
                     }
@@ -435,7 +435,7 @@ private struct DeviceSyncSection: View {
                 }
             }
         } header: {
-            Text("Download (\(device.deviceName))")
+            Text("下载（\(device.deviceName)）")
         }
     }
 }
@@ -585,7 +585,7 @@ struct RemoteSkillsListView: View {
                 }
             }
         }
-        .navigationTitle("Skills from \(deviceName)")
+        .navigationTitle("来自 \(deviceName) 的技能")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             Task { skills = await ChatStore.shared.listRemoteSkills(deviceId: deviceId) }
@@ -644,7 +644,7 @@ struct RemoteMemoriesListView: View {
                 }
             }
         }
-        .navigationTitle("Memories from \(deviceName)")
+        .navigationTitle("来自 \(deviceName) 的记忆")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             Task { memories = await ChatStore.shared.listRemoteMemories(deviceId: deviceId) }

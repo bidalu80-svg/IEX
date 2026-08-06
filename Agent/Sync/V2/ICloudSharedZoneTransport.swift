@@ -304,7 +304,10 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
     // MARK: - Init
 
     override init() {
-        self.container = CKContainer(identifier: Self.containerIdentifier)
+        // Resolve the container from the app's signed entitlements. Explicit
+        // identifier construction can raise an Objective-C NSException before
+        // Swift can handle the unavailable-container case.
+        self.container = CKContainer.default()
         let dir = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ZeChat/cloud-sync-v2", isDirectory: true)

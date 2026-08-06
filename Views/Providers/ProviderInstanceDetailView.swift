@@ -125,7 +125,7 @@ struct ProviderInstanceDetailView: View {
                 pendingDeleteModelEntry = nil
             }
         } message: { entry in
-            Text("Are you sure you want to delete \"\(entry.model.displayName)\"? This action cannot be undone.")
+            Text("确定要删除“\(entry.model.displayName)”吗？此操作无法撤销。")
         }
     }
 
@@ -276,7 +276,7 @@ struct ProviderInstanceDetailView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // Source info (green)
                     if let source = fetchSource {
-                        Label("Loaded from \(source)", systemImage: "checkmark.circle")
+                        Label("来源：\(source)", systemImage: "checkmark.circle")
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
@@ -593,7 +593,7 @@ struct ProviderInstanceDetailView: View {
                 }
             )) {
                 Text("Auto").tag(ImageEndpointMode.auto)
-                Text("Images Generations").tag(ImageEndpointMode.imagesGenerations)
+                Text("图像生成").tag(ImageEndpointMode.imagesGenerations)
                 Text("Chat Completions").tag(ImageEndpointMode.chatCompletions)
             } label: {
                 Text(String(localized: "Image Endpoint"))

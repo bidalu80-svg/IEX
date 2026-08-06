@@ -2697,6 +2697,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         lastMsg.streamInterruptCount = 0
         lastMsg.firstTokenRequestStartedAt = nil
         lastMsg.firstTokenLatency = nil
+        lastMsg.taskDurationStartTime = nil
+        lastMsg.taskDuration = nil
 
         // Remove blocks from the incomplete/interrupted iteration.
         // committedBlockCount tracks how many blocks were fully committed before the
@@ -3178,6 +3180,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 messages[r].isAwaitingModelResponse = true
                 messages[r].firstTokenRequestStartedAt = nil
                 messages[r].firstTokenLatency = nil
+                messages[r].taskDurationStartTime = nil
+                messages[r].taskDuration = nil
             } else {
                 // [RetryDiag] resumeAt points outside the array or at a non-
                 // assistant row — an off-by-one in the caller's index math. The
@@ -4762,6 +4766,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let iterationStreamStart = Date()
             if msgIdx < messages.count, messages[msgIdx].firstTokenRequestStartedAt == nil {
                 messages[msgIdx].firstTokenRequestStartedAt = iterationStreamStart
+                messages[msgIdx].taskDurationStartTime = ProcessInfo.processInfo.systemUptime
+                messages[msgIdx].taskDuration = nil
             }
             let prevEntryId = activeEntryId
             fallbackReasons.removeAll()
@@ -5633,6 +5639,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         guard msgIdx < messages.count else { return }
         messages[msgIdx].isAwaitingModelResponse = false
         messages[msgIdx].usage = turnUsage
+        if messages[msgIdx].error == nil,
+           let startedAt = messages[msgIdx].taskDurationStartTime {
+            messages[msgIdx].taskDuration = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+        }
 
         // Safety net: force-close any tool blocks still stuck in non-terminal status.
         // This can happen when stream interruptions, retries, or edge cases leave

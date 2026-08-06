@@ -287,7 +287,7 @@ struct AlarmListView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("All \(vm.alarms.count) alarm(s) will be removed. This cannot be undone.")
+                Text("将删除全部 \(vm.alarms.count) 个提醒，此操作无法撤销。")
             }
             .onAppear { vm.load() }
         }
