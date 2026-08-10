@@ -455,6 +455,16 @@ struct AIChatView: View {
     /// (file was deleted, the session was pruned, or iCloud hasn't synced yet).
     @State private var missingZeFileName: String?
 
+    /// Kept outside the very large chat `body` expression so the lightweight
+    /// navigation bridge does not make Swift's view-type inference explode.
+    @ViewBuilder
+    private var compactNavigationGestureSupport: some View {
+        if showsCompactToolbarNavigation {
+            CompactChatInteractivePopEnabler(onDismiss: dismiss)
+                .frame(width: 0, height: 0)
+        }
+    }
+
     var body: some View {
         ZStack {
             // Messages — floating tool preview overlaid at bottom
@@ -656,10 +666,7 @@ struct AIChatView: View {
         }
         .background(ChatColors.background)
         .background(alignment: .topLeading) {
-            if showsCompactToolbarNavigation {
-                CompactChatInteractivePopEnabler(onDismiss: dismiss)
-                    .frame(width: 0, height: 0)
-            }
+            compactNavigationGestureSupport
         }
         .onDrop(of: [.image, .movie, .fileURL, .data], isTargeted: $isDropTargeted) { providers in
             handleDropProviders(providers)
