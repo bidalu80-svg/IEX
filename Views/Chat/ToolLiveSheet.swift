@@ -2427,15 +2427,18 @@ private struct ToolStatusBar: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, trailingInset > 0 ? trailingInset : 12)
-        .padding(.vertical, 5)
-        .frame(minHeight: 38)
+        .padding(.vertical, 4)
+        .frame(minHeight: 34)
         .frame(maxWidth: .infinity)
-        .background(Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : UIColor.systemBackground }))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : UIColor.systemBackground }))
         )
+        .clipShape(Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+        }
         .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 0.75) : UIColor(white: 0, alpha: 0.12) }), radius: 8, x: 0, y: 4)
     }
 
