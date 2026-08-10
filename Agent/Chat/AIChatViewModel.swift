@@ -4906,7 +4906,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     // empty we report an error (below) instead of a silent stall.
                     guard !didInjectEmptyToolReminderThisRun, lastEffectiveMessageIsToolResult() else {
                         logger.error("🔁STREAM empty response (no content, no stop reason) — treating as transient error")
-                        throw LLMError.transientError(message: "Server returned an empty response (overloaded or upstream error)")
+                        throw LLMError.transientError(message: "服务器返回了空响应（可能服务过载或上游异常）")
                     }
                     didInjectEmptyToolReminderThisRun = true
                     logger.error("🔁STREAM empty after tool result — injecting <system-reminder> and retrying one round")
@@ -4928,7 +4928,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                         // transient blip. Surface it clearly instead of silently
                         // looping so the user knows why the chat stopped.
                         logger.error("🔁STREAM still empty after <system-reminder> retry — reporting error")
-                        throw LLMError.providerError(message: "The model returned no response after a tool result, even after a reminder. It may be overloaded — please retry or switch models.")
+                        throw LLMError.providerError(message: "模型在工具结果后仍未返回内容，可能服务过载。请重试或切换模型。")
                     }
                     // Recovered — proceed with the reminder round's content.
                     streamResult = reminderResult
@@ -5021,7 +5021,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                         // failing (e.g. Anthropic overloaded).  Trigger group fallback.
                         if isEmptyResponse(retryResult) {
                             logger.error("🔁STREAM autoRetry also returned empty — triggering group fallback")
-                            throw LLMError.providerError(message: "Server is overloaded")
+                            throw LLMError.providerError(message: "服务器过载")
                         }
                         streamResult = retryResult
                     } catch let retryError as LLMError where retryError.isFallbackable || retryError.isRetryable {
@@ -5988,7 +5988,7 @@ enum LLMProviderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noCredentials: return "No API credentials available"
+        case .noCredentials: return "没有可用的 API 凭据"
         }
     }
 }
