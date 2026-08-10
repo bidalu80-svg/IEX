@@ -138,6 +138,11 @@ extension AIChatViewModel {
             ))
         }
 
+        // Remote SSH/SFTP is deliberately a distinct, opt-in tool family.
+        // The gateway publishes only per-server AI-authorized metadata and
+        // never exposes credentials or Keychain material to the model.
+        tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
+
         return tools
     }
 
