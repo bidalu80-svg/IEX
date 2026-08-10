@@ -657,7 +657,7 @@ struct AIChatView: View {
         .background(ChatColors.background)
         .background(alignment: .topLeading) {
             if showsCompactToolbarNavigation {
-                CompactChatInteractivePopEnabler()
+                CompactChatInteractivePopEnabler(onDismiss: dismiss)
                     .frame(width: 0, height: 0)
             }
         }
@@ -4863,7 +4863,9 @@ private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View
 /// is replaced with the compact session-list control. UIKit owns the progress,
 /// completion threshold, and cancellation, so the transition tracks the finger.
 private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    let onDismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
 
     func makeUIView(context: Context) -> MarkerView {
         let view = MarkerView()
@@ -4875,6 +4877,7 @@ private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MarkerView, context: Context) {
+        context.coordinator.onDismiss = onDismiss
         context.coordinator.enable(from: uiView)
     }
 
@@ -4882,13 +4885,24 @@ private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
         coordinator.cancelPendingEnable()
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         private weak var navigationController: UINavigationController?
+        private weak var leftSideDismissGesture: UIPanGestureRecognizer?
         private var pendingEnable: DispatchWorkItem?
+        var onDismiss: (() -> Void)?
+
+        init(onDismiss: @escaping () -> Void) {
+            self.onDismiss = onDismiss
+            super.init()
+        }
 
         func enable(from marker: UIView) {
             guard let navigationController = nearestNavigationController(from: marker) else { return }
+            if self.navigationController !== navigationController {
+                removeLeftSideDismissGesture()
+            }
             self.navigationController = navigationController
+            installLeftSideDismissGesture(on: navigationController)
             pendingEnable?.cancel()
 
             // SwiftUI applies `navigationBarBackButtonHidden` during the same
@@ -4908,6 +4922,57 @@ private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
         func cancelPendingEnable() {
             pendingEnable?.cancel()
             pendingEnable = nil
+            removeLeftSideDismissGesture()
+        }
+
+        /// UIKit's native edge-pop owns the true screen-edge interaction. This
+        /// recognizer only covers the wider 60pt band immediately beside it,
+        /// then calls the exact same `dismiss()` action as the toolbar button.
+        private func installLeftSideDismissGesture(on navigationController: UINavigationController) {
+            guard leftSideDismissGesture == nil else { return }
+
+            let gesture = UIPanGestureRecognizer(target: self, action: #selector(handleLeftSidePan(_:)))
+            gesture.delegate = self
+            gesture.cancelsTouchesInView = false
+            gesture.delaysTouchesBegan = false
+            if let interactivePop = navigationController.interactivePopGestureRecognizer {
+                gesture.require(toFail: interactivePop)
+            }
+            navigationController.view.addGestureRecognizer(gesture)
+            leftSideDismissGesture = gesture
+        }
+
+        private func removeLeftSideDismissGesture() {
+            if let gesture = leftSideDismissGesture {
+                gesture.view?.removeGestureRecognizer(gesture)
+            }
+            leftSideDismissGesture = nil
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let gesture = gestureRecognizer as? UIPanGestureRecognizer,
+                  let navigationController,
+                  navigationController.viewControllers.count > 1 else { return false }
+
+            let start = gesture.location(in: navigationController.view)
+            let velocity = gesture.velocity(in: navigationController.view)
+            // Permit only deliberate rightward drags that began in the left
+            // side band. Vertical scrolling and regular message interactions
+            // therefore remain with their existing views.
+            return start.x <= 72
+                && velocity.x > 0
+                && velocity.x > abs(velocity.y) * 1.25
+        }
+
+        @objc private func handleLeftSidePan(_ gesture: UIPanGestureRecognizer) {
+            guard let navigationController else { return }
+            guard gesture.state == .ended else { return }
+
+            let translation = gesture.translation(in: navigationController.view)
+            let velocity = gesture.velocity(in: navigationController.view)
+            if translation.x >= 84 || velocity.x >= 650 {
+                onDismiss?()
+            }
         }
 
         private func nearestNavigationController(from view: UIView) -> UINavigationController? {

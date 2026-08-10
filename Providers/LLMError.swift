@@ -15,21 +15,21 @@ enum LLMError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidAPIKey(let detail):
-            return detail.isEmpty ? "Invalid API key" : "Invalid API key: \(detail)"
+            return detail.isEmpty ? "API 密钥无效" : "API 密钥无效：\(detail)"
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "网络错误：\(error.localizedDescription)"
         case .providerError(let message):
-            return "Provider error: \(message)"
+            return "服务商错误：\(message)"
         case .transientError(let message):
-            return "Service temporarily unavailable: \(message)"
+            return "服务暂时不可用：\(message)"
         case .decodingError(let error):
-            return "Decoding error: \(error.localizedDescription)"
+            return "响应解析失败：\(error.localizedDescription)"
         case .rateLimited:
-            return "Rate limited — please try again later"
+            return "请求过于频繁，请稍后重试。"
         case .cancelled:
-            return "Request was cancelled"
+            return "请求已取消"
         case .unknown(let error):
-            return "Unknown error: \(error?.localizedDescription ?? "no details")"
+            return "未知错误：\(error?.localizedDescription ?? "无详细信息")"
         }
     }
 
@@ -57,10 +57,10 @@ enum LLMError: LocalizedError {
     /// auto-retry is exhausted on the current model, group fallback kicks in.
     var fallbackReason: String {
         switch self {
-        case .rateLimited: return "Rate limited"
-        case .invalidAPIKey: return "Invalid API key"
-        case .providerError(let msg): return "Provider error: \(String(msg.prefix(60)))"
-        default: return "Error"
+        case .rateLimited: return "请求过于频繁"
+        case .invalidAPIKey: return "API 密钥无效"
+        case .providerError(let msg): return "服务商错误：\(String(msg.prefix(60)))"
+        default: return "错误"
         }
     }
 
