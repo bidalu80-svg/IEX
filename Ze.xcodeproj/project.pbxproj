@@ -457,6 +457,14 @@
 		F1VMCPB2 /* MCPFormSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1VMCP02 /* MCPFormSheet.swift */; };
 		F1VMCPB3 /* MCPJSONImportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1VMCP03 /* MCPJSONImportSheet.swift */; };
 		F1VMCPB4 /* SessionMCPsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1VMCP04 /* SessionMCPsView.swift */; };
+		D7A900000000000000000001 /* RemoteServerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000011 /* RemoteServerModels.swift */; };
+		D7A900000000000000000002 /* RemoteServerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000012 /* RemoteServerStore.swift */; };
+		D7A900000000000000000003 /* RemoteServerSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000013 /* RemoteServerSecretStore.swift */; };
+		D7A900000000000000000008 /* RemoteSSHConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000014 /* RemoteSSHConnectionService.swift */; };
+		D7A900000000000000000004 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000040 /* Citadel */; };
+		D7A900000000000000000005 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000041 /* NIOSSH */; };
+		D7A900000000000000000006 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000042 /* NIOCore */; };
+		D7A900000000000000000007 /* Crypto in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000043 /* Crypto */; };
 		F1W00011 /* ZeShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00010 /* ZeShareSheet.swift */; };
 		F1W00013 /* WebPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00012 /* WebPreviewSheet.swift */; };
 		F1W00061 /* PaginatedMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00060 /* PaginatedMarkdownView.swift */; };
@@ -1066,6 +1074,10 @@
 		F1VMCP02 /* MCPFormSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPFormSheet.swift; sourceTree = "<group>"; };
 		F1VMCP03 /* MCPJSONImportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPJSONImportSheet.swift; sourceTree = "<group>"; };
 		F1VMCP04 /* SessionMCPsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMCPsView.swift; sourceTree = "<group>"; };
+		D7A900000000000000000011 /* RemoteServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerModels.swift; sourceTree = "<group>"; };
+		D7A900000000000000000012 /* RemoteServerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerStore.swift; sourceTree = "<group>"; };
+		D7A900000000000000000013 /* RemoteServerSecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerSecretStore.swift; sourceTree = "<group>"; };
+		D7A900000000000000000014 /* RemoteSSHConnectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSSHConnectionService.swift; sourceTree = "<group>"; };
 		F1W00010 /* ZeShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeShareSheet.swift; sourceTree = "<group>"; };
 		F1W00012 /* WebPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPreviewSheet.swift; sourceTree = "<group>"; };
 		F1W00060 /* PaginatedMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginatedMarkdownView.swift; sourceTree = "<group>"; };
@@ -1121,6 +1133,10 @@
 				AA26CCC32F31090100AECF2D /* libresolv.tbd in Frameworks */,
 				AA26CCC12F31090000AECF2D /* SystemConfiguration.framework in Frameworks */,
 				E52000005 /* SwiftAnthropic in Frameworks */,
+				D7A900000000000000000004 /* Citadel in Frameworks */,
+				D7A900000000000000000005 /* NIOSSH in Frameworks */,
+				D7A900000000000000000006 /* NIOCore in Frameworks */,
+				D7A900000000000000000007 /* Crypto in Frameworks */,
 				E5M000001 /* cmark-gfm in Frameworks */,
 				E5M000002 /* cmark-gfm-extensions in Frameworks */,
 				E5S000005 /* CloudKit.framework in Frameworks */,
@@ -1570,6 +1586,7 @@
 		E5E000031 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				D7A900000000000000000020 /* RemoteServers */,
 				E5G000014 /* AgentActivityAttributes.swift */,
 				E5AT00011 /* AudioTogglePlaybackIntent.swift */,
 				E5Q000013 /* AppLogger.swift */,
@@ -1627,6 +1644,17 @@
 				AADDA9E02F6ECCF400B66649 /* ThumbnailCache.swift */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		D7A900000000000000000020 /* RemoteServers */ = {
+			isa = PBXGroup;
+			children = (
+				D7A900000000000000000011 /* RemoteServerModels.swift */,
+				D7A900000000000000000012 /* RemoteServerStore.swift */,
+				D7A900000000000000000013 /* RemoteServerSecretStore.swift */,
+				D7A900000000000000000014 /* RemoteSSHConnectionService.swift */,
+			);
+			path = RemoteServers;
 			sourceTree = "<group>";
 		};
 		E5FP00030 /* FileProvider */ = {
@@ -2182,6 +2210,10 @@
 			name = Ze;
 			packageProductDependencies = (
 				E52000021 /* SwiftAnthropic */,
+				D7A900000000000000000040 /* Citadel */,
+				D7A900000000000000000041 /* NIOSSH */,
+				D7A900000000000000000042 /* NIOCore */,
+				D7A900000000000000000043 /* Crypto */,
 				E5M000021 /* cmark-gfm */,
 				E5M000022 /* cmark-gfm-extensions */,
 				E5X000021 /* SwiftMath */,
@@ -2285,6 +2317,10 @@
 			mainGroup = E51000030;
 			packageReferences = (
 				E52000020 /* XCRemoteSwiftPackageReference "SwiftAnthropic" */,
+				D7A900000000000000000030 /* XCRemoteSwiftPackageReference "Citadel" */,
+				D7A900000000000000000031 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				D7A900000000000000000032 /* XCRemoteSwiftPackageReference "swift-nio" */,
+				D7A900000000000000000033 /* XCRemoteSwiftPackageReference "swift-crypto" */,
 				E5M000020 /* XCRemoteSwiftPackageReference "swift-cmark" */,
 				E5X000020 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				B318C2F47DB3F301A17E49BE /* XCRemoteSwiftPackageReference "RealTimeCutVADLibrary" */,
@@ -2739,6 +2775,10 @@
 				F1VMCPB2 /* MCPFormSheet.swift in Sources */,
 				F1VMCPB3 /* MCPJSONImportSheet.swift in Sources */,
 				F1VMCPB4 /* SessionMCPsView.swift in Sources */,
+				D7A900000000000000000001 /* RemoteServerModels.swift in Sources */,
+				D7A900000000000000000002 /* RemoteServerStore.swift in Sources */,
+				D7A900000000000000000003 /* RemoteServerSecretStore.swift in Sources */,
+				D7A900000000000000000008 /* RemoteSSHConnectionService.swift in Sources */,
 				E5LOCK001 /* SessionLockStore.swift in Sources */,
 				E5SOUL001 /* SoulStore.swift in Sources */,
 				E5SOUL002 /* SoulSettingsView.swift in Sources */,
@@ -3522,6 +3562,38 @@
 				minimumVersion = 1.7.3;
 			};
 		};
+		D7A900000000000000000030 /* XCRemoteSwiftPackageReference "Citadel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/Citadel.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.11.1;
+			};
+		};
+		D7A900000000000000000031 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Joannis/swift-nio-ssh.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.3.4;
+			};
+		};
+		D7A900000000000000000032 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.81.0;
+			};
+		};
+		D7A900000000000000000033 /* XCRemoteSwiftPackageReference "swift-crypto" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-crypto.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.12.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -3534,6 +3606,26 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E52000020 /* XCRemoteSwiftPackageReference "SwiftAnthropic" */;
 			productName = SwiftAnthropic;
+		};
+		D7A900000000000000000040 /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7A900000000000000000030 /* XCRemoteSwiftPackageReference "Citadel" */;
+			productName = Citadel;
+		};
+		D7A900000000000000000041 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7A900000000000000000031 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
+		};
+		D7A900000000000000000042 /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7A900000000000000000032 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		D7A900000000000000000043 /* Crypto */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7A900000000000000000033 /* XCRemoteSwiftPackageReference "swift-crypto" */;
+			productName = Crypto;
 		};
 		E5M000021 /* cmark-gfm */ = {
 			isa = XCSwiftPackageProductDependency;
