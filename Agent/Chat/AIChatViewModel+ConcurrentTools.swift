@@ -628,7 +628,7 @@ extension AIChatViewModel {
             toolOutput = memResult.output
             toolSuccess = memResult.success
 
-        case "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
+        case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 messages[msgIdx].blocks[blockIdx].content = remoteResult.output

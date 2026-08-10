@@ -17,6 +17,40 @@ struct RemoteServerAIConfirmationRequest: Identifiable {
     let isDestructive: Bool
 }
 
+/// Non-secret connection details proposed by a model. A draft is never
+/// persisted or connected automatically: the native editor remains the only
+/// place where a user can enter credentials and save a server profile.
+struct RemoteServerAIDraft: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let host: String
+    let port: Int
+    let username: String
+    let labels: [String]
+    let note: String
+    let authentication: RemoteServerAuthentication
+    let aiAccess: RemoteServerAIAccessLevel
+}
+
+@MainActor
+final class RemoteServerAIDraftStore: ObservableObject {
+    static let shared = RemoteServerAIDraftStore()
+
+    @Published private(set) var pending: RemoteServerAIDraft?
+
+    private init() {}
+
+    func stage(_ draft: RemoteServerAIDraft) -> Bool {
+        guard pending == nil else { return false }
+        pending = draft
+        return true
+    }
+
+    func dismiss() {
+        pending = nil
+    }
+}
+
 @MainActor
 final class RemoteServerAIConfirmationGate: ObservableObject {
     static let shared = RemoteServerAIConfirmationGate()
@@ -66,24 +100,43 @@ enum RemoteServerAIToolGateway {
 
     static var statusFragment: String {
         let servers = authorizedServers
+        let configurationGuidance = "\n\nRemote server configuration: When the user explicitly asks to add an SSH server and has supplied its host and username, use remote_server_draft to prepare a native review form. Pass only non-secret metadata. Never pass, request through this tool, infer, print, or store passwords, private keys, passphrases, Keychain values, or host-key approvals. The user must review the form, enter credentials locally, save it, and confirm the SSH host fingerprint themselves."
         guard !servers.isEmpty else {
-            return "\n\nRemote server access: no server is currently authorized for AI. Do not claim that you can operate a user's SSH server."
+            return configurationGuidance + "\n\nRemote server access: no server is currently authorized for AI. Do not claim that you can operate a user's SSH server."
         }
         let descriptions = servers.map { server in
             "- \(server.name) [id: \(server.id.uuidString), endpoint: \(server.endpointDescription), connected: \(connection.isConnected(to: server.id)), access: \(server.aiAccess.title)]"
         }.joined(separator: "\n")
-        return "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve passwords, private keys, passphrases, or Keychain data. A server must already be connected by the user in Settings. Every command and every write/delete/rename operation opens a user confirmation; never describe an action as completed before the tool returns success."
+        return configurationGuidance + "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve passwords, private keys, passphrases, or Keychain data. A server must already be connected by the user in Settings. Every command and every write/delete/rename operation opens a user confirmation; never describe an action as completed before the tool returns success."
     }
 
     static func definitions() -> [AgentToolDefinition] {
-        guard hasVisibleServers else { return [] }
+        var tools = [AgentToolDefinition(
+            name: "remote_server_draft",
+            description: "Prepare a native SSH server review form after the user explicitly asks to add a server. This only stages non-secret metadata and never saves, connects, trusts a host key, or changes an existing server. Do not call until the user has provided both host and username. Never include passwords, private keys, passphrases, tokens, or Keychain data.",
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
+                "name": AgentToolParam(type: .string, description: "Human-readable server name. Use a clear name derived from the user's description."),
+                "host": AgentToolParam(type: .string, description: "SSH host name or IP address only, without ssh://, username, path, password, or port."),
+                "port": AgentToolParam(type: .integer, description: "SSH port. Defaults to 22 when omitted."),
+                "username": AgentToolParam(type: .string, description: "SSH login username, supplied by the user."),
+                "authentication": AgentToolParam(type: .string, description: "Preferred native credential entry mode. This is not a credential.", enumValues: ["private_key", "password"]),
+                "labels": AgentToolParam(type: .string, description: "Optional comma-separated non-secret labels."),
+                "note": AgentToolParam(type: .string, description: "Optional non-secret note for the user."),
+                "ai_access": AgentToolParam(type: .string, description: "Suggested AI access only. The native form requires user review before save.", enumValues: ["none", "read_only", "commands_with_confirmation", "full_with_confirmation"]),
+            ],
+            required: ["tool_title", "host", "username"],
+            propertyOrdering: ["tool_title", "name", "host", "port", "username", "authentication", "labels", "note", "ai_access"]
+        )]
+
+        guard hasVisibleServers else { return tools }
         let serverIDs = authorizedServers.map { $0.id.uuidString }
         let commonServer = AgentToolParam(
             type: .string,
             description: "Server UUID returned by remote_server_list. Never invent an ID.",
             enumValues: serverIDs
         )
-        return [
+        tools += [
             AgentToolDefinition(
                 name: "remote_server_list",
                 description: "List AI-authorized SSH server metadata and connection state. This reveals no password, private key, passphrase, or Keychain content.",
@@ -142,10 +195,13 @@ enum RemoteServerAIToolGateway {
                 propertyOrdering: ["tool_title", "server_id", "action", "path", "new_path", "content", "is_directory"]
             ),
         ]
+        return tools
     }
 
     static func execute(name: String, arguments: [String: Any]) async -> RemoteServerAIToolResult {
         switch name {
+        case "remote_server_draft":
+            return stageDraft(arguments)
         case "remote_server_list":
             return .init(output: listOutput(), success: true)
         case "remote_server_command":
@@ -159,6 +215,33 @@ enum RemoteServerAIToolGateway {
         default:
             return .init(output: "Error: Unknown remote server tool '\(name)'.", success: false)
         }
+    }
+
+    private static func stageDraft(_ arguments: [String: Any]) -> RemoteServerAIToolResult {
+        guard let host = normalizedHost(from: arguments), let username = string("username", from: arguments) else {
+            return .init(output: "Error: A host and username are required before Ze can prepare a server configuration form.", success: false)
+        }
+
+        let port = integer("port", from: arguments) ?? 22
+        guard (1...65_535).contains(port) else {
+            return .init(output: "Error: SSH port must be between 1 and 65535.", success: false)
+        }
+
+        let name = string("name", from: arguments) ?? (username + "@" + host)
+        let draft = RemoteServerAIDraft(
+            name: name,
+            host: host,
+            port: port,
+            username: username,
+            labels: string("labels", from: arguments)?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? [],
+            note: string("note", from: arguments) ?? "",
+            authentication: authentication(from: arguments),
+            aiAccess: accessLevel(from: arguments)
+        )
+        guard RemoteServerAIDraftStore.shared.stage(draft) else {
+            return .init(output: "Error: A server configuration review is already open. Wait for the user to save or dismiss it before preparing another draft.", success: false)
+        }
+        return .init(output: "Draft ready. Ze opened a native server review form for \(draft.username)@\(draft.host):\(draft.port). The user must verify every field, enter credentials locally, save the profile, and confirm the SSH host fingerprint before any connection can be trusted.", success: true)
     }
 
     private static var authorizedServers: [RemoteServerProfile] {
@@ -307,6 +390,35 @@ enum RemoteServerAIToolGateway {
         guard let value = arguments[name] as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func integer(_ name: String, from arguments: [String: Any]) -> Int? {
+        if let value = arguments[name] as? Int { return value }
+        if let value = arguments[name] as? NSNumber { return value.intValue }
+        if let value = arguments[name] as? String { return Int(value) }
+        return nil
+    }
+
+    private static func normalizedHost(from arguments: [String: Any]) -> String? {
+        guard let host = string("host", from: arguments) else { return nil }
+        guard !host.contains(where: { $0.isWhitespace }),
+              !host.contains("/"),
+              !host.contains("@"),
+              !host.contains("://") else { return nil }
+        return host
+    }
+
+    private static func authentication(from arguments: [String: Any]) -> RemoteServerAuthentication {
+        string("authentication", from: arguments) == "password" ? .password : .privateKey
+    }
+
+    private static func accessLevel(from arguments: [String: Any]) -> RemoteServerAIAccessLevel {
+        switch string("ai_access", from: arguments) {
+        case "read_only": return .readOnly
+        case "commands_with_confirmation": return .commandsWithConfirmation
+        case "full_with_confirmation": return .fullWithConfirmation
+        default: return .none
+        }
     }
 
     private static func truncate(_ text: String, maximum: Int = 15_000) -> String {

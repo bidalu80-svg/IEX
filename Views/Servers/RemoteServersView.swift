@@ -104,6 +104,7 @@ private struct RemoteServerRow: View {
 
 struct RemoteServerEditorSheet: View {
     let server: RemoteServerProfile?
+    let draft: RemoteServerAIDraft?
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = RemoteServerStore.shared
@@ -123,22 +124,31 @@ struct RemoteServerEditorSheet: View {
     @State private var showKeyImporter = false
     @State private var errorMessage: String?
 
-    init(server: RemoteServerProfile?) {
+    init(server: RemoteServerProfile?, draft: RemoteServerAIDraft? = nil) {
         self.server = server
-        _name = State(initialValue: server?.name ?? "")
-        _host = State(initialValue: server?.host ?? "")
-        _port = State(initialValue: String(server?.port ?? 22))
-        _username = State(initialValue: server?.username ?? "")
-        _labels = State(initialValue: server?.labels.joined(separator: ", ") ?? "")
-        _note = State(initialValue: server?.note ?? "")
-        _authentication = State(initialValue: server?.authentication ?? .privateKey)
-        _aiAccess = State(initialValue: server?.aiAccess ?? .none)
+        self.draft = draft
+        _name = State(initialValue: server?.name ?? draft?.name ?? "")
+        _host = State(initialValue: server?.host ?? draft?.host ?? "")
+        _port = State(initialValue: String(server?.port ?? draft?.port ?? 22))
+        _username = State(initialValue: server?.username ?? draft?.username ?? "")
+        _labels = State(initialValue: server?.labels.joined(separator: ", ") ?? draft?.labels.joined(separator: ", ") ?? "")
+        _note = State(initialValue: server?.note ?? draft?.note ?? "")
+        _authentication = State(initialValue: server?.authentication ?? draft?.authentication ?? .privateKey)
+        _aiAccess = State(initialValue: server?.aiAccess ?? draft?.aiAccess ?? .none)
         _enabled = State(initialValue: server?.enabled ?? true)
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                if draft != nil {
+                    Section {
+                        Label("以下非敏感字段由 AI 生成，请逐项核对后再保存。密码、私钥、口令和主机指纹不能由 AI 填写或确认。", systemImage: "wand.and.stars")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("基本信息") {
                     TextField("名称", text: $name)
                     TextField("主机地址或 IP", text: $host)
@@ -202,7 +212,7 @@ struct RemoteServerEditorSheet: View {
                         .lineLimit(2...5)
                 }
             }
-            .navigationTitle(server == nil ? "添加服务器" : "编辑服务器")
+            .navigationTitle(server == nil ? (draft == nil ? "添加服务器" : "确认服务器草稿") : "编辑服务器")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
