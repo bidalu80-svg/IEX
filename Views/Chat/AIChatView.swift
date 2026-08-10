@@ -460,7 +460,7 @@ struct AIChatView: View {
     @ViewBuilder
     private var compactNavigationGestureSupport: some View {
         if showsCompactToolbarNavigation {
-            CompactChatInteractivePopEnabler(onDismiss: dismiss)
+            CompactChatInteractivePopEnabler(onDismiss: { dismiss() })
                 .frame(width: 0, height: 0)
         }
     }
