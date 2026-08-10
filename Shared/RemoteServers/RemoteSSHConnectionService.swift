@@ -81,9 +81,13 @@ final class RemoteSSHConnectionService: ObservableObject {
             return response.flatMap(\.components).filter { component in
                 component.filename != "." && component.filename != ".."
             }.map { component in
-                let permissions = component.attributes.permissions
-                let isDirectory = permissions.map { ($0 & 0o170000) == 0o040000 }
-                    ?? component.longname.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("d")
+                let permissions: UInt32? = component.attributes.permissions ?? nil
+                let isDirectory: Bool
+                if let permissions {
+                    isDirectory = (permissions & 0o170000) == 0o040000
+                } else {
+                    isDirectory = component.longname.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("d")
+                }
                 return RemoteSFTPEntry(
                     path: Self.remotePath(directory, appending: component.filename),
                     name: component.filename,
