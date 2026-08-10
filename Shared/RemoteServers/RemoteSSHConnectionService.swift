@@ -134,8 +134,11 @@ final class RemoteSSHConnectionService: ObservableObject {
             throw RemoteServerError.connectionFailed("文件超过本次上传上限（256 MB）")
         }
         try await withSFTP(on: serverID) { sftp in
-            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-            buffer.writeBytes(data)
+            let buffer: ByteBuffer = {
+                var value = ByteBufferAllocator().buffer(capacity: data.count)
+                value.writeBytes(data)
+                return value
+            }()
             _ = try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
                 try await file.write(buffer)
             }
@@ -191,7 +194,7 @@ final class RemoteSSHConnectionService: ObservableObject {
         return try await client.withSFTP(operation)
     }
 
-    private static func remotePath(_ directory: String, appending name: String) -> String {
+    nonisolated private static func remotePath(_ directory: String, appending name: String) -> String {
         directory == "/" ? "/\(name)" : directory + "/" + name
     }
 
