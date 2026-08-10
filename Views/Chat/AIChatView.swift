@@ -769,12 +769,7 @@ struct AIChatView: View {
                 Text("服务器：\(request.serverName)\n操作：\(request.operation)\n\n\(request.detail)")
             }
         }
-        .sheet(item: Binding(
-            get: { remoteServerAIDraftStore.pending },
-            set: { if $0 == nil { remoteServerAIDraftStore.dismiss() } }
-        )) { draft in
-            RemoteServerEditorSheet(server: nil, draft: draft)
-        }
+        .modifier(RemoteServerAIDraftPresentationModifier())
         // [T-ios-json-open-provider-import-prompt] Shared/opened Provider-export
         // JSON: let the user choose import-as-provider vs add-as-attachment.
         // Extracted into a single modifier so the body's type-check stays cheap.
@@ -4710,6 +4705,23 @@ private struct NavigationStatusCapsule: View {
         DispatchQueue.main.async {
             guard !reduceMotion else { return }
             isPulsing = true
+        }
+    }
+}
+
+// MARK: - Remote Server Draft Presentation
+
+/// Keeps the model-proposed server review sheet outside AIChatView.body, whose
+/// large modifier chain otherwise exceeds the Swift type-checker budget.
+private struct RemoteServerAIDraftPresentationModifier: ViewModifier {
+    @ObservedObject private var store = RemoteServerAIDraftStore.shared
+
+    func body(content: Content) -> some View {
+        content.sheet(item: Binding<RemoteServerAIDraft?>(
+            get: { store.pending },
+            set: { if $0 == nil { store.dismiss() } }
+        )) { draft in
+            RemoteServerEditorSheet(server: nil, draft: draft)
         }
     }
 }
