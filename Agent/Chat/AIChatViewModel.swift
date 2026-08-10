@@ -1965,6 +1965,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         return transientAssistantResponseFeedbackRecords[fingerprint]?.feedback
     }
 
+    /// Dynamic, credential-free inventory of the server tools that were
+    /// registered for this turn. This is rebuilt per request because the user
+    /// may connect/disconnect a server or alter its AI access from Settings.
+    private var remoteServerStatusFragment: String {
+        RemoteServerAIToolGateway.statusFragment
+    }
+
     /// Upserts or removes a reply assessment. The next model request receives
     /// the recent records as private context through effectiveAgentHistory().
     func recordReplyFeedback(for message: ChatMessage, feedback: AssistantResponseFeedback?) {
@@ -4464,6 +4471,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // Authoritative memory-status footer (overrides any earlier
         // baseSystemPrompt mentions when memory is disabled).
         userSystemPrompt += memoryStatusFragment
+        userSystemPrompt += remoteServerStatusFragment
 
         let promptBuildMs = (CFAbsoluteTimeGetCurrent() - loopSetupStart) * 1000
         logger.info("⏱️ [runAgentLoop] prompt build elapsed=\(String(format: "%.1f", promptBuildMs))ms history=\(self.agentHistory.count)")
@@ -4826,6 +4834,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     }
                 }
                 userSystemPrompt += memoryStatusFragment
+                userSystemPrompt += remoteServerStatusFragment
                 fallbackTrigger += 1
                 if !fallbackReasons.isEmpty {
                     // Resync the assistant message index by its stable id before
