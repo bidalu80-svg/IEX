@@ -411,6 +411,9 @@ struct AIChatView: View {
     /// `lockStore.isVisuallyLocked(sid)` rather than recomputing the
     /// 4-guard expression independently).
     @ObservedObject private var lockStore = SessionLockStore.shared
+    /// Server commands and mutations proposed by a model pause here until the
+    /// user explicitly allows or denies the individual remote operation.
+    @ObservedObject private var remoteServerAIGate = RemoteServerAIConfirmationGate.shared
     /// Opacity for the fallback capsule highlight (animated 3× pulse on model switch).
     @State private var fallbackPulseOpacity: Double = 0
 
@@ -740,6 +743,27 @@ struct AIChatView: View {
             Button(String(localized: "Cancel"), role: .cancel) {}
         } message: {
             Text(String(localized: "This will delete all local messages for this chat and re-download them from iCloud. Local changes that haven't synced yet will be lost. Continue?"))
+        }
+        .confirmationDialog(
+            "允许 AI 操作远程服务器？",
+            isPresented: Binding(
+                get: { remoteServerAIGate.pending != nil },
+                set: { if !$0 { remoteServerAIGate.resolve(allowed: false) } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let request = remoteServerAIGate.pending {
+                Button(request.isDestructive ? "确认执行" : "允许") {
+                    remoteServerAIGate.resolve(allowed: true)
+                }
+                Button("拒绝", role: .cancel) {
+                    remoteServerAIGate.resolve(allowed: false)
+                }
+            }
+        } message: {
+            if let request = remoteServerAIGate.pending {
+                Text("服务器：\(request.serverName)\n操作：\(request.operation)\n\n\(request.detail)")
+            }
         }
         // [T-ios-json-open-provider-import-prompt] Shared/opened Provider-export
         // JSON: let the user choose import-as-provider vs add-as-attachment.
