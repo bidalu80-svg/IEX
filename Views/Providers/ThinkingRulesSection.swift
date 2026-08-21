@@ -102,7 +102,9 @@ struct ThinkingRulesSection: View {
     private var matchingPreview: String? {
         guard let modelId = store.modelEntries.first(where: {
             $0.providerInstanceId == instanceId && !$0.isHidden
-        })?.model.id,
+        })?.model.id else {
+            return nil
+        }
         if let rule = rules.first(where: { $0.scope.matches(modelId) }) {
             return "模型 \(modelId) 将使用自定义规则“\(rule.label)”"
         }
