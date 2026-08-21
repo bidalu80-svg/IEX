@@ -1145,7 +1145,7 @@ final class OpenAIAgentProvider: AgentProvider {
                     switch part {
                     case .text(let text):
                         contentParts.append(["type": "text", "text": text])
-                    case .imageData(let data, let mimeType, _):
+                    case .imageData(let data, let mimeType, let linuxPath):
                         if supportsImages {
                             let base64 = data.base64EncodedString()
                             contentParts.append([
@@ -1523,7 +1523,7 @@ final class OpenAIAgentProvider: AgentProvider {
                 switch part {
                 case .text(let text):
                     contentParts.append(["type": "text", "text": text])
-                case .imageData(let data, let mimeType, _):
+                case .imageData(let data, let mimeType, let linuxPath):
                     if supportsImages {
                         let base64 = data.base64EncodedString()
                         contentParts.append([
