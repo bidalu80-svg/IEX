@@ -45,6 +45,8 @@ struct ThinkingRule: Identifiable, Equatable {
         case omit
         case reasoningEffort
         case nestedReasoningEffort
+        case deepSeekV4
+        case qwenDual
         case booleanToggle
         case customPath
 
@@ -52,10 +54,31 @@ struct ThinkingRule: Identifiable, Equatable {
         var title: String {
             switch self {
             case .omit: return "不发送思考字段"
-            case .reasoningEffort: return "推理强度字段"
-            case .nestedReasoningEffort: return "嵌套推理强度字段"
+            case .reasoningEffort: return "reasoning_effort（根级）"
+            case .nestedReasoningEffort: return "reasoning.effort（嵌套）"
+            case .deepSeekV4: return "thinking + reasoning_effort"
+            case .qwenDual: return "Qwen 思考开关与预算"
             case .booleanToggle: return "布尔开关"
             case .customPath: return "自定义字段路径"
+            }
+        }
+
+        var explanation: String {
+            switch self {
+            case .omit:
+                return "不额外发送思考相关字段。"
+            case .reasoningEffort:
+                return "在请求根级发送 reasoning_effort，例如 high。"
+            case .nestedReasoningEffort:
+                return "在 reasoning 对象内发送 effort，例如 reasoning: { effort: high }。"
+            case .deepSeekV4:
+                return "开启时在 thinking 对象内发送 type=enabled 与 reasoning_effort；关闭时发送 type=disabled。"
+            case .qwenDual:
+                return "同时发送顶级与 extra_body 中的 enable_thinking、thinking_budget，预算会按本次最大输出限制裁剪。"
+            case .booleanToggle:
+                return "将指定字段发送为 true 或 false。"
+            case .customPath:
+                return "按点分隔的字段路径发送思考强度值。"
             }
         }
     }
@@ -76,6 +99,16 @@ struct ThinkingRule: Identifiable, Equatable {
     }
 }
 
+/// Ze 内建的请求映射目录。它只描述真实的默认行为；点按后会复制为一条
+/// 可编辑的自定义规则，因此内建规则本身不会被改写或删除。
+struct BuiltInThinkingRule: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let scope: ThinkingRule.Scope
+    let summary: String
+    let template: ThinkingRule
+}
+
 /// Lock-protected snapshot read from the synchronous request builder.
 final class ThinkingRuleCache: @unchecked Sendable {
     static let shared = ThinkingRuleCache()
@@ -89,10 +122,73 @@ final class ThinkingRuleCache: @unchecked Sendable {
 }
 
 enum ThinkingRuleResolver {
+    @MainActor
+    static func builtInRulesForDisplay(instanceId: String) -> [BuiltInThinkingRule] {
+        guard let instance = ProviderConfigStore.shared.instance(for: instanceId) else { return [] }
+        let modelIds = ProviderConfigStore.shared.modelEntries
+            .filter { $0.providerInstanceId == instanceId && !$0.isHidden }
+            .map { $0.model.id }
+        let baseURL = instance.effectiveCustomBaseURL?.lowercased() ?? ""
+        let isOpenRouter = instance.providerType == .openRouter || baseURL.contains("openrouter.ai")
+        let isMistral = baseURL.contains("mistral.ai") || modelIds.contains { $0.lowercased().contains("mistral") }
+        let isUnifiedGateway = instance.azureMode || baseURL.contains("volces") || baseURL.contains("ark.") || baseURL.contains("azure") || baseURL.contains("venice.ai")
+
+        func rule(_ id: String, _ label: String, _ scope: ThinkingRule.Scope, _ format: ThinkingRule.WireFormat, _ summary: String, path: String = "", offValue: String? = nil) -> BuiltInThinkingRule {
+            BuiltInThinkingRule(
+                id: id,
+                label: label,
+                scope: scope,
+                summary: summary,
+                template: ThinkingRule(label: label, scope: scope, format: format, path: path, offValue: offValue)
+            )
+        }
+
+        var candidates: [BuiltInThinkingRule] = []
+        if isMistral {
+            candidates.append(rule("mistral-official", "Mistral 默认规则", .allModels, .omit, "Mistral 接口不额外发送思考字段"))
+        } else if isOpenRouter {
+            candidates.append(rule("openrouter-default", "OpenRouter 默认规则", .allModels, .nestedReasoningEffort, "发送 reasoning.effort"))
+        } else {
+            let openAIModels = ["o1*", "o3*", "o4*", "gpt-5*", "gpt-4*"]
+            for pattern in openAIModels {
+                candidates.append(rule("openai-\(pattern)", "OpenAI \(pattern)", .modelPattern(pattern), .reasoningEffort, "发送 reasoning_effort"))
+            }
+            candidates.append(rule("qwen-thinking", "Qwen 思考规则", .modelPattern("*qwen*"), .qwenDual, "发送 enable_thinking 与 thinking_budget"))
+            if isUnifiedGateway {
+                candidates.append(rule("unified-gateway-default", "统一网关默认规则", .allModels, .reasoningEffort, "发送 reasoning_effort"))
+            } else {
+                candidates.append(rule("deepseek-v4-official", "DeepSeek V4 官方规则", .modelPattern("*deepseek-v4*"), .deepSeekV4, "发送 thinking 与 reasoning_effort"))
+            }
+        }
+        candidates.append(rule("openai-compatible-default", "OpenAI 兼容默认规则", .allModels, .reasoningEffort, "发送 reasoning_effort"))
+
+        // 有模型时只展示此服务商实际可能命中的规则；首次配置尚未拉取模型时
+        // 保留候选规则，避免用户面对一个空白目录。
+        guard !modelIds.isEmpty else { return candidates }
+        return candidates.filter { candidate in
+            if case .allModels = candidate.scope { return true }
+            return modelIds.contains { candidate.scope.matches($0) }
+        }
+    }
+
+    static func requestPreview(for rule: ThinkingRule, level: ThinkingLevel = .high) -> String {
+        var body: [String: Any] = ["model": "示例模型", "messages": [["role": "user", "content": "你好"]]]
+        apply(rule: rule, to: &body, level: level, maxTokens: 4096)
+        guard JSONSerialization.isValidJSONObject(body),
+              let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
     /// Returns true if a custom rule matched. The caller must skip legacy built-in
     /// branching in that case, including for `.omit`.
-    static func applyCustomRule(to body: inout [String: Any], instanceId: String?, modelId: String, level: ThinkingLevel) -> Bool {
+    static func applyCustomRule(to body: inout [String: Any], instanceId: String?, modelId: String, level: ThinkingLevel, maxTokens: Int = 0) -> Bool {
         guard let rule = ThinkingRuleCache.shared.rules(for: instanceId).first(where: { $0.scope.matches(modelId) }) else { return false }
+        apply(rule: rule, to: &body, level: level, maxTokens: maxTokens)
+        return true
+    }
+
+    private static func apply(rule: ThinkingRule, to body: inout [String: Any], level: ThinkingLevel, maxTokens: Int) {
         let value = effort(level)
         switch rule.format {
         case .omit:
@@ -103,13 +199,38 @@ enum ThinkingRuleResolver {
         case .nestedReasoningEffort:
             if level.isEnabled { body["reasoning"] = ["effort": value] }
             else if let off = rule.offValue, !off.isEmpty { body["reasoning"] = ["effort": off] }
+        case .deepSeekV4:
+            var thinking: [String: Any] = ["type": level.isEnabled ? "enabled" : "disabled"]
+            if level.isEnabled { thinking["reasoning_effort"] = value }
+            body["thinking"] = thinking
+        case .qwenDual:
+            body["enable_thinking"] = level.isEnabled
+            var budget: Int = switch level {
+            case .off: 0
+            case .low: 4096
+            case .medium: 16384
+            case .high: 32768
+            case .xhigh, .max, .ultra: 65536
+            }
+            if budget > 0 && maxTokens > 0 {
+                if maxTokens < 2 { budget = 0 }
+                else {
+                    let margin = max(2048, maxTokens / 8)
+                    let ceiling = max(1, min(maxTokens - margin, maxTokens - 1))
+                    if budget >= ceiling { budget = ceiling }
+                }
+            }
+            if budget > 0 { body["thinking_budget"] = budget }
+            body["extra_body"] = [
+                "enable_thinking": level.isEnabled,
+                "thinking_budget": budget > 0 ? budget : NSNull(),
+            ] as [String: Any]
         case .booleanToggle:
             set(path: rule.path.isEmpty ? "thinking" : rule.path, value: level.isEnabled, in: &body)
         case .customPath:
             if level.isEnabled { set(path: rule.path, value: value, in: &body) }
             else if let off = rule.offValue, !off.isEmpty { set(path: rule.path, value: off, in: &body) }
         }
-        return true
     }
 
     static func effort(_ level: ThinkingLevel) -> String {

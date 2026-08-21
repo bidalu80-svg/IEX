@@ -25,6 +25,9 @@ struct ProviderInstanceDetailView: View {
     @State private var editingModelEntry: ModelEntry?
     @State private var pendingDeleteModelEntry: ModelEntry?
     @State private var showKeyRevealed = false
+    /// Kept on the provider-detail root rather than the Form Section. A sheet
+    /// attached to a Section can lose its presentation host when Form rebuilds.
+    @State private var thinkingRuleEditorRequest: ThinkingRuleEditorRequest?
 
     private var instance: ProviderInstance? {
         store.instance(for: instanceId)
@@ -57,6 +60,20 @@ struct ProviderInstanceDetailView: View {
         }
         .sheet(item: $editingModelEntry) { entry in
             ModelEntryDetailSheet(entry: entry)
+        }
+        .sheet(item: $thinkingRuleEditorRequest) { request in
+            ThinkingRuleEditor(rule: request.rule, isNew: request.isNew) { saved in
+                let existing = await ProviderConfigStore.shared.thinkingRules(for: instanceId)
+                let replacingID = request.isNew ? nil : request.rule?.id
+                let sortOrder = replacingID.flatMap { id in
+                    existing.firstIndex { $0.id == id }
+                } ?? existing.count
+                _ = await ProviderConfigStore.shared.saveThinkingRule(
+                    saved,
+                    instanceId: instanceId,
+                    sortOrder: sortOrder
+                )
+            }
         }
         .sheet(isPresented: $showKimiLogin) {
             if let instance = instance {
@@ -223,7 +240,10 @@ struct ProviderInstanceDetailView: View {
             // Completions request path. Official Responses/Anthropic/Gemini
             // protocols retain their own native thinking controls.
             if instance.providerType == .openAI || instance.providerType == .openRouter || instance.providerType == .xAI {
-                ThinkingRulesSection(instanceId: instance.id)
+                ThinkingRulesSection(
+                    instanceId: instance.id,
+                    editorRequest: $thinkingRuleEditorRequest
+                )
             }
 
             // MARK: Manual OAuth Token (for OAuth instances with manual token)

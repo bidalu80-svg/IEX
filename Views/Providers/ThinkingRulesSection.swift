@@ -4,20 +4,16 @@ import SwiftUI
 /// They are intentionally ordered: the first scope matching the model is used.
 struct ThinkingRulesSection: View {
     let instanceId: String
+    @Binding var editorRequest: ThinkingRuleEditorRequest?
     @ObservedObject private var store = ProviderConfigStore.shared
     @State private var rules: [ThinkingRule] = []
-    @State private var editing: ThinkingRule?
-    @State private var creating = false
+    @State private var builtInRules: [BuiltInThinkingRule] = []
+    @State private var showBuiltInRules = false
 
     var body: some View {
         Section {
-            if rules.isEmpty {
-                Label("当前使用 Ze 内建的思考参数规则", systemImage: "checkmark.shield")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
             ForEach(rules) { rule in
-                Button { editing = rule } label: {
+                Button { editorRequest = ThinkingRuleEditorRequest(rule: rule, isNew: false) } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "slider.horizontal.3")
                             .foregroundStyle(.tint)
@@ -45,7 +41,33 @@ struct ThinkingRulesSection: View {
                 let ids = rules.map(\.id)
                 Task { _ = await ProviderConfigStore.shared.reorderThinkingRules(instanceId: instanceId, orderedIds: ids) }
             }
-            Button { creating = true } label: {
+
+            DisclosureGroup(isExpanded: $showBuiltInRules) {
+                ForEach(builtInRules) { rule in
+                    Button { editorRequest = ThinkingRuleEditorRequest(rule: rule.template, isNew: true) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "lock.fill")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(rule.label).foregroundStyle(.primary)
+                                Text("\(rule.scope.displayName) · \(rule.summary)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Image(systemName: "doc.on.doc")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } label: {
+                Label("默认规则（\(builtInRules.count)）", systemImage: "lock.shield")
+            }
+
+            Button { editorRequest = ThinkingRuleEditorRequest(rule: nil, isNew: true) } label: {
                 Label("添加思考规则", systemImage: "plus.circle")
             }
         } header: {
@@ -56,43 +78,48 @@ struct ThinkingRulesSection: View {
             }
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                Text("规则按从上到下的顺序匹配。匹配成功的规则会覆盖 Ze 的内建请求格式，适用于使用非标准思考参数的 OpenAI 兼容中转服务。")
+                Text("规则按从上到下的顺序匹配。自定义规则优先于 Ze 的默认请求格式，适用于使用非标准思考参数的 OpenAI 兼容服务。")
                 if let preview = matchingPreview {
                     Label(preview, systemImage: "scope")
                         .foregroundStyle(.blue)
-                } else if !rules.isEmpty {
-                    Text("没有自定义规则匹配此 Provider 当前可见的模型。")
-                        .foregroundStyle(.secondary)
                 }
+                Text("默认规则内置于 Ze，不能直接删除。点按默认规则可复制为自定义规则，再按服务商要求修改。")
+                    .foregroundStyle(.secondary)
             }
             .font(.caption)
         }
         .task { await reload() }
-        .sheet(item: $editing) { rule in
-            ThinkingRuleEditor(rule: rule, isNew: false) { saved in await save(saved, replacing: rule.id) }
-        }
-        .sheet(isPresented: $creating) {
-            ThinkingRuleEditor(rule: nil, isNew: true) { saved in await save(saved, replacing: nil) }
+        .onChange(of: editorRequest) { request in
+            if request == nil { Task { await reload() } }
         }
     }
 
-    private func reload() async { rules = await ProviderConfigStore.shared.thinkingRules(for: instanceId) }
+    private func reload() async {
+        rules = await ProviderConfigStore.shared.thinkingRules(for: instanceId)
+        builtInRules = ThinkingRuleResolver.builtInRulesForDisplay(instanceId: instanceId)
+    }
 
     private var matchingPreview: String? {
         guard let modelId = store.modelEntries.first(where: {
             $0.providerInstanceId == instanceId && !$0.isHidden
         })?.model.id,
-        let rule = rules.first(where: { $0.scope.matches(modelId) }) else { return nil }
-        return "模型 \(modelId) 将使用“\(rule.label)”"
-    }
-    private func save(_ rule: ThinkingRule, replacing oldId: String?) async {
-        let order = oldId.flatMap { oldId in rules.firstIndex { existing in existing.id == oldId } } ?? rules.count
-        _ = await ProviderConfigStore.shared.saveThinkingRule(rule, instanceId: instanceId, sortOrder: order)
-        await reload()
+        if let rule = rules.first(where: { $0.scope.matches(modelId) }) {
+            return "模型 \(modelId) 将使用自定义规则“\(rule.label)”"
+        }
+        if let rule = builtInRules.first(where: { $0.scope.matches(modelId) }) {
+            return "模型 \(modelId) 将使用默认规则“\(rule.label)”"
+        }
+        return nil
     }
 }
 
-private struct ThinkingRuleEditor: View {
+struct ThinkingRuleEditorRequest: Identifiable, Equatable {
+    let rule: ThinkingRule?
+    let isNew: Bool
+    var id: String { "\(rule?.id ?? "new"):\(isNew ? "new" : "edit")" }
+}
+
+struct ThinkingRuleEditor: View {
     let rule: ThinkingRule?
     let isNew: Bool
     let onSave: (ThinkingRule) async -> Void
@@ -119,18 +146,33 @@ private struct ThinkingRuleEditor: View {
                     Picker("格式", selection: $format) {
                         ForEach(ThinkingRule.WireFormat.allCases) { Text($0.title).tag($0) }
                     }
+                    Text(format.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     if format == .booleanToggle || format == .customPath {
                         TextField("字段路径", text: $path)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                     if format == .reasoningEffort || format == .nestedReasoningEffort || format == .customPath {
-                        TextField("关闭思考时的值（可选）", text: $offValue)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Toggle("关闭思考时仍发送一个值", isOn: Binding(
+                            get: { !offValue.isEmpty },
+                            set: { if !$0 { offValue = "" } else if offValue.isEmpty { offValue = "none" } }
+                        ))
+                        if !offValue.isEmpty {
+                            TextField("关闭时的值（例如：none）", text: $offValue)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        }
                     }
                 } header: {
                     Text("请求格式")
                 } footer: {
                     Text("字段路径使用点分隔，例如 extra_body.thinking.enabled。关闭思考时的值留空，即不发送该字段。")
+                }
+                Section("请求预览") {
+                    Text(ThinkingRuleResolver.requestPreview(for: previewRule))
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
                 }
                 Section("生效方式") {
                     Label("当模型匹配范围时，此规则会优先于 Ze 的内建请求映射。", systemImage: "arrow.up.to.line")
@@ -156,5 +198,13 @@ private struct ThinkingRuleEditor: View {
                 if case .modelPattern(let value) = rule.scope { allModels = false; pattern = value }
             }
         }
+    }
+
+    private var previewRule: ThinkingRule {
+        ThinkingRule(label: label.isEmpty ? "示例规则" : label,
+                     scope: allModels ? .allModels : .modelPattern(pattern),
+                     format: format,
+                     path: path,
+                     offValue: offValue.isEmpty ? nil : offValue)
     }
 }

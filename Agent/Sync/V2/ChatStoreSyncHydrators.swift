@@ -171,12 +171,14 @@ enum ChatStoreSyncHydrators {
         let memoryEnabled = (intField(record, "memoryEnabled") ?? 1) == 1
         let modelBinding = optionalStringField(record, "modelBinding")
         let pinnedAt = dateField(record, "pinnedAt")
+        let archivedAt = dateField(record, "archivedAt")
 
         var session = ChatSession(
             id: id, title: title, category: category, modelId: modelId,
             createdAt: createdAt, updatedAt: updatedAt
         )
         session.pinnedAt = pinnedAt
+        session.archivedAt = archivedAt
         // v2 doesn't currently track per-device origin in PortableRecord;
         // pass an empty string as a sentinel ("unknown remote device").
         await ChatStore.shared.mergeRemoteSession(

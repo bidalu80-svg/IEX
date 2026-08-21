@@ -19,6 +19,8 @@ private final class SessionMenuActionChannel {
 
 private enum SessionMenuAction {
     case togglePin(String)
+    case toggleArchive(String)
+    case moveToGroup(String)
     case exportJSON(String)
     case exportText(String)
     case editTitle(String)
@@ -131,6 +133,11 @@ struct ContentView: View {
     @ObservedObject private var sidebarActivityTracker = SessionActivityTracker.shared
     @ObservedObject private var sidebarConcurrencyManager = SessionConcurrencyManager.shared
     @State private var sessions: [ChatSession] = []
+    /// Archived sessions are intentionally separated from the everyday list,
+    /// while remaining available through the archive button in the toolbar.
+    @State private var showingArchivedSessions = false
+    @State private var chatFolders: [ChatFolder] = []
+    @State private var sessionToMoveIntoGroup: ChatSession?
     /// [T-ios-session-list-equatable-jank] id → ChatSession lookup backing the
     /// sidebar rows. Held in @State (not a per-body-eval computed `[String:
     /// ChatSession]`) on purpose: a plain `let byId = computedDict` inside the
@@ -547,6 +554,25 @@ struct ContentView: View {
             }
             .presentationDetents([.medium])
         }
+        .sheet(item: $sessionToMoveIntoGroup) { session in
+            ChatGroupPickerSheet(session: session, folders: chatFolders) { folderId in
+                Task { @MainActor in
+                    await ChatStore.shared.setSessionFolder(session.id, folderId: folderId)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                    sessionToMoveIntoGroup = nil
+                    refreshSessionList()
+                }
+            } onCreateAndMove: { name in
+                Task { @MainActor in
+                    guard let folder = await ChatStore.shared.createChatFolder(name: name) else { return }
+                    await ChatStore.shared.setSessionFolder(session.id, folderId: folder.id)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                    sessionToMoveIntoGroup = nil
+                    refreshSessionList()
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $showDeleteConfirm, onDismiss: {
             if deleteInfo == nil {
                 // Deletion was performed — reset selection mode after sheet is fully dismissed
@@ -589,6 +615,7 @@ struct ContentView: View {
         }
         .task {
             sessions = await ChatStore.shared.listSessions()
+            chatFolders = await ChatStore.shared.listChatFolders()
             let shareAlreadyHandled = shareCoordinator.bufferVersion > 0
             // A Home Screen Quick Action that fired during launch will
             // open the right session itself via `quickActionRouter.newChatTrigger`.
@@ -979,8 +1006,9 @@ struct ContentView: View {
 
     /// Sessions filtered by active search query, or all sessions if not searching.
     private var filteredSessions: [ChatSession] {
-        guard let matchedIds = searchMatchedIds else { return sessions }
-        return sessions.filter { matchedIds.contains($0.id) }
+        let visible = sessions.filter { $0.isArchived == showingArchivedSessions }
+        guard let matchedIds = searchMatchedIds else { return visible }
+        return visible.filter { matchedIds.contains($0.id) }
     }
 
     /// Group sessions by date period for section display, with pinned sessions at the top.
@@ -988,6 +1016,16 @@ struct ContentView: View {
         let calendar = Calendar.current
         let now = Date()
         var buckets: [(label: String, sessions: [ChatSession])] = []
+        let foldersById = Dictionary(chatFolders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let grouped = Dictionary(grouping: list.compactMap { session -> ChatSession? in
+            guard let folderId = session.folderId, foldersById[folderId] != nil else { return nil }
+            return session
+        }) { $0.folderId! }
+        for folder in chatFolders {
+            if let members = grouped[folder.id], !members.isEmpty {
+                buckets.append(("分组：\(folder.name)", members.sorted { $0.updatedAt > $1.updatedAt }))
+            }
+        }
         var pinned: [ChatSession] = []
         var today: [ChatSession] = []
         var yesterday: [ChatSession] = []
@@ -998,7 +1036,7 @@ struct ContentView: View {
         let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) ?? now
         let monthAgo = calendar.date(byAdding: .month, value: -1, to: now) ?? now
 
-        for session in list {
+        for session in list where session.folderId == nil || foldersById[session.folderId ?? ""] == nil {
             if session.isPinned {
                 pinned.append(session)
                 continue
@@ -1216,7 +1254,7 @@ struct ContentView: View {
                                 // [T-ios-crash-contextmenu-uaf] Value-only menu view,
                                 // no closure captures — see SessionContextMenu.
                                 SessionContextMenu(
-                                    key: MenuKey(sid: session.id, pinned: session.isPinned, title: session.title),
+                                    key: MenuKey(sid: session.id, pinned: session.isPinned, archived: session.isArchived, title: session.title),
                                     actions: menuActions
                                 )
                                 .equatable()
@@ -1331,7 +1369,7 @@ struct ContentView: View {
                                         : session.id
                                     if let menuSid {
                                         SessionContextMenu(
-                                            key: MenuKey(sid: menuSid, pinned: session.isPinned, title: session.title),
+                                            key: MenuKey(sid: menuSid, pinned: session.isPinned, archived: session.isArchived, title: session.title),
                                             actions: menuActions
                                         )
                                         .equatable()
@@ -1670,6 +1708,19 @@ struct ContentView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             if !isSelecting {
+                Button {
+                    showingArchivedSessions.toggle()
+                    searchMatchedIds = nil
+                    searchMatchSnippets = [:]
+                    searchText = ""
+                } label: {
+                    Image(systemName: showingArchivedSessions ? "tray.full.fill" : "archivebox")
+                }
+                .accessibilityLabel(showingArchivedSessions ? "返回聊天列表" : "查看已归档聊天")
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if !isSelecting {
                 Menu {
                     Button {
                         showTerminal = true
@@ -1917,6 +1968,16 @@ struct ContentView: View {
                     await ChatStore.shared.toggleSessionPin(sid)
                     refreshSessionList()
                 }
+            case .toggleArchive(let sid):
+                Task { @MainActor in
+                    let isNowArchived = await ChatStore.shared.toggleSessionArchive(sid)
+                    if isNowArchived, isSessionHighlighted(sid) {
+                        selectedSessionId = nil
+                    }
+                    refreshSessionList()
+                }
+            case .moveToGroup(let sid):
+                sessionToMoveIntoGroup = sessions.first(where: { $0.id == sid })
             case .exportJSON(let sid):
                 exportSessions(ids: [sid], format: .json)
             case .exportText(let sid):
@@ -2295,6 +2356,7 @@ struct ContentView: View {
         sessionRefreshInFlight = true
         Task(priority: .utility) { @MainActor in
             sessions = await ChatStore.shared.listSessions()
+            chatFolders = await ChatStore.shared.listChatFolders()
             sessionRefreshInFlight = false
             if sessionRefreshPending {
                 sessionRefreshPending = false
@@ -3589,8 +3651,19 @@ private struct SessionContextMenu: View, Equatable {
         Button {
             actions.send(.togglePin(key.sid))
         } label: {
-            Label(LocalizedStringKey(key.pinned ? "Unpin" : "Pin"),
+            Label(LocalizedStringKey(key.pinned ? "取消置顶" : "置顶"),
                   systemImage: key.pinned ? "pin.slash" : "pin")
+        }
+        Button {
+            actions.send(.toggleArchive(key.sid))
+        } label: {
+            Label(key.archived ? "恢复到聊天列表" : "归档聊天记录",
+                  systemImage: key.archived ? "tray.and.arrow.up" : "archivebox")
+        }
+        Button {
+            actions.send(.moveToGroup(key.sid))
+        } label: {
+            Label("移入分组", systemImage: "folder")
         }
         Menu {
             Button {
@@ -3601,20 +3674,20 @@ private struct SessionContextMenu: View, Equatable {
             Button {
                 actions.send(.exportText(key.sid))
             } label: {
-                Label("Plain Text", systemImage: "text.alignleft")
+                Label("纯文本", systemImage: "text.alignleft")
             }
         } label: {
-            Label("Export", systemImage: "square.and.arrow.up")
+            Label("导出", systemImage: "square.and.arrow.up")
         }
         Button {
             actions.send(.editTitle(key.sid))
         } label: {
-            Label("Edit Title & Category", systemImage: "square.and.pencil")
+            Label("编辑标题和分类", systemImage: "square.and.pencil")
         }
         Button {
             actions.send(.regenerateTitle(key.sid))
         } label: {
-            Label("Regenerate Title", systemImage: "arrow.triangle.2.circlepath")
+            Label("重新生成标题", systemImage: "arrow.triangle.2.circlepath")
         }
         if BiometricAuth.isAvailable {
             if SessionLockStore.shared.isLocked(key.sid) {
@@ -3634,24 +3707,24 @@ private struct SessionContextMenu: View, Equatable {
         Button {
             actions.send(.duplicate(key.sid))
         } label: {
-            Label("Duplicate", systemImage: "doc.on.doc")
+            Label("复制会话", systemImage: "doc.on.doc")
         }
         if iCloudSyncVisible {
             Button {
                 actions.send(.forceSync(key.sid))
             } label: {
-                Label("Force iCloud Sync", systemImage: "icloud.and.arrow.up")
+                Label("强制同步 iCloud", systemImage: "icloud.and.arrow.up")
             }
             Button {
                 actions.send(.forcePull(key.sid))
             } label: {
-                Label("Force Pull Messages", systemImage: "icloud.and.arrow.down")
+                Label("从 iCloud 拉取消息", systemImage: "icloud.and.arrow.down")
             }
         }
         Button {
             actions.send(.select(key.sid))
         } label: {
-            Label("Select", systemImage: "checkmark.circle")
+            Label("选择", systemImage: "checkmark.circle")
         }
         Button {
             let title = (key.title ?? "Untitled").prefix(60)
@@ -3661,12 +3734,12 @@ private struct SessionContextMenu: View, Equatable {
                 UIApplication.shared.open(url)
             }
         } label: {
-            Label("Report Content", systemImage: "exclamationmark.bubble")
+            Label("举报内容", systemImage: "exclamationmark.bubble")
         }
         Button(role: .destructive) {
             actions.send(.delete(key.sid))
         } label: {
-            Label("Delete", systemImage: "trash")
+            Label("删除", systemImage: "trash")
         }
     }
 
@@ -3684,7 +3757,66 @@ private struct SessionContextMenu: View, Equatable {
 private struct MenuKey: Equatable {
     let sid: String
     let pinned: Bool
+    let archived: Bool
     let title: String?
+}
+
+/// Stable, root-hosted picker used by the sidebar context menu. It keeps
+/// grouping reversible: the first row moves the conversation back out.
+private struct ChatGroupPickerSheet: View {
+    let session: ChatSession
+    let folders: [ChatFolder]
+    let onMove: (String?) -> Void
+    let onCreateAndMove: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var newGroupName = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("选择分组") {
+                    Button {
+                        onMove(nil)
+                        dismiss()
+                    } label: {
+                        Label("移出分组", systemImage: "tray.and.arrow.up")
+                    }
+                    ForEach(folders) { folder in
+                        Button {
+                            onMove(folder.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Label(folder.name, systemImage: "folder.fill")
+                                Spacer()
+                                if session.folderId == folder.id {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section("新建分组") {
+                    TextField("分组名称", text: $newGroupName)
+                    Button {
+                        onCreateAndMove(newGroupName)
+                        dismiss()
+                    } label: {
+                        Label("新建并移入分组", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .navigationTitle("移入分组")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Session Row

@@ -51,12 +51,18 @@ struct ChatSession: Identifiable, Codable, Hashable {
     var remoteDeviceId: String?   // non-nil if this session came from another device via iCloud
     var remoteDeviceName: String? // human-readable name of the remote device
     var pinnedAt: Date?       // non-nil if session is pinned; timestamp of when it was pinned
+    /// Optional user-created grouping on the home list. nil = ungrouped.
+    var folderId: String? = nil
+    /// An archived session remains fully intact and can be restored at any time.
+    /// Nil means it belongs to the normal chat list.
+    var archivedAt: Date? = nil
 
     /// Whether this session is from a remote device (read-only).
     var isRemote: Bool { remoteDeviceId != nil }
 
     /// Whether this session is pinned to the top of the list.
     var isPinned: Bool { pinnedAt != nil }
+    var isArchived: Bool { archivedAt != nil }
 
     // MARK: - Equatable / Hashable (cheap, content-via-proxy)
     //
@@ -82,6 +88,8 @@ struct ChatSession: Identifiable, Codable, Hashable {
         lhs.id == rhs.id
             && lhs.updatedAt == rhs.updatedAt
             && lhs.pinnedAt == rhs.pinnedAt
+            && lhs.folderId == rhs.folderId
+            && lhs.archivedAt == rhs.archivedAt
             && lhs.title == rhs.title
             && lhs.category == rhs.category
             && lhs.source == rhs.source
@@ -96,6 +104,22 @@ struct ChatSession: Identifiable, Codable, Hashable {
         // Mirror ==: cheap, identity + updatedAt. Avoids hashing long strings.
         hasher.combine(id)
         hasher.combine(updatedAt)
+    }
+}
+
+/// A durable, user-created home-list group. Session membership is stored on
+/// the session row, so moving a conversation never touches its messages.
+struct ChatFolder: Identifiable, Codable, Hashable {
+    let id: String
+    var name: String
+    let createdAt: Date
+    var updatedAt: Date
+
+    init(id: String = UUID().uuidString, name: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }
 
@@ -481,6 +505,19 @@ actor ChatStore {
         addColumnIfMissing(table: "sessions", column: "remote_origin_device_id", definition: "TEXT")
         addColumnIfMissing(table: "sync_devices", column: "upload_types", definition: "TEXT NOT NULL DEFAULT ''")
         addColumnIfMissing(table: "sessions", column: "pinned_at", definition: "REAL")
+        addColumnIfMissing(table: "sessions", column: "folder_id", definition: "TEXT")
+        // Conversation archive is a reversible visibility state. It deliberately
+        // keeps messages and attachments in place; only the home-list placement
+        // changes, so restoring does not require a data migration or re-download.
+        addColumnIfMissing(table: "sessions", column: "archived_at", definition: "REAL")
+        exec("""
+            CREATE TABLE IF NOT EXISTS chat_folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
         addColumnIfMissing(table: "messages", column: "updated_at", definition: "REAL")
         // [T-error-persist-ios] Device-local error string shown on a failed
         // assistant turn (provider/network/empty-response/context-full/…). Persisted
@@ -1013,7 +1050,7 @@ actor ChatStore {
                        AND (m.part_flags & \(userMask)) != 0
                      ORDER BY m.sort_order DESC LIMIT 1),
                    s.source, s.last_synced_at,
-                   s.remote_origin_device_id, s.pinned_at,
+                   s.remote_origin_device_id, s.pinned_at, s.folder_id, s.archived_at,
                    -- sort_order of the picked assistant/user rows, so the Swift
                    -- layer can prefer whichever is genuinely newer.
                    (SELECT m.sort_order FROM messages m
@@ -1049,17 +1086,17 @@ actor ChatStore {
                 let userRaw = sqlite3_column_text(stmt, 7).map { String(cString: $0) }
                 let assistantText = assistantRaw.flatMap { extractTextFromPartsJSON($0) }
                 let userText = userRaw.flatMap { extractTextFromPartsJSON($0) }
-                // sort_order of each picked row (columns 12/13). Prefer whichever
+                // sort_order of each picked row (columns 14/15). Prefer whichever
                 // is genuinely newer: assistant wins when its row is at least as
                 // recent (covers mid-tool-call previews); the user message wins
                 // only when the user just sent something the assistant hasn't
                 // answered yet (assistant row is from an earlier turn). This
                 // replaces the dropped SQL pivot clause and is robust to
                 // sort_order re-ranking from iCloud merges.
-                let asstSortOrder: Int? = sqlite3_column_type(stmt, 12) != SQLITE_NULL
-                    ? Int(sqlite3_column_int64(stmt, 12)) : nil
-                let userSortOrder: Int? = sqlite3_column_type(stmt, 13) != SQLITE_NULL
-                    ? Int(sqlite3_column_int64(stmt, 13)) : nil
+                let asstSortOrder: Int? = sqlite3_column_type(stmt, 14) != SQLITE_NULL
+                    ? Int(sqlite3_column_int64(stmt, 14)) : nil
+                let userSortOrder: Int? = sqlite3_column_type(stmt, 15) != SQLITE_NULL
+                    ? Int(sqlite3_column_int64(stmt, 15)) : nil
                 let lastMessage: String? = {
                     switch (assistantText, userText) {
                     case let (a?, u?):
@@ -1085,12 +1122,15 @@ actor ChatStore {
                 let remoteDeviceId = sqlite3_column_text(stmt, 10).map { String(cString: $0) }
                 let pinnedAt: Date? = sqlite3_column_type(stmt, 11) != SQLITE_NULL
                     ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 11)) : nil
+                let folderId = sqlite3_column_text(stmt, 12).map { String(cString: $0) }
+                let archivedAt: Date? = sqlite3_column_type(stmt, 13) != SQLITE_NULL
+                    ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 13)) : nil
 
                 sessions.append(ChatSession(
                     id: id, title: title, category: category, modelId: modelId,
                     createdAt: createdAt, updatedAt: updatedAt, lastMessage: lastMessage,
                     source: source, lastSyncedAt: lastSyncedAt,
-                    remoteDeviceId: remoteDeviceId, pinnedAt: pinnedAt
+                    remoteDeviceId: remoteDeviceId, pinnedAt: pinnedAt, folderId: folderId, archivedAt: archivedAt
                 ))
             }
         }
@@ -1627,7 +1667,7 @@ actor ChatStore {
     }
 
     func getSession(_ id: String) -> ChatSession? {
-        let sql = "SELECT id, title, model_id, created_at, updated_at, category, source, pinned_at FROM sessions WHERE id = ?"
+        let sql = "SELECT id, title, model_id, created_at, updated_at, category, source, pinned_at, folder_id, archived_at FROM sessions WHERE id = ?"
         var stmt: OpaquePointer?
         var session: ChatSession?
 
@@ -1642,11 +1682,14 @@ actor ChatStore {
                 let source = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
                 let pinnedAt: Date? = sqlite3_column_type(stmt, 7) != SQLITE_NULL
                     ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 7)) : nil
+                let folderId = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+                let archivedAt: Date? = sqlite3_column_type(stmt, 9) != SQLITE_NULL
+                    ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 9)) : nil
 
                 session = ChatSession(
                     id: id, title: title, category: category, modelId: modelId,
                     createdAt: createdAt, updatedAt: updatedAt, source: source,
-                    pinnedAt: pinnedAt
+                    pinnedAt: pinnedAt, folderId: folderId, archivedAt: archivedAt
                 )
             }
         }
@@ -1714,6 +1757,103 @@ actor ChatStore {
         sqlite3_finalize(stmt)
         markDirty(recordType: "Session", recordId: id)
         return newPinned
+    }
+
+    /// Reversibly archive or restore a conversation. Content is never deleted.
+    @discardableResult
+    func toggleSessionArchive(_ id: String) -> Bool {
+        invalidateSessionListCache()
+        var isArchived = false
+        var check: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT archived_at FROM sessions WHERE id = ?", -1, &check, nil) == SQLITE_OK {
+            sqlite3_bind_text(check, 1, (id as NSString).utf8String, -1, nil)
+            if sqlite3_step(check) == SQLITE_ROW {
+                isArchived = sqlite3_column_type(check, 0) != SQLITE_NULL
+            }
+        }
+        sqlite3_finalize(check)
+
+        let nowArchived = !isArchived
+        var update: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE sessions SET archived_at = ?, updated_at = ? WHERE id = ?", -1, &update, nil) == SQLITE_OK {
+            if nowArchived { sqlite3_bind_double(update, 1, Date().timeIntervalSince1970) }
+            else { sqlite3_bind_null(update, 1) }
+            sqlite3_bind_double(update, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(update, 3, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(update)
+        }
+        sqlite3_finalize(update)
+        // Existing peers simply retain the session content. A newer Ze build
+        // will also preserve this local archive state across relaunches.
+        markDirty(recordType: "Session", recordId: id)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: id)
+        return nowArchived
+    }
+
+    // MARK: - Conversation Groups
+
+    func listChatFolders() -> [ChatFolder] {
+        let sql = "SELECT id, name, created_at, updated_at FROM chat_folders ORDER BY updated_at DESC, name COLLATE NOCASE ASC"
+        var stmt: OpaquePointer?
+        var folders: [ChatFolder] = []
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = String(cString: sqlite3_column_text(stmt, 0))
+                let name = String(cString: sqlite3_column_text(stmt, 1))
+                folders.append(ChatFolder(
+                    id: id,
+                    name: name,
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2)),
+                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+                ))
+            }
+        }
+        sqlite3_finalize(stmt)
+        return folders
+    }
+
+    @discardableResult
+    func createChatFolder(name: String) -> ChatFolder? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let folder = ChatFolder(name: String(trimmed.prefix(40)))
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "INSERT INTO chat_folders (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (folder.id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (folder.name as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 3, folder.createdAt.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 4, folder.updatedAt.timeIntervalSince1970)
+            guard sqlite3_step(stmt) == SQLITE_DONE else { sqlite3_finalize(stmt); return nil }
+        } else {
+            sqlite3_finalize(stmt)
+            return nil
+        }
+        sqlite3_finalize(stmt)
+        return folder
+    }
+
+    /// Assign a session to a group, or pass nil to move it back to the main list.
+    func setSessionFolder(_ sessionId: String, folderId: String?) {
+        invalidateSessionListCache()
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE sessions SET folder_id = ?, updated_at = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK {
+            bindOptionalText(stmt, index: 1, value: folderId)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (sessionId as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+        if let folderId {
+            var touch: OpaquePointer?
+            if sqlite3_prepare_v2(db, "UPDATE chat_folders SET updated_at = ? WHERE id = ?", -1, &touch, nil) == SQLITE_OK {
+                sqlite3_bind_double(touch, 1, Date().timeIntervalSince1970)
+                sqlite3_bind_text(touch, 2, (folderId as NSString).utf8String, -1, nil)
+                sqlite3_step(touch)
+            }
+            sqlite3_finalize(touch)
+        }
+        markDirty(recordType: "Session", recordId: sessionId)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: sessionId)
     }
 
     func getMemoryEnabled(sessionId: String) -> Bool {
@@ -5271,7 +5411,7 @@ extension ChatStore {
             // Local exists — only update title/category/etc if remote is newer
             if remoteUpdated > localTs {
                 iCloudLogger.info("[iCloud] mergeRemoteSession UPDATE (remote newer): id=\(session.id) remoteTs=\(remoteUpdated) localTs=\(localTs)")
-                let sql = "UPDATE sessions SET title = ?, category = ?, updated_at = ?, memory_enabled = ?, model_binding = ?, pinned_at = ? WHERE id = ?"
+                let sql = "UPDATE sessions SET title = ?, category = ?, updated_at = ?, memory_enabled = ?, model_binding = ?, pinned_at = ?, archived_at = ? WHERE id = ?"
                 var stmt: OpaquePointer?
                 if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                     bindOptionalText(stmt, index: 1, value: session.title)
@@ -5284,7 +5424,12 @@ extension ChatStore {
                     } else {
                         sqlite3_bind_null(stmt, 6)
                     }
-                    sqlite3_bind_text(stmt, 7, (session.id as NSString).utf8String, -1, nil)
+                    if let archivedAt = session.archivedAt {
+                        sqlite3_bind_double(stmt, 7, archivedAt.timeIntervalSince1970)
+                    } else {
+                        sqlite3_bind_null(stmt, 7)
+                    }
+                    sqlite3_bind_text(stmt, 8, (session.id as NSString).utf8String, -1, nil)
                     sqlite3_step(stmt)
                 }
                 sqlite3_finalize(stmt)
@@ -5332,7 +5477,7 @@ extension ChatStore {
             }
             // Local doesn't have this session — insert
             iCloudLogger.info("[iCloud] mergeRemoteSession INSERT: id=\(session.id) title=\(session.title ?? "nil") from=\(fromDeviceId)")
-            let sql = "INSERT INTO sessions (id, title, category, model_id, created_at, updated_at, remote_origin_device_id, memory_enabled, model_binding, pinned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            let sql = "INSERT INTO sessions (id, title, category, model_id, created_at, updated_at, remote_origin_device_id, memory_enabled, model_binding, pinned_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (session.id as NSString).utf8String, -1, nil)
@@ -5348,6 +5493,11 @@ extension ChatStore {
                     sqlite3_bind_double(stmt, 10, pinTs)
                 } else {
                     sqlite3_bind_null(stmt, 10)
+                }
+                if let archivedAt = session.archivedAt {
+                    sqlite3_bind_double(stmt, 11, archivedAt.timeIntervalSince1970)
+                } else {
+                    sqlite3_bind_null(stmt, 11)
                 }
                 sqlite3_step(stmt)
             }

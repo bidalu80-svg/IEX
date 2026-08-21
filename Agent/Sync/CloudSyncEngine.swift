@@ -1067,6 +1067,9 @@ final class CloudSyncEngine: ObservableObject {
                 // Send 0 sentinel to propagate "not pinned" state
                 record["pinnedAt"] = Date(timeIntervalSince1970: 0)
             }
+            // nil is an explicit restore state for current Ze builds. Older
+            // peers ignore the unknown field without affecting session data.
+            record["archivedAt"] = session.archivedAt
 
         case "CompactMarker":
             guard let marker = await ChatStore.shared.getCompactMarker(id: id) else { return nil }
@@ -1302,6 +1305,7 @@ final class CloudSyncEngine: ObservableObject {
                 updatedAt: record["updatedAt"] as? Date ?? Date()
             )
             session.pinnedAt = remotePinnedAt
+            session.archivedAt = record["archivedAt"] as? Date
             let memoryEnabled = (record["memoryEnabled"] as? Int ?? 1) == 1
             let modelBinding = record["modelBinding"] as? String
             // remotePinnedAtRaw distinguishes "old device / field absent" (nil) from "explicitly unpinned" (0)

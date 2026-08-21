@@ -863,7 +863,13 @@ final class OpenAIAgentProvider: AgentProvider {
     ///   generic `reasoning_effort` path instead. Only Ark/Azure set this, so
     ///   official direct DeepSeek/GLM/Kimi endpoints keep their native behavior.
     static func injectThinkingParams(into body: inout [String: Any], model: LLMModel, level: ThinkingLevel, isOpenRouter: Bool = false, maxTokens: Int = 0, offEffort: String? = nil, unifiedReasoningEffort: Bool = false, providerInstanceId: String? = nil) {
-        if ThinkingRuleResolver.applyCustomRule(to: &body, instanceId: providerInstanceId, modelId: model.id, level: level) {
+        if ThinkingRuleResolver.applyCustomRule(
+            to: &body,
+            instanceId: providerInstanceId,
+            modelId: model.id,
+            level: level,
+            maxTokens: maxTokens
+        ) {
             return
         }
         let lid = model.id.lowercased()

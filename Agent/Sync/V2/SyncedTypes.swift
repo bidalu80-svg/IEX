@@ -21,6 +21,9 @@ struct SyncedSession: Syncable {
     var memoryEnabled: Int          // 0/1
     var modelBinding: String?
     var pinnedAt: Date?
+    /// Optional for compatibility with older peers. nil explicitly represents
+    /// a restored (non-archived) conversation on current Ze builds.
+    var archivedAt: Date?
 
     static let syncMetadata: SyncTypeMetadata<SyncedSession> = {
         typealias F = FieldDescriptor<SyncedSession>
@@ -38,6 +41,7 @@ struct SyncedSession: Syncable {
                 F.int("memoryEnabled",       \SyncedSession.memoryEnabled),
                 F.optionalString("modelBinding", \SyncedSession.modelBinding),
                 F.optionalDate("pinnedAt",   \SyncedSession.pinnedAt),
+                F.optionalDate("archivedAt", \SyncedSession.archivedAt),
             ],
             conflictPolicy: .lastWriteWinsByField(\SyncedSession.updatedAt),
             version: 1
@@ -54,7 +58,8 @@ struct SyncedSession: Syncable {
             updatedAt: s.updatedAt,
             memoryEnabled: memoryEnabled ? 1 : 0,
             modelBinding: modelBinding,
-            pinnedAt: s.pinnedAt
+            pinnedAt: s.pinnedAt,
+            archivedAt: s.archivedAt
         )
     }
 }
