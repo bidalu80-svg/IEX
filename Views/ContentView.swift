@@ -4992,6 +4992,22 @@ private struct SettingsSheet: View {
                     }
                 }
 
+                Section("服务器与连接") {
+                    NavigationLink {
+                        RemoteServersView()
+                    } label: {
+                        Label {
+                            Text("服务器")
+                        } icon: {
+                            Image(systemName: "server.rack")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.blue, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                }
+
                 Section("Storage") {
                     NavigationLink {
                         StorageManagementView()

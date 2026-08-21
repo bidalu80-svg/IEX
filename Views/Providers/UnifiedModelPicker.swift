@@ -126,6 +126,7 @@ struct ModelPickerConfig {
         let store = ProviderConfigStore.shared
         if gid == store.voiceInputGroupId  { return [.audioInput] }
         if gid == store.voiceOutputGroupId { return [.audioOutput] }
+        if gid == store.visionGroupId      { return [.imageInput] }
         return nil
     }
 

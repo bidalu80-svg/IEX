@@ -198,6 +198,47 @@ enum ModelsDevAPI {
     /// True while a background network fetch is in flight (prevents concurrent fetches).
     private static var isRefreshing = false
 
+    /// Catalog details required to sort a provider's model picker.
+    struct ReleaseEntry {
+        let day: Int
+        let outputCost: Double?
+        let context: Int?
+    }
+
+    struct ReleaseIndex {
+        let byFullId: [String: ReleaseEntry]
+        let byTail: [String: ReleaseEntry]
+    }
+
+    private static var cachedReleaseIndex: ReleaseIndex?
+    private static var releaseIndexBuiltFrom: Date?
+
+    /// Builds the ranking index from the same models.dev registry already used
+    /// for model enrichment, rebuilding it when that catalog refreshes.
+    static func releaseIndex() -> ReleaseIndex? {
+        guard let registry = loadRegistry() else { return nil }
+        if let cachedReleaseIndex, releaseIndexBuiltFrom == cacheTimestamp { return cachedReleaseIndex }
+        var byFullId: [String: ReleaseEntry] = [:]
+        var byTail: [String: ReleaseEntry] = [:]
+        for provider in registry.values {
+            for (rawId, model) in provider.models {
+                guard let rawDate = model.releaseDate,
+                      let parsed = ModelReleaseIndex.parseReleaseDate(rawDate) else { continue }
+                let entry = ReleaseEntry(day: parsed.day, outputCost: model.cost?.output,
+                                         context: model.limit?.context)
+                let fullId = rawId.lowercased()
+                if byFullId[fullId]?.day ?? Int.min < entry.day { byFullId[fullId] = entry }
+                let tail = fullId.split(separator: "/").last.map(String.init) ?? fullId
+                if byTail[tail]?.day ?? Int.min < entry.day { byTail[tail] = entry }
+            }
+        }
+        let index = ReleaseIndex(byFullId: byFullId, byTail: byTail)
+        cachedReleaseIndex = index
+        releaseIndexBuiltFrom = cacheTimestamp
+        logger.info("[ModelRank] release index built: full=\(byFullId.count) tail=\(byTail.count)")
+        return index
+    }
+
     /// Returns the registry immediately from memory/disk/bundle (never blocks on network).
     /// Triggers a background refresh when the cache is stale (>24h), at most one at a time.
     private static func loadRegistry() -> [String: ModelsDevProvider]? {
@@ -352,6 +393,13 @@ private struct ModelsDevModel: Decodable {
     let limit: ModelsDevLimit?
     let reasoning: Bool?
     let interleaved: ModelsDevInterleaved?
+    let releaseDate: String?
+    let cost: ModelsDevCost?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, family, modalities, limit, reasoning, interleaved, cost
+        case releaseDate = "release_date"
+    }
 
     /// Convert models.dev modalities to app ModelModality.
     var resolvedModality: ModelModality? {
@@ -380,6 +428,11 @@ private struct ModelsDevModalities: Decodable {
 private struct ModelsDevLimit: Decodable {
     let context: Int?
     let output: Int?
+}
+
+private struct ModelsDevCost: Decodable {
+    let input: Double?
+    let output: Double?
 }
 
 /// `interleaved` can be either a bool (`true`) or an object (`{"field": "reasoning_content"}`).

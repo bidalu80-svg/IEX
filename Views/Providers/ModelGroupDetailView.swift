@@ -337,6 +337,9 @@ struct ModelGroupDetailView: View {
             if store.voiceOutputGroupId == gid {
                 return String(localized: "This group drives Voice Output — only models that can output audio are listed.", comment: "Add-models filter note for the bound voice output group")
             }
+            if store.visionGroupId == gid {
+                return String(localized: "该分组为不支持原生视觉的模型识别图片；此处仅显示支持图片输入的模型。", comment: "Add-models filter note for the bound vision group")
+            }
             return nil
         }()
         return ModelPickerConfig(

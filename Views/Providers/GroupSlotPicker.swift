@@ -13,18 +13,30 @@ struct GroupSlotPicker: View {
     let label: LocalizedStringKey
     @Binding var selection: String?
     var voiceDirection: VoiceDirection? = nil
+    var isVision: Bool = false
 
     @State private var showCreate = false
 
     private var selectedName: String {
         if let id = selection, let g = store.group(for: id) { return g.name }
-        return String(localized: "None", comment: "No group selected")
+        return String(localized: "无", comment: "No group selected")
+    }
+
+    private var selectedVisionMemberCount: Int {
+        guard isVision, let id = selection, let group = store.group(for: id) else { return 0 }
+        return group.memberEntryIds.reduce(into: 0) { count, entryId in
+            guard let entry = store.entry(for: entryId),
+                  !entry.isHidden,
+                  store.instance(for: entry.providerInstanceId)?.isEnabled == true,
+                  entry.model.capabilities.supportedModalities.contains(.imageInput) else { return }
+            count += 1
+        }
     }
 
     var body: some View {
         Menu {
             Picker(selection: $selection) {
-                Text("None", comment: "No group selected").tag(String?.none)
+                Text("无", comment: "No group selected").tag(String?.none)
                 ForEach(store.modelGroups) { group in
                     Text(group.name).tag(Optional(group.id))
                 }
@@ -34,18 +46,30 @@ struct GroupSlotPicker: View {
             Button {
                 showCreate = true
             } label: {
-                Label("Create group from models…", systemImage: "plus.rectangle.on.folder")
+                Label("从模型创建分组…", systemImage: "plus.rectangle.on.folder")
             }
         } label: {
-            HStack {
-                Text(label)
-                    .foregroundStyle(Color(UIColor.label))
-                Spacer()
-                Text(selectedName)
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.up.chevron.down")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(label)
+                        .foregroundStyle(Color(UIColor.label))
+                    Spacer()
+                    Text(selectedName)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if isVision, selection != nil {
+                    Label(
+                        selectedVisionMemberCount == 0
+                            ? "此分组没有已启用的图片识别模型"
+                            : "当前可用 \(selectedVisionMemberCount) 个图片识别模型",
+                        systemImage: selectedVisionMemberCount == 0 ? "exclamationmark.triangle.fill" : "eye.fill"
+                    )
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(selectedVisionMemberCount == 0 ? .orange : .secondary)
+                }
             }
         }
         .sheet(isPresented: $showCreate) {
@@ -60,14 +84,18 @@ struct GroupSlotPicker: View {
         let dir = voiceDirection
         let assign: (String) -> Void = { selection = $0 }
         return ModelPickerConfig(
-            title: "Create Group",
+            title: isVision ? "创建视觉分组" : "创建分组",
             mode: .multi,
-            explicitPreferModality: dir.map { $0 == .input ? [.audioInput] : [.audioOutput] },
+            explicitPreferModality: isVision
+                ? [.imageInput]
+                : dir.map { $0 == .input ? [.audioInput] : [.audioOutput] },
             groupScope: .none,
-            headerNote: dir?.filterNote,
+            headerNote: isVision
+                ? String(localized: "仅显示支持图片输入的模型。", comment: "Vision group picker filter note")
+                : dir?.filterNote,
             onAddMulti: { ids in
                 guard !ids.isEmpty else { return }
-                let name = Self.suggestedName(for: dir, store: ProviderConfigStore.shared)
+                let name = Self.suggestedName(for: dir, isVision: isVision, store: ProviderConfigStore.shared)
                 let group = ModelGroup(name: name, memberEntryIds: ids.sorted())
                 ProviderConfigStore.shared.addGroup(group)
                 assign(group.id)
@@ -75,12 +103,16 @@ struct GroupSlotPicker: View {
         )
     }
 
-    private static func suggestedName(for dir: VoiceDirection?, store: ProviderConfigStore) -> String {
+    private static func suggestedName(for dir: VoiceDirection?, isVision: Bool = false, store: ProviderConfigStore) -> String {
         let base: String
-        switch dir {
-        case .input:  base = String(localized: "Voice Input", comment: "Default voice input group name")
-        case .output: base = String(localized: "Voice Output", comment: "Default voice output group name")
-        case nil:     base = String(localized: "New Group", comment: "Default group name")
+        if isVision {
+            base = String(localized: "视觉输入", comment: "Default vision group name")
+        } else {
+            switch dir {
+            case .input:  base = String(localized: "语音输入", comment: "Default voice input group name")
+            case .output: base = String(localized: "语音输出", comment: "Default voice output group name")
+            case nil:     base = String(localized: "新建分组", comment: "Default group name")
+            }
         }
         let existing = Set(store.modelGroups.map(\.name))
         if !existing.contains(base) { return base }

@@ -581,17 +581,6 @@ extension AIChatViewModel {
                     resizedH = originalH
                 }
 
-                toolImageData = inferenceData
-                toolImageMimeType = "image/jpeg"
-                if pathArg.hasPrefix("/var/ze/") {
-                    toolImageLinuxPath = pathArg
-                } else if pathArg.hasPrefix("ze://") {
-                    let tail = String(pathArg.dropFirst("ze://".count))
-                    if !tail.isEmpty {
-                        toolImageLinuxPath = "/var/ze/\(tail)"
-                    }
-                }
-
                 var meta = "Image loaded successfully."
                 meta += "\nPath: \(pathArg)"
                 meta += "\nOriginal: \(originalW)x\(originalH), \(formatBytes(originalSize))"
@@ -599,12 +588,51 @@ extension AIChatViewModel {
                     meta += "\nResized for analysis: \(resizedW)x\(resizedH)"
                 }
                 meta += "\nMIME: image/jpeg"
-                toolOutput = meta
-                toolSuccess = true
+                let nativeVision = activeModelHasNativeVision
+                if nativeVision {
+                    toolImageData = inferenceData
+                    toolImageMimeType = "image/jpeg"
+                    if pathArg.hasPrefix("/var/ze/") {
+                        toolImageLinuxPath = pathArg
+                    } else if pathArg.hasPrefix("ze://") {
+                        let tail = String(pathArg.dropFirst("ze://".count))
+                        if !tail.isEmpty { toolImageLinuxPath = "/var/ze/\(tail)" }
+                    }
+                    toolOutput = meta
+                    toolSuccess = true
+                } else {
+                    let visionPrompt = (toolArgs["prompt"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    do {
+                        let groupName = VisionGroupResolver.groupName()
+                        let outcome = try await VisionGroupResolver.describe(
+                            imageData: inferenceData,
+                            mimeType: "image/jpeg",
+                            customPrompt: visionPrompt,
+                            seed: abs(tu.id.hashValue),
+                            onAttempt: { [weak self] attempt in
+                                guard let self,
+                                      msgIdx < self.messages.count,
+                                      blockIdx < self.messages[msgIdx].blocks.count else { return }
+                                self.messages[msgIdx].blocks[blockIdx].content =
+                                    "Reading image \(pathArg) via \(attempt.modelName) — attempt \(attempt.index)/\(attempt.total)…"
+                            }
+                        )
+                        toolOutput = meta + "\n\n" + VisionGroupResolver.framedDescription(
+                            outcome, groupName: groupName, question: visionPrompt)
+                        toolSuccess = true
+                    } catch {
+                        let reason = (error as? VisionGroupResolver.VisionError)?.errorDescription
+                            ?? error.localizedDescription
+                        toolOutput = meta + "\n\n" + VisionGroupResolver.failureText(reason)
+                        toolSuccess = true
+                        ctLogger.error("[read_image] Vision Input group failed: \(reason)")
+                    }
+                }
 
                 if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                     messages[msgIdx].blocks[blockIdx].imageFilePath = fileURL.path
-                    messages[msgIdx].blocks[blockIdx].content = meta
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
                 }
             } else {
                 ctLogger.error("[read_image] FAILED pathArg=\(pathArg) resolvedURL=\(resolvedURL?.path ?? "nil")")
@@ -627,6 +655,14 @@ extension AIChatViewModel {
             }
             toolOutput = memResult.output
             toolSuccess = memResult.success
+
+        case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
+            let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = remoteResult.output
+            }
+            toolOutput = remoteResult.output
+            toolSuccess = remoteResult.success
 
         default:
             toolOutput = "Error: Unknown tool '\(tu.name)'"

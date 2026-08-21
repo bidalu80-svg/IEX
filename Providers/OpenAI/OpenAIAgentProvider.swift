@@ -124,7 +124,7 @@ final class OpenAIAgentProvider: AgentProvider {
             // also a valid OpenAI value, so relays serving gpt models work too).
             if !provider.isMistral {
                 let offEffort = Self.explicitOffEffort(for: provider, model: model, level: thinkingLevel)
-                Self.injectThinkingParams(into: &body, model: model, level: thinkingLevel, isOpenRouter: provider.useOpenRouterCompat, maxTokens: maxTokens, offEffort: offEffort, unifiedReasoningEffort: provider.usesUnifiedReasoningEffort)
+                Self.injectThinkingParams(into: &body, model: model, level: thinkingLevel, isOpenRouter: provider.useOpenRouterCompat, maxTokens: maxTokens, offEffort: offEffort, unifiedReasoningEffort: provider.usesUnifiedReasoningEffort, providerInstanceId: provider.thinkingRuleInstanceId)
             }
         }
 
@@ -862,7 +862,10 @@ final class OpenAIAgentProvider: AgentProvider {
     ///   self-reasoning skip) are bypassed so those models fall through to the
     ///   generic `reasoning_effort` path instead. Only Ark/Azure set this, so
     ///   official direct DeepSeek/GLM/Kimi endpoints keep their native behavior.
-    static func injectThinkingParams(into body: inout [String: Any], model: LLMModel, level: ThinkingLevel, isOpenRouter: Bool = false, maxTokens: Int = 0, offEffort: String? = nil, unifiedReasoningEffort: Bool = false) {
+    static func injectThinkingParams(into body: inout [String: Any], model: LLMModel, level: ThinkingLevel, isOpenRouter: Bool = false, maxTokens: Int = 0, offEffort: String? = nil, unifiedReasoningEffort: Bool = false, providerInstanceId: String? = nil) {
+        if ThinkingRuleResolver.applyCustomRule(to: &body, instanceId: providerInstanceId, modelId: model.id, level: level) {
+            return
+        }
         let lid = model.id.lowercased()
         // [T-thinking-off-explicit] Families whose backends validate
         // reasoning_effort against a STRICT low/medium/high enum and reject
@@ -1150,7 +1153,7 @@ final class OpenAIAgentProvider: AgentProvider {
                                 "image_url": ["url": "data:\(mimeType);base64,\(base64)"],
                             ])
                         } else {
-                            contentParts.append(["type": "text", "text": "[Image attached but this model does not support vision input]"])
+                            contentParts.append(["type": "text", "text": VisionGroupResolver.attachmentPlaceholder(linuxPath: linuxPath)])
                         }
                     default:
                         break
@@ -1528,7 +1531,7 @@ final class OpenAIAgentProvider: AgentProvider {
                             "image_url": ["url": "data:\(mimeType);base64,\(base64)"],
                         ])
                     } else {
-                        contentParts.append(["type": "text", "text": "[Image attached but this model does not support vision input]"])
+                        contentParts.append(["type": "text", "text": VisionGroupResolver.attachmentPlaceholder(linuxPath: linuxPath)])
                     }
                 default:
                     break

@@ -4,6 +4,13 @@ import Foundation
 
 extension AIChatViewModel {
 
+    /// Keep tool registration and the tool handler on the exact model selected
+    /// for the request, rather than the potentially stale UI model selection.
+    var activeModelHasNativeVision: Bool {
+        let model = resolveCurrentEntry()?.model ?? selectedModel
+        return model.capabilities.supportedModalities.contains(.imageInput)
+    }
+
     // MARK: - Tool Definitions (Canonical)
 
     func makeAgentTools() -> [AgentToolDefinition] {
@@ -124,19 +131,34 @@ extension AIChatViewModel {
             ))
         }
 
-        // Only include read_image when the model supports image input
-        if selectedModel.capabilities.supportedModalities.contains(.imageInput) {
+        // A text-only chat model can still use read_image when a configured
+        // Vision Input group can turn the pixels into a framed text description.
+        let nativeVision = activeModelHasNativeVision
+        let visionGroupConfigured = VisionGroupResolver.isConfigured
+        if nativeVision || visionGroupConfigured {
+            let description = nativeVision
+                ? "Read an image file from the Linux filesystem and return it for visual analysis. Supports PNG, JPEG, GIF, WEBP, and other common image formats. The image is returned directly for your analysis along with metadata."
+                : "Read an image file from the Linux filesystem. A configured Vision Input group will inspect it and return a detailed text description and transcription. Use prompt to ask for specific details."
+            let promptDescription = nativeVision
+                ? "Optional note about what to inspect."
+                : "Optional specific question for the vision model, for example: transcribe the table or identify the error shown in the screenshot."
             tools.append(AgentToolDefinition(
                 name: "read_image",
-                description: "Read an image file from the Linux filesystem and return it for visual analysis. Supports PNG, JPEG, GIF, WEBP, and other common image formats. Use this to inspect generated charts, downloaded images, screenshots, or any visual output. The image is returned directly for your analysis along with metadata (dimensions, file size).",
+                description: description,
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'View generated bar chart', 'Inspect downloaded screenshot'). Use the same language as the user."),
                     "path": AgentToolParam(type: .string, description: "Linux path (e.g. /var/ze/attachments/chart.png) or ze:// URL (e.g. ze://attachments/chart.png)"),
+                    "prompt": AgentToolParam(type: .string, description: promptDescription),
                 ],
                 required: ["tool_title", "path"],
-                propertyOrdering: ["tool_title", "path"]
+                propertyOrdering: ["tool_title", "path", "prompt"]
             ))
         }
+
+        // Remote SSH/SFTP is deliberately a distinct, opt-in tool family.
+        // The gateway publishes only per-server AI-authorized metadata and
+        // never exposes credentials or Keychain material to the model.
+        tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
 
         return tools
     }

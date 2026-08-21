@@ -219,6 +219,13 @@ struct ProviderInstanceDetailView: View {
                 imageEndpointSection(instance)
             }
 
+            // Custom rules are honored by the OpenAI-compatible Chat
+            // Completions request path. Official Responses/Anthropic/Gemini
+            // protocols retain their own native thinking controls.
+            if instance.providerType == .openAI || instance.providerType == .openRouter || instance.providerType == .xAI {
+                ThinkingRulesSection(instanceId: instance.id)
+            }
+
             // MARK: Manual OAuth Token (for OAuth instances with manual token)
             if instance.credentialType == .oauth && instance.providerType != .antigravity {
                 manualOAuthTokenSection(instance)

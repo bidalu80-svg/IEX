@@ -35,6 +35,9 @@ struct ProviderConfig: Codable, Equatable {
     var voiceInputGroupId: String?
     /// Model group used for voice OUTPUT (text-to-speech). Same semantics.
     var voiceOutputGroupId: String?
+    /// Model group used to describe images for text-only chat models. Like the
+    /// voice selectors, this is local device configuration rather than sync data.
+    var visionGroupId: String?
     /// Per-session inference settings (thinking toggle, etc.).
     var sessionInferenceConfigs: [String: SessionInferenceConfig]
     /// Soft-delete tombstones. Required to make deletes survive
@@ -50,6 +53,7 @@ struct ProviderConfig: Codable, Equatable {
          sessionBindings: [String: SessionModelBinding],
          agentLoopModelEntryIds: [String] = [], agentLoopGroupIds: [String] = [],
          voiceInputGroupId: String? = nil, voiceOutputGroupId: String? = nil,
+         visionGroupId: String? = nil,
          sessionInferenceConfigs: [String: SessionInferenceConfig] = [:],
          deletedInstances: [ProviderConfigTombstone] = [],
          deletedModelEntries: [ProviderConfigTombstone] = [],
@@ -64,6 +68,7 @@ struct ProviderConfig: Codable, Equatable {
         self.agentLoopGroupIds = agentLoopGroupIds
         self.voiceInputGroupId = voiceInputGroupId
         self.voiceOutputGroupId = voiceOutputGroupId
+        self.visionGroupId = visionGroupId
         self.sessionInferenceConfigs = sessionInferenceConfigs
         self.deletedInstances = deletedInstances
         self.deletedModelEntries = deletedModelEntries
@@ -87,6 +92,7 @@ struct ProviderConfig: Codable, Equatable {
         agentLoopGroupIds = try container.decodeIfPresent([String].self, forKey: .agentLoopGroupIds) ?? []
         voiceInputGroupId = try container.decodeIfPresent(String.self, forKey: .voiceInputGroupId)
         voiceOutputGroupId = try container.decodeIfPresent(String.self, forKey: .voiceOutputGroupId)
+        visionGroupId = try container.decodeIfPresent(String.self, forKey: .visionGroupId)
         sessionInferenceConfigs = try container.decodeIfPresent([String: SessionInferenceConfig].self, forKey: .sessionInferenceConfigs) ?? [:]
         deletedInstances = try container.decodeIfPresent([ProviderConfigTombstone].self, forKey: .deletedInstances) ?? []
         deletedModelEntries = try container.decodeIfPresent([ProviderConfigTombstone].self, forKey: .deletedModelEntries) ?? []
@@ -96,7 +102,7 @@ struct ProviderConfig: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case instances, modelEntries, modelGroups, defaultPrimaryGroupId, defaultSubGroupId
         case sessionBindings, agentLoopModelEntryIds, agentLoopGroupIds, sessionInferenceConfigs
-        case voiceInputGroupId, voiceOutputGroupId
+        case voiceInputGroupId, voiceOutputGroupId, visionGroupId
         case deletedInstances, deletedModelEntries, deletedModelGroups
     }
 
@@ -199,6 +205,7 @@ final class ProviderConfigStore: ObservableObject {
                 guard let self else { return }
                 self.db = db
                 guard let db else { return }
+                await self.refreshThinkingRuleCache()
                 // [T-provider-entry-composite-key] Load the persisted
                 // legacyUuid→compositeKey map (normalization runs AFTER the
                 // authoritative config is loaded below, so it operates on the
@@ -239,6 +246,7 @@ final class ProviderConfigStore: ObservableObject {
                 let (deduped, prunedAtLoad) = Self.dedupeEntriesByModel(fresh)
                 self.config = deduped
                 self.lastSavedSnapshot = deduped
+                await self.refreshThinkingRuleCache()
                 // [T-provider-entry-composite-key] Build the legacyUuid map from
                 // the local entries (each entry's random uuid → its composite
                 // key), then normalize any group/binding/agent-loop reference
@@ -335,6 +343,47 @@ final class ProviderConfigStore: ObservableObject {
                 logger.error("[v3] ProviderConfigDB open failed: \(error) — staying on JSON-only mode")
                 completion(nil)
             }
+        }
+    }
+
+    // MARK: - Thinking Rules
+
+    /// Reads one provider's custom rules and refreshes the synchronous request
+    /// cache. Rules are stored separately from ProviderConfig so ordinary model
+    /// edits never overwrite them.
+    func thinkingRules(for instanceId: String) async -> [ThinkingRule] {
+        guard let db else { return [] }
+        return await db.loadThinkingRules(instanceId: instanceId)
+    }
+
+    @discardableResult
+    func saveThinkingRule(_ rule: ThinkingRule, instanceId: String, sortOrder: Int) async -> Bool {
+        guard let db else { return false }
+        let saved = await db.upsertThinkingRule(rule, instanceId: instanceId, sortOrder: sortOrder)
+        if saved { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        return saved
+    }
+
+    @discardableResult
+    func deleteThinkingRule(id: String, instanceId: String) async -> Bool {
+        guard let db else { return false }
+        let deleted = await db.deleteThinkingRule(id: id)
+        if deleted { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        return deleted
+    }
+
+    @discardableResult
+    func reorderThinkingRules(instanceId: String, orderedIds: [String]) async -> Bool {
+        guard let db else { return false }
+        let saved = await db.reorderThinkingRules(instanceId: instanceId, orderedIds: orderedIds)
+        if saved { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        return saved
+    }
+
+    private func refreshThinkingRuleCache() async {
+        guard let db else { return }
+        for instance in config.instances {
+            ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instance.id), for: instance.id)
         }
     }
 
@@ -1225,13 +1274,27 @@ final class ProviderConfigStore: ObservableObject {
     func entries(for instanceId: String) -> [ModelEntry] {
         config.modelEntries
             .filter { $0.providerInstanceId == instanceId }
-            .sorted { $0.baseModel.id < $1.baseModel.id }
+            .sorted(by: Self.releaseRankOrder)
     }
 
     func visibleEntries(for instanceId: String) -> [ModelEntry] {
         config.modelEntries
             .filter { $0.providerInstanceId == instanceId && !$0.isHidden }
-            .sorted { $0.baseModel.id < $1.baseModel.id }
+            .sorted(by: Self.releaseRankOrder)
+    }
+
+    /// Newer catalog models appear first; unknown local/custom entries stay
+    /// visible, deterministically ordered after the dated catalog entries.
+    static func releaseRankOrder(_ lhs: ModelEntry, _ rhs: ModelEntry) -> Bool {
+        let left = ModelReleaseIndex.rank(modelId: lhs.baseModel.id,
+                                          displayName: lhs.baseModel.displayName,
+                                          contextWindow: lhs.baseModel.contextWindow)
+        let right = ModelReleaseIndex.rank(modelId: rhs.baseModel.id,
+                                           displayName: rhs.baseModel.displayName,
+                                           contextWindow: rhs.baseModel.contextWindow)
+        if left < right { return true }
+        if right < left { return false }
+        return lhs.baseModel.id < rhs.baseModel.id
     }
 
     /// Shared sort used by the flat-list getter. Clusters entries by provider
@@ -1579,6 +1642,7 @@ final class ProviderConfigStore: ObservableObject {
         config.modelGroups.removeAll { $0.id == groupId }
         if config.defaultPrimaryGroupId == groupId { config.defaultPrimaryGroupId = nil }
         if config.defaultSubGroupId == groupId { config.defaultSubGroupId = nil }
+        if config.visionGroupId == groupId { config.visionGroupId = nil }
         config.agentLoopGroupIds.removeAll { $0 == groupId }
         Self.recordTombstone(in: &config.deletedModelGroups, ids: [groupId])
         save()
@@ -1644,6 +1708,11 @@ final class ProviderConfigStore: ObservableObject {
     var voiceOutputGroupId: String? {
         get { config.voiceOutputGroupId }
         set { config.voiceOutputGroupId = newValue; save() }
+    }
+
+    var visionGroupId: String? {
+        get { config.visionGroupId }
+        set { config.visionGroupId = newValue; save() }
     }
 
     /// Ensure a default Voice INPUT group exists and is bound when the user hasn't

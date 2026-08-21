@@ -94,6 +94,7 @@ actor ProviderConfigDB {
         // backstop also belongs here for the same reason; kept idempotent.)
         Self.ensureInstanceCustomUAColumn(db: db)
         Self.ensureGroupTombstoneColumns(db: db)
+        Self.ensureThinkingRulesTable(db: db)
 
         if current >= schemaVersion {
             logger.info("[v3] schema up-to-date at version \(current)")
@@ -288,6 +289,27 @@ actor ProviderConfigDB {
             exec(db: db, "ALTER TABLE provider_model_groups ADD COLUMN added_members_json TEXT NOT NULL DEFAULT '{}'")
             logger.info("[v3] schema repair: added missing column added_members_json")
         }
+    }
+
+    /// Custom Thinking Rules are local rows (like session inference settings).
+    /// The table creation is idempotent so databases already at the current
+    /// schema version acquire it without requiring a destructive migration.
+    private static func ensureThinkingRulesTable(db: OpaquePointer) {
+        exec(db: db, """
+            CREATE TABLE IF NOT EXISTS provider_thinking_rules (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                scope_pattern TEXT,
+                format TEXT NOT NULL,
+                path TEXT NOT NULL DEFAULT '',
+                off_value TEXT,
+                updated_at REAL NOT NULL
+            )
+        """)
+        exec(db: db, "CREATE INDEX IF NOT EXISTS idx_provider_thinking_rules_instance ON provider_thinking_rules (instance_id, sort_order)")
     }
 
     // MARK: - Member-timestamp map JSON codec
@@ -634,6 +656,9 @@ actor ProviderConfigDB {
         if let v = config.voiceOutputGroupId {
             setLocalKVRow("voiceOutputGroupId", value: v)
         }
+        if let v = config.visionGroupId {
+            setLocalKVRow("visionGroupId", value: v)
+        }
         for (sid, binding) in config.sessionBindings {
             if let json = try? Self.jsonString(binding) {
                 upsertSessionBindingRow(sessionId: sid, bindingJson: json, updatedAt: now)
@@ -808,6 +833,7 @@ actor ProviderConfigDB {
         let agentLoopGroups = loadAgentLoopIds(kind: "group")
         let voiceInputGroup = localKV("voiceInputGroupId")
         let voiceOutputGroup = localKV("voiceOutputGroupId")
+        let visionGroup = localKV("visionGroupId")
 
         return ProviderConfig(
             instances: instances,
@@ -820,6 +846,7 @@ actor ProviderConfigDB {
             agentLoopGroupIds: agentLoopGroups,
             voiceInputGroupId: voiceInputGroup,
             voiceOutputGroupId: voiceOutputGroup,
+            visionGroupId: visionGroup,
             sessionInferenceConfigs: inferCfgs
         )
     }
@@ -835,6 +862,88 @@ actor ProviderConfigDB {
         }
         logger.info("[v3] migrateFromLegacyJSON: ingesting \(config.instances.count) instances / \(config.modelEntries.count) entries / \(config.modelGroups.count) groups")
         bulkReplace(from: config)
+        return true
+    }
+
+    // MARK: - Thinking Rules
+
+    func loadThinkingRules(instanceId: String) -> [ThinkingRule] {
+        guard let db else { return [] }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT id, label, scope_kind, scope_pattern, format, path, off_value FROM provider_thinking_rules WHERE instance_id = ? ORDER BY sort_order ASC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, instanceId, -1, Self.SQLITE_TRANSIENT)
+        var rules: [ThinkingRule] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let raw = Self.text(stmt, 4)
+            guard let format = ThinkingRule.WireFormat(rawValue: raw) else { continue }
+            rules.append(ThinkingRule(
+                id: Self.text(stmt, 0),
+                label: Self.text(stmt, 1),
+                scope: .persisted(kind: Self.text(stmt, 2), pattern: Self.optText(stmt, 3)),
+                format: format,
+                path: Self.text(stmt, 5),
+                offValue: Self.optText(stmt, 6)
+            ))
+        }
+        return rules
+    }
+
+    @discardableResult
+    func upsertThinkingRule(_ rule: ThinkingRule, instanceId: String, sortOrder: Int) -> Bool {
+        guard let db else { return false }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            INSERT INTO provider_thinking_rules (id, instance_id, sort_order, label, scope_kind, scope_pattern, format, path, off_value, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id, sort_order=excluded.sort_order,
+            label=excluded.label, scope_kind=excluded.scope_kind, scope_pattern=excluded.scope_pattern,
+            format=excluded.format, path=excluded.path, off_value=excluded.off_value, updated_at=excluded.updated_at
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, rule.id, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, instanceId, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 3, Int32(sortOrder))
+        sqlite3_bind_text(stmt, 4, rule.label, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 5, rule.scope.persistedKind, -1, Self.SQLITE_TRANSIENT)
+        if let pattern = rule.scope.persistedPattern { sqlite3_bind_text(stmt, 6, pattern, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 6) }
+        sqlite3_bind_text(stmt, 7, rule.format.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 8, rule.path, -1, Self.SQLITE_TRANSIENT)
+        if let off = rule.offValue, !off.isEmpty { sqlite3_bind_text(stmt, 9, off, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 9) }
+        sqlite3_bind_double(stmt, 10, Date().timeIntervalSince1970)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    @discardableResult
+    func deleteThinkingRule(id: String) -> Bool {
+        guard let db else { return false }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "DELETE FROM provider_thinking_rules WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, id, -1, Self.SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    @discardableResult
+    func reorderThinkingRules(instanceId: String, orderedIds: [String]) -> Bool {
+        guard let db else { return false }
+        Self.exec(db: db, "BEGIN IMMEDIATE")
+        for (index, id) in orderedIds.enumerated() {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE provider_thinking_rules SET sort_order = ?, updated_at = ? WHERE id = ? AND instance_id = ?", -1, &stmt, nil) == SQLITE_OK else {
+                sqlite3_finalize(stmt); Self.exec(db: db, "ROLLBACK"); return false
+            }
+            sqlite3_bind_int(stmt, 1, Int32(index))
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, id, -1, Self.SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 4, instanceId, -1, Self.SQLITE_TRANSIENT)
+            let done = sqlite3_step(stmt) == SQLITE_DONE
+            sqlite3_finalize(stmt)
+            guard done else { Self.exec(db: db, "ROLLBACK"); return false }
+        }
+        Self.exec(db: db, "COMMIT")
         return true
     }
 

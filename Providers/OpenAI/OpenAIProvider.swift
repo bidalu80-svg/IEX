@@ -86,6 +86,10 @@ final class OpenAIProvider: LLMProvider {
     /// force-restored after the merge. Empty = no passthrough (default).
     var chatExtraBody: [String: Any] = [:]
 
+    /// Source ProviderInstance for local Thinking Rules. It is intentionally
+    /// runtime-only: the rule is selected when a request is built, never sent.
+    var thinkingRuleInstanceId: String?
+
     /// [T-model-use-endpoint-override] Absolute-path endpoint override.
     /// When set (must start with "/"), it replaces the ENTIRE URL path after
     /// scheme+host — unlike the legacy `imagePathOverride`, which is joined

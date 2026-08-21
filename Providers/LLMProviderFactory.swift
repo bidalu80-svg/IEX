@@ -58,6 +58,7 @@ enum LLMProviderFactory {
 
     @discardableResult
     static func applyCustomUserAgent(_ provider: OpenAIProvider, instance: ProviderInstance) -> OpenAIProvider {
+        provider.thinkingRuleInstanceId = instance.id
         // OAuth (Codex) requires its own `codex_cli_rs/...` UA — never touch it.
         guard !provider.isOAuth else { return provider }
         // A user-set per-provider custom UA wins (only honored for

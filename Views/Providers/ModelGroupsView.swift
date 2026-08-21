@@ -86,10 +86,18 @@ struct ModelGroupsView: View {
                         ),
                         voiceDirection: .output
                     )
+                    GroupSlotPicker(
+                        label: "视觉输入",
+                        selection: Binding(
+                            get: { store.visionGroupId },
+                            set: { store.visionGroupId = $0 }
+                        ),
+                        isVision: true
+                    )
                 } header: {
                     Text("Defaults")
                 } footer: {
-                    Text("Primary is used for main agent tasks. Sub is used for lightweight tasks like title generation. Voice Input/Output pick a group whose audio-capable models drive speech-to-text and text-to-speech; if none is set, the offline System voice is used.")
+                    Text("主模型用于主要 Agent 任务；副模型用于标题生成等轻量任务。语音输入/输出分组中的音频模型用于语音转文字和文字转语音；未设置时使用离线系统语音。视觉输入分组中的图片识别模型会为不支持原生视觉的聊天模型生成图片描述。")
                 }
             }
 
