@@ -115,7 +115,7 @@ private struct ThinkingRuleEditor: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                 }
-                Section("请求格式") {
+                Section {
                     Picker("格式", selection: $format) {
                         ForEach(ThinkingRule.WireFormat.allCases) { Text($0.title).tag($0) }
                     }
@@ -127,6 +127,8 @@ private struct ThinkingRuleEditor: View {
                         TextField("关闭思考时的值（可选）", text: $offValue)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
+                } header: {
+                    Text("请求格式")
                 } footer: {
                     Text("字段路径使用点分隔，例如 extra_body.thinking.enabled。关闭思考时的值留空，即不发送该字段。")
                 }
