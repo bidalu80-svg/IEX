@@ -34,6 +34,26 @@ private enum SessionMenuAction {
     case delete(String)
 }
 
+/// The sidebar's lightweight list projection. Folder rows carry their full
+/// metadata so the list can render a real folder card instead of treating a
+/// folder as a date-heading string.
+private struct SidebarGroup: Identifiable {
+    let label: String
+    let ids: [String]
+    let folder: ChatFolder?
+    var id: String { folder?.id ?? "date:\(label)" }
+    var isFolder: Bool { folder != nil }
+}
+
+/// One root-hosted request serves the row menu and the batch-selection bar.
+/// Keeping ids rather than ChatSession values avoids stale sheets after a list
+/// refresh and supports moving multiple selected conversations at once.
+private struct FolderMoveRequest: Identifiable {
+    let id = UUID()
+    let sessionIds: Set<String>
+    let anyFiled: Bool
+}
+
 #if DEBUG
 // TEMPORARY: SessionRow height probe to confirm List cell-height estimation
 // jitter. Logs each distinct measured row height once (deduped) so we know
@@ -137,7 +157,15 @@ struct ContentView: View {
     /// while remaining available through the archive button in the toolbar.
     @State private var showingArchivedSessions = false
     @State private var chatFolders: [ChatFolder] = []
-    @State private var sessionToMoveIntoGroup: ChatSession?
+    @State private var folderMoveRequest: FolderMoveRequest?
+    /// Expand/collapse is presentation preference only; memberships remain in
+    /// SQLite and are unaffected by this local sidebar choice.
+    @State private var collapsedFolderIds: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "ze.collapsedChatFolderIds") ?? [])
+    @State private var folderToRename: ChatFolder?
+    @State private var renameFolderName = ""
+    @State private var renameFolderDescription = ""
+    @State private var folderToDissolve: ChatFolder?
     /// [T-ios-session-list-equatable-jank] id → ChatSession lookup backing the
     /// sidebar rows. Held in @State (not a per-body-eval computed `[String:
     /// ChatSession]`) on purpose: a plain `let byId = computedDict` inside the
@@ -554,24 +582,61 @@ struct ContentView: View {
             }
             .presentationDetents([.medium])
         }
-        .sheet(item: $sessionToMoveIntoGroup) { session in
-            ChatGroupPickerSheet(session: session, folders: chatFolders) { folderId in
+        .sheet(item: $folderMoveRequest) { request in
+            ChatGroupPickerSheet(sessionIds: request.sessionIds, folders: chatFolders, anyFiled: request.anyFiled) { folderId in
                 Task { @MainActor in
-                    await ChatStore.shared.setSessionFolder(session.id, folderId: folderId)
+                    await ChatStore.shared.setSessionsFolder(Array(request.sessionIds), folderId: folderId)
                     chatFolders = await ChatStore.shared.listChatFolders()
-                    sessionToMoveIntoGroup = nil
+                    folderMoveRequest = nil
                     refreshSessionList()
                 }
-            } onCreateAndMove: { name in
+            } onCreateAndMove: { name, desc in
                 Task { @MainActor in
-                    guard let folder = await ChatStore.shared.createChatFolder(name: name) else { return }
-                    await ChatStore.shared.setSessionFolder(session.id, folderId: folder.id)
+                    guard let folder = await ChatStore.shared.createChatFolder(name: name, desc: desc) else { return }
+                    await ChatStore.shared.setSessionsFolder(Array(request.sessionIds), folderId: folder.id)
                     chatFolders = await ChatStore.shared.listChatFolders()
-                    sessionToMoveIntoGroup = nil
+                    folderMoveRequest = nil
                     refreshSessionList()
                 }
             }
             .presentationDetents([.medium, .large])
+        }
+        .alert("编辑分组", isPresented: Binding(
+            get: { folderToRename != nil },
+            set: { if !$0 { folderToRename = nil } }
+        )) {
+            TextField("分组名称", text: $renameFolderName)
+            TextField("说明（可选）", text: $renameFolderDescription)
+            Button("保存") {
+                guard let folder = folderToRename else { return }
+                let name = renameFolderName
+                let desc = renameFolderDescription
+                Task { @MainActor in
+                    await ChatStore.shared.renameChatFolder(folder.id, name: name, desc: desc)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                    refreshSessionList()
+                }
+                folderToRename = nil
+            }
+            Button("取消", role: .cancel) { folderToRename = nil }
+        }
+        .confirmationDialog(
+            "解散“\(folderToDissolve?.name ?? "")”分组？",
+            isPresented: Binding(get: { folderToDissolve != nil }, set: { if !$0 { folderToDissolve = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("解散分组", role: .destructive) {
+                guard let folder = folderToDissolve else { return }
+                Task { @MainActor in
+                    _ = await ChatStore.shared.dissolveChatFolder(folder.id)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                    refreshSessionList()
+                }
+                folderToDissolve = nil
+            }
+            Button("取消", role: .cancel) { folderToDissolve = nil }
+        } message: {
+            Text("聊天记录不会被删除，只会移回聊天列表。")
         }
         .sheet(isPresented: $showDeleteConfirm, onDismiss: {
             if deleteInfo == nil {
@@ -1011,20 +1076,33 @@ struct ContentView: View {
         return visible.filter { matchedIds.contains($0.id) }
     }
 
-    /// Group sessions by date period for section display, with pinned sessions at the top.
-    private func groupedSessions(_ list: [ChatSession]) -> [(label: String, sessions: [ChatSession])] {
+    /// Group sessions by folder first, then by date. A filed conversation stays
+    /// in its folder even when it is pinned; otherwise moving a pinned item into
+    /// a folder appears to do nothing.
+    private func groupedSessions(_ list: [ChatSession]) -> [SidebarGroup] {
         let calendar = Calendar.current
         let now = Date()
-        var buckets: [(label: String, sessions: [ChatSession])] = []
+        var buckets: [SidebarGroup] = []
         let foldersById = Dictionary(chatFolders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let grouped = Dictionary(grouping: list.compactMap { session -> ChatSession? in
             guard let folderId = session.folderId, foldersById[folderId] != nil else { return nil }
             return session
         }) { $0.folderId! }
         for folder in chatFolders {
-            if let members = grouped[folder.id], !members.isEmpty {
-                buckets.append(("分组：\(folder.name)", members.sorted { $0.updatedAt > $1.updatedAt }))
+            // Keep an empty folder visible outside search so a freshly-created
+            // folder never looks as though it disappeared. Search shows only
+            // folders that actually contain a matching conversation.
+            let members = grouped[folder.id] ?? []
+            guard !isSearching || !members.isEmpty else { continue }
+            let ordered = members.sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return lhs.updatedAt > rhs.updatedAt
             }
+            buckets.append(SidebarGroup(
+                label: folder.name,
+                ids: collapsedFolderIds.contains(folder.id) && !isSelecting ? [] : ordered.map(\.id),
+                folder: folder
+            ))
         }
         var pinned: [ChatSession] = []
         var today: [ChatSession] = []
@@ -1061,12 +1139,12 @@ struct ContentView: View {
             return ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast)
         }
 
-        if !pinned.isEmpty    { buckets.append(("Pinned", pinned)) }
-        if !today.isEmpty     { buckets.append(("Today", today)) }
-        if !yesterday.isEmpty { buckets.append(("Yesterday", yesterday)) }
-        if !thisWeek.isEmpty  { buckets.append(("This Week", thisWeek)) }
-        if !thisMonth.isEmpty { buckets.append(("This Month", thisMonth)) }
-        if !earlier.isEmpty   { buckets.append(("Earlier", earlier)) }
+        if !pinned.isEmpty    { buckets.append(SidebarGroup(label: "Pinned", ids: pinned.map(\.id), folder: nil)) }
+        if !today.isEmpty     { buckets.append(SidebarGroup(label: "Today", ids: today.map(\.id), folder: nil)) }
+        if !yesterday.isEmpty { buckets.append(SidebarGroup(label: "Yesterday", ids: yesterday.map(\.id), folder: nil)) }
+        if !thisWeek.isEmpty  { buckets.append(SidebarGroup(label: "This Week", ids: thisWeek.map(\.id), folder: nil)) }
+        if !thisMonth.isEmpty { buckets.append(SidebarGroup(label: "This Month", ids: thisMonth.map(\.id), folder: nil)) }
+        if !earlier.isEmpty   { buckets.append(SidebarGroup(label: "Earlier", ids: earlier.map(\.id), folder: nil)) }
         return buckets
     }
 
@@ -1086,8 +1164,8 @@ struct ContentView: View {
     // groupedSessionIDs() just projects groupedSessions() down to ids.
 
     /// Grouped sidebar sections carrying only session IDs (cheap to diff).
-    private func groupedSessionIDs(_ list: [ChatSession]) -> [(label: String, ids: [String])] {
-        groupedSessions(list).map { (label: $0.label, ids: $0.sessions.map(\.id)) }
+    private func groupedSessionIDs(_ list: [ChatSession]) -> [SidebarGroup] {
+        groupedSessions(list)
     }
 
 
@@ -1208,6 +1286,12 @@ struct ContentView: View {
             let groups = groupedSessionIDs(filteredSessions)
             ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
                 Section {
+                    if let folder = group.folder, !isSelecting {
+                        folderSectionCard(folder)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
                     ForEach(group.ids, id: \.self) { sessionId in
                         // [T-ios-session-list-equatable-jank] Resolve via the
                         // @State cache (sessionForRow), NOT a captured
@@ -1300,6 +1384,12 @@ struct ContentView: View {
             let groups = groupedSessionIDs(displaySessions)
             ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
                 Section {
+                    if let folder = group.folder, !isSelecting {
+                        folderSectionCard(folder)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
                     ForEach(group.ids, id: \.self) { sessionId in
                         // [T-ios-session-list-equatable-jank] Resolve via the
                         // @State cache (sessionForRow), NOT a captured
@@ -1977,7 +2067,11 @@ struct ContentView: View {
                     refreshSessionList()
                 }
             case .moveToGroup(let sid):
-                sessionToMoveIntoGroup = sessions.first(where: { $0.id == sid })
+                let target = sessions.first(where: { $0.id == sid })
+                folderMoveRequest = FolderMoveRequest(
+                    sessionIds: [sid],
+                    anyFiled: target?.folderId != nil
+                )
             case .exportJSON(let sid):
                 exportSessions(ids: [sid], format: .json)
             case .exportText(let sid):
@@ -2516,7 +2610,7 @@ struct ContentView: View {
     // MARK: - Section Header
 
     @ViewBuilder
-    private func sectionHeader(index: Int, group: (label: String, ids: [String])) -> some View {
+    private func sectionHeader(index: Int, group: SidebarGroup) -> some View {
         if isSelecting {
             let groupIds = Set(group.ids)
             let allSelected = groupIds.isSubset(of: selectedIds)
@@ -2540,7 +2634,7 @@ struct ContentView: View {
                 .textCase(nil)
             }
             .buttonStyle(.plain)
-        } else if index > 0 || group.label == "Pinned" {
+        } else if !group.isFolder && (index > 0 || group.label == "Pinned") {
             HStack(spacing: 4) {
                 if group.label == "Pinned" {
                     Image(systemName: "pin.fill")
@@ -2603,6 +2697,22 @@ struct ContentView: View {
                 }
                 .disabled(selectedIds.isEmpty || forceSyncInFlight)
             }
+
+            Button {
+                folderMoveRequest = FolderMoveRequest(
+                    sessionIds: selectedIds,
+                    anyFiled: sessions.contains { selectedIds.contains($0.id) && $0.folderId != nil }
+                )
+            } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 20))
+                    Text("移入分组")
+                        .font(.caption2)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .disabled(selectedIds.isEmpty)
 
             Button(role: .destructive) {
                 deleteInfo = nil
@@ -3326,6 +3436,84 @@ private struct DeleteConfirmSheet: View {
         }
     }
 
+    /// The reference application renders folders as first-class accordion cards,
+    /// not as a text heading. Keep the same interaction model in Ze: tap to
+    /// collapse, long press for maintenance actions, and no conversation is
+    /// deleted when a folder is dissolved.
+    @ViewBuilder
+    private func folderSectionCard(_ folder: ChatFolder) -> some View {
+        let collapsed = collapsedFolderIds.contains(folder.id)
+        let memberCount = sessions.filter { $0.folderId == folder.id && $0.isArchived == showingArchivedSessions }.count
+        Button {
+            if collapsed {
+                collapsedFolderIds.remove(folder.id)
+            } else {
+                collapsedFolderIds.insert(folder.id)
+            }
+            UserDefaults.standard.set(Array(collapsedFolderIds), forKey: "ze.collapsedChatFolderIds")
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: folder.icon ?? "folder.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(folder.isPinned ? Color.orange : Color.accentColor)
+                    .frame(width: 30, height: 30)
+                    .background((folder.isPinned ? Color.orange : Color.accentColor).opacity(0.13), in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(folder.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        if folder.isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(folder.desc?.isEmpty == false ? folder.desc! : "\(memberCount) 条聊天记录")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("\(memberCount)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(Color(UIColor.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                Task { @MainActor in
+                    _ = await ChatStore.shared.toggleChatFolderPin(folder.id)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                }
+            } label: {
+                Label(folder.isPinned ? "取消置顶分组" : "置顶分组", systemImage: folder.isPinned ? "pin.slash" : "pin")
+            }
+            Button {
+                renameFolderName = folder.name
+                renameFolderDescription = folder.desc ?? ""
+                folderToRename = folder
+            } label: {
+                Label("编辑分组", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                folderToDissolve = folder
+            } label: {
+                Label("解散分组", systemImage: "folder.badge.minus")
+            }
+        }
+    }
+
     private func sessionSummary(for count: Int) -> String {
         if count == 1 {
             return String(localized: "1 session and all messages")
@@ -3764,56 +3952,116 @@ private struct MenuKey: Equatable {
 /// Stable, root-hosted picker used by the sidebar context menu. It keeps
 /// grouping reversible: the first row moves the conversation back out.
 private struct ChatGroupPickerSheet: View {
-    let session: ChatSession
+    let sessionIds: Set<String>
     let folders: [ChatFolder]
+    let anyFiled: Bool
     let onMove: (String?) -> Void
-    let onCreateAndMove: (String) -> Void
+    let onCreateAndMove: (String, String?) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var newGroupName = ""
+    @State private var newGroupDescription = ""
+    @State private var isSuggesting = false
+    @State private var suggestedExistingFolder: (id: String, name: String)?
+    @State private var suggestionError: String?
 
     var body: some View {
         NavigationStack {
             List {
-                Section("选择分组") {
+                Section("新建分组") {
+                    TextField("分组名称", text: $newGroupName)
+                    TextField("说明（可选，便于识别分组内容）", text: $newGroupDescription, axis: .vertical)
+                        .lineLimit(1...2)
                     Button {
-                        onMove(nil)
-                        dismiss()
+                        requestAISuggestion()
                     } label: {
-                        Label("移出分组", systemImage: "tray.and.arrow.up")
+                        HStack {
+                            if isSuggesting { ProgressView().controlSize(.small) }
+                            Label(isSuggesting ? "AI 正在分析…" : "AI 建议分组", systemImage: "sparkles")
+                            Spacer()
+                        }
+                    }
+                    .disabled(isSuggesting)
+                    if let suggested = suggestedExistingFolder {
+                        Button {
+                            onMove(suggested.id)
+                            dismiss()
+                        } label: {
+                            Label("采用 AI 建议：移入“\(suggested.name)”", systemImage: "sparkles")
+                        }
+                    }
+                    if let suggestionError {
+                        Text(suggestionError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     ForEach(folders) { folder in
                         Button {
                             onMove(folder.id)
                             dismiss()
                         } label: {
-                            HStack {
-                                Label(folder.name, systemImage: "folder.fill")
-                                Spacer()
-                                if session.folderId == folder.id {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.tint)
+                            HStack(spacing: 10) {
+                                Image(systemName: folder.icon ?? "folder.fill")
+                                    .foregroundStyle(folder.isPinned ? .orange : .tint)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(folder.name)
+                                        .foregroundStyle(.primary)
+                                    if let desc = folder.desc, !desc.isEmpty {
+                                        Text(desc)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
                                 }
+                                Spacer()
                             }
                         }
                     }
-                }
-                Section("新建分组") {
-                    TextField("分组名称", text: $newGroupName)
                     Button {
-                        onCreateAndMove(newGroupName)
+                        onCreateAndMove(newGroupName, newGroupDescription)
                         dismiss()
                     } label: {
                         Label("新建并移入分组", systemImage: "folder.badge.plus")
                     }
                     .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                if anyFiled {
+                    Section {
+                        Button {
+                            onMove(nil)
+                            dismiss()
+                        } label: {
+                            Label("移出分组", systemImage: "folder.badge.minus")
+                        }
+                    }
+                }
             }
-            .navigationTitle("移入分组")
+            .navigationTitle("移入分组（\(sessionIds.count) 条）")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private func requestAISuggestion() {
+        isSuggesting = true
+        suggestionError = nil
+        suggestedExistingFolder = nil
+        let ids = Array(sessionIds)
+        Task { @MainActor in
+            defer { isSuggesting = false }
+            do {
+                switch try await AIChatViewModel.suggestFolder(forSessionIds: ids) {
+                case .merge(let id, let name):
+                    suggestedExistingFolder = (id, name)
+                case .create(let name, let desc):
+                    newGroupName = name
+                    newGroupDescription = desc ?? ""
+                }
+            } catch {
+                suggestionError = error.localizedDescription
             }
         }
     }

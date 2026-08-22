@@ -21,6 +21,7 @@ struct SyncedSession: Syncable {
     var memoryEnabled: Int          // 0/1
     var modelBinding: String?
     var pinnedAt: Date?
+    var folderId: String?
     /// Optional for compatibility with older peers. nil explicitly represents
     /// a restored (non-archived) conversation on current Ze builds.
     var archivedAt: Date?
@@ -41,6 +42,7 @@ struct SyncedSession: Syncable {
                 F.int("memoryEnabled",       \SyncedSession.memoryEnabled),
                 F.optionalString("modelBinding", \SyncedSession.modelBinding),
                 F.optionalDate("pinnedAt",   \SyncedSession.pinnedAt),
+                F.optionalString("folderId", \SyncedSession.folderId),
                 F.optionalDate("archivedAt", \SyncedSession.archivedAt),
             ],
             conflictPolicy: .lastWriteWinsByField(\SyncedSession.updatedAt),
@@ -59,7 +61,58 @@ struct SyncedSession: Syncable {
             memoryEnabled: memoryEnabled ? 1 : 0,
             modelBinding: modelBinding,
             pinnedAt: s.pinnedAt,
+            folderId: s.folderId,
             archivedAt: s.archivedAt
+        )
+    }
+}
+
+// MARK: - SyncedFolder
+
+/// First-class home-list folder. Its UUID is stable across rename and is what
+/// SessionV2 stores in `folderId`, so changing a name never needs to rewrite
+/// every member conversation.
+struct SyncedFolder: Syncable {
+    var id: String
+    var name: String
+    var icon: String?
+    var color: String?
+    var origin: String
+    var sortIndex: Int
+    var pinnedAt: Date?
+    var desc: String?
+    var createdAt: Date
+    var updatedAt: Date
+
+    static let syncMetadata: SyncTypeMetadata<SyncedFolder> = {
+        typealias F = FieldDescriptor<SyncedFolder>
+        return SyncTypeMetadata<SyncedFolder>(
+            recordType: "FolderV2",
+            idKeyPath: \SyncedFolder.id,
+            scope: .global,
+            fields: [
+                F.string("folderId", \SyncedFolder.id),
+                F.string("name", \SyncedFolder.name),
+                F.optionalString("icon", \SyncedFolder.icon),
+                F.optionalString("color", \SyncedFolder.color),
+                F.string("origin", \SyncedFolder.origin),
+                F.int("sortIndex", \SyncedFolder.sortIndex),
+                F.optionalDate("pinnedAt", \SyncedFolder.pinnedAt),
+                F.optionalString("desc", \SyncedFolder.desc),
+                F.date("createdAt", \SyncedFolder.createdAt),
+                F.date("updatedAt", \SyncedFolder.updatedAt),
+            ],
+            conflictPolicy: .lastWriteWinsByField(\SyncedFolder.updatedAt),
+            version: 1
+        )
+    }()
+
+    static func from(_ folder: ChatFolder) -> SyncedFolder {
+        SyncedFolder(
+            id: folder.id, name: folder.name, icon: folder.icon,
+            color: folder.color, origin: folder.origin, sortIndex: folder.sortIndex,
+            pinnedAt: folder.pinnedAt, desc: folder.desc,
+            createdAt: folder.createdAt, updatedAt: folder.updatedAt
         )
     }
 }
@@ -731,6 +784,7 @@ enum SyncedTypesBootstrap {
         r.register(SyncedSession.self)
         r.register(SyncedMessage.self)
         r.register(SyncedCompactMarker.self)
+        r.register(SyncedFolder.self)
         r.register(SyncedSessionFile.self)
         r.register(SyncedSkill.self)
         r.register(SyncedProviderConfig.self)

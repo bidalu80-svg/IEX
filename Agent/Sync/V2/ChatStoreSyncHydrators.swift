@@ -40,6 +40,12 @@ enum ChatStoreSyncHydrators {
             deletionApplier: { id in await deleteCompactMarker(id: id) }
         )
         h.register(
+            recordType: "FolderV2",
+            builder: { id in await buildFolder(id: id) },
+            merger: { record in await mergeFolder(record: record) },
+            deletionApplier: { id in await applyFolderDeletion(id: id) }
+        )
+        h.register(
             recordType: "SessionFileV2",
             builder: { id in await buildSessionFile(id: id) },
             merger: { record in await mergeSessionFile(record: record) }
@@ -171,6 +177,10 @@ enum ChatStoreSyncHydrators {
         let memoryEnabled = (intField(record, "memoryEnabled") ?? 1) == 1
         let modelBinding = optionalStringField(record, "modelBinding")
         let pinnedAt = dateField(record, "pinnedAt")
+        // Presence distinguishes an up-to-date peer explicitly clearing folder
+        // membership from an older peer which knows nothing about folders.
+        let folderFieldPresent = record.fields["folderId"] != nil
+        let folderId = optionalStringField(record, "folderId")
         let archivedAt = dateField(record, "archivedAt")
 
         var session = ChatSession(
@@ -185,7 +195,9 @@ enum ChatStoreSyncHydrators {
             session, fromDeviceId: "",
             memoryEnabled: memoryEnabled,
             modelBinding: modelBinding,
-            remotePinnedAtRaw: pinnedAt
+            remotePinnedAtRaw: pinnedAt,
+            remoteFolderId: folderId,
+            remoteHasFolderField: folderFieldPresent
         )
     }
 
@@ -193,6 +205,41 @@ enum ChatStoreSyncHydrators {
         // Per §3.3.2: SessionV2 deletions are NOT propagated as hard
         // deletes — they soft-tombstone instead.
         _ = await TombstoneManager.shared.applyRemoteSessionDeletion(sessionId: id)
+    }
+
+    // MARK: - Folder
+
+    private static func buildFolder(id: String) async -> PortableRecord? {
+        guard let folder = await ChatStore.shared.getChatFolder(id) else { return nil }
+        return SyncableTypeRegistry.shared
+            .metadata(for: "FolderV2")?
+            .buildPortable(SyncedFolder.from(folder))
+    }
+
+    private static func mergeFolder(record: PortableRecord) async {
+        guard let id = stringField(record, "folderId") else { return }
+        let updatedAt = dateField(record, "updatedAt") ?? record.updatedAt
+        if await ChatStore.shared.isRecentlyDeletedRecord(type: "Folder", id: id, remoteUpdatedAt: updatedAt) {
+            return
+        }
+        let folder = ChatFolder(
+            id: id,
+            name: stringField(record, "name") ?? "",
+            icon: optionalStringField(record, "icon"),
+            color: optionalStringField(record, "color"),
+            origin: stringField(record, "origin") ?? "manual",
+            sortIndex: intField(record, "sortIndex") ?? 0,
+            pinnedAt: dateField(record, "pinnedAt"),
+            desc: optionalStringField(record, "desc"),
+            createdAt: dateField(record, "createdAt") ?? Date(),
+            updatedAt: updatedAt
+        )
+        guard !folder.name.isEmpty else { return }
+        await ChatStore.shared.applyRemoteChatFolder(folder)
+    }
+
+    private static func applyFolderDeletion(id: String) async {
+        await ChatStore.shared.applyRemoteChatFolderDeletion(id: id)
     }
 
     // MARK: - Message

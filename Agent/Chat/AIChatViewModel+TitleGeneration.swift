@@ -253,6 +253,111 @@ extension AIChatViewModel {
         await ChatStore.shared.updateSessionTitle(sessionId, title: trimmed, category: category)
     }
 
+    // MARK: - AI folder suggestion
+
+    /// A suggestion is deliberately only a proposal. The picker presents it
+    /// and the user chooses whether to move sessions; no batch reorganization
+    /// ever happens invisibly.
+    enum FolderSuggestion {
+        case merge(folderId: String, folderName: String)
+        case create(name: String, desc: String?)
+    }
+
+    /// Suggest a destination for selected conversations using their generated
+    /// titles/categories only. Message bodies are intentionally not sent to the
+    /// lightweight naming request.
+    static func suggestFolder(forSessionIds sessionIds: [String]) async throws -> FolderSuggestion {
+        let ids = Array(Set(sessionIds)).sorted()
+        guard !ids.isEmpty else {
+            throw NSError(domain: "FolderSuggestion", code: 1, userInfo: [NSLocalizedDescriptionKey: "未选择聊天记录"])
+        }
+
+        let config = ProviderConfigStore.shared
+        var entry: ModelEntry?
+        for id in ids {
+            guard let session = await ChatStore.shared.getSession(id) else { continue }
+            if let candidate = config.modelEntries.first(where: { item in
+                item.model.id == session.modelId
+                    && !item.isHidden
+                    && config.instance(for: item.providerInstanceId)?.isEnabled == true
+                    && config.instance(for: item.providerInstanceId)?.hasAnyCredential == true
+            }) {
+                entry = candidate
+                break
+            }
+        }
+        guard let entry else {
+            throw NSError(domain: "FolderSuggestion", code: 2, userInfo: [NSLocalizedDescriptionKey: "没有可用于 AI 建议的已配置模型"])
+        }
+
+        let folders = await ChatStore.shared.listChatFolders()
+        var folderLines: [String] = []
+        for folder in folders.prefix(30) {
+            let memberIds = await ChatStore.shared.sessionIdsInChatFolder(folder.id)
+            var titles: [String] = []
+            for id in memberIds.prefix(3) {
+                if let title = await ChatStore.shared.getSession(id)?.title, !title.isEmpty { titles.append(title) }
+            }
+            let description = folder.desc?.isEmpty == false ? "（\(folder.desc!)）" : ""
+            folderLines.append("- \"\(folder.name)\"\(description)：\(titles.joined(separator: " / "))")
+        }
+
+        var selectedLines: [String] = []
+        for id in ids.prefix(20) {
+            if let session = await ChatStore.shared.getSession(id) {
+                selectedLines.append("- \(session.title ?? "未命名聊天") [\(session.category ?? "其他")]")
+            }
+        }
+        guard !selectedLines.isEmpty else {
+            throw NSError(domain: "FolderSuggestion", code: 3, userInfo: [NSLocalizedDescriptionKey: "找不到所选聊天记录"])
+        }
+
+        let existing = folderLines.isEmpty ? "当前没有已有分组。" : "已有分组及示例聊天：\n\(folderLines.joined(separator: "\n"))"
+        let prompt = """
+        请为以下聊天记录建议归档分组：
+        \(selectedLines.joined(separator: "\n"))
+
+        \(existing)
+
+        如果它们明显适合一个已有分组，选择 merge；否则选择 create，给出一个简洁中文分组名和不超过 100 字的中文说明。不要自动执行任何移动。
+        只返回一个 JSON 对象：
+        {"decision":"merge","folder":"已有分组名"}
+        或
+        {"decision":"create","name":"新分组名","description":"这个分组收纳的内容"}
+        """
+
+        let provider = await AIChatViewModel.makeAgentProvider(for: entry)
+        var response = ""
+        let stream = try await provider.streamAgentMessage(
+            messages: [AgentMessage(role: .user, parts: [.text(prompt)])],
+            systemPrompt: "你负责整理聊天记录。只输出单个有效 JSON 对象，不要输出 Markdown 或解释。",
+            tools: [],
+            maxTokens: 256,
+            thinkingLevel: .off
+        )
+        for try await event in stream {
+            if case .textDelta(let value) = event { response += value }
+        }
+
+        guard let start = response.firstIndex(of: "{"), let end = response.lastIndex(of: "}"),
+              let data = String(response[start...end]).data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "FolderSuggestion", code: 4, userInfo: [NSLocalizedDescriptionKey: "AI 返回的分组建议格式无效"])
+        }
+        if (json["decision"] as? String)?.lowercased() == "merge",
+           let name = json["folder"] as? String,
+           let folder = folders.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(name.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame }) {
+            return .merge(folderId: folder.id, folderName: folder.name)
+        }
+        let rawName = (json["name"] as? String) ?? (json["folder"] as? String) ?? ""
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw NSError(domain: "FolderSuggestion", code: 5, userInfo: [NSLocalizedDescriptionKey: "AI 未返回分组名称"])
+        }
+        let desc = (json["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return .create(name: String(name.prefix(40)), desc: desc?.isEmpty == false ? String(desc!.prefix(100)) : nil)
+    }
+
     /// Build a lightweight provider for the sub model and call it to generate a title and category.
     private static func callSubModelForTitle(
         conversationSummary: String,

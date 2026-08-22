@@ -27,7 +27,7 @@ enum UploadPolicy {
         var recordTypes: Set<String> {
             switch self {
             case .chatSessions:
-                return ["Session", "SessionV2", "Message", "MessageV2", "CompactMarker", "CompactMarkerV2"]
+                return ["Session", "SessionV2", "Message", "MessageV2", "CompactMarker", "CompactMarkerV2", "Folder", "FolderV2"]
             case .sessionFiles:
                 return ["SessionFile", "SessionFileV2"]
             case .skills:

@@ -107,17 +107,45 @@ struct ChatSession: Identifiable, Codable, Hashable {
     }
 }
 
-/// A durable, user-created home-list group. Session membership is stored on
+/// A durable, user-created home-list folder. Session membership is stored on
 /// the session row, so moving a conversation never touches its messages.
 struct ChatFolder: Identifiable, Codable, Hashable {
     let id: String
     var name: String
+    /// Optional visual identity. These are deliberately data fields rather than
+    /// view state so a folder has the same appearance after relaunch/sync.
+    var icon: String?
+    var color: String?
+    var origin: String
+    var sortIndex: Int
+    var pinnedAt: Date?
+    /// A short note explains the folder in the picker and edit sheet.
+    var desc: String?
     let createdAt: Date
     var updatedAt: Date
 
-    init(id: String = UUID().uuidString, name: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
+    var isPinned: Bool { pinnedAt != nil }
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        icon: String? = nil,
+        color: String? = nil,
+        origin: String = "manual",
+        sortIndex: Int = 0,
+        pinnedAt: Date? = nil,
+        desc: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
         self.id = id
         self.name = name
+        self.icon = icon
+        self.color = color
+        self.origin = origin
+        self.sortIndex = sortIndex
+        self.pinnedAt = pinnedAt
+        self.desc = desc
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -514,10 +542,22 @@ actor ChatStore {
             CREATE TABLE IF NOT EXISTS chat_folders (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                icon TEXT,
+                color TEXT,
+                origin TEXT NOT NULL DEFAULT 'manual',
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                pinned_at REAL,
+                description TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
         """)
+        addColumnIfMissing(table: "chat_folders", column: "icon", definition: "TEXT")
+        addColumnIfMissing(table: "chat_folders", column: "color", definition: "TEXT")
+        addColumnIfMissing(table: "chat_folders", column: "origin", definition: "TEXT NOT NULL DEFAULT 'manual'")
+        addColumnIfMissing(table: "chat_folders", column: "sort_index", definition: "INTEGER NOT NULL DEFAULT 0")
+        addColumnIfMissing(table: "chat_folders", column: "pinned_at", definition: "REAL")
+        addColumnIfMissing(table: "chat_folders", column: "description", definition: "TEXT")
         addColumnIfMissing(table: "messages", column: "updated_at", definition: "REAL")
         // [T-error-persist-ios] Device-local error string shown on a failed
         // assistant turn (provider/network/empty-response/context-full/…). Persisted
@@ -1792,19 +1832,37 @@ actor ChatStore {
 
     // MARK: - Conversation Groups
 
+    /// All conversation folders. Pinned folders stay at the top; the remaining
+    /// folders follow their last explicit update and then their name.
     func listChatFolders() -> [ChatFolder] {
-        let sql = "SELECT id, name, created_at, updated_at FROM chat_folders ORDER BY updated_at DESC, name COLLATE NOCASE ASC"
+        let sql = """
+            SELECT id, name, icon, color, origin, sort_index, pinned_at, description, created_at, updated_at
+            FROM chat_folders
+            ORDER BY CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END, pinned_at DESC, updated_at DESC, name COLLATE NOCASE ASC
+            """
         var stmt: OpaquePointer?
         var folders: [ChatFolder] = []
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let id = String(cString: sqlite3_column_text(stmt, 0))
                 let name = String(cString: sqlite3_column_text(stmt, 1))
+                let icon = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+                let color = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+                let origin = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? "manual"
+                let pinnedAt: Date? = sqlite3_column_type(stmt, 6) != SQLITE_NULL
+                    ? Date(timeIntervalSince1970: sqlite3_column_double(stmt, 6)) : nil
+                let desc = sqlite3_column_text(stmt, 7).map { String(cString: $0) }
                 folders.append(ChatFolder(
                     id: id,
                     name: name,
-                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2)),
-                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+                    icon: icon,
+                    color: color,
+                    origin: origin,
+                    sortIndex: Int(sqlite3_column_int64(stmt, 5)),
+                    pinnedAt: pinnedAt,
+                    desc: desc,
+                    createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 8)),
+                    updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 9))
                 ))
             }
         }
@@ -1813,26 +1871,186 @@ actor ChatStore {
     }
 
     @discardableResult
-    func createChatFolder(name: String) -> ChatFolder? {
+    func createChatFolder(name: String, desc: String? = nil, icon: String? = nil, color: String? = nil) -> ChatFolder? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let folder = ChatFolder(name: String(trimmed.prefix(40)))
+        let cleanedDesc = desc?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = ChatFolder(
+            name: String(trimmed.prefix(40)),
+            icon: icon,
+            color: color,
+            desc: cleanedDesc.map { String($0.prefix(100)) }
+        )
         var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, "INSERT INTO chat_folders (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)", -1, &stmt, nil) == SQLITE_OK {
+        if sqlite3_prepare_v2(db, "INSERT INTO chat_folders (id, name, icon, color, origin, sort_index, pinned_at, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_text(stmt, 1, (folder.id as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 2, (folder.name as NSString).utf8String, -1, nil)
-            sqlite3_bind_double(stmt, 3, folder.createdAt.timeIntervalSince1970)
-            sqlite3_bind_double(stmt, 4, folder.updatedAt.timeIntervalSince1970)
+            bindOptionalText(stmt, index: 3, value: folder.icon)
+            bindOptionalText(stmt, index: 4, value: folder.color)
+            sqlite3_bind_text(stmt, 5, (folder.origin as NSString).utf8String, -1, nil)
+            sqlite3_bind_int64(stmt, 6, Int64(folder.sortIndex))
+            sqlite3_bind_null(stmt, 7)
+            bindOptionalText(stmt, index: 8, value: folder.desc)
+            sqlite3_bind_double(stmt, 9, folder.createdAt.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 10, folder.updatedAt.timeIntervalSince1970)
             guard sqlite3_step(stmt) == SQLITE_DONE else { sqlite3_finalize(stmt); return nil }
         } else {
             sqlite3_finalize(stmt)
             return nil
         }
         sqlite3_finalize(stmt)
+        markDirty(recordType: "Folder", recordId: folder.id)
         return folder
     }
 
-    /// Assign a session to a group, or pass nil to move it back to the main list.
+    /// Rename a folder while preserving its id and all of its members.
+    func renameChatFolder(_ id: String, name: String, desc: String?) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let cleanedDesc = desc?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE chat_folders SET name = ?, description = ?, updated_at = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (String(trimmed.prefix(40)) as NSString).utf8String, -1, nil)
+            bindOptionalText(stmt, index: 2, value: cleanedDesc?.isEmpty == true ? nil : cleanedDesc.map { String($0.prefix(100)) })
+            sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 4, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+        markDirty(recordType: "Folder", recordId: id)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: nil)
+    }
+
+    @discardableResult
+    func toggleChatFolderPin(_ id: String) -> Bool {
+        var currentlyPinned = false
+        var check: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT pinned_at FROM chat_folders WHERE id = ?", -1, &check, nil) == SQLITE_OK {
+            sqlite3_bind_text(check, 1, (id as NSString).utf8String, -1, nil)
+            if sqlite3_step(check) == SQLITE_ROW { currentlyPinned = sqlite3_column_type(check, 0) != SQLITE_NULL }
+        }
+        sqlite3_finalize(check)
+        let pinned = !currentlyPinned
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE chat_folders SET pinned_at = ?, updated_at = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK {
+            if pinned { sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 1) }
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+        markDirty(recordType: "Folder", recordId: id)
+        return pinned
+    }
+
+    /// Dissolving a folder only moves its conversations back to the main list;
+    /// it never deletes sessions, messages, attachments, or their workspaces.
+    @discardableResult
+    func dissolveChatFolder(_ id: String) -> [String] {
+        let ids = sessionIdsInChatFolder(id)
+        invalidateSessionListCache()
+        var clear: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE sessions SET folder_id = NULL, updated_at = ? WHERE folder_id = ?", -1, &clear, nil) == SQLITE_OK {
+            sqlite3_bind_double(clear, 1, Date().timeIntervalSince1970)
+            sqlite3_bind_text(clear, 2, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(clear)
+        }
+        sqlite3_finalize(clear)
+        var delete: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM chat_folders WHERE id = ?", -1, &delete, nil) == SQLITE_OK {
+            sqlite3_bind_text(delete, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(delete)
+        }
+        sqlite3_finalize(delete)
+        for sessionId in ids { markDirty(recordType: "Session", recordId: sessionId) }
+        markDirty(recordType: "Folder", recordId: id, operation: "delete")
+        recordDeletedRecordTombstone(type: "Folder", id: id)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: nil)
+        return ids
+    }
+
+    func sessionIdsInChatFolder(_ folderId: String) -> [String] {
+        var stmt: OpaquePointer?
+        var ids: [String] = []
+        if sqlite3_prepare_v2(db, "SELECT id FROM sessions WHERE folder_id = ? ORDER BY updated_at DESC", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (folderId as NSString).utf8String, -1, nil)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let value = sqlite3_column_text(stmt, 0) { ids.append(String(cString: value)) }
+            }
+        }
+        sqlite3_finalize(stmt)
+        return ids
+    }
+
+    /// Move any number of sessions into a folder, or pass nil to remove them
+    /// from their current folder. This is used by both the row menu and batch UI.
+    func setSessionsFolder(_ sessionIds: [String], folderId: String?) {
+        guard !sessionIds.isEmpty else { return }
+        for sessionId in sessionIds { setSessionFolder(sessionId, folderId: folderId) }
+    }
+
+    /// Sync builder path for one folder.
+    func getChatFolder(_ id: String) -> ChatFolder? {
+        listChatFolders().first(where: { $0.id == id })
+    }
+
+    /// Apply a peer's folder without marking it dirty again. Newer updatedAt
+    /// wins; the UUID identity means rename never needs to move members.
+    func applyRemoteChatFolder(_ folder: ChatFolder) {
+        var localUpdatedAt: Double?
+        var check: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT updated_at FROM chat_folders WHERE id = ?", -1, &check, nil) == SQLITE_OK {
+            sqlite3_bind_text(check, 1, (folder.id as NSString).utf8String, -1, nil)
+            if sqlite3_step(check) == SQLITE_ROW { localUpdatedAt = sqlite3_column_double(check, 0) }
+        }
+        sqlite3_finalize(check)
+        guard localUpdatedAt == nil || folder.updatedAt.timeIntervalSince1970 > localUpdatedAt! else { return }
+        let sql = """
+            INSERT INTO chat_folders (id, name, icon, color, origin, sort_index, pinned_at, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name, icon = excluded.icon, color = excluded.color,
+                origin = excluded.origin, sort_index = excluded.sort_index,
+                pinned_at = excluded.pinned_at, description = excluded.description,
+                updated_at = excluded.updated_at
+            """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (folder.id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (folder.name as NSString).utf8String, -1, nil)
+            bindOptionalText(stmt, index: 3, value: folder.icon)
+            bindOptionalText(stmt, index: 4, value: folder.color)
+            sqlite3_bind_text(stmt, 5, (folder.origin as NSString).utf8String, -1, nil)
+            sqlite3_bind_int64(stmt, 6, Int64(folder.sortIndex))
+            if let pinnedAt = folder.pinnedAt { sqlite3_bind_double(stmt, 7, pinnedAt.timeIntervalSince1970) } else { sqlite3_bind_null(stmt, 7) }
+            bindOptionalText(stmt, index: 8, value: folder.desc)
+            sqlite3_bind_double(stmt, 9, folder.createdAt.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 10, folder.updatedAt.timeIntervalSince1970)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: nil)
+    }
+
+    /// A remote folder delete only clears membership; conversations remain.
+    func applyRemoteChatFolderDeletion(id: String) {
+        var clear: OpaquePointer?
+        if sqlite3_prepare_v2(db, "UPDATE sessions SET folder_id = NULL WHERE folder_id = ?", -1, &clear, nil) == SQLITE_OK {
+            sqlite3_bind_text(clear, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(clear)
+        }
+        sqlite3_finalize(clear)
+        var delete: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM chat_folders WHERE id = ?", -1, &delete, nil) == SQLITE_OK {
+            sqlite3_bind_text(delete, 1, (id as NSString).utf8String, -1, nil)
+            sqlite3_step(delete)
+        }
+        sqlite3_finalize(delete)
+        recordDeletedRecordTombstone(type: "Folder", id: id)
+        NotificationCenter.default.post(name: .sessionDidUpdate, object: nil)
+    }
+
+    /// Assign a session to a folder, or pass nil to move it back to the main list.
     func setSessionFolder(_ sessionId: String, folderId: String?) {
         invalidateSessionListCache()
         var stmt: OpaquePointer?
@@ -4468,6 +4686,7 @@ extension ChatStore {
         case "Session":         return "SessionV2"
         case "Message":         return "MessageV2"
         case "CompactMarker":   return "CompactMarkerV2"
+        case "Folder":          return "FolderV2"
         case "SessionFile":     return "SessionFileV2"
         case "Skill":           return "SkillV2"
         case "ProviderConfig":  return "ProviderConfigV2"
@@ -4868,7 +5087,7 @@ extension ChatStore {
     /// and being phased out, but kept here so any remaining dirty rows
     /// can still drain).
     fileprivate static let v2SyncRecordTypes: [String] = [
-        "SessionV2", "MessageV2", "CompactMarkerV2", "SessionFileV2",
+        "SessionV2", "MessageV2", "CompactMarkerV2", "FolderV2", "SessionFileV2",
         "SkillV2", "ProviderConfigV2", "EnvVarV2", "EnvVarItem",
         "SyncDeviceV2", "SoulV2",
         // File-backed singletons. Without these in the whitelist,
@@ -5356,7 +5575,15 @@ extension ChatStore {
     /// Merge a remote session into local sessions table.
     /// - `remotePinnedAtRaw`: The raw pinnedAt Date from CKRecord. nil = old device (field absent),
     ///   epoch 0 = explicitly unpinned, positive = pinned timestamp.
-    func mergeRemoteSession(_ session: ChatSession, fromDeviceId: String, memoryEnabled: Bool = true, modelBinding: String? = nil, remotePinnedAtRaw: Date? = nil) {
+    func mergeRemoteSession(
+        _ session: ChatSession,
+        fromDeviceId: String,
+        memoryEnabled: Bool = true,
+        modelBinding: String? = nil,
+        remotePinnedAtRaw: Date? = nil,
+        remoteFolderId: String? = nil,
+        remoteHasFolderField: Bool = false
+    ) {
         invalidateSessionListCache()
         // Check if local session exists and its updated_at + pinned_at
         var localUpdatedAt: Double?
@@ -5411,7 +5638,9 @@ extension ChatStore {
             // Local exists — only update title/category/etc if remote is newer
             if remoteUpdated > localTs {
                 iCloudLogger.info("[iCloud] mergeRemoteSession UPDATE (remote newer): id=\(session.id) remoteTs=\(remoteUpdated) localTs=\(localTs)")
-                let sql = "UPDATE sessions SET title = ?, category = ?, updated_at = ?, memory_enabled = ?, model_binding = ?, pinned_at = ?, archived_at = ? WHERE id = ?"
+                let sql = remoteHasFolderField
+                    ? "UPDATE sessions SET title = ?, category = ?, updated_at = ?, memory_enabled = ?, model_binding = ?, pinned_at = ?, archived_at = ?, folder_id = ? WHERE id = ?"
+                    : "UPDATE sessions SET title = ?, category = ?, updated_at = ?, memory_enabled = ?, model_binding = ?, pinned_at = ?, archived_at = ? WHERE id = ?"
                 var stmt: OpaquePointer?
                 if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                     bindOptionalText(stmt, index: 1, value: session.title)
@@ -5429,7 +5658,12 @@ extension ChatStore {
                     } else {
                         sqlite3_bind_null(stmt, 7)
                     }
-                    sqlite3_bind_text(stmt, 8, (session.id as NSString).utf8String, -1, nil)
+                    if remoteHasFolderField {
+                        bindOptionalText(stmt, index: 8, value: remoteFolderId)
+                        sqlite3_bind_text(stmt, 9, (session.id as NSString).utf8String, -1, nil)
+                    } else {
+                        sqlite3_bind_text(stmt, 8, (session.id as NSString).utf8String, -1, nil)
+                    }
                     sqlite3_step(stmt)
                 }
                 sqlite3_finalize(stmt)
@@ -5477,7 +5711,7 @@ extension ChatStore {
             }
             // Local doesn't have this session — insert
             iCloudLogger.info("[iCloud] mergeRemoteSession INSERT: id=\(session.id) title=\(session.title ?? "nil") from=\(fromDeviceId)")
-            let sql = "INSERT INTO sessions (id, title, category, model_id, created_at, updated_at, remote_origin_device_id, memory_enabled, model_binding, pinned_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            let sql = "INSERT INTO sessions (id, title, category, model_id, created_at, updated_at, remote_origin_device_id, memory_enabled, model_binding, pinned_at, archived_at, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (session.id as NSString).utf8String, -1, nil)
@@ -5498,6 +5732,11 @@ extension ChatStore {
                     sqlite3_bind_double(stmt, 11, archivedAt.timeIntervalSince1970)
                 } else {
                     sqlite3_bind_null(stmt, 11)
+                }
+                if remoteHasFolderField {
+                    bindOptionalText(stmt, index: 12, value: remoteFolderId)
+                } else {
+                    sqlite3_bind_null(stmt, 12)
                 }
                 sqlite3_step(stmt)
             }
