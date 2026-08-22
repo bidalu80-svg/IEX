@@ -1655,7 +1655,7 @@ enum ChatStoreSyncHydrators {
               ProviderConfigStore.shared.config.instances.contains(where: { $0.id == instanceId }) else { return }
         let id = record.id.id
         let updatedAt = dateField(record, "updatedAt") ?? record.updatedAt
-        guard !await ChatStore.shared.isRecentlyDeletedRecord(type: "ProviderThinkingRuleV3", id: id, remoteUpdatedAt: updatedAt) else { return }
+        guard !(await ChatStore.shared.isRecentlyDeletedRecord(type: "ProviderThinkingRuleV3", id: id, remoteUpdatedAt: updatedAt)) else { return }
         let rule = SyncedProviderThinkingRuleV3(
             id: id, instanceId: instanceId, sortOrder: intField(record, "sortOrder") ?? 0,
             label: stringField(record, "label") ?? "", scopeKind: stringField(record, "scopeKind") ?? "allModels",
