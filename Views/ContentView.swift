@@ -355,6 +355,13 @@ struct ContentView: View {
     @State private var pendingNewChatTargetId: String? = nil
 
     var body: some View {
+        remainingLifecycle(presentation(eventLifecycle(pageLayout)))
+    }
+
+    /// Keep the geometry/layout expression separate from the presentation and
+    /// lifecycle chain below. The sidebar now has folder sheets and alerts too;
+    /// keeping all of that in one `body` exceeded Swift's type-check budget.
+    private var pageLayout: some View {
         GeometryReader { geo in
             let wide = isIPad && geo.size.width >= compactThreshold
             Group {
@@ -380,6 +387,12 @@ struct ContentView: View {
                 wireMenuActions()
             }
         }
+    }
+
+    /// Presentation/lifecycle modifiers are split from `pageLayout` solely to
+    /// give the Swift compiler smaller expressions to infer.
+    private func eventLifecycle<Content: View>(_ content: Content) -> some View {
+        content
         .onReceive(NotificationCenter.default.publisher(for: .newChatRequested)) { _ in
             handleNewChatRequest()
         }
@@ -520,6 +533,10 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func presentation<Content: View>(_ content: Content) -> some View {
+        content
         .fullScreenCover(isPresented: $showTerminal) {
             NavigationStack {
                 ISHTerminalView(showCloseButton: true)
@@ -638,6 +655,10 @@ struct ContentView: View {
         } message: {
             Text("聊天记录不会被删除，只会移回聊天列表。")
         }
+    }
+
+    private func remainingLifecycle<Content: View>(_ content: Content) -> some View {
+        content
         .sheet(isPresented: $showDeleteConfirm, onDismiss: {
             if deleteInfo == nil {
                 // Deletion was performed — reset selection mode after sheet is fully dismissed
