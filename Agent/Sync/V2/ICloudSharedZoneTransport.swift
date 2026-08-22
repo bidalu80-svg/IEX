@@ -63,6 +63,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
         "ProviderInstanceV3":   secretsZoneName,
         "ProviderModelEntryV3": secretsZoneName,
         "ProviderModelGroupV3": secretsZoneName,
+        "ProviderThinkingRuleV3": secretsZoneName,
         // [T-mcp-sync-zone-mapping] servers.json whole-file record. Was missing
         // from this map, so every MCPServersV2 portable was silently dropped at
         // the push loop's zone guard — MCP servers never reached CloudKit at
@@ -224,7 +225,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
     // invisible. These types instead pull their FULL history (no time floor)
     // until they have been anchored once via `configTypeAnchoredKey`.
     private static let fullHistoryConfigTypes: Set<String> = [
-        "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3",
+        "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3", "ProviderThinkingRuleV3",
         "ProviderConfigV2", "MCPServersV2", "MCPServerItem", "EnvVarItem",
     ]
     /// Per-type "we have completed at least one full-history pull AND the
@@ -638,6 +639,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
             ("ProviderInstanceV3", "updatedAt"),
             ("ProviderModelEntryV3", "updatedAt"),
             ("ProviderModelGroupV3", "updatedAt"),
+            ("ProviderThinkingRuleV3", "updatedAt"),
             ("MCPServersV2", "updatedAt"),
             ("MCPServerItem", "updatedAt"),
             ("EnvVarItem", "updatedAt"),
@@ -763,7 +765,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
         // provider DB being open; other config types anchor on a clean run.
         let providerDBReady = ProviderConfigStore.shared.db != nil
         let providerGatedTypes: Set<String> = [
-            "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3", "ProviderConfigV2",
+            "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3", "ProviderThinkingRuleV3", "ProviderConfigV2",
         ]
         // [T-icloud-provider-anchor-per-type] Anchor each full-history type on
         // ITS OWN successful pull (no error for THAT type), not on a clean batch.

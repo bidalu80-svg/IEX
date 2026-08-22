@@ -360,7 +360,10 @@ final class ProviderConfigStore: ObservableObject {
     func saveThinkingRule(_ rule: ThinkingRule, instanceId: String, sortOrder: Int) async -> Bool {
         guard let db else { return false }
         let saved = await db.upsertThinkingRule(rule, instanceId: instanceId, sortOrder: sortOrder)
-        if saved { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        if saved {
+            ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId)
+            await ChatStore.shared.markDirty(recordType: "ProviderThinkingRuleV3", recordId: rule.id)
+        }
         return saved
     }
 
@@ -368,7 +371,10 @@ final class ProviderConfigStore: ObservableObject {
     func deleteThinkingRule(id: String, instanceId: String) async -> Bool {
         guard let db else { return false }
         let deleted = await db.deleteThinkingRule(id: id)
-        if deleted { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        if deleted {
+            ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId)
+            await ChatStore.shared.markDirty(recordType: "ProviderThinkingRuleV3", recordId: id, operation: "delete")
+        }
         return deleted
     }
 
@@ -376,7 +382,10 @@ final class ProviderConfigStore: ObservableObject {
     func reorderThinkingRules(instanceId: String, orderedIds: [String]) async -> Bool {
         guard let db else { return false }
         let saved = await db.reorderThinkingRules(instanceId: instanceId, orderedIds: orderedIds)
-        if saved { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
+        if saved {
+            ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId)
+            for id in orderedIds { await ChatStore.shared.markDirty(recordType: "ProviderThinkingRuleV3", recordId: id) }
+        }
         return saved
     }
 

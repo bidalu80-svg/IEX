@@ -153,7 +153,7 @@ final class OpenAIProvider: LLMProvider {
     var usesUnifiedReasoningEffort: Bool {
         if isAzure { return true }
         guard let base = customBaseURL?.lowercased() else { return false }
-        return base.contains("volces") || base.contains("ark.")
+        return base.contains("volces") || base.contains("ark.") || base.contains("venice.ai")
     }
 
     var isOAuth: Bool {

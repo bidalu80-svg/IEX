@@ -132,6 +132,7 @@ struct ThinkingRuleEditor: View {
     @State private var format: ThinkingRule.WireFormat = .reasoningEffort
     @State private var path = ""
     @State private var offValue = ""
+    @State private var customHighValue = ""
 
     var body: some View {
         NavigationStack {
@@ -151,8 +152,12 @@ struct ThinkingRuleEditor: View {
                     Text(format.explanation)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if format == .booleanToggle || format == .customPath {
-                        TextField("字段路径", text: $path)
+                    if format == .booleanToggle || format == .extraBodyToggle || format == .customPath {
+                        TextField(format == .extraBodyToggle ? "extra_body 字段路径" : "字段路径", text: $path)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    if format == .customPath {
+                        TextField("开启思考时的值（例如：enabled）", text: $customHighValue)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                     if format == .reasoningEffort || format == .nestedReasoningEffort || format == .customPath {
@@ -188,16 +193,23 @@ struct ThinkingRuleEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         let scope: ThinkingRule.Scope = allModels ? .allModels : .modelPattern(pattern)
-                        let saved = ThinkingRule(id: isNew ? UUID().uuidString : (rule?.id ?? UUID().uuidString), label: label, scope: scope, format: format, path: path, offValue: offValue.isEmpty ? nil : offValue)
+                        let saved = ThinkingRule(id: isNew ? UUID().uuidString : (rule?.id ?? UUID().uuidString), label: label, scope: scope, format: format, path: path, offValue: offValue.isEmpty ? nil : offValue, customHighValue: customHighValue.isEmpty ? nil : customHighValue)
                         Task { await onSave(saved); dismiss() }
                     }
-                    .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!allModels && pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!allModels && pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || (format == .customPath && path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 }
             }
             .onAppear {
                 guard let rule else { return }
-                label = rule.label; format = rule.format; path = rule.path; offValue = rule.offValue ?? ""
+                label = rule.label; format = rule.format; path = rule.path; offValue = rule.offValue ?? ""; customHighValue = rule.customHighValue ?? ""
                 if case .modelPattern(let value) = rule.scope { allModels = false; pattern = value }
+            }
+            .onChange(of: format) { selected in
+                if selected == .extraBodyToggle && path.isEmpty {
+                    path = "extra_body.thinking.enabled"
+                } else if selected == .booleanToggle && path.isEmpty {
+                    path = "thinking"
+                }
             }
         }
     }
@@ -205,8 +217,9 @@ struct ThinkingRuleEditor: View {
     private var previewRule: ThinkingRule {
         ThinkingRule(label: label.isEmpty ? "示例规则" : label,
                      scope: allModels ? .allModels : .modelPattern(pattern),
-                     format: format,
-                     path: path,
-                     offValue: offValue.isEmpty ? nil : offValue)
+                      format: format,
+                      path: path,
+                      offValue: offValue.isEmpty ? nil : offValue,
+                      customHighValue: customHighValue.isEmpty ? nil : customHighValue)
     }
 }

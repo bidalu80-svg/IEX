@@ -581,6 +581,43 @@ struct SyncedProviderModelGroupV3: Syncable {
     }()
 }
 
+/// One user-authored provider thinking rule. Built-in rules are code constants
+/// and deliberately never sync; only custom overrides travel between devices.
+struct SyncedProviderThinkingRuleV3: Syncable {
+    var id: String
+    var instanceId: String
+    var sortOrder: Int
+    var label: String
+    var scopeKind: String
+    var scopePattern: String?
+    var format: String
+    var path: String
+    var offValue: String?
+    var customHighValue: String?
+    var createdAt: Date
+    var updatedAt: Date
+
+    static let syncMetadata: SyncTypeMetadata<SyncedProviderThinkingRuleV3> = {
+        typealias F = FieldDescriptor<SyncedProviderThinkingRuleV3>
+        return SyncTypeMetadata<SyncedProviderThinkingRuleV3>(
+            recordType: "ProviderThinkingRuleV3", idKeyPath: \SyncedProviderThinkingRuleV3.id, scope: .global,
+            fields: [
+                F.string("instanceId", \SyncedProviderThinkingRuleV3.instanceId),
+                F.int("sortOrder", \SyncedProviderThinkingRuleV3.sortOrder),
+                F.string("label", \SyncedProviderThinkingRuleV3.label),
+                F.string("scopeKind", \SyncedProviderThinkingRuleV3.scopeKind),
+                F.optionalString("scopePattern", \SyncedProviderThinkingRuleV3.scopePattern),
+                F.string("format", \SyncedProviderThinkingRuleV3.format),
+                F.string("path", \SyncedProviderThinkingRuleV3.path),
+                F.optionalString("offValue", \SyncedProviderThinkingRuleV3.offValue),
+                F.optionalString("customHighValue", \SyncedProviderThinkingRuleV3.customHighValue),
+                F.date("createdAt", \SyncedProviderThinkingRuleV3.createdAt),
+                F.date("updatedAt", \SyncedProviderThinkingRuleV3.updatedAt),
+            ], conflictPolicy: .lastWriteWinsByField(\SyncedProviderThinkingRuleV3.updatedAt), version: 1
+        )
+    }()
+}
+
 // MARK: - SyncedEnvVars (legacy whole-file record)
 //
 // Kept for inbound compatibility ONLY. New devices push per-variable
@@ -797,6 +834,7 @@ enum SyncedTypesBootstrap {
         r.register(SyncedProviderInstanceV3.self)
         r.register(SyncedProviderModelEntryV3.self)
         r.register(SyncedProviderModelGroupV3.self)
+        r.register(SyncedProviderThinkingRuleV3.self)
         r.register(SyncedEnvVars.self)   // legacy whole-file, inbound only
         r.register(SyncedEnvVar.self)    // per-variable, current schema
         r.register(SyncedDevice.self)

@@ -3994,28 +3994,6 @@ private struct ChatGroupPickerSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(folders) { folder in
-                        Button {
-                            onMove(folder.id)
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: folder.icon ?? "folder.fill")
-                                    .foregroundStyle(folder.isPinned ? .orange : .tint)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(folder.name)
-                                        .foregroundStyle(.primary)
-                                    if let desc = folder.desc, !desc.isEmpty {
-                                        Text(desc)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer()
-                            }
-                        }
-                    }
                     Button {
                         onCreateAndMove(newGroupName, newGroupDescription)
                         dismiss()
@@ -4023,6 +4001,32 @@ private struct ChatGroupPickerSheet: View {
                         Label("新建并移入分组", systemImage: "folder.badge.plus")
                     }
                     .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if !folders.isEmpty {
+                    Section("现有分组") {
+                        ForEach(folders) { folder in
+                            Button {
+                                onMove(folder.id)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: folder.icon ?? "folder.fill")
+                                        .foregroundStyle(folder.isPinned ? .orange : .tint)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(folder.name)
+                                            .foregroundStyle(.primary)
+                                        if let desc = folder.desc, !desc.isEmpty {
+                                            Text(desc)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
                 }
                 if anyFiled {
                     Section {

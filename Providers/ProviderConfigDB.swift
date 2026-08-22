@@ -306,9 +306,26 @@ actor ProviderConfigDB {
                 format TEXT NOT NULL,
                 path TEXT NOT NULL DEFAULT '',
                 off_value TEXT,
+                custom_high_value TEXT,
+                created_at REAL NOT NULL DEFAULT 0,
                 updated_at REAL NOT NULL
             )
         """)
+        var columns = Set<String>()
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA table_info(provider_thinking_rules)", -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let column = sqlite3_column_text(stmt, 1) { columns.insert(String(cString: column)) }
+            }
+        }
+        sqlite3_finalize(stmt)
+        if !columns.contains("custom_high_value") {
+            exec(db: db, "ALTER TABLE provider_thinking_rules ADD COLUMN custom_high_value TEXT")
+        }
+        if !columns.contains("created_at") {
+            exec(db: db, "ALTER TABLE provider_thinking_rules ADD COLUMN created_at REAL NOT NULL DEFAULT 0")
+            exec(db: db, "UPDATE provider_thinking_rules SET created_at = updated_at WHERE created_at = 0")
+        }
         exec(db: db, "CREATE INDEX IF NOT EXISTS idx_provider_thinking_rules_instance ON provider_thinking_rules (instance_id, sort_order)")
     }
 
@@ -871,7 +888,7 @@ actor ProviderConfigDB {
         guard let db else { return [] }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
-        let sql = "SELECT id, label, scope_kind, scope_pattern, format, path, off_value FROM provider_thinking_rules WHERE instance_id = ? ORDER BY sort_order ASC"
+        let sql = "SELECT id, label, scope_kind, scope_pattern, format, path, off_value, custom_high_value FROM provider_thinking_rules WHERE instance_id = ? ORDER BY sort_order ASC"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         sqlite3_bind_text(stmt, 1, instanceId, -1, Self.SQLITE_TRANSIENT)
         var rules: [ThinkingRule] = []
@@ -884,7 +901,8 @@ actor ProviderConfigDB {
                 scope: .persisted(kind: Self.text(stmt, 2), pattern: Self.optText(stmt, 3)),
                 format: format,
                 path: Self.text(stmt, 5),
-                offValue: Self.optText(stmt, 6)
+                offValue: Self.optText(stmt, 6),
+                customHighValue: Self.optText(stmt, 7)
             ))
         }
         return rules
@@ -896,11 +914,11 @@ actor ProviderConfigDB {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         let sql = """
-            INSERT INTO provider_thinking_rules (id, instance_id, sort_order, label, scope_kind, scope_pattern, format, path, off_value, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO provider_thinking_rules (id, instance_id, sort_order, label, scope_kind, scope_pattern, format, path, off_value, custom_high_value, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM provider_thinking_rules WHERE id = ?), ?), ?)
             ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id, sort_order=excluded.sort_order,
             label=excluded.label, scope_kind=excluded.scope_kind, scope_pattern=excluded.scope_pattern,
-            format=excluded.format, path=excluded.path, off_value=excluded.off_value, updated_at=excluded.updated_at
+            format=excluded.format, path=excluded.path, off_value=excluded.off_value, custom_high_value=excluded.custom_high_value, updated_at=excluded.updated_at
         """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         sqlite3_bind_text(stmt, 1, rule.id, -1, Self.SQLITE_TRANSIENT)
@@ -912,7 +930,11 @@ actor ProviderConfigDB {
         sqlite3_bind_text(stmt, 7, rule.format.rawValue, -1, Self.SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 8, rule.path, -1, Self.SQLITE_TRANSIENT)
         if let off = rule.offValue, !off.isEmpty { sqlite3_bind_text(stmt, 9, off, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 9) }
-        sqlite3_bind_double(stmt, 10, Date().timeIntervalSince1970)
+        if let value = rule.customHighValue, !value.isEmpty { sqlite3_bind_text(stmt, 10, value, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 10) }
+        let now = Date().timeIntervalSince1970
+        sqlite3_bind_text(stmt, 11, rule.id, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 12, now)
+        sqlite3_bind_double(stmt, 13, now)
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
@@ -923,6 +945,51 @@ actor ProviderConfigDB {
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, "DELETE FROM provider_thinking_rules WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
         sqlite3_bind_text(stmt, 1, id, -1, Self.SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    /// Raw sync row; keeping columns rather than a decoded rule lets the V3
+    /// hydrator build an exact portable record without touching UI state.
+    func thinkingRuleSyncRow(id: String) -> [String: Any]? {
+        guard let db else { return nil }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT instance_id, sort_order, label, scope_kind, scope_pattern, format, path, off_value, custom_high_value, created_at, updated_at FROM provider_thinking_rules WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, id, -1, Self.SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        var row: [String: Any] = [
+            "instanceId": Self.text(stmt, 0), "sortOrder": Int(sqlite3_column_int(stmt, 1)),
+            "label": Self.text(stmt, 2), "scopeKind": Self.text(stmt, 3),
+            "format": Self.text(stmt, 5), "path": Self.text(stmt, 6),
+            "createdAt": sqlite3_column_double(stmt, 9), "updatedAt": sqlite3_column_double(stmt, 10)
+        ]
+        if sqlite3_column_type(stmt, 4) != SQLITE_NULL { row["scopePattern"] = Self.text(stmt, 4) }
+        if sqlite3_column_type(stmt, 7) != SQLITE_NULL { row["offValue"] = Self.text(stmt, 7) }
+        if sqlite3_column_type(stmt, 8) != SQLITE_NULL { row["customHighValue"] = Self.text(stmt, 8) }
+        return row
+    }
+
+    @discardableResult
+    func upsertThinkingRuleFromSync(_ rule: SyncedProviderThinkingRuleV3) -> Bool {
+        guard let db else { return false }
+        var current: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT updated_at FROM provider_thinking_rules WHERE id = ?", -1, &current, nil) == SQLITE_OK {
+            sqlite3_bind_text(current, 1, rule.id, -1, Self.SQLITE_TRANSIENT)
+            if sqlite3_step(current) == SQLITE_ROW, sqlite3_column_double(current, 0) >= rule.updatedAt.timeIntervalSince1970 {
+                sqlite3_finalize(current); return false
+            }
+        }
+        sqlite3_finalize(current)
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO provider_thinking_rules (id, instance_id, sort_order, label, scope_kind, scope_pattern, format, path, off_value, custom_high_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id, sort_order=excluded.sort_order, label=excluded.label, scope_kind=excluded.scope_kind, scope_pattern=excluded.scope_pattern, format=excluded.format, path=excluded.path, off_value=excluded.off_value, custom_high_value=excluded.custom_high_value, updated_at=excluded.updated_at"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, rule.id, -1, Self.SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 2, rule.instanceId, -1, Self.SQLITE_TRANSIENT); sqlite3_bind_int(stmt, 3, Int32(rule.sortOrder)); sqlite3_bind_text(stmt, 4, rule.label, -1, Self.SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 5, rule.scopeKind, -1, Self.SQLITE_TRANSIENT)
+        if let v = rule.scopePattern { sqlite3_bind_text(stmt, 6, v, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 6) }
+        sqlite3_bind_text(stmt, 7, rule.format, -1, Self.SQLITE_TRANSIENT); sqlite3_bind_text(stmt, 8, rule.path, -1, Self.SQLITE_TRANSIENT)
+        if let v = rule.offValue { sqlite3_bind_text(stmt, 9, v, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 9) }
+        if let v = rule.customHighValue { sqlite3_bind_text(stmt, 10, v, -1, Self.SQLITE_TRANSIENT) } else { sqlite3_bind_null(stmt, 10) }
+        sqlite3_bind_double(stmt, 11, rule.createdAt.timeIntervalSince1970); sqlite3_bind_double(stmt, 12, rule.updatedAt.timeIntervalSince1970)
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 

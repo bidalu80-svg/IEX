@@ -48,6 +48,7 @@ struct ThinkingRule: Identifiable, Equatable {
         case deepSeekV4
         case qwenDual
         case booleanToggle
+        case extraBodyToggle
         case customPath
 
         var id: String { rawValue }
@@ -59,6 +60,7 @@ struct ThinkingRule: Identifiable, Equatable {
             case .deepSeekV4: return "thinking + reasoning_effort"
             case .qwenDual: return "Qwen 思考开关与预算"
             case .booleanToggle: return "布尔开关"
+            case .extraBodyToggle: return "extra_body 布尔开关"
             case .customPath: return "自定义字段路径"
             }
         }
@@ -72,11 +74,13 @@ struct ThinkingRule: Identifiable, Equatable {
             case .nestedReasoningEffort:
                 return "在 reasoning 对象内发送 effort，例如 reasoning: { effort: high }。"
             case .deepSeekV4:
-                return "开启时在 thinking 对象内发送 type=enabled 与 reasoning_effort；关闭时发送 type=disabled。"
+                return "发送根级 thinking.type 与 reasoning_effort；关闭时仅发送 thinking.type=disabled。"
             case .qwenDual:
                 return "同时发送顶级与 extra_body 中的 enable_thinking、thinking_budget，预算会按本次最大输出限制裁剪。"
             case .booleanToggle:
                 return "将指定字段发送为 true 或 false。"
+            case .extraBodyToggle:
+                return "在 extra_body 内将指定字段发送为 true 或 false。"
             case .customPath:
                 return "按点分隔的字段路径发送思考强度值。"
             }
@@ -92,10 +96,13 @@ struct ThinkingRule: Identifiable, Equatable {
     var path: String
     /// Optional explicit value used while thinking is disabled.
     var offValue: String?
+    /// A custom-path rule may use a vendor-specific enabled value rather than
+    /// the generic reasoning tier (for example `enabled`).
+    var customHighValue: String?
 
-    init(id: String = UUID().uuidString, label: String, scope: Scope, format: WireFormat, path: String = "", offValue: String? = nil) {
+    init(id: String = UUID().uuidString, label: String, scope: Scope, format: WireFormat, path: String = "", offValue: String? = nil, customHighValue: String? = nil) {
         self.id = id; self.label = label; self.scope = scope; self.format = format
-        self.path = path; self.offValue = offValue
+        self.path = path; self.offValue = offValue; self.customHighValue = customHighValue
     }
 }
 
@@ -200,9 +207,10 @@ enum ThinkingRuleResolver {
             if level.isEnabled { body["reasoning"] = ["effort": value] }
             else if let off = rule.offValue, !off.isEmpty { body["reasoning"] = ["effort": off] }
         case .deepSeekV4:
-            var thinking: [String: Any] = ["type": level.isEnabled ? "enabled" : "disabled"]
-            if level.isEnabled { thinking["reasoning_effort"] = value }
-            body["thinking"] = thinking
+            // DeepSeek V4's switch and effort are root siblings. Nesting the
+            // effort inside `thinking` is silently ignored by the current API.
+            body["thinking"] = ["type": level.isEnabled ? "enabled" : "disabled"]
+            if level.isEnabled { body["reasoning_effort"] = value }
         case .qwenDual:
             body["enable_thinking"] = level.isEnabled
             var budget: Int = switch level {
@@ -227,8 +235,11 @@ enum ThinkingRuleResolver {
             ] as [String: Any]
         case .booleanToggle:
             set(path: rule.path.isEmpty ? "thinking" : rule.path, value: level.isEnabled, in: &body)
+        case .extraBodyToggle:
+            let path = rule.path.isEmpty ? "extra_body.thinking.enabled" : rule.path
+            set(path: path, value: level.isEnabled, in: &body)
         case .customPath:
-            if level.isEnabled { set(path: rule.path, value: value, in: &body) }
+            if level.isEnabled { set(path: rule.path, value: rule.customHighValue?.isEmpty == false ? rule.customHighValue! : value, in: &body) }
             else if let off = rule.offValue, !off.isEmpty { set(path: rule.path, value: off, in: &body) }
         }
     }

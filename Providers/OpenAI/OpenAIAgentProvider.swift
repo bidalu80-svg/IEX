@@ -988,7 +988,10 @@ final class OpenAIAgentProvider: AgentProvider {
                 case .off, .low, .medium: "high"
                 case .high, .xhigh, .max, .ultra: "max"
                 }
-                body["thinking"] = ["type": "enabled", "reasoning_effort": effort]
+                // DeepSeek V4 expects the enable switch and tier as root
+                // siblings; a nested thinking.reasoning_effort is ignored.
+                body["thinking"] = ["type": "enabled"]
+                body["reasoning_effort"] = effort
             } else {
                 body["thinking"] = ["type": "disabled"]
             }

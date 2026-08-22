@@ -103,6 +103,12 @@ enum ChatStoreSyncHydrators {
             merger: { record in await mergeProviderModelGroupV3(record: record) },
             deletionApplier: { id in await deleteProviderModelGroupV3(id: id) }
         )
+        h.register(
+            recordType: "ProviderThinkingRuleV3",
+            builder: { id in await buildProviderThinkingRuleV3(id: id) },
+            merger: { record in await mergeProviderThinkingRuleV3(record: record) },
+            deletionApplier: { id in await deleteProviderThinkingRuleV3(id: id) }
+        )
         // Legacy whole-file env-vars record. New devices NEVER emit it
         // (builder returns nil — caller treats nil as "this builder
         // chose not to push" and drops the dirty row). The merger is
@@ -1619,6 +1625,57 @@ enum ChatStoreSyncHydrators {
         await MainActor.run {
             ProviderConfigStore.shared.applyMergedConfigFromSync(fresh)
         }
+    }
+
+    // MARK: - ProviderThinkingRuleV3
+
+    private static func buildProviderThinkingRuleV3(id: String) async -> PortableRecord? {
+        guard let db = ProviderConfigStore.shared.db,
+              let row = await db.thinkingRuleSyncRow(id: id) else { return nil }
+        let synced = SyncedProviderThinkingRuleV3(
+            id: id,
+            instanceId: row["instanceId"] as? String ?? "",
+            sortOrder: row["sortOrder"] as? Int ?? 0,
+            label: row["label"] as? String ?? "",
+            scopeKind: row["scopeKind"] as? String ?? "allModels",
+            scopePattern: row["scopePattern"] as? String,
+            format: row["format"] as? String ?? "omit",
+            path: row["path"] as? String ?? "",
+            offValue: row["offValue"] as? String,
+            customHighValue: row["customHighValue"] as? String,
+            createdAt: Date(timeIntervalSince1970: row["createdAt"] as? Double ?? 0),
+            updatedAt: Date(timeIntervalSince1970: row["updatedAt"] as? Double ?? 0)
+        )
+        return SyncableTypeRegistry.shared.metadata(for: "ProviderThinkingRuleV3")?.buildPortable(synced)
+    }
+
+    private static func mergeProviderThinkingRuleV3(record: PortableRecord) async {
+        guard let db = ProviderConfigStore.shared.db,
+              let instanceId = stringField(record, "instanceId"),
+              ProviderConfigStore.shared.config.instances.contains(where: { $0.id == instanceId }) else { return }
+        let id = record.id.id
+        let updatedAt = dateField(record, "updatedAt") ?? record.updatedAt
+        guard !await ChatStore.shared.isRecentlyDeletedRecord(type: "ProviderThinkingRuleV3", id: id, remoteUpdatedAt: updatedAt) else { return }
+        let rule = SyncedProviderThinkingRuleV3(
+            id: id, instanceId: instanceId, sortOrder: intField(record, "sortOrder") ?? 0,
+            label: stringField(record, "label") ?? "", scopeKind: stringField(record, "scopeKind") ?? "allModels",
+            scopePattern: optionalStringField(record, "scopePattern"), format: stringField(record, "format") ?? "omit",
+            path: stringField(record, "path") ?? "", offValue: optionalStringField(record, "offValue"),
+            customHighValue: optionalStringField(record, "customHighValue"),
+            createdAt: dateField(record, "createdAt") ?? updatedAt, updatedAt: updatedAt
+        )
+        if await db.upsertThinkingRuleFromSync(rule) {
+            let rules = await db.loadThinkingRules(instanceId: instanceId)
+            ThinkingRuleCache.shared.replace(rules, for: instanceId)
+        }
+    }
+
+    private static func deleteProviderThinkingRuleV3(id: String) async {
+        guard let db = ProviderConfigStore.shared.db else { return }
+        let instanceId = await db.thinkingRuleSyncRow(id: id)?["instanceId"] as? String
+        _ = await db.deleteThinkingRule(id: id)
+        await ChatStore.shared.recordDeletedRecordTombstone(type: "ProviderThinkingRuleV3", id: id)
+        if let instanceId { ThinkingRuleCache.shared.replace(await db.loadThinkingRules(instanceId: instanceId), for: instanceId) }
     }
 }
 

@@ -5101,7 +5101,7 @@ extension ChatStore {
         // "ProviderConfigV2" remains in the whitelist too — outbound is
         // dual-written until all peers upgrade; inbound v2 is dropped
         // on v3 builds (ProviderV3Bootstrap.isEnabled gate).
-        "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3",
+        "ProviderInstanceV3", "ProviderModelEntryV3", "ProviderModelGroupV3", "ProviderThinkingRuleV3",
         // [T-mcp-per-server-sync] Per-server MCP records, plus the legacy
         // whole-file type. MCPServersV2 was NEVER in this whitelist — its
         // dirty rows were written but filtered out by loadDirtyRecords
