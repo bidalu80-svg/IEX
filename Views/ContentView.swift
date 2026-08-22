@@ -3319,6 +3319,51 @@ struct ContentView: View {
         return summary
     }
 
+    @ViewBuilder
+    private func folderSectionCard(_ folder: ChatFolder) -> some View {
+        let collapsed = collapsedFolderIds.contains(folder.id)
+        let memberCount = sessions.filter { $0.folderId == folder.id && $0.isArchived == showingArchivedSessions }.count
+        Button {
+            if collapsed { collapsedFolderIds.remove(folder.id) } else { collapsedFolderIds.insert(folder.id) }
+            UserDefaults.standard.set(Array(collapsedFolderIds), forKey: "ze.collapsedChatFolderIds")
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: folder.icon ?? "folder.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(folder.isPinned ? Color.orange : Color.accentColor)
+                    .frame(width: 30, height: 30)
+                    .background((folder.isPinned ? Color.orange : Color.accentColor).opacity(0.13), in: Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(folder.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                        if folder.isPinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange) }
+                    }
+                    Text(folder.desc?.isEmpty == false ? folder.desc! : "\(memberCount) 条聊天记录")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("\(memberCount)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(Color(UIColor.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 8).padding(.top, 8)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                Task { @MainActor in
+                    _ = await ChatStore.shared.toggleChatFolderPin(folder.id)
+                    chatFolders = await ChatStore.shared.listChatFolders()
+                }
+            } label: { Label(folder.isPinned ? "取消置顶分组" : "置顶分组", systemImage: folder.isPinned ? "pin.slash" : "pin") }
+            Button {
+                renameFolderName = folder.name; renameFolderDescription = folder.desc ?? ""; folderToRename = folder
+            } label: { Label("编辑分组", systemImage: "pencil") }
+            Button(role: .destructive) { folderToDissolve = folder } label: { Label("解散分组", systemImage: "folder.badge.minus") }
+        }
+    }
+
 }
 
 // MARK: - Export Summary
@@ -3433,84 +3478,6 @@ private struct DeleteConfirmSheet: View {
             Text(value)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    /// The reference application renders folders as first-class accordion cards,
-    /// not as a text heading. Keep the same interaction model in Ze: tap to
-    /// collapse, long press for maintenance actions, and no conversation is
-    /// deleted when a folder is dissolved.
-    @ViewBuilder
-    private func folderSectionCard(_ folder: ChatFolder) -> some View {
-        let collapsed = collapsedFolderIds.contains(folder.id)
-        let memberCount = sessions.filter { $0.folderId == folder.id && $0.isArchived == showingArchivedSessions }.count
-        Button {
-            if collapsed {
-                collapsedFolderIds.remove(folder.id)
-            } else {
-                collapsedFolderIds.insert(folder.id)
-            }
-            UserDefaults.standard.set(Array(collapsedFolderIds), forKey: "ze.collapsedChatFolderIds")
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: folder.icon ?? "folder.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(folder.isPinned ? Color.orange : Color.accentColor)
-                    .frame(width: 30, height: 30)
-                    .background((folder.isPinned ? Color.orange : Color.accentColor).opacity(0.13), in: Circle())
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(folder.name)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        if folder.isPinned {
-                            Image(systemName: "pin.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    Text(folder.desc?.isEmpty == false ? folder.desc! : "\(memberCount) 条聊天记录")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("\(memberCount)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(Color(UIColor.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button {
-                Task { @MainActor in
-                    _ = await ChatStore.shared.toggleChatFolderPin(folder.id)
-                    chatFolders = await ChatStore.shared.listChatFolders()
-                }
-            } label: {
-                Label(folder.isPinned ? "取消置顶分组" : "置顶分组", systemImage: folder.isPinned ? "pin.slash" : "pin")
-            }
-            Button {
-                renameFolderName = folder.name
-                renameFolderDescription = folder.desc ?? ""
-                folderToRename = folder
-            } label: {
-                Label("编辑分组", systemImage: "pencil")
-            }
-            Button(role: .destructive) {
-                folderToDissolve = folder
-            } label: {
-                Label("解散分组", systemImage: "folder.badge.minus")
-            }
         }
     }
 
@@ -4011,7 +3978,7 @@ private struct ChatGroupPickerSheet: View {
                             } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: folder.icon ?? "folder.fill")
-                                        .foregroundStyle(folder.isPinned ? .orange : .tint)
+                                        .foregroundStyle(folder.isPinned ? Color.orange : Color.accentColor)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(folder.name)
                                             .foregroundStyle(.primary)
