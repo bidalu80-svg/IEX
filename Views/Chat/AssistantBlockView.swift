@@ -933,7 +933,11 @@ struct TypingIndicator: View {
     private static let sweepDuration: TimeInterval = 2.15
 
     private var peakOpacity: CGFloat {
-        colorScheme == .light ? 0.75 : 0.25
+        // The capsule shines over a dark gray surface, so 0.25 is enough
+        // there. This label uses `secondaryLabel`, which is already bright
+        // in dark mode, so its sweep needs a stronger white band to remain
+        // visibly distinct.
+        colorScheme == .light ? 0.75 : 0.75
     }
 
     var body: some View {

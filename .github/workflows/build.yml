@@ -427,7 +427,7 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.2"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.3"
           test -f "$APP_AUDIT/Assets.car"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
