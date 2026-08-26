@@ -922,10 +922,19 @@ struct ThinkingBlockView: View {
 /// Semantic label colors retain contrast in both light and dark appearances.
 struct TypingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sweepOffset: CGFloat = -1
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var startedAt = Date()
 
     private static let label = "Ze正在思考中"
-    private static let sweepDuration: TimeInterval = 3
+    // Keep the thinking-label sweep in lockstep with the tool-capsule shimmer.
+    // The capsule uses a time-driven 2.15 s pass with a narrow 42%-of-width
+    // highlight (minimum 52 pt); using the same values makes the two effects
+    // read as one shared UI treatment.
+    private static let sweepDuration: TimeInterval = 2.15
+
+    private var peakOpacity: CGFloat {
+        colorScheme == .light ? 0.75 : 0.25
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -933,24 +942,24 @@ struct TypingIndicator: View {
                 .foregroundStyle(ChatColors.secondaryText)
 
             if !reduceMotion {
-                labelText
-                    .foregroundStyle(ChatColors.primaryText)
-                    .mask(sweepMask)
-                    .accessibilityHidden(true)
+                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+                    let elapsed = timeline.date.timeIntervalSince(startedAt)
+                    let phase = CGFloat((elapsed / Self.sweepDuration).truncatingRemainder(dividingBy: 1.0))
+
+                    labelText
+                        // Match ShimmerOverlay: a white highlight whose alpha
+                        // is supplied by the moving gradient mask.
+                        .foregroundStyle(Color.white)
+                        .mask(sweepMask(phase: phase))
+                        .accessibilityHidden(true)
+                }
             }
         }
         .fixedSize(horizontal: true, vertical: false)
         .frame(minHeight: 24, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ze正在思考中")
-        .onAppear(perform: startSweep)
-        .onChange(of: reduceMotion) { isReduced in
-            if isReduced {
-                sweepOffset = -1
-            } else {
-                startSweep()
-            }
-        }
+        .onAppear { startedAt = Date() }
     }
 
     private var labelText: some View {
@@ -959,27 +968,22 @@ struct TypingIndicator: View {
             .lineLimit(1)
     }
 
-    /// The transparent ends let the state reset outside the glyphs, so each
-    /// 3-second repeat reads as a continuous left-to-right highlight.
-    private var sweepMask: some View {
+    /// The same narrow, time-driven band used by ShimmerOverlay. The gradient
+    /// is used as a mask so the highlight exists only inside the glyphs.
+    private func sweepMask(phase: CGFloat) -> some View {
         GeometryReader { proxy in
+            let bandWidth = max(52, proxy.size.width * 0.42)
             LinearGradient(
-                colors: [.clear, .white.opacity(0.92), .clear],
+                colors: [
+                    .white.opacity(0),
+                    .white.opacity(peakOpacity),
+                    .white.opacity(0)
+                ],
                 startPoint: .leading,
                 endPoint: .trailing
             )
-            .frame(width: proxy.size.width * 0.58)
-            .offset(x: sweepOffset * proxy.size.width)
-        }
-    }
-
-    private func startSweep() {
-        guard !reduceMotion else { return }
-        sweepOffset = -1
-        DispatchQueue.main.async {
-            withAnimation(.linear(duration: Self.sweepDuration).repeatForever(autoreverses: false)) {
-                sweepOffset = 1
-            }
+            .frame(width: bandWidth, height: proxy.size.height)
+            .offset(x: -bandWidth + phase * (proxy.size.width + bandWidth))
         }
     }
 }
