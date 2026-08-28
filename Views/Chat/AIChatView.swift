@@ -3293,6 +3293,14 @@ struct AIChatView: View {
         usesExpandedComposerChrome ? 8 : 4
     }
 
+    /// ChatGPT keeps an empty, resting composer narrower than the screen and
+    /// expands it to the normal edge-to-edge width as the keyboard appears.
+    /// Keep content-bearing states wide so attachments and drafts never lose
+    /// usable editing space.
+    private var composerHorizontalPadding: CGFloat {
+        usesExpandedComposerChrome ? 12 : 64
+    }
+
     /// Keyboard notifications provide the same duration as UIKit's keyboard
     /// transition. Animating this small layout change in that transaction keeps
     /// the composer from snapping between its compact and typing states.
@@ -3393,7 +3401,7 @@ struct AIChatView: View {
                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             }
             .frame(maxWidth: maxContentWidth)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, composerHorizontalPadding)
             // The attachment tray is the preceding sibling in the bottom
             // stack. Do not leave the composer's normal top gutter between a
             // pending attachment and this capsule; with no floating bar that
