@@ -410,10 +410,12 @@ struct ChatMessageRow: View {
         let time = DateFormatter.localizedString(from: message.timestamp, dateStyle: .none, timeStyle: .short)
 
         if calendar.isDateInToday(message.timestamp) {
-            return "\(String(localized: \"Today\")) \(time)"
+            let today = String(localized: "Today")
+            return "\(today) \(time)"
         }
         if calendar.isDateInYesterday(message.timestamp) {
-            return "\(String(localized: \"Yesterday\")) \(time)"
+            let yesterday = String(localized: "Yesterday")
+            return "\(yesterday) \(time)"
         }
 
         let isCurrentYear = calendar.component(.year, from: message.timestamp)
