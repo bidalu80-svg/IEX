@@ -721,6 +721,11 @@ struct ChatMessageRow: View {
 /// finished. It is shared by the SwiftUI row and the collection-view header.
 struct AssistantTaskDurationView: View {
     let duration: TimeInterval
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var durationColor: Color {
+        colorScheme == .dark ? .blue : ChatColors.secondaryText
+    }
 
     private var durationText: String {
         let totalSeconds = max(1, Int(duration.rounded()))
@@ -731,15 +736,15 @@ struct AssistantTaskDurationView: View {
     var body: some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(ChatColors.secondaryText.opacity(0.22))
+                .fill(durationColor.opacity(0.22))
                 .frame(height: 0.5)
             Text("任务耗时 \(durationText)")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(ChatColors.secondaryText)
+                .foregroundStyle(durationColor)
                 .monospacedDigit()
                 .fixedSize(horizontal: true, vertical: false)
             Rectangle()
-                .fill(ChatColors.secondaryText.opacity(0.22))
+                .fill(durationColor.opacity(0.22))
                 .frame(height: 0.5)
         }
         .frame(maxWidth: .infinity)
