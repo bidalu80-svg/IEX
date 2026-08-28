@@ -277,6 +277,10 @@ struct AIChatView: View {
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @Environment(\.dismiss) private var dismiss
     @State private var inputFocused: Bool = false
+    /// The composer should follow the software keyboard's actual visibility,
+    /// rather than focus alone: a hardware keyboard can keep focus while the
+    /// compact, resting composer remains on screen.
+    @State private var softwareKeyboardVisible = false
     /// Collapses the verbose principal-title status into its three-dot capsule.
     /// This belongs to the navbar's Equatable key so a user tap updates the
     /// toolbar once, while streaming tokens still leave it untouched.
@@ -3277,6 +3281,44 @@ struct AIChatView: View {
         vm.inputCaret = caret
     }
 
+    /// Preserve the full composer whenever it needs room for real content.
+    /// Only the empty, resting text composer uses the compact ChatGPT-style
+    /// height when the software keyboard is dismissed.
+    private var usesExpandedComposerChrome: Bool {
+        softwareKeyboardVisible || hasComposerContent || voiceInputActive
+            || speechManager.state == .recording
+    }
+
+    private var composerVerticalPadding: CGFloat {
+        usesExpandedComposerChrome ? 8 : 4
+    }
+
+    /// Keyboard notifications provide the same duration as UIKit's keyboard
+    /// transition. Animating this small layout change in that transaction keeps
+    /// the composer from snapping between its compact and typing states.
+    private func updateSoftwareKeyboardVisibility(from notification: Notification) {
+        let endFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+        let visible: Bool
+
+        if let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) {
+            let frameInWindow = window.convert(endFrame, from: nil)
+            visible = frameInWindow.height > 1
+                && frameInWindow.intersects(window.bounds)
+                && frameInWindow.minY < window.bounds.maxY - 1
+        } else {
+            visible = endFrame.height > 1 && endFrame.minY < UIScreen.main.bounds.height - 1
+        }
+
+        guard softwareKeyboardVisible != visible else { return }
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        withAnimation(.easeInOut(duration: max(0.01, duration))) {
+            softwareKeyboardVisible = visible
+        }
+    }
+
     private var inputBar: some View {
         VStack(spacing: 0) {
             if vm.isSuspended {
@@ -3296,7 +3338,7 @@ struct AIChatView: View {
                 VStack(spacing: 0) {
                     inputBottomRow
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, composerVerticalPadding)
                 }
                 .contentShape(Capsule())
                 .onTapGesture { inputFocused = true }
@@ -3638,6 +3680,12 @@ struct AIChatView: View {
                         }
                     }
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            updateSoftwareKeyboardVisibility(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) {
+            updateSoftwareKeyboardVisibility(from: $0)
         }
         .background(
             // Fade from transparent (top) to solid background (bottom half)
