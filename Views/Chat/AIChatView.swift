@@ -3298,7 +3298,7 @@ struct AIChatView: View {
     /// Keep content-bearing states wide so attachments and drafts never lose
     /// usable editing space.
     private var composerHorizontalPadding: CGFloat {
-        usesExpandedComposerChrome ? 12 : 64
+        usesExpandedComposerChrome ? 12 : 34
     }
 
     /// Keyboard notifications provide the same duration as UIKit's keyboard
