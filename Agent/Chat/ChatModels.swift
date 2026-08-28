@@ -89,13 +89,22 @@ final class ChatMessage: Identifiable, ObservableObject {
     var lastSourceSortOrder: Int?
     /// Links back to the QueuedPrompt so we can withdraw it.
     var queuedPromptId: UUID?
-    let timestamp = Date()
+    /// Message creation time. This is supplied from persisted history on reload
+    /// so user-message context menus show the original send time.
+    let timestamp: Date
 
-    init(role: ChatMessageRole, content: String, blocks: [AssistantBlock] = [], isQueued: Bool = false) {
+    init(
+        role: ChatMessageRole,
+        content: String,
+        blocks: [AssistantBlock] = [],
+        isQueued: Bool = false,
+        timestamp: Date = Date()
+    ) {
         self.role = role
         self.content = content
         self.blocks = blocks
         self.isQueued = isQueued
+        self.timestamp = timestamp
     }
 
     /// [T-bridge-message-ui-leak] True when this UI message is the internal

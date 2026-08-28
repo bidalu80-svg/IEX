@@ -122,6 +122,18 @@ enum ChatColors {
     static let secondaryText = Color(UIColor.secondaryLabel)
     static let tertiaryText = Color(UIColor.tertiaryLabel)
     static let userBubble = Color(UIColor.tertiarySystemFill)
+    /// Dedicated ChatGPT-style colors for sent message bubbles. Keep these
+    /// separate from `userBubble`, which is also used by neutral usage capsules.
+    static let userMessageBubble = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.08, green: 0.24, blue: 0.38, alpha: 1)
+            : UIColor(red: 0.88, green: 0.95, blue: 0.99, alpha: 1)
+    })
+    static let userMessageText = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.58, green: 0.80, blue: 1.00, alpha: 1)
+            : UIColor(red: 0.03, green: 0.38, blue: 0.68, alpha: 1)
+    })
     static let toolBg = Color(UIColor.tertiarySystemGroupedBackground)
     static let toolBorder = Color(UIColor.separator).opacity(0.5)
     static let accent = Color(UIColor.label)

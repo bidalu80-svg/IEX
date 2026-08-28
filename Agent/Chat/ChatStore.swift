@@ -4400,7 +4400,12 @@ extension RawMessage {
             blocks.insert(AssistantBlock(kind: .thinking, content: rc), at: 0)
         }
 
-        let msg = ChatMessage(role: uiRole, content: textContent, blocks: blocks)
+        let msg = ChatMessage(
+            role: uiRole,
+            content: textContent,
+            blocks: blocks,
+            timestamp: createdAt
+        )
         // Deduplicate attachments by path
         var seenPaths = Set<String>()
         msg.attachments = userAttachments.filter { seenPaths.insert($0.path).inserted }

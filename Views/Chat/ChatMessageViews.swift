@@ -26,6 +26,8 @@ import SwiftUI
 /// has no intrinsic height — without it the context-menu platter would collapse.
 struct MessageContextMenuPreview: View {
     let text: String
+    var background: Color = ChatColors.background
+    var foreground: Color = ChatColors.primaryText
 
     /// [T-ios-usermsg-preview-adaptive-width] Width is now a CAP, not a fixed
     /// size. A short user bubble ("ok") previously lifted into a full 360pt
@@ -48,7 +50,7 @@ struct MessageContextMenuPreview: View {
             // which starts at the cap and shrinks to the measured content.
             Text(shown)
                 .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
-                .foregroundStyle(ChatColors.primaryText)
+                .foregroundStyle(foreground)
                 .multilineTextAlignment(.leading)
                 .padding(16)
                 .background(
@@ -69,7 +71,7 @@ struct MessageContextMenuPreview: View {
             width: contentSize.width > 0 ? min(max(contentSize.width, 60), maxCardWidth) : maxCardWidth,
             height: contentSize.height > 0 ? min(contentSize.height, maxCardHeight) : maxCardHeight
         )
-        .background(ChatColors.background)
+        .background(background)
     }
 }
 
@@ -327,12 +329,12 @@ struct ChatMessageRow: View {
                 } else if !userDisplayText.isEmpty {
                     Text(userDisplayText)
                         .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
-                        .foregroundStyle(ChatColors.primaryText)
+                        .foregroundStyle(ChatColors.userMessageText)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 18)
-                                .fill(ChatColors.userBubble)
+                                .fill(ChatColors.userMessageBubble)
                         )
                 }
             }
@@ -346,6 +348,13 @@ struct ChatMessageRow: View {
             // preview clip shape independently from the interaction shape.
             .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18))
             .contextMenu {
+                Button {} label: {
+                    Text(userMessageTimestamp)
+                }
+                .disabled(true)
+
+                Divider()
+
                 Button {
                     UIPasteboard.general.string = message.content
                 } label: {
@@ -383,11 +392,34 @@ struct ChatMessageRow: View {
             } preview: {
                 // [T-ios-longpress-menu-preview-background] Opaque card so the
                 // long-press preview isn't transparent (see MessageContextMenuPreview).
-                MessageContextMenuPreview(text: message.content)
+                MessageContextMenuPreview(
+                    text: userDisplayText,
+                    background: ChatColors.userMessageBubble,
+                    foreground: ChatColors.userMessageText
+                )
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
+    }
+
+    /// ChatGPT-style contextual time label for a sent message. The menu is the
+    /// only presentation point, so this does not alter collection-cell sizing.
+    private var userMessageTimestamp: String {
+        let calendar = Calendar.current
+        let time = DateFormatter.localizedString(from: message.timestamp, dateStyle: .none, timeStyle: .short)
+
+        if calendar.isDateInToday(message.timestamp) {
+            return "\(String(localized: \"Today\")) \(time)"
+        }
+        if calendar.isDateInYesterday(message.timestamp) {
+            return "\(String(localized: \"Yesterday\")) \(time)"
+        }
+
+        let isCurrentYear = calendar.component(.year, from: message.timestamp)
+            == calendar.component(.year, from: Date())
+        let dateStyle: DateFormatter.Style = isCurrentYear ? .medium : .long
+        return DateFormatter.localizedString(from: message.timestamp, dateStyle: dateStyle, timeStyle: .short)
     }
 
     // MARK: Assistant Row
