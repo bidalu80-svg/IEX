@@ -632,11 +632,11 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "customBaseURL", type: "string", required: false, default: nil, description: "New base URL. Pass null to revert to default."),
                 ParamSpec(name: "appendV1Suffix", type: "bool", required: false, default: nil, description: "Update suffix behavior."),
                 ParamSpec(name: "isEnabled", type: "bool", required: false, default: nil, description: "Enable or disable."),
-                ParamSpec(name: "imageEndpointMode", type: "string", required: false, default: nil, description: "auto | images_generations | chat_completions. Forces a specific endpoint for image-output models on this instance."),
+                ParamSpec(name: "imageEndpointMode", type: "string", required: false, default: nil, description: "auto | images_generations | images_edits | chat_completions. Forces a specific endpoint for image-output models on this instance."),
                 ParamSpec(name: "imageEndpointResolved", type: "string", required: false, default: nil, description: "Manually set/clear the auto-mode cache. Pass null to clear so the next call re-probes."),
             ],
             returns: "{instance: {...}}",
-            example: ["instanceId": "pi_xyz", "imageEndpointMode": "chat_completions"]
+            example: ["instanceId": "pi_xyz", "imageEndpointMode": "images_edits"]
         ),
         MethodSpec(
             name: "provider.instances.delete",

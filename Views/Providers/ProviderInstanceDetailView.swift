@@ -621,6 +621,7 @@ struct ProviderInstanceDetailView: View {
             )) {
                 Text("Auto").tag(ImageEndpointMode.auto)
                 Text("图像生成").tag(ImageEndpointMode.imagesGenerations)
+                Text("图像编辑").tag(ImageEndpointMode.imagesEdits)
                 Text("Chat Completions").tag(ImageEndpointMode.chatCompletions)
             } label: {
                 Text(String(localized: "Image Endpoint"))
@@ -639,13 +640,15 @@ struct ProviderInstanceDetailView: View {
             if let resolved = instance.imageEndpointResolved {
                 let resolvedLabel = resolved == .imagesGenerations
                     ? "/v1/images/generations"
-                    : "/v1/chat/completions"
-                Text(String(localized: "Auto: tries /v1/images/generations first, falls back to /v1/chat/completions. Last successful endpoint: \(resolvedLabel)."))
+                    : resolved == .imagesEdits ? "/v1/images/edits" : "/v1/chat/completions"
+                Text(String(localized: "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Last successful endpoint: \(resolvedLabel)."))
             } else {
-                Text(String(localized: "Auto: tries /v1/images/generations first, falls back to /v1/chat/completions. Caches the working endpoint after the first call."))
+                Text(String(localized: "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Caches the working endpoint after the first call."))
             }
         case .imagesGenerations:
             Text(String(localized: "Always use /v1/images/generations."))
+        case .imagesEdits:
+            Text(String(localized: "Always use /v1/images/edits for image-to-image requests with an input image."))
         case .chatCompletions:
             Text(String(localized: "Always use /v1/chat/completions (multimodal output)."))
         }

@@ -1,13 +1,15 @@
 import Foundation
 
 /// User preference for which OpenAI-compatible endpoint to use for image generation.
-///   - `auto`:  try /v1/images/generations first; fall back to /v1/chat/completions on 4xx.
-///              The successful path is cached on the instance via `imageEndpointResolved`.
+///   - `auto`:  try the Images API (generations for text-to-image, edits for image-to-image);
+///              fall back to /v1/chat/completions on 4xx. The successful path is cached.
 ///   - `imagesGenerations`: always use /v1/images/generations.
+///   - `imagesEdits`:       always use /v1/images/edits for image-to-image.
 ///   - `chatCompletions`:   always use /v1/chat/completions (multimodal output).
 enum ImageEndpointMode: String, Codable, Hashable, CaseIterable {
     case auto
     case imagesGenerations = "images_generations"
+    case imagesEdits = "images_edits"
     case chatCompletions = "chat_completions"
 }
 

@@ -73,7 +73,7 @@ struct ProvidersCollection: ConfigCollection {
     ///   customBaseURL  (optional) override endpoint (for OpenAI/Anthropic-
     ///                  compatible proxies)
     ///   appendV1Suffix (optional, default true)
-    ///   imageEndpointMode (optional) auto / images_generations / chat_completions
+    ///   imageEndpointMode (optional) auto / images_generations / images_edits / chat_completions
     func add(_ payload: ConfigValue) throws -> String {
         guard case .object(let dict) = payload else {
             throw ConfigError.invalidValue("Expected a JSON object")
@@ -333,7 +333,7 @@ struct ProvidersCollection: ConfigCollection {
         ClosureField(
             path: "providers.\(id).imageEndpointMode",
             displayName: "Image endpoint mode",
-            description: "auto / images_generations / chat_completions.",
+            description: "auto / images_generations / images_edits / chat_completions.",
             valueSchema: .stringEnum(ImageEndpointMode.allCases.map(\.rawValue)),
             risk: .normal, revertable: true,
             reader: { [self] in

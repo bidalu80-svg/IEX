@@ -95,13 +95,13 @@ final class OpenAIProvider: LLMProvider {
     /// scheme+host — unlike the legacy `imagePathOverride`, which is joined
     /// after `base [+ /v1]` and therefore can never escape a base-URL prefix
     /// like `/compatible-mode/v1` (proven by device baseline p03). Applies to
-    /// chat/completions, responses, and images/generations builders. Never
+    /// chat/completions, responses, and image generation/edit builders. Never
     /// applies to Codex OAuth (hardcoded backend). Per-call, never persisted.
     var absoluteEndpointOverride: String? = nil
 
     /// [T-model-use-image-passthrough GH#62] Optional endpoint path override for the
-    /// image request (e.g. a non-standard `/api/v3/images/generations`). When set, it
-    /// replaces the hardcoded `/images/generations` path (base URL + this verbatim,
+    /// image request (e.g. a non-standard `/api/v3/images/generations` or `/edits`). When set, it
+    /// replaces the hardcoded image path (base URL + this verbatim,
     /// preserving any query). nil = default path.
     var imagePathOverride: String? = nil
     /// When true, use `max_tokens` instead of `max_completion_tokens` and skip `stream_options`.
@@ -1355,14 +1355,17 @@ final class OpenAIProvider: LLMProvider {
         size: String? = nil,
         quality: String? = nil
     ) async throws -> LLMResponse {
+        let imagePath = imagePathOverride ?? "/images/edits"
         let url: URL
-        if isAzure, let azure = azureURL(path: "/images/edits") {
+        if let abs = absoluteEndpointOverride, abs.hasPrefix("/"), let u = hostRootURL(abs) {
+            url = u
+        } else if isAzure, let azure = azureURL(path: imagePath) {
             url = azure   // [T-ios-azure-openai]
         } else {
             let base = resolvedAPIBase(customBaseURL ?? "https://api.openai.com", appendV1: appendV1Suffix)
             let v1Path = appendV1Suffix ? "/v1" : ""
-            guard let u = URL(string: URLBuilding.join(base, v1Path, "/images/edits")) else {
-                throw LLMError.providerError(message: "Invalid URL for /images/edits")
+            guard let u = URL(string: URLBuilding.join(base, v1Path, imagePath)) else {
+                throw LLMError.providerError(message: "Invalid URL for \(imagePath)")
             }
             url = u
         }

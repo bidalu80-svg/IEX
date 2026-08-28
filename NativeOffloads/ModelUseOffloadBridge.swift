@@ -431,8 +431,8 @@ private let logger = AppLogger(category: "ModelUseOffload")
 
         // 4. Image-output models route through /v1/images/generations or /v1/chat/completions.
         //    The choice is controlled by the provider instance's `imageEndpointMode`:
-        //      - .imagesGenerations / .chatCompletions: forced by user
-        //      - .auto: try /images/generations first; on 4xx fall back to chat/completions
+            //      - .imagesGenerations / .imagesEdits / .chatCompletions: forced by user
+            //      - .auto: try the Images API first; on 4xx fall back to chat/completions
         //               and persist the working endpoint to `imageEndpointResolved` so the
         //               next request skips the probe.
         //    Endpoint override CLI flag (`--endpoint`) is parsed from inputJSON below and
@@ -557,6 +557,21 @@ private let logger = AppLogger(category: "ModelUseOffload")
             }()
             logger.info("[ModelUseRoute] EFFECTIVE-MODE model=\(entry.model.id) isPureImageGenerator=\(isPureImageGenerator) (imageOutput=\(modalities.contains(.imageOutput)) textOutput=\(modalities.contains(.textOutput))) cliOverride=\(cliEndpointOverride?.rawValue ?? "<nil>") effectiveMode=\(effectiveMode.rawValue)")
 
+            if effectiveMode == .imagesEdits {
+                guard !inputImages.isEmpty else {
+                    throw ModelUseError.invalidInput("image_endpoint=images_edits requires at least one input image in a user content block (type image_url).")
+                }
+                let response = try await openAI.editImage(
+                    prompt: prompt, images: inputImages, n: imgConfig.n,
+                    size: imgConfig.size, quality: imgConfig.quality
+                )
+                return Self.attachCallFeedback(try Self.buildMediaResult(
+                    response: response, entry: entry,
+                    outputHostPath: outputHostPath, outputExt: outputExt0,
+                    imageEndpointUsed: .imagesEdits
+                ), warnings: callWarnings, extras: appliedExtras)
+            }
+
             // Forced or already-resolved → use that endpoint directly.
             if effectiveMode == .imagesGenerations {
                 logger.info("🖼️ image_endpoint=images_generations (forced/cached) for \(entry.model.id)")
@@ -576,7 +591,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
                 return Self.attachCallFeedback(try Self.buildMediaResult(
                     response: response, entry: entry,
                     outputHostPath: outputHostPath, outputExt: outputExt0,
-                    imageEndpointUsed: .imagesGenerations
+                    imageEndpointUsed: inputImages.isEmpty ? .imagesGenerations : .imagesEdits
                 ), warnings: callWarnings, extras: appliedExtras)
             }
 
@@ -1438,6 +1453,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
         switch raw.lowercased() {
         case "auto": return .auto
         case "images_generations", "images-generations", "images-gen": return .imagesGenerations
+        case "images_edits", "images-edits", "images-edit", "edit": return .imagesEdits
         case "chat_completions", "chat-completions", "chat": return .chatCompletions
         default: return nil
         }
