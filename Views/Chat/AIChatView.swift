@@ -3146,7 +3146,7 @@ struct AIChatView: View {
         Image(systemName: systemName)
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 36, height: 36)
+            .frame(width: 34, height: 34)
             .background(ChatColors.composerAction.opacity(isEnabled ? 1 : 0.45), in: Circle())
     }
 
