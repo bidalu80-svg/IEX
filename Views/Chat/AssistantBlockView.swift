@@ -139,6 +139,12 @@ struct AssistantBlockView: View {
 
 // MARK: - Shimmer Overlay (continuous leading-to-trailing shine)
 
+/// Shared sweep timing for the compact chat status rows and the "Ze正在思考中"
+/// indicator. Keeping one value prevents the two animations from drifting apart.
+private enum ChatShimmerStyle {
+    static let sweepDuration: TimeInterval = 1.65
+}
+
 /// A narrow shimmer band that sweeps from leading to trailing.
 /// Its offset is time-driven, so a collection-view cell cannot retain a
 /// stopped repeat-forever animation after it has been reused for another tool.
@@ -146,8 +152,6 @@ struct ShimmerOverlay: View {
     @Environment(\.colorScheme) private var colorScheme
     let isActive: Bool
     @State private var startedAt = Date()
-
-    private let sweepDuration: TimeInterval = 2.15
 
     private var peakOpacity: CGFloat {
         colorScheme == .light ? 0.75 : 0.25
@@ -167,7 +171,7 @@ struct ShimmerOverlay: View {
                 // schedule keeps the phase advancing from left to right.
                 TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startedAt)
-                    let phase = CGFloat((elapsed / sweepDuration).truncatingRemainder(dividingBy: 1.0))
+                    let phase = CGFloat((elapsed / ChatShimmerStyle.sweepDuration).truncatingRemainder(dividingBy: 1.0))
                     ZStack(alignment: .leading) {
                         Rectangle()
                             .fill(
@@ -320,17 +324,11 @@ struct ToolCapsuleView: View {
     private var shimmerMask: some View {
         HStack(spacing: 8) {
             statusOrIcon
-            HStack(spacing: 0) {
-                Text(displayText)
-                    .font(.system(size: 13, weight: .medium))
-                if isStreaming {
-                    Text("...")
-                        .font(.system(size: 13, weight: .medium))
-                }
-            }
-            .lineLimit(1)
-            if durationText != nil {
-                Text("00s")
+            Text(displayText)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+            if let durationText {
+                Text(durationText)
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
             }
         }
@@ -839,15 +837,6 @@ struct ThinkingBlockView: View {
                                 .textSelection(.enabled)
                                 .padding(.horizontal, 4)
                                 .padding(.bottom, 10)
-                                .overlay(
-                                    ShimmerOverlay(isActive: isStreaming)
-                                        .mask(
-                                            Text(displayContent)
-                                                .font(.system(size: 13))
-                                                .lineSpacing(3)
-                                        )
-                                        .allowsHitTesting(false)
-                                )
                                 .id("thinkingBottom")
                         }
                     }
@@ -941,17 +930,22 @@ struct ThinkingBlockView: View {
     private var thinkingHeaderShimmerMask: some View {
         HStack(spacing: 6) {
             Image(systemName: "brain.head.profile")
+                .font(.system(size: 14, weight: .semibold))
             Text(thinkingHeaderTitle)
+                .font(.system(size: 13, weight: .semibold))
             ThinkingDurationLabel(block: block, isStreaming: isStreaming)
-            if thinkingLevel.isEnabled { Text(thinkingLevelCompactLabel) }
-            if isStreaming { ProgressView().controlSize(.mini) }
+            if thinkingLevel.isEnabled {
+                Text(thinkingLevelCompactLabel)
+                    .font(.system(size: 9, weight: .semibold))
+            }
             if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
                 let count = max(block.content.count, block.thinkingContentBuffer.count)
                 Text(count > 1000 ? "\(count / 1000)K" : "\(count)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
             }
             Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                .font(.system(size: 11, weight: .medium))
         }
-        .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
         .padding(.horizontal, 4)
     }
@@ -1004,12 +998,10 @@ struct TypingIndicator: View {
     @State private var startedAt = Date()
 
     private static let label = "Ze正在思考中"
-    // Keep the thinking-label sweep in lockstep with the tool-capsule shimmer.
-    // The capsule uses a time-driven 2.15 s pass with a narrow 42%-of-width
+    // Keep the thinking-label sweep in lockstep with the tool-step shimmer.
+    // Both use a time-driven 1.65 s pass with a narrow 42%-of-width
     // highlight (minimum 52 pt); using the same values makes the two effects
     // read as one shared UI treatment.
-    private static let sweepDuration: TimeInterval = 2.15
-
     private var peakOpacity: CGFloat {
         // The capsule shines over a dark gray surface, so 0.25 is enough
         // there. This label uses `secondaryLabel`, which is already bright
@@ -1026,7 +1018,7 @@ struct TypingIndicator: View {
             if !reduceMotion {
                 TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startedAt)
-                    let phase = CGFloat((elapsed / Self.sweepDuration).truncatingRemainder(dividingBy: 1.0))
+                    let phase = CGFloat((elapsed / ChatShimmerStyle.sweepDuration).truncatingRemainder(dividingBy: 1.0))
 
                     labelText
                         // Match ShimmerOverlay: a white highlight whose alpha

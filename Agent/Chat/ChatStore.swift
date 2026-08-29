@@ -344,6 +344,9 @@ struct RawMessage: Identifiable, Codable, Hashable {
     var tokenUsage: StoredTokenUsage?
     /// Reasoning content from thinking models (Kimi, DeepSeek, QwQ, etc.) — must be echoed back.
     var reasoningContent: String?
+    /// Frozen elapsed time for the visible reasoning summary, persisted so
+    /// completed thinking rows keep their value after an app restart.
+    var reasoningDuration: TimeInterval? = nil
     /// Number of mid-stream auto-retries that occurred before this message completed successfully.
     /// 0 means no interruption. Persisted to DB for display after session reload.
     var streamInterruptCount: Int = 0
@@ -527,6 +530,7 @@ actor ChatStore {
         addColumnIfMissing(table: "sessions", column: "model_binding", definition: "TEXT")
         addColumnIfMissing(table: "sessions", column: "source", definition: "TEXT")
         addColumnIfMissing(table: "messages", column: "reasoning_content", definition: "TEXT")
+        addColumnIfMissing(table: "messages", column: "reasoning_duration", definition: "REAL")
         addColumnIfMissing(table: "messages", column: "stream_interrupt_count", definition: "INTEGER NOT NULL DEFAULT 0")
         addColumnIfMissing(table: "sessions", column: "memory_enabled", definition: "INTEGER NOT NULL DEFAULT 1")
         addColumnIfMissing(table: "sessions", column: "last_synced_at", definition: "REAL")
@@ -2295,8 +2299,8 @@ actor ChatStore {
         logger.info("[Store] appendMessages enter count=\(messages.count) dbOpen=\(dbOK) sid=\(firstSid)")
 
         let sql = """
-            INSERT INTO messages (id, session_id, role, parts_json, created_at, token_usage, sort_order, reasoning_content, stream_interrupt_count, updated_at, error_info, part_flags)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (id, session_id, role, parts_json, created_at, token_usage, sort_order, reasoning_content, reasoning_duration, stream_interrupt_count, updated_at, error_info, part_flags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         exec("BEGIN TRANSACTION")
@@ -2334,10 +2338,12 @@ actor ChatStore {
                 bindOptionalText(stmt, index: 6, value: usageJSON)
                 sqlite3_bind_int64(stmt, 7, Int64(sortOrder))
                 bindOptionalText(stmt, index: 8, value: message.reasoningContent)
-                sqlite3_bind_int64(stmt, 9, Int64(message.streamInterruptCount))
-                sqlite3_bind_double(stmt, 10, message.createdAt.timeIntervalSince1970)
-                bindOptionalText(stmt, index: 11, value: message.errorInfo)  // [T-error-persist-ios]
-                sqlite3_bind_int64(stmt, 12, Int64(partFlags))  // [T-ios-listsessions-part-flags]
+                if let duration = message.reasoningDuration { sqlite3_bind_double(stmt, 9, duration) }
+                else { sqlite3_bind_null(stmt, 9) }
+                sqlite3_bind_int64(stmt, 10, Int64(message.streamInterruptCount))
+                sqlite3_bind_double(stmt, 11, message.createdAt.timeIntervalSince1970)
+                bindOptionalText(stmt, index: 12, value: message.errorInfo)  // [T-error-persist-ios]
+                sqlite3_bind_int64(stmt, 13, Int64(partFlags))  // [T-ios-listsessions-part-flags]
                 let stepRC = sqlite3_step(stmt)
                 if stepRC != SQLITE_DONE {
                     let errMsg = String(cString: sqlite3_errmsg(db))
@@ -2399,7 +2405,7 @@ actor ChatStore {
     func loadMessages(sessionId: String) -> [RawMessage] {
         let totalStart = CFAbsoluteTimeGetCurrent()
         let sql = """
-            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, stream_interrupt_count, sort_order, error_info
+            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, stream_interrupt_count, sort_order, error_info
             FROM messages WHERE session_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC
         """
         var stmt: OpaquePointer?
@@ -2438,13 +2444,15 @@ actor ChatStore {
 
                 let reasoningContent = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
 
-                let streamInterruptCount = Int(sqlite3_column_int64(stmt, 7))
-                let sortOrder = Int(sqlite3_column_int64(stmt, 8))
-                let errorInfo = sqlite3_column_text(stmt, 9).map { String(cString: $0) }  // [T-error-persist-ios]
+                let reasoningDuration = sqlite3_column_type(stmt, 7) != SQLITE_NULL ? sqlite3_column_double(stmt, 7) : nil
+                let streamInterruptCount = Int(sqlite3_column_int64(stmt, 8))
+                let sortOrder = Int(sqlite3_column_int64(stmt, 9))
+                let errorInfo = sqlite3_column_text(stmt, 10).map { String(cString: $0) }  // [T-error-persist-ios]
                 var msg = RawMessage(
                     id: id, sessionId: sessId, role: role, parts: parts,
                     createdAt: createdAt, tokenUsage: tokenUsage,
                     reasoningContent: reasoningContent,
+                    reasoningDuration: reasoningDuration,
                     streamInterruptCount: streamInterruptCount
                 )
                 msg.sortOrder = sortOrder
@@ -4397,7 +4405,12 @@ extension RawMessage {
 
         // Prepend thinking block if reasoning content was stored and thinking display is enabled
         if showThinking, role == .assistant, let rc = reasoningContent, !rc.isEmpty {
-            blocks.insert(AssistantBlock(kind: .thinking, content: rc), at: 0)
+            let thinkingBlock = AssistantBlock(kind: .thinking, content: rc)
+            thinkingBlock.thinkingDuration = reasoningDuration
+            // A restored completed block should never show a live clock. Its
+            // start date is irrelevant once the frozen duration is present.
+            thinkingBlock.thinkingStartTime = nil
+            blocks.insert(thinkingBlock, at: 0)
         }
 
         let msg = ChatMessage(
@@ -4512,6 +4525,7 @@ extension RawMessage {
 
         var msg = AgentMessage(role: agentRole, parts: agentParts)
         msg.reasoningContent = reasoningContent
+        msg.reasoningDuration = reasoningDuration
         return msg
     }
 
@@ -6478,7 +6492,7 @@ extension ChatStore {
 
     func loadSingleMessage(id: String) -> RawMessage? {
         let sql = """
-            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, stream_interrupt_count, sort_order
+            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, stream_interrupt_count, sort_order
             FROM messages WHERE id = ?
         """
         var stmt: OpaquePointer?
@@ -6494,8 +6508,9 @@ extension ChatStore {
                 let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
                 let tokenUsageStr = sqlite3_column_text(stmt, 5).map { String(cString: $0) }
                 let reasoningContent = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
-                let streamInterruptCount = Int(sqlite3_column_int(stmt, 7))
-                let sortOrder = Int(sqlite3_column_int64(stmt, 8))
+                let reasoningDuration = sqlite3_column_type(stmt, 7) != SQLITE_NULL ? sqlite3_column_double(stmt, 7) : nil
+                let streamInterruptCount = Int(sqlite3_column_int(stmt, 8))
+                let sortOrder = Int(sqlite3_column_int64(stmt, 9))
 
                 let role = MessageRole(rawValue: roleStr) ?? .user
                 let parts = (try? JSONDecoder().decode([ContentPart].self, from: Data(partsJson.utf8))) ?? []
@@ -6507,6 +6522,7 @@ extension ChatStore {
                     id: msgId, sessionId: sessionId, role: role, parts: parts,
                     createdAt: createdAt, tokenUsage: tokenUsage,
                     reasoningContent: reasoningContent,
+                    reasoningDuration: reasoningDuration,
                     streamInterruptCount: streamInterruptCount
                 )
                 raw.sortOrder = sortOrder

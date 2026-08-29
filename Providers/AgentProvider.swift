@@ -110,6 +110,9 @@ struct AgentMessage: @unchecked Sendable {
     /// Opaque reasoning content from thinking models (e.g. Kimi, DeepSeek, QwQ).
     /// Must be echoed back on assistant messages for multi-turn conversations.
     var reasoningContent: String?
+    /// UI-only frozen duration for the visible reasoning summary. It is not
+    /// included in provider requests and is persisted alongside the raw message.
+    var reasoningDuration: TimeInterval? = nil
     /// Native reasoning payload (Responses-API encrypted items, etc.). In
     /// memory only — see `ReasoningEcho` for cross-model isolation rules.
     var reasoningEcho: ReasoningEcho?

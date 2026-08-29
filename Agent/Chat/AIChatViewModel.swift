@@ -5199,6 +5199,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             var assistantMessage = AgentMessage(role: .assistant, parts: assistantParts)
             assistantMessage.isInterrupted = streamResult.isStreamInterrupted
             assistantMessage.reasoningContent = streamResult.reasoningContent
+            // Carry the frozen duration from the just-finished thinking block
+            // into the persisted assistant turn so reloads do not reset it to 0s.
+            assistantMessage.reasoningDuration = allBlocks.last(where: { $0.kind == .thinking })?.thinkingDuration
             assistantMessage.reasoningEcho = streamResult.reasoningEcho
             let assistantAgentIdx = agentHistory.count
             agentHistory.append(assistantMessage)

@@ -1358,6 +1358,7 @@ extension AIChatViewModel {
             role: msg.role == .user ? .user : .assistant,
             parts: parts, createdAt: Date(), tokenUsage: storedUsage,
             reasoningContent: reasoningContent ?? msg.reasoningContent,
+            reasoningDuration: msg.reasoningDuration,
             streamInterruptCount: streamInterruptCount
         )
     }
