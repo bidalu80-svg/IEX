@@ -993,6 +993,7 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var onStop: (() -> Void)?
     @Published var onRetry: (() -> Void)?
     @Published var onEdit: (() -> Void)?
+    @Published var onDelete: (() -> Void)?
     @Published var onWithdraw: (() -> Void)?
     @Published var autoRetryAttempt: Int = 0
     @Published var autoRetryCountdown: Int = 0
