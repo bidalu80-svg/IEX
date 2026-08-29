@@ -522,57 +522,82 @@ private struct BridgedAssistantFooterV3: View {
 
     private var completionActionBar: some View {
         HStack(spacing: 2) {
-            completionActionButton(
+            completionActionEntry(index: 0) {
+                completionActionButton(
                 systemImage: transientCompletionAction == .copy ? "checkmark" : "rectangle.on.rectangle",
                 isSelected: transientCompletionAction == .copy,
                 selectedColor: .green,
                 accessibilityLabel: String(localized: "Copy")
-            ) {
-                UIPasteboard.general.string = replyText
-                flashCompletionAction(.copy)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            }
-
-            completionActionButton(
-                systemImage: "play",
-                symbolSize: 17,
-                isSelected: transientCompletionAction == .play,
-                accessibilityLabel: String(localized: "Read from Start"),
-                action: {
-                    flashCompletionAction(.play)
-                    bridge.onReadAloud?()
+                ) {
+                    UIPasteboard.general.string = replyText
+                    flashCompletionAction(.copy)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
-            )
-            .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
-
-            completionActionButton(
-                systemImage: bridge.replyFeedback == .positive ? "hand.thumbsup.fill" : "hand.thumbsup",
-                isSelected: bridge.replyFeedback == .positive,
-                accessibilityLabel: "点赞"
-            ) {
-                toggleFeedback(.positive)
             }
 
-            completionActionButton(
-                systemImage: bridge.replyFeedback == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown",
-                isSelected: bridge.replyFeedback == .negative,
-                accessibilityLabel: "踩"
-            ) {
-                toggleFeedback(.negative)
+            completionActionEntry(index: 1) {
+                completionActionButton(
+                    systemImage: "play",
+                    symbolSize: 17,
+                    isSelected: transientCompletionAction == .play,
+                    accessibilityLabel: String(localized: "Read from Start"),
+                    action: {
+                        flashCompletionAction(.play)
+                        bridge.onReadAloud?()
+                    }
+                )
+                .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
             }
 
-            completionActionButton(
-                systemImage: "arrow.clockwise",
-                isSelected: transientCompletionAction == .retry,
-                accessibilityLabel: String(localized: "Retry"),
-                action: {
-                    flashCompletionAction(.retry)
-                    bridge.onRetry?()
+            completionActionEntry(index: 2) {
+                completionActionButton(
+                    systemImage: bridge.replyFeedback == .positive ? "hand.thumbsup.fill" : "hand.thumbsup",
+                    isSelected: bridge.replyFeedback == .positive,
+                    accessibilityLabel: "点赞"
+                ) {
+                    toggleFeedback(.positive)
                 }
-            )
-            .disabled(bridge.onRetry == nil)
+            }
+
+            completionActionEntry(index: 3) {
+                completionActionButton(
+                    systemImage: bridge.replyFeedback == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                    isSelected: bridge.replyFeedback == .negative,
+                    accessibilityLabel: "踩"
+                ) {
+                    toggleFeedback(.negative)
+                }
+            }
+
+            completionActionEntry(index: 4) {
+                completionActionButton(
+                    systemImage: "arrow.clockwise",
+                    isSelected: transientCompletionAction == .retry,
+                    accessibilityLabel: String(localized: "Retry"),
+                    action: {
+                        flashCompletionAction(.retry)
+                        bridge.onRetry?()
+                    }
+                )
+                .disabled(bridge.onRetry == nil)
+            }
         }
         .padding(.top, 1)
+    }
+
+    /// Each action enters from the leading edge with a short stagger. Applying
+    /// the animation to the individual transition keeps the row's layout
+    /// stable while making the left-to-right reveal feel continuous.
+    private func completionActionEntry<Content: View>(
+        index: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .transition(.opacity.combined(with: .move(edge: .leading)))
+            .animation(
+                .easeOut(duration: 0.28).delay(Double(index) * 0.07),
+                value: bridge.showsCompletionActions
+            )
     }
 
     private func completionActionButton(
