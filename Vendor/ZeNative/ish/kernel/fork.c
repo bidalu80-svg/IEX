@@ -1,5 +1,6 @@
 #include <time.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include "debug.h"
 #include "kernel/task.h"
 #include "fs/fd.h"
@@ -16,6 +17,15 @@
 #define CPU_SP(cpu) ((cpu).esp)
 #define CPU_RETVAL(cpu) ((cpu).eax)
 #endif
+
+// Host-controlled process-creation guard.  The callback is intentionally kept
+// as a tiny atomic hook so iOS can reject memory-expensive guest forks before
+// iSH allocates a task, without adding platform-specific policy to the kernel.
+static _Atomic(ish_fork_guard_t) g_fork_guard = NULL;
+
+void ish_set_fork_guard(ish_fork_guard_t guard) {
+    atomic_store_explicit(&g_fork_guard, guard, memory_order_release);
+}
 
 #define CSIGNAL_ 0x000000ff
 #define CLONE_VM_ 0x00000100
@@ -170,6 +180,19 @@ dword_t sys_clone(dword_t flags, addr_t stack, addr_t ptid, addr_t tls, addr_t c
         return _EINVAL;
     if (flags & CLONE_THREAD_ && !(flags & CLONE_SIGHAND_))
         return _EINVAL;
+
+    // Threads share the parent's address space and are exempt; process forks
+    // go through the host hook before task_create_ so a denial cannot leak a
+    // task or pid.  Negative errno values are returned to the guest verbatim.
+    if (!(flags & CLONE_THREAD_)) {
+        ish_fork_guard_t guard =
+            atomic_load_explicit(&g_fork_guard, memory_order_acquire);
+        if (guard != NULL) {
+            int err = guard();
+            if (err < 0)
+                return (dword_t) err;
+        }
+    }
 
     struct task *task = task_create_(current);
     if (task == NULL)

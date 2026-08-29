@@ -117,9 +117,15 @@ static int __path_normalize(const char *at_path, const char *path, char *out, in
         return _ENOENT;
 
     if (at_path != NULL && strcmp(at_path, "/") != 0) {
+        // Leave room for at least "/x" and the terminating NUL before
+        // copying the base path.  Without this bound n could become negative
+        // and the component loop would write separators past MAX_PATH.
+        size_t at_len = strlen(at_path);
+        if (at_len + 2 > (size_t) n)
+            return _ENAMETOOLONG;
         strcpy(o, at_path);
-        n -= strlen(at_path);
-        o += strlen(at_path);
+        n -= at_len;
+        o += at_len;
     }
 
     while (*p == '/')
@@ -148,6 +154,9 @@ static int __path_normalize(const char *at_path, const char *path, char *out, in
             }
         }
 
+        // Reserve the separator, at least one name byte, and the NUL.
+        if (n < 2)
+            return _ENAMETOOLONG;
         // output a slash
         *o++ = '/'; n--;
         char *c = o;
@@ -158,7 +167,7 @@ static int __path_normalize(const char *at_path, const char *path, char *out, in
         while (*p == '/')
             p++;
 
-        if (n == 0)
+        if (n <= 0)
             return _ENAMETOOLONG;
 
         if ((flags & N_SYMLINK_FOLLOW) || *p != '\0') {
