@@ -41,6 +41,11 @@ struct AssistantBlockView: View {
                 thinkingLevel: thinkingLevel
             )
             .padding(.vertical, 2)
+            // The enclosing assistant stack first measures its children at
+            // intrinsic width, then expands itself. Keep the thinking block
+            // full-width for that measurement so its compact header is always
+            // placed at the message's leading edge after streaming finishes.
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .shellTool:
             ToolCapsuleView(block: block, icon: "terminal", accentColor: .green,
                             commandStartTime: commandStartTime, onStop: onStop, browserPool: browserPool,
@@ -739,10 +744,6 @@ struct ThinkingBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
-                Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(ChatColors.tertiaryText)
-
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(ChatColors.secondaryText)
@@ -767,6 +768,9 @@ struct ThinkingBlockView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(ChatColors.tertiaryText)
                 }
+                Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ChatColors.tertiaryText)
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 5)
@@ -936,7 +940,6 @@ struct ThinkingBlockView: View {
 
     private var thinkingHeaderShimmerMask: some View {
         HStack(spacing: 6) {
-            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
             Image(systemName: "brain.head.profile")
             Text(thinkingHeaderTitle)
             ThinkingDurationLabel(block: block, isStreaming: isStreaming)
@@ -946,6 +949,7 @@ struct ThinkingBlockView: View {
                 let count = max(block.content.count, block.thinkingContentBuffer.count)
                 Text(count > 1000 ? "\(count / 1000)K" : "\(count)")
             }
+            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
         }
         .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
