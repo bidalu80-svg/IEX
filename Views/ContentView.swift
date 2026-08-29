@@ -3906,7 +3906,7 @@ private struct SessionContextMenu: View, Equatable {
             let title = (key.title ?? "Untitled").prefix(60)
             let subject = "Content Report: \(title)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
             let msgBody = "Session: \(key.sid)\n\nPlease describe the issue:\n".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            if let url = URL(string: "mailto:dev@ze.app?subject=\(subject)&body=\(msgBody)") {
+            if let url = URL(string: "mailto:bidalu9@gmail.com?subject=\(subject)&body=\(msgBody)") {
                 UIApplication.shared.open(url)
             }
         } label: {
@@ -5655,38 +5655,122 @@ private struct SettingsSheet: View {
 }
 
 private struct AboutProjectView: View {
+    private struct Feature: Identifiable {
+        let id = UUID()
+        let icon: String
+        let tint: Color
+        let title: LocalizedStringKey
+        let detail: LocalizedStringKey
+    }
+
     private var marketingVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
     }
 
+    private let features: [Feature] = [
+        Feature(icon: "sparkles", tint: .blue, title: "智能对话", detail: "支持多模型、多轮上下文与流式回答，随时切换你的工作方式。"),
+        Feature(icon: "wrench.and.screwdriver.fill", tint: .orange, title: "工具协作", detail: "通过文件、浏览器、图片和终端工具完成真实任务，并保留可查看的执行记录。"),
+        Feature(icon: "photo.on.rectangle.angled", tint: .purple, title: "图像理解与生成", detail: "支持图片阅读、创作和编辑，让文字与视觉工作在同一段对话中完成。"),
+        Feature(icon: "lock.shield.fill", tint: .green, title: "隐私优先", detail: "数据保存在你的设备和个人同步空间，连接的服务由你自己选择和管理。"),
+        Feature(icon: "icloud.fill", tint: .cyan, title: "跨设备同步", detail: "使用 iCloud 同步会话、设置与资源，在不同设备之间无缝继续工作。"),
+        Feature(icon: "text.book.closed.fill", tint: .pink, title: "记忆与个性化", detail: "通过记忆、技能和自定义提示，让 Ze 更贴合你的长期工作习惯。")
+    ]
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 14) {
-                Spacer(minLength: 88)
+            VStack(spacing: 20) {
+                VStack(spacing: 10) {
+                    Image("ZeAssistantAvatar")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 82, height: 82)
+                        .padding(14)
+                        .background(
+                            Circle().fill(
+                                LinearGradient(colors: [.blue.opacity(0.16), .purple.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                        )
 
-                Image("ZeAssistantAvatar")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 76, height: 76)
+                    Text("Ze")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(ChatColors.primaryText)
+                    Text("你的随身 AI 工作伙伴")
+                        .font(.subheadline)
+                        .foregroundStyle(ChatColors.secondaryText)
+                    Text("版本 \(marketingVersion) · 作者 ID：BLANK")
+                        .font(.caption)
+                        .foregroundStyle(ChatColors.tertiaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
+                .background(
+                    LinearGradient(colors: [Color.blue.opacity(0.10), Color.purple.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+                )
 
-                Text(String(format: String(localized: "Version %@"), marketingVersion))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("功能特性")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(ChatColors.primaryText)
+                        .padding(.horizontal, 4)
 
-                Text(String(localized: "Author ID: BLANK"))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    ForEach(features) { feature in
+                        HStack(alignment: .top, spacing: 13) {
+                            Image(systemName: feature.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 34, height: 34)
+                                .background(feature.tint.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                Text(String(localized: "Ze Assistant is your portable assistant. The best privacy strategy is to let it run."))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(feature.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(ChatColors.primaryText)
+                                Text(feature.detail)
+                                    .font(.footnote)
+                                    .foregroundStyle(ChatColors.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(13)
+                        .background(ChatColors.primaryText.opacity(0.045), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                    }
+                }
+
+                Button {
+                    let subject = "联系 Ze 作者"
+                    let body = "你好，我想反馈关于 Ze 的建议："
+                    let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
+                    let encodedBody = body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? body
+                    if let url = URL(string: "mailto:bidalu9@gmail.com?subject=\(encodedSubject)&body=\(encodedBody)") {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "envelope.fill")
+                        Text("联系作者")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(ChatColors.composerAction.gradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("联系作者，发送邮件到 bidalu9@gmail.com")
+
+                Text("Ze Assistant 是你的随身助手。隐私策略由你决定，数据和服务始终掌握在你手中。")
+                    .font(.caption)
+                    .foregroundStyle(ChatColors.tertiaryText)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
-
-                Spacer(minLength: 88)
+                    .padding(.horizontal, 10)
             }
-            .frame(maxWidth: .infinity, minHeight: 500)
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
         }
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
