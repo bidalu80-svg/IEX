@@ -3587,6 +3587,46 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         logger.info("✏️ editMessage idx=\(idx) text=\(text.count)ch attachments=\(msg.attachments.count)")
     }
 
+    /// Delete a user message and everything generated after it. This mirrors
+    /// the edit truncation semantics, keeping the in-memory transcript,
+    /// agent history, tool pairing and persisted rows in sync.
+    func deleteMessageAndFollowing(_ messageId: UUID) {
+        guard !isProcessing,
+              let idx = messages.firstIndex(where: { $0.id == messageId }),
+              messages[idx].role == .user else { return }
+
+        messages.removeSubrange(idx...)
+        let remainingUserCount = messages.filter { $0.role == .user }.count
+        var usersSeen = 0
+        var keepUpTo = -1
+        for (i, entry) in agentHistory.enumerated() {
+            if Self.isUserBubbleEntry(entry) {
+                usersSeen += 1
+                if usersSeen > remainingUserCount { break }
+            }
+            keepUpTo = i
+        }
+        if remainingUserCount == 0 {
+            agentHistory.removeAll()
+        } else if keepUpTo + 1 < agentHistory.count {
+            agentHistory.removeSubrange((keepUpTo + 1)...)
+        }
+        toolSnapshots = messages
+            .filter { $0.role == .assistant }
+            .flatMap { msg in
+                msg.blocks.compactMap { block -> ToolSnapshotItem? in
+                    guard let tuId = block.toolUseId else { return nil }
+                    return toolSnapshots.first(where: { $0.id == tuId })
+                }
+            }
+        if let sessionId {
+            let keepCount = agentHistory.count
+            Task { await ChatStore.shared.deleteMessagesAfter(sessionId: sessionId, keepCount: keepCount) }
+        }
+        scrollToBottomSignal.send()
+        logger.info("🗑️ deleteMessageAndFollowing idx=\(idx), remaining=\(messages.count)")
+    }
+
     func cancelEdit() {
         editingMessageIndex = nil
         inputText = ""

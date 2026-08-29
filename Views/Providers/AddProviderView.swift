@@ -609,7 +609,7 @@ struct AddProviderView: View {
                         Spacer()
                     }
                 }
-                .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                .disabled(!canSaveAPIKey || isSaving)
             }
         }
     }
@@ -748,6 +748,25 @@ struct AddProviderView: View {
         }
     }
 
+    /// Compatible OpenAI/Anthropic gateways often provision an endpoint first
+    /// and a key later. Permit an empty key only when a valid custom endpoint
+    /// is present; official endpoints still require credentials.
+    private var canSaveAPIKey: Bool {
+        let keyPresent = !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !keyPresent else { return true }
+        guard selectedType == .openAI || selectedType == .anthropic else { return false }
+        return validatedBaseURL != nil
+    }
+
+    private var validatedBaseURL: URL? {
+        let raw = customBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else { return nil }
+        return url
+    }
+
     private var defaultBaseURL: String {
         switch selectedType {
         case .anthropic: return "https://api.anthropic.com"
@@ -768,7 +787,15 @@ struct AddProviderView: View {
         let trimmedKey = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedLabel = labelInput.trimmingCharacters(in: .whitespaces)
         let trimmedBase = customBaseURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else { return }
+        guard canSaveAPIKey else {
+            errorMessage = String(localized: "Enter an API key, or provide a valid HTTP(S) custom endpoint for a compatible service.")
+            return
+        }
+
+        if !trimmedBase.isEmpty && validatedBaseURL == nil {
+            errorMessage = String(localized: "Enter a valid HTTP(S) base URL.")
+            return
+        }
 
         // Map OpenAI + Responses API format to .openAIResponses provider type
         let effectiveType: ProviderType = (type == .openAI && useResponsesAPI) ? .openAIResponses : type
@@ -782,7 +809,9 @@ struct AddProviderView: View {
             customBaseURL: base,
             appendV1Suffix: appendV1SuffixInput
         )
-        ProviderKeychainHelper.saveAPIKey(trimmedKey, instanceId: instance.id)
+        if !trimmedKey.isEmpty {
+            ProviderKeychainHelper.saveAPIKey(trimmedKey, instanceId: instance.id)
+        }
         store.addInstance(instance)
         isSaving = false
         dismiss()

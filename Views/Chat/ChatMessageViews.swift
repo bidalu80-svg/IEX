@@ -94,6 +94,7 @@ struct ChatMessageRow: View {
     var onStop: (() -> Void)?
     var onRetry: (() -> Void)?
     var onEdit: (() -> Void)?
+    var onDelete: (() -> Void)?
     var onWithdraw: (() -> Void)?
     var autoRetryAttempt: Int = 0
     var autoRetryCountdown: Int = 0
@@ -372,6 +373,11 @@ struct ChatMessageRow: View {
                         onEdit()
                     } label: {
                         Label("Edit", systemImage: "square.and.pencil")
+                    }
+                }
+                if let onDelete {
+                    Button(role: .destructive, action: onDelete) {
+                        Label(String(localized: "Delete from here"), systemImage: "trash")
                     }
                 }
                 if let onRetry {

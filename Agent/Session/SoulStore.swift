@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Persistent personality/identity file living alongside GLOBAL.md and the
 /// daily memory logs. Two-part format: YAML frontmatter (delimited by `---`)
@@ -7,24 +8,23 @@ import SwiftUI
 /// system prompt; the `name` / `emoji` fields drive the chat bubble header.
 struct SoulMetadata: Equatable {
     var name: String
-    /// User-selected emoji value parsed from SOUL.md. Empty values fall back
-    /// to the default sparkle so existing installations keep the same look.
+    /// User-selected emoji value parsed from SOUL.md. Empty means the built-in
+    /// ZeAssistantAvatar logo is used by the shared avatar renderer.
     var emoji: String
     var style: String
     /// `"auto"`, `"zh"`, `"en"`, or any free-form tag.
     var lang: String
 
-    /// The emoji shown in every UI surface (chat header, welcome state and
-    /// Soul Settings preview). Kept derived so old files with no `emoji:`
-    /// field continue to render the original sparkle.
+    /// The user-selected emoji, if any. An empty value intentionally remains
+    /// empty so callers can fall back to the original Ze logo.
     var displayEmoji: String {
         let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "✨" : trimmed
+        return trimmed
     }
 
     static let `default` = SoulMetadata(
         name: "Ze",
-        // Empty means use the built-in sparkle.
+        // Empty means use the built-in Ze logo.
         emoji: "",
         // Default style is also empty so the user fills it in themselves
         // (UI shows a placeholder hint). Avoids shipping an opinionated
@@ -523,24 +523,75 @@ struct AssistantSoulName: View {
     }
 }
 
+/// Stores an optional user-selected assistant avatar image next to SOUL.md.
+/// The file is deliberately kept outside the markdown so iCloud SOUL sync can
+/// remain text-only; the image is still included by future backup exporters.
+enum SoulAvatarStore {
+    private static let fileName = "ASSISTANT_AVATAR.png"
+
+    private static var fileURL: URL {
+        SoulStore.fileURL.deletingLastPathComponent().appendingPathComponent(fileName)
+    }
+
+    static func load() -> UIImage? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
+    }
+
+    static func loadData() -> Data? {
+        try? Data(contentsOf: fileURL)
+    }
+
+    static func save(_ data: Data?) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data {
+            guard UIImage(data: data) != nil else { throw CocoaError(.fileReadCorruptFile) }
+            try data.write(to: fileURL, options: .atomic)
+        } else if fm.fileExists(atPath: fileURL.path) {
+            try fm.removeItem(at: fileURL)
+        }
+    }
+}
+
 /// Shared assistant avatar renderer. It observes the same notification used by
 /// the Soul name so every chat surface updates immediately after saving a new
-/// emoji, while installations without a custom value retain the original
-/// sparkle avatar.
+/// emoji. An empty value deliberately renders Ze's original logo asset; the
+/// custom emoji path is opt-in and never replaces the default branding.
 @MainActor
 struct SoulAvatarView: View {
     var size: CGFloat = 24
-    @State private var emoji: String = SoulStore.cachedMetadata.displayEmoji
+    @State private var emoji: String = SoulStore.cachedMetadata.emoji
+    @State private var image: UIImage? = SoulAvatarStore.load()
 
     var body: some View {
-        Text(emoji)
-            .font(.system(size: size * 0.82))
-            .frame(width: size, height: size)
-            .minimumScaleFactor(0.55)
-            .lineLimit(1)
-            .accessibilityLabel(String(localized: "Assistant icon (emoji)"))
-            .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
-                emoji = SoulStore.cachedMetadata.displayEmoji
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(Circle())
+                    .accessibilityLabel(String(localized: "Custom assistant image"))
+            } else {
+                let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    Image("ZeAssistantAvatar")
+                        .resizable()
+                        .scaledToFit()
+                        .accessibilityLabel(String(localized: "Ze assistant icon"))
+                } else {
+                    Text(trimmed)
+                        .font(.system(size: size * 0.82))
+                        .minimumScaleFactor(0.55)
+                        .lineLimit(1)
+                        .accessibilityLabel(String(localized: "Assistant icon (emoji)"))
+                }
             }
+        }
+        .frame(width: size, height: size)
+        .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
+            emoji = SoulStore.cachedMetadata.emoji
+            image = SoulAvatarStore.load()
+        }
     }
 }

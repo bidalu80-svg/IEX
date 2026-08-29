@@ -4740,6 +4740,7 @@ private let supportedLanguages: [LanguageOption] = [
     LanguageOption(id: "fr",     name: "Français", flag: "🇫🇷"),
     LanguageOption(id: "de",     name: "Deutsch", flag: "🇩🇪"),
     LanguageOption(id: "ru",     name: "Русский", flag: "🇷🇺"),
+    LanguageOption(id: "es",     name: "Español", flag: "🇪🇸"),
 ]
 
 private struct FontScaleRow: View {
@@ -5664,6 +5665,17 @@ private struct AboutProjectView: View {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
     }
 
+    private var buildDateText: String? {
+        guard let executable = Bundle.main.executableURL,
+              let values = try? executable.resourceValues(forKeys: [.contentModificationDateKey]),
+              let date = values.contentModificationDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
     private let features: [Feature] = [
         Feature(icon: "sparkles", tint: .blue, title: "智能对话", detail: "支持多模型、多轮上下文与流式回答，随时切换你的工作方式。"),
         Feature(icon: "wrench.and.screwdriver.fill", tint: .orange, title: "工具协作", detail: "通过文件、浏览器、图片和终端工具完成真实任务，并保留可查看的执行记录。"),
@@ -5694,7 +5706,7 @@ private struct AboutProjectView: View {
                     Text("你的随身 AI 工作伙伴")
                         .font(.subheadline)
                         .foregroundStyle(ChatColors.secondaryText)
-                    Text("版本 \(marketingVersion) · 作者 ID：BLANK")
+                    Text(buildDateText.map { "版本 \(marketingVersion) · 构建于 \($0) · 作者 ID：BLANK" } ?? "版本 \(marketingVersion) · 作者 ID：BLANK")
                         .font(.caption)
                         .foregroundStyle(ChatColors.tertiaryText)
                 }

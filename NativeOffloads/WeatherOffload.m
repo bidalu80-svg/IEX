@@ -141,7 +141,7 @@ static int weather_handler(int argc, char **argv,
         noff_emit_help(stderr_fd, HELP_TEXT);
         NSDictionary *err = noff_json_error(TOOL_NAME, subcmd,
                                              NOFF_ERR_INVALID_ARGS,
-                                             [NSString stringWithFormat:@"Unknown command '%@'. Valid commands: current, hourly, daily, alerts. Use --help for details.", subcmd]);
+                                             [NSString stringWithFormat:@"Unknown command '%@'. Valid commands: current, hourly, daily, alerts, report. Use --help for details.", subcmd]);
         noff_emit_json(stdout_fd, err, compact, quiet);
         return NOFF_EXIT_INVALID_ARGS;
     }

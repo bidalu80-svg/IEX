@@ -2443,6 +2443,7 @@ struct AIChatView: View {
                     vm.editMessage(msgId)
                     inputFocused = true
                 },
+                onDelete: { msgId in vm.deleteMessageAndFollowing(msgId) },
                 onWithdraw: { vm.withdrawQueuedMessage($0) },
                 onResume: { vm.resume(); vm.forceScrollToBottom.send() },
                 onStop: { vm.stopCurrentCommand() },

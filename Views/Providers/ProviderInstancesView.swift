@@ -9,6 +9,8 @@ struct ProviderInstancesView: View {
     @State private var importMessage: String?
     @State private var showImportResult = false
     @State private var forceSyncToast: String?
+    @State private var editingInstanceID: String?
+    @State private var deletingInstanceID: String?
     @AppStorage("cloudSync.v2.enabled") private var iCloudSyncEnabled: Bool = false
 
     var body: some View {
@@ -27,6 +29,19 @@ struct ProviderInstancesView: View {
                                 ProviderInstanceDetailView(instanceId: instance.id)
                             } label: {
                                 InstanceRow(instance: instance)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button {
+                                    editingInstanceID = instance.id
+                                } label: {
+                                    Label(String(localized: "Edit"), systemImage: "pencil")
+                                }
+                                .tint(.blue)
+                                Button(role: .destructive) {
+                                    deletingInstanceID = instance.id
+                                } label: {
+                                    Label(String(localized: "Delete"), systemImage: "trash")
+                                }
                             }
                         }
                         .onMove { source, destination in
@@ -121,6 +136,26 @@ struct ProviderInstancesView: View {
                 AddProviderView()
             }
         }
+        .sheet(isPresented: Binding(
+            get: { editingInstanceID != nil },
+            set: { if !$0 { editingInstanceID = nil } }
+        )) {
+            if let id = editingInstanceID {
+                NavigationStack { ProviderInstanceDetailView(instanceId: id) }
+            }
+        }
+        .alert(String(localized: "Delete Provider"), isPresented: Binding(
+            get: { deletingInstanceID != nil },
+            set: { if !$0 { deletingInstanceID = nil } }
+        )) {
+            Button(String(localized: "Delete"), role: .destructive) {
+                if let id = deletingInstanceID { store.removeInstance(id) }
+                deletingInstanceID = nil
+            }
+            Button(String(localized: "Cancel"), role: .cancel) { deletingInstanceID = nil }
+        } message: {
+            Text(String(localized: "This removes the provider, its models, and stored credentials."))
+        }
         .sheet(isPresented: $showImportFile) {
             ProviderJSONDocumentPicker { result in
                 defer { showImportFile = false }
@@ -214,7 +249,15 @@ private struct InstanceRow: View {
     private var isConfigured: Bool {
         switch instance.credentialType {
         case .apiKey:
-            return ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
+            if ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil { return true }
+            // A third-party compatible endpoint may intentionally be created
+            // before its key is provisioned.
+            guard (instance.providerType == .openAI || instance.providerType == .anthropic),
+                  let raw = instance.customBaseURL,
+                  let url = URL(string: raw),
+                  let scheme = url.scheme?.lowercased(),
+                  ["http", "https"].contains(scheme), url.host != nil else { return false }
+            return true
         case .oauth:
             return oauthIsAuthenticated
         }
@@ -244,7 +287,9 @@ private struct InstanceRow: View {
             if let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) {
                 return maskKey(key)
             }
-            return String(localized: "No API key")
+            return instance.customBaseURL == nil
+                ? String(localized: "No API key")
+                : String(localized: "Endpoint configured · key not set")
         case .oauth:
             return oauthIsAuthenticated ? String(localized: "Authenticated") : String(localized: "Not authenticated")
         }

@@ -24,6 +24,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var onRetryMessage: ((UUID) -> Void)?
     var onRetryLast: (() -> Void)?
     var onEdit: ((UUID) -> Void)?
+    var onDelete: ((UUID) -> Void)?
     var onWithdraw: ((UUID) -> Void)?
     var onResume: (() -> Void)?
     var onStop: (() -> Void)?
@@ -63,6 +64,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.onRetryMessage = onRetryMessage
         coord.onRetryLast = onRetryLast
         coord.onEdit = onEdit
+        coord.onDelete = onDelete
         coord.onWithdraw = onWithdraw
         coord.onResume = onResume
         coord.onStop = onStop
@@ -750,6 +752,7 @@ private struct BridgedWholeMessageV3: View {
             onStop: nil,
             onRetry: bridge.onRetry,
             onEdit: bridge.onEdit,
+            onDelete: bridge.onDelete,
             onWithdraw: bridge.onWithdraw,
             autoRetryAttempt: 0,
             autoRetryCountdown: 0,
@@ -791,6 +794,7 @@ extension CollectionViewMessageListV3 {
         var onRetryMessage: ((UUID) -> Void)?
         var onRetryLast: (() -> Void)?
         var onEdit: ((UUID) -> Void)?
+        var onDelete: ((UUID) -> Void)?
         var onWithdraw: ((UUID) -> Void)?
         var onResume: (() -> Void)?
         var onStop: (() -> Void)?
@@ -1359,6 +1363,12 @@ extension CollectionViewMessageListV3 {
             bridge.canResume = isLast ? (vm.canResume && !vm.isProcessing && !trackerActive) : false
             bridge.onResume = isLast ? { [weak self] in self?.onResume?() } : nil
             bridge.onWithdraw = message.isQueued ? { [weak self] in self?.onWithdraw?(message.id) } : nil
+            bridge.onDelete = (message.role == .user && !message.isQueued && !vm.isProcessing)
+                ? { [weak self, weak message] in
+                    guard let id = message?.id else { return }
+                    self?.onDelete?(id)
+                }
+                : nil
             // "Read from Start": replay this whole reply via TTS. Only for assistant
             // messages; disabled while it's the actively-streaming reply.
             bridge.isStreaming = isActive

@@ -61,7 +61,9 @@ import CoreLocation
                         "apparent_temp_c": forecast.apparentTemperature.converted(to: .celsius).value,
                         "humidity": forecast.humidity,
                         "precip_chance": forecast.precipitationChance,
+                        "precipitation_mm": forecast.precipitationAmount.converted(to: .millimeters).value,
                         "wind_speed_kmh": forecast.wind.speed.converted(to: .kilometersPerHour).value,
+                        "wind_direction": forecast.wind.compassDirection.description,
                         "uv_index": forecast.uvIndex.value,
                         "cloud_cover": forecast.cloudCover,
                         "is_daylight": forecast.isDaylight,
@@ -85,7 +87,9 @@ import CoreLocation
                         "high_c": forecast.highTemperature.converted(to: .celsius).value,
                         "low_c": forecast.lowTemperature.converted(to: .celsius).value,
                         "precip_chance": forecast.precipitationChance,
+                        "precipitation_mm": forecast.precipitationAmount.converted(to: .millimeters).value,
                         "wind_speed_kmh": forecast.wind.speed.converted(to: .kilometersPerHour).value,
+                        "wind_direction": forecast.wind.compassDirection.description,
                         "uv_index": forecast.uvIndex.value,
                     ]
                     if let sunrise = forecast.sun.sunrise {

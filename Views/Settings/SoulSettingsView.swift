@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 /// Settings page for SOUL.md — Ze's persistent personality file.
 /// Lives between Skills and Memory in the Agent Runtime section.
@@ -6,6 +8,9 @@ struct SoulSettingsView: View {
     @State private var name: String = SoulMetadata.default.name
     /// Emoji value loaded from SOUL.md and edited in the Identity section.
     @State private var rawEmoji: String = SoulMetadata.default.emoji
+    @State private var avatarItem: PhotosPickerItem?
+    @State private var avatarImageData: Data?
+    @State private var loadedAvatarImageData: Data?
     @State private var style: String = SoulMetadata.default.style
     @State private var lang: String = SoulMetadata.default.lang
     @State private var bodyText: String = ""
@@ -24,6 +29,7 @@ struct SoulSettingsView: View {
             (String(localized: "Auto"), "auto"),
             (String(localized: "Chinese"), "zh"),
             (String(localized: "English"), "en"),
+            (String(localized: "Spanish"), "es"),
         ]
     }
 
@@ -41,7 +47,7 @@ struct SoulSettingsView: View {
                         .submitLabel(.done)
                 }
                 LabeledContent(String(localized: "Assistant icon")) {
-                    TextField("✨", text: $rawEmoji)
+                    TextField(String(localized: "Optional emoji"), text: $rawEmoji)
                         .multilineTextAlignment(.trailing)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -51,6 +57,19 @@ struct SoulSettingsView: View {
                             let limited = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8))
                             if limited != value { rawEmoji = limited }
                         }
+                }
+                HStack {
+                    PhotosPicker(selection: $avatarItem, matching: .images) {
+                        Label(String(localized: "Choose image"), systemImage: "photo")
+                    }
+                    Spacer()
+                    if avatarImageData != nil {
+                        Button(String(localized: "Remove image"), role: .destructive) {
+                            avatarItem = nil
+                            avatarImageData = nil
+                        }
+                        .font(.footnote)
+                    }
                 }
                 LabeledContent(String(localized: "Style")) {
                     TextField(String(localized: "e.g. Warm, direct, opinionated"), text: $style)
@@ -117,6 +136,17 @@ struct SoulSettingsView: View {
             }
         }
         .onAppear(perform: reload)
+        .onChange(of: avatarItem) { item in
+            guard let item else { return }
+            Task {
+                do {
+                    let data = try await item.loadTransferable(type: Data.self)
+                    await MainActor.run { avatarImageData = data }
+                } catch {
+                    await MainActor.run { saveError = String(localized: "Unable to load selected image") }
+                }
+            }
+        }
         // Using .alert (not .confirmationDialog) so the dialog stays
         // centered on iPad / Mac. confirmationDialog without a source
         // rect renders as a popover anchored to the screen's top edge
@@ -152,7 +182,22 @@ struct SoulSettingsView: View {
         HStack(alignment: .center, spacing: 12) {
             // Keep the soul preview consistent with the assistant header and
             // welcome state instead of rendering the old sparkles glyph.
-            SoulAvatarView(size: 40)
+            if let data = avatarImageData, let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 40, height: 40)
+                    .clipShape(Circle())
+            } else if !rawEmoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(rawEmoji.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 32))
+                    .frame(width: 40, height: 40)
+            } else {
+                Image("ZeAssistantAvatar")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 40, height: 40)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(name.isEmpty ? "Ze" : name)
                     .font(.title3.weight(.semibold))
@@ -235,7 +280,7 @@ struct SoulSettingsView: View {
     }
 
     private var isDirty: Bool {
-        currentFile != loadedRef.value
+        currentFile != loadedRef.value || avatarImageData != loadedAvatarImageData
     }
 
     private func reload() {
@@ -245,6 +290,9 @@ struct SoulSettingsView: View {
         style = file.metadata.style
         lang = file.metadata.lang
         bodyText = file.body
+        avatarImageData = SoulAvatarStore.loadData()
+        loadedAvatarImageData = avatarImageData
+        avatarItem = nil
         loadedRef.value = file
         saveError = nil
     }
@@ -252,8 +300,10 @@ struct SoulSettingsView: View {
     private func save() {
         do {
             let f = currentFile
+            try SoulAvatarStore.save(avatarImageData)
             try SoulStore.save(f)
             loadedRef.value = f
+            loadedAvatarImageData = avatarImageData
             saveError = nil
             withAnimation { didJustSave = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -293,6 +343,8 @@ struct SoulSettingsView: View {
         style = parsed.metadata.style
         lang = parsed.metadata.lang
         bodyText = parsed.body
+        avatarItem = nil
+        avatarImageData = nil
         save()
     }
 
