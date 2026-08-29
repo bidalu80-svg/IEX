@@ -4,9 +4,7 @@ import SwiftUI
 /// Lives between Skills and Memory in the Agent Runtime section.
 struct SoulSettingsView: View {
     @State private var name: String = SoulMetadata.default.name
-    /// Raw emoji value loaded from SOUL.md. Not user-editable; preserved
-    /// verbatim on save so we don't rewrite a value the user (or another
-    /// device) may have set in the file. UI always shows `displayEmoji`.
+    /// Emoji value loaded from SOUL.md and edited in the Identity section.
     @State private var rawEmoji: String = SoulMetadata.default.emoji
     @State private var style: String = SoulMetadata.default.style
     @State private var lang: String = SoulMetadata.default.lang
@@ -41,6 +39,18 @@ struct SoulSettingsView: View {
                         .multilineTextAlignment(.trailing)
                         .textInputAutocapitalization(.words)
                         .submitLabel(.done)
+                }
+                LabeledContent(String(localized: "Assistant icon")) {
+                    TextField("✨", text: $rawEmoji)
+                        .multilineTextAlignment(.trailing)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: rawEmoji) { value in
+                            // Keep the metadata compact and avoid accidentally
+                            // turning a pasted paragraph into an avatar.
+                            let limited = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8))
+                            if limited != value { rawEmoji = limited }
+                        }
                 }
                 LabeledContent(String(localized: "Style")) {
                     TextField(String(localized: "e.g. Warm, direct, opinionated"), text: $style)
@@ -142,10 +152,7 @@ struct SoulSettingsView: View {
         HStack(alignment: .center, spacing: 12) {
             // Keep the soul preview consistent with the assistant header and
             // welcome state instead of rendering the old sparkles glyph.
-            Image("ZeAssistantAvatar")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 40, height: 40)
+            SoulAvatarView(size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name.isEmpty ? "Ze" : name)
                     .font(.title3.weight(.semibold))
@@ -219,11 +226,7 @@ struct SoulSettingsView: View {
         SoulFile(
             metadata: SoulMetadata(
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                // Round-trip the on-disk emoji untouched — UI no longer
-                // edits this field, but a SOUL.md authored elsewhere
-                // (other device / hand-edit) should not have its emoji
-                // rewritten on save.
-                emoji: rawEmoji,
+                emoji: rawEmoji.trimmingCharacters(in: .whitespacesAndNewlines),
                 style: style,
                 lang: lang
             ),

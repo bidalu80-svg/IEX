@@ -166,10 +166,7 @@ private struct BridgedAssistantHeaderV3: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image("ZeAssistantAvatar")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 22, height: 22)
+                SoulAvatarView(size: 22)
                 Text(soulMeta.name.isEmpty ? "Ze" : soulMeta.name)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(ChatColors.primaryText)

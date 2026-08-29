@@ -6227,10 +6227,7 @@ private struct StatRow: View {
 private struct EmptyChatWelcomeView: View {
     var body: some View {
         VStack(spacing: 18) {
-            Image("ZeAssistantAvatar")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 84, height: 84)
+            SoulAvatarView(size: 84)
 
             Text("有什么我可以帮到你的吗？")
                 .font(.system(size: 28, weight: .bold))

@@ -7,28 +7,24 @@ import SwiftUI
 /// system prompt; the `name` / `emoji` fields drive the chat bubble header.
 struct SoulMetadata: Equatable {
     var name: String
-    /// Raw `emoji` value parsed from SOUL.md. Preserved on disk for
-    /// backward compatibility but NOT shown anywhere in the UI: the chat
-    /// bubble header and Soul Settings preview always render
-    /// `displayEmoji` (a fixed sparkles glyph). User-customized emoji
-    /// was removed; this field is round-tripped untouched if the file
-    /// already has one.
+    /// User-selected emoji value parsed from SOUL.md. Empty values fall back
+    /// to the default sparkle so existing installations keep the same look.
     var emoji: String
     var style: String
     /// `"auto"`, `"zh"`, `"en"`, or any free-form tag.
     var lang: String
 
-    /// The emoji shown in every UI surface (chat bubble header, Soul
-    /// Settings preview card). Hard-coded — see comment on `emoji`.
-    var displayEmoji: String { "✨" }
+    /// The emoji shown in every UI surface (chat header, welcome state and
+    /// Soul Settings preview). Kept derived so old files with no `emoji:`
+    /// field continue to render the original sparkle.
+    var displayEmoji: String {
+        let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "✨" : trimmed
+    }
 
     static let `default` = SoulMetadata(
         name: "Ze",
-        // Default emoji is intentionally empty — the UI uses the fixed
-        // `displayEmoji` sparkle and serialize() no longer writes the
-        // `emoji:` line. Kept on the struct only so the parser can
-        // round-trip an `emoji: "..."` line that survives in an old
-        // user-authored SOUL.md (next save will drop it on disk too).
+        // Empty means use the built-in sparkle.
         emoji: "",
         // Default style is also empty so the user fills it in themselves
         // (UI shows a placeholder hint). Avoids shipping an opinionated
@@ -90,17 +86,15 @@ enum SoulMDParser {
         return SoulFile(metadata: meta, body: String(body))
     }
 
-    /// Serialize back to SOUL.md text. Emits a 3-key frontmatter
-    /// block (name / style / lang) followed by an empty line and the body.
-    /// The `emoji` field is deliberately NOT written — the UI is locked to
-    /// a fixed sparkle (`displayEmoji`), so persisting a `emoji:` line would
-    /// imply user-controlled customization that doesn't exist. Old files
-    /// containing `emoji: "..."` still parse cleanly (the value is kept in
-    /// memory for round-trip safety) but the line is dropped on the next
-    /// save, naturally migrating disk state to the new schema.
+    /// Serialize back to SOUL.md text. The optional emoji is persisted when
+    /// selected, while empty values keep the compact legacy schema.
     static func serialize(_ file: SoulFile) -> String {
         var out = "---\n"
         out += "name: \"\(escape(file.metadata.name))\"\n"
+        let emoji = file.metadata.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !emoji.isEmpty {
+            out += "emoji: \"\(escape(emoji))\"\n"
+        }
         out += "style: \"\(escape(file.metadata.style))\"\n"
         out += "lang: \"\(escape(file.metadata.lang))\"\n"
         out += "---\n\n"
@@ -525,6 +519,28 @@ struct AssistantSoulName: View {
             .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
                 let n = SoulStore.cachedMetadata.name
                 name = n.isEmpty ? "Ze" : n
+            }
+    }
+}
+
+/// Shared assistant avatar renderer. It observes the same notification used by
+/// the Soul name so every chat surface updates immediately after saving a new
+/// emoji, while installations without a custom value retain the original
+/// sparkle avatar.
+@MainActor
+struct SoulAvatarView: View {
+    var size: CGFloat = 24
+    @State private var emoji: String = SoulStore.cachedMetadata.displayEmoji
+
+    var body: some View {
+        Text(emoji)
+            .font(.system(size: size * 0.82))
+            .frame(width: size, height: size)
+            .minimumScaleFactor(0.55)
+            .lineLimit(1)
+            .accessibilityLabel(String(localized: "Assistant icon (emoji)"))
+            .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
+                emoji = SoulStore.cachedMetadata.displayEmoji
             }
     }
 }

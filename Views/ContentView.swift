@@ -2265,10 +2265,7 @@ struct ContentView: View {
             Spacer()
             // Ze assistant avatar / hero. Keep the same artwork as the
             // first-chat welcome state and the assistant message header.
-            Image("ZeAssistantAvatar")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 76, height: 76)
+            SoulAvatarView(size: 76)
                 .padding(.bottom, 4)
 
             VStack(spacing: 8) {
