@@ -5199,6 +5199,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             var assistantMessage = AgentMessage(role: .assistant, parts: assistantParts)
             assistantMessage.isInterrupted = streamResult.isStreamInterrupted
             assistantMessage.reasoningContent = streamResult.reasoningContent
+            assistantMessage.firstTokenLatency = messages[msgIdx].firstTokenLatency
+            // A no-tool iteration is the completed assistant turn. Capture its
+            // duration before the raw row is inserted; tool-loop iterations are
+            // updated after the loop by updateMessageTiming below.
+            if toolEntries.isEmpty,
+               let startedAt = messages[msgIdx].taskDurationStartTime {
+                assistantMessage.taskDuration = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+            }
             // Carry the frozen duration from the just-finished thinking block
             // into the persisted assistant turn so reloads do not reset it to 0s.
             assistantMessage.reasoningDuration = allBlocks.last(where: { $0.kind == .thinking })?.thinkingDuration
@@ -5654,6 +5662,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         if messages[msgIdx].error == nil,
            let startedAt = messages[msgIdx].taskDurationStartTime {
             messages[msgIdx].taskDuration = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+        }
+
+        // Persist timing that is finalized after the assistant row was written
+        // (tool loops, cancellation, and turn-limit exits all reach this path).
+        if let persistedId = agentHistory.last(where: { $0.role == .assistant && $0.dbMessageId != nil })?.dbMessageId {
+            await ChatStore.shared.updateMessageTiming(
+                messageId: persistedId,
+                firstTokenLatency: messages[msgIdx].firstTokenLatency,
+                taskDuration: messages[msgIdx].taskDuration
+            )
         }
 
         // Safety net: force-close any tool blocks still stuck in non-terminal status.

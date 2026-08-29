@@ -307,6 +307,12 @@ extension AIChatViewModel {
                     if let usage = continuation.usage {
                         assistant.usage = usage
                     }
+                    if let latency = continuation.firstTokenLatency {
+                        assistant.firstTokenLatency = latency
+                    }
+                    if let duration = continuation.taskDuration {
+                        assistant.taskDuration = duration
+                    }
                     assistant.lastSourceSortOrder = raw.sortOrder
                 } else {
                     // First assistant message in this turn
@@ -1359,6 +1365,8 @@ extension AIChatViewModel {
             parts: parts, createdAt: Date(), tokenUsage: storedUsage,
             reasoningContent: reasoningContent ?? msg.reasoningContent,
             reasoningDuration: msg.reasoningDuration,
+            firstTokenLatency: msg.firstTokenLatency,
+            taskDuration: msg.taskDuration,
             streamInterruptCount: streamInterruptCount
         )
     }

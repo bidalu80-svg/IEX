@@ -113,6 +113,10 @@ struct AgentMessage: @unchecked Sendable {
     /// UI-only frozen duration for the visible reasoning summary. It is not
     /// included in provider requests and is persisted alongside the raw message.
     var reasoningDuration: TimeInterval? = nil
+    /// UI-only first-token latency, persisted alongside the raw assistant row.
+    var firstTokenLatency: TimeInterval? = nil
+    /// UI-only total task duration, persisted alongside the raw assistant row.
+    var taskDuration: TimeInterval? = nil
     /// Native reasoning payload (Responses-API encrypted items, etc.). In
     /// memory only — see `ReasoningEcho` for cross-model isolation rules.
     var reasoningEcho: ReasoningEcho?

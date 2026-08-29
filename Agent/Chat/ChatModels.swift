@@ -52,6 +52,7 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// Kept in memory only because it is meaningful for the live response UI.
     var firstTokenRequestStartedAt: Date?
     /// Time from the first model-stream request to its first output block.
+    /// Restored from the persisted assistant row for the header pill.
     @Published var firstTokenLatency: TimeInterval?
     /// Total monotonic time spent generating this assistant turn, including
     /// tool calls, provider fallback, and subsequent model requests.
