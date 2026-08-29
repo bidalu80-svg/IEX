@@ -4356,9 +4356,6 @@ extension RawMessage {
                 let kind: AssistantBlockKind
                 let content: String
                 switch tu.name {
-                case "todo_write":
-                    kind = .shellTool(command: "todo_write")
-                    content = "Updating task plan..."
                 case "shell_execute":
                     let cmd = extractCommandFromJSON(tu.input)
                     kind = .shellTool(command: cmd)

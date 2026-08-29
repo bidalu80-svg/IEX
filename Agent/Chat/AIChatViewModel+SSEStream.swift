@@ -365,7 +365,6 @@ extension AIChatViewModel {
                     let assistantText = result.assistantText
                     let textIdx = currentTextBlockIdx
                     let blockKind: AssistantBlockKind = switch name {
-                    case "todo_write": .shellTool(command: "todo_write")
                     case "shell_execute": .shellTool(command: "")
                     case "file_read": .fileReadTool(path: "")
                     case "file_write": .fileWriteTool(path: "")
@@ -698,8 +697,6 @@ extension AIChatViewModel {
                     messages[msgIdx].blocks[blockIdx].toolStatus = .running
                     messages[msgIdx].blocks[blockIdx].streamingFileContent = nil
                     switch name {
-                    case "todo_write":
-                        messages[msgIdx].blocks[blockIdx].kind = .shellTool(command: "todo_write")
                     case "file_write":
                         if let path = args["path"] as? String {
                             messages[msgIdx].blocks[blockIdx].kind = .fileWriteTool(path: path)
@@ -975,9 +972,6 @@ extension AIChatViewModel {
         let detail = clip(title, 40)
 
         switch name {
-        case "todo_write":
-            let d = detail ?? (zh ? "更新任务计划" : "Update task plan")
-            return zh ? "正在更新任务计划:\(d)" : "Updating task plan: \(d)"
         case "shell_execute":
             let d = detail ?? clip(args["command"] as? String, 40) ?? ""
             return zh ? "正在执行脚本:\(d)" : "Executing script: \(d)"
@@ -1004,8 +998,6 @@ extension AIChatViewModel {
 
     nonisolated private func makeToolPreview(name: String, args: [String: Any]) -> String {
         switch name {
-        case "todo_write":
-            return "Updating task plan..."
         case "shell_execute":
             return "Executing..."
         case "file_read":
@@ -1037,10 +1029,6 @@ extension AIChatViewModel {
 
         // Try to extract the primary parameter value from partial JSON
         switch name {
-        case "todo_write":
-            if let value = extractPartialStringValue("todos", from: json) {
-                return ("Updating task plan... (\(value.count) chars)", desc)
-            }
         case "shell_execute":
             if let val = extractPartialStringValue("command", from: json) {
                 return ("\(val)", desc)

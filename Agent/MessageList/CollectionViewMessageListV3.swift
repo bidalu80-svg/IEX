@@ -235,7 +235,7 @@ private struct BridgedAssistantBlockV3: View {
         switch block.kind {
         case .text: return "assistantTextBlock"
         case .thinking: return "assistantThinkingBlock"
-        case .shellTool(let command): return command == "todo_write" ? "assistantTaskPlanBlock" : "assistantShellBlock"
+        case .shellTool: return "assistantShellBlock"
         case .fileReadTool: return "assistantFileReadBlock"
         case .fileWriteTool: return "assistantFileWriteBlock"
         case .fileEditTool: return "assistantFileEditBlock"
