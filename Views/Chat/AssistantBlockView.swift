@@ -24,7 +24,11 @@ struct AssistantBlockView: View {
     private var isHighlighted: Bool { highlightedBlockId == block.id }
 
     var body: some View {
-        switch block.kind {
+        if block.isTaskPlan {
+            TaskPlanView(block: block) {
+                detailBlock = block
+            }
+        } else { switch block.kind {
         case .text:
             if !block.content.isEmpty {
                 textBlockView
@@ -117,6 +121,7 @@ struct AssistantBlockView: View {
                 }
             }
         }
+        }
     }
 
     @ViewBuilder
@@ -134,6 +139,83 @@ struct AssistantBlockView: View {
         )
         .fixedSize(horizontal: false, vertical: true)
         .modifier(ZeOpenURLHandler())
+    }
+}
+
+/// Compact checklist surface for the `todo_write` protocol. It stays visually
+/// lighter than the assistant body while retaining the same tap-to-inspect
+/// behavior as every other tool step.
+struct TaskPlanView: View {
+    @ObservedObject var block: AssistantBlock
+    let onOpenDetails: () -> Void
+
+    private var items: [TaskPlanItem] { block.taskPlanItems }
+    private var completedCount: Int { items.filter { $0.status == .completed }.count }
+    private var isActive: Bool {
+        switch block.toolStatus {
+        case .streaming, .running: return true
+        default: return false
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ChatColors.secondaryText)
+                ChatShimmerText(
+                    text: isActive ? "更新任务计划" : "任务计划",
+                    font: .system(size: 13, weight: .semibold),
+                    color: ChatColors.secondaryText,
+                    isActive: isActive
+                )
+                Spacer(minLength: 4)
+                Text("\(completedCount)/\(items.count)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(ChatColors.tertiaryText)
+            }
+
+            if items.isEmpty {
+                Text(isActive ? "正在接收计划…" : "暂无可显示的计划")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChatColors.tertiaryText)
+            } else {
+                ForEach(items) { item in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        planMarker(for: item.status)
+                        Text(item.content)
+                            .font(.system(size: 12))
+                            .foregroundStyle(item.status == .completed ? ChatColors.tertiaryText : ChatColors.secondaryText)
+                            .strikethrough(item.status == .completed, color: ChatColors.tertiaryText)
+                            .lineLimit(2)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ChatColors.primaryText.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpenDetails)
+    }
+
+    @ViewBuilder
+    private func planMarker(for status: TaskPlanItem.Status) -> some View {
+        switch status {
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .inProgress:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(ChatColors.secondaryText)
+        case .pending:
+            Image(systemName: "circle")
+                .foregroundStyle(ChatColors.tertiaryText)
+        }
     }
 }
 

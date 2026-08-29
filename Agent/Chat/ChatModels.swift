@@ -206,6 +206,96 @@ enum ToolBlockStatus: Equatable {
     case cancelled
 }
 
+/// A bounded, session-scoped checklist emitted by the `todo_write` tool.
+/// The complete list is replaced on every write, which keeps the model-facing
+/// protocol deterministic and makes reloads independent of in-memory state.
+struct TaskPlanItem: Codable, Hashable, Identifiable {
+    enum Status: String, Codable, Hashable {
+        case pending
+        case inProgress = "in_progress"
+        case completed
+    }
+
+    let content: String
+    let status: Status
+
+    var id: String { content }
+}
+
+enum TaskPlanCodec {
+    static let maximumItems = 24
+    static let maximumItemLength = 240
+
+    /// Accept the canonical array as well as a JSON-encoded string. The latter
+    /// is used in the provider schema because the canonical tool schema in Ze
+    /// historically only exposed primitive parameter types.
+    static func parse(from argumentsJSON: String?) -> [TaskPlanItem] {
+        guard let argumentsJSON,
+              let data = argumentsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        if let items = normalize(object["todos"]) { return items }
+        if let marker = object["plan"] as? String,
+           let data = marker.data(using: .utf8),
+           let value = try? JSONSerialization.jsonObject(with: data) {
+            return normalize(value) ?? []
+        }
+        return []
+    }
+
+    /// Parse the persisted result marker when an older or interrupted row has
+    /// no usable tool input attached to its UI block.
+    static func parse(from blockContent: String) -> [TaskPlanItem] {
+        let startTag = "<ze-task-plan>"
+        let endTag = "</ze-task-plan>"
+        guard let start = blockContent.range(of: startTag),
+              let end = blockContent.range(of: endTag, range: start.upperBound..<blockContent.endIndex) else { return [] }
+        let payload = String(blockContent[start.upperBound..<end.lowerBound])
+        guard let data = payload.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        return normalize(value) ?? []
+    }
+
+    static func canonicalJSON(_ items: [TaskPlanItem]) -> String {
+        let values = items.map { ["content": $0.content, "status": $0.status.rawValue] }
+        guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
+
+    static func validationError(_ raw: Any?) -> String? {
+        guard let normalized = normalize(raw) else {
+            return "todos must be a JSON array of 1-24 items; each item requires content and status (pending, in_progress, or completed)."
+        }
+        if normalized.count > maximumItems { return "todos may contain at most 24 items." }
+        if normalized.isEmpty { return "todos must contain at least one item." }
+        if normalized.filter({ $0.status == .inProgress }).count > 1 { return "at most one todo may be in_progress." }
+        return nil
+    }
+
+    private static func normalize(_ value: Any?) -> [TaskPlanItem]? {
+        var rawValue = value
+        if let string = value as? String,
+           let data = string.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) {
+            rawValue = decoded
+        }
+        guard let array = rawValue as? [Any], !array.isEmpty, array.count <= maximumItems else { return nil }
+        var result: [TaskPlanItem] = []
+        var seen = Set<String>()
+        for item in array {
+            guard let dictionary = item as? [String: Any],
+                  let content = (dictionary["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !content.isEmpty, content.count <= maximumItemLength,
+                  let rawStatus = dictionary["status"] as? String,
+                  let status = TaskPlanItem.Status(rawValue: rawStatus) else { return nil }
+            let key = content.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            result.append(TaskPlanItem(content: content, status: status))
+        }
+        return result
+    }
+}
+
 /// A single block within an assistant turn.
 final class AssistantBlock: Identifiable, ObservableObject {
     let id = UUID()
@@ -340,6 +430,19 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// `isThinkingExpanded` alone so a tap on an earlier (frozen) block can't
     /// be silently undone by a streaming sibling's recomposition.
     @Published var thinkingUserToggled: Bool = false
+
+    /// True for the checklist protocol block. It intentionally reuses the
+    /// existing tool block kind so persisted rows and provider adapters remain
+    /// backward compatible while the UI can render a dedicated plan surface.
+    var isTaskPlan: Bool {
+        if case .shellTool(let command) = kind, command == "todo_write" { return true }
+        return toolInputArgs?.contains("\"todos\"") == true
+    }
+
+    var taskPlanItems: [TaskPlanItem] {
+        let fromArgs = TaskPlanCodec.parse(from: toolInputArgs)
+        return fromArgs.isEmpty ? TaskPlanCodec.parse(from: content) : fromArgs
+    }
 
     init(kind: AssistantBlockKind, content: String, toolStatus: ToolBlockStatus? = nil, toolUseId: String? = nil) {
         self.kind = kind

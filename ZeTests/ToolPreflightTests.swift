@@ -107,4 +107,29 @@ final class ToolPreflightTests: XCTestCase {
             "new_string": "\n",
         ]))
     }
+
+    // MARK: - Task plan protocol
+
+    func testTaskPlan_rejectsMultipleInProgressItems() {
+        let raw: [[String: Any]] = [
+            ["content": "Inspect", "status": "in_progress"],
+            ["content": "Implement", "status": "in_progress"],
+        ]
+        XCTAssertNotNil(TaskPlanCodec.validationError(raw))
+    }
+
+    func testTaskPlan_acceptsJSONStringAndRoundTrips() {
+        let raw = "[{\"content\":\"Inspect\",\"status\":\"completed\"},{\"content\":\"Implement\",\"status\":\"in_progress\"}]"
+        XCTAssertNil(TaskPlanCodec.validationError(raw))
+        let parsed = TaskPlanCodec.parse(from: "{\"todos\":\(raw)}")
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed[0].status, .completed)
+        XCTAssertEqual(parsed[1].status, .inProgress)
+    }
+
+    func testTaskPlan_resultMarkerRestoresItems() {
+        let content = "Task plan updated.\n<ze-task-plan>[{\"content\":\"Verify build\",\"status\":\"pending\"}]</ze-task-plan>"
+        let parsed = TaskPlanCodec.parse(from: content)
+        XCTAssertEqual(parsed.map(\.content), ["Verify build"])
+    }
 }

@@ -640,6 +640,41 @@ extension AIChatViewModel {
                 toolSuccess = false
             }
 
+        case "todo_write":
+            // The provider schema carries `todos` as a JSON string for
+            // compatibility with Ze's primitive tool-parameter wire format,
+            // while the executor also accepts a native array from providers
+            // that preserve richer JSON schemas.
+            let rawTodos: Any? = toolArgs["todos"]
+            if let error = TaskPlanCodec.validationError(rawTodos) {
+                toolOutput = "Error: \(error)"
+                toolSuccess = false
+            } else {
+                let items: [TaskPlanItem] = {
+                    if let rawString = rawTodos as? String,
+                       let data = rawString.data(using: .utf8),
+                       let value = try? JSONSerialization.jsonObject(with: data),
+                       let encoded = try? JSONSerialization.data(withJSONObject: value),
+                       let json = String(data: encoded, encoding: .utf8) {
+                        return TaskPlanCodec.parse(from: "{\"todos\":\(json)}")
+                    }
+                    if let encoded = try? JSONSerialization.data(withJSONObject: rawTodos as Any),
+                       let json = String(data: encoded, encoding: .utf8) {
+                        return TaskPlanCodec.parse(from: "{\"todos\":\(json)}")
+                    }
+                    return []
+                }()
+                let completed = items.filter { $0.status == .completed }.count
+                let active = items.filter { $0.status == .inProgress }.count
+                let pending = items.count - completed - active
+                let planJSON = TaskPlanCodec.canonicalJSON(items)
+                toolOutput = "Task plan updated: \(pending) pending, \(active) in progress, \(completed) completed.\n<ze-task-plan>\(planJSON)</ze-task-plan>"
+                toolSuccess = true
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         case "memory_write":
             let memResult = executeMemoryWrite(from: argsJson)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
