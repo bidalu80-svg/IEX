@@ -444,6 +444,9 @@ struct ChatMessageRow: View {
                 AssistantTaskDurationView(duration: duration)
             }
 
+            // Each todo_write replaces the whole checklist. Rendering only the
+            // latest plan block keeps historical updates from stacking into
+            // several identical-looking plan cards.
             let latestTaskPlanID = message.blocks.last(where: { $0.isTaskPlan })?.id
             ForEach(message.blocks.filter { !$0.isTaskPlan || $0.id == latestTaskPlanID }) { block in
                 AssistantBlockView(

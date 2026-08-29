@@ -420,27 +420,9 @@ extension AIChatViewModel {
                         }
                         logger.info("[ToolUseId] APPEND tuId=\(tuId) name=\(name) rawIdWasDedupedFrom=\(rawTuId == tuId ? "n/a" : rawTuId) totalBlocksAfter=\(messages[msgIdx].blocks.count + 1)")
                         #endif
-                        let toolBlock: AssistantBlock
-                        if name == "todo_write",
-                           let existingIdx = messages[msgIdx].blocks.indices.last(where: { messages[msgIdx].blocks[$0].isTaskPlan }) {
-                            // todo_write replaces the complete checklist. Reuse
-                            // the existing block so a status update never
-                            // deletes/inserts a collection cell and leaves a
-                            // stale height behind in the custom layout.
-                            toolBlock = messages[msgIdx].blocks[existingIdx]
-                            toolBlock.kind = blockKind
-                            toolBlock.content = ""
-                            toolBlock.toolStatus = .streaming(bytes: 0)
-                            toolBlock.toolUseId = tuId
-                            toolBlock.toolInputArgs = nil
-                            toolBlock.toolSummary = nil
-                            toolBlock.toolDuration = nil
-                            toolBlock.toolStartTime = Date()
-                        } else {
-                            toolBlock = AssistantBlock(kind: blockKind, content: "", toolStatus: .streaming(bytes: 0), toolUseId: tuId)
-                            toolBlock.toolStartTime = Date()
-                            messages[msgIdx].blocks.append(toolBlock)
-                        }
+                        let toolBlock = AssistantBlock(kind: blockKind, content: "", toolStatus: .streaming(bytes: 0), toolUseId: tuId)
+                        toolBlock.toolStartTime = Date()
+                        messages[msgIdx].blocks.append(toolBlock)
                         #if DEBUG
                         logger.debug("[TOOL:CREATED] \(name) id:\(tuId.prefix(20)) displayText=\"\(toolBlock.toolSummary ?? toolBlock.toolDescription)\" content=\"\"")
                         #endif

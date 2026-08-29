@@ -700,11 +700,6 @@ final class MessageListLayout: UICollectionViewLayout {
         precalcHeights = newPrecalc
         estimatedHeights = newEstimated
         geometryReaderConfirmed = newConfirmed
-        // These maps are rebuilt by the coordinator for every new snapshot.
-        // Clear stale index entries here so deletions or replacements cannot
-        // make prepare() apply footer spacing metadata to the wrong cell.
-        contentKeyByIndex.removeAll(keepingCapacity: true)
-        footerHugByIndex.removeAll(keepingCapacity: true)
     }
 
     /// Invalidate the cached height for a specific item index, forcing re-measurement.
