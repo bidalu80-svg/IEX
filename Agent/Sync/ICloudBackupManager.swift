@@ -123,7 +123,7 @@ final class ICloudBackupManager: ObservableObject {
     private var skillsURL: URL { zeBaseURL.appendingPathComponent("skills", isDirectory: true) }
     private var memoryURL: URL { zeBaseURL.appendingPathComponent("memory", isDirectory: true) }
 
-    /// Local encrypted backup directory. Files use the portable `.minisbak`
+    /// Local encrypted backup directory. Files use the portable `.zebak`
     /// envelope so they can be shared or copied to another device without
     /// exposing the staged ZIP contents.
     private var localBackupDirectoryURL: URL {
@@ -135,7 +135,7 @@ final class ICloudBackupManager: ObservableObject {
         isCancelled = true
     }
 
-    /// Export an encrypted, portable `.minisbak` file. The password is never
+    /// Export an encrypted, portable `.zebak` file. The password is never
     /// persisted or written to logs; callers should collect it in a secure
     /// text field and discard it after this method returns.
     func exportEncryptedBackup(category: BackupCategory, password: String) async throws -> URL {
@@ -168,7 +168,7 @@ final class ICloudBackupManager: ObservableObject {
         progress = 0.75
         let encrypted = try encryptArchive(Data(contentsOf: zipURL), password: password)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "").replacingOccurrences(of: "-", with: "")
-        let output = localBackupDirectoryURL.appendingPathComponent("\(category.filePrefix)_\(stamp).minisbak")
+        let output = localBackupDirectoryURL.appendingPathComponent("\(category.filePrefix)_\(stamp).zebak")
         try encrypted.write(to: output, options: .atomic)
         progress = 1
         lastExportURL = output
@@ -176,7 +176,7 @@ final class ICloudBackupManager: ObservableObject {
         return output
     }
 
-    /// Restore from a password-protected `.minisbak` file. The decrypted
+    /// Restore from a password-protected `.zebak` file. The decrypted
     /// payload is kept in a temporary directory and removed on every path.
     func restoreEncrypted(from url: URL, password: String) async throws {
         guard !password.isEmpty else { throw BackupError.emptyPassword }
@@ -220,20 +220,20 @@ final class ICloudBackupManager: ObservableObject {
         let saltResult = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!) }
         guard saltResult == errSecSuccess else { throw BackupError.encryptionError }
         let material = SymmetricKey(data: Data(password.utf8))
-        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeMiniSBak-v1".utf8), outputByteCount: 32)
+        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeBackup-v1".utf8), outputByteCount: 32)
         let sealed = try AES.GCM.seal(archive, using: key)
         guard let combined = sealed.combined else { throw BackupError.encryptionError }
-        return Data("ZEMINISBAK1".utf8) + salt + combined
+        return Data("ZEBAK1".utf8) + salt + combined
     }
 
     private func decryptArchive(_ data: Data, password: String) throws -> Data {
-        let header = Data("ZEMINISBAK1".utf8)
+        let header = Data("ZEBAK1".utf8)
         guard data.count > header.count + 16, data.prefix(header.count) == header else { throw BackupError.invalidEncryptedBackup }
         let saltStart = header.count
         let salt = data.subdata(in: saltStart..<(saltStart + 16))
         let combined = data.subdata(in: (saltStart + 16)..<data.count)
         let material = SymmetricKey(data: Data(password.utf8))
-        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeMiniSBak-v1".utf8), outputByteCount: 32)
+        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeBackup-v1".utf8), outputByteCount: 32)
         do { return try AES.GCM.open(try AES.GCM.SealedBox(combined: combined), using: key) }
         catch { throw BackupError.invalidPassword }
     }

@@ -97,7 +97,7 @@ struct ICloudBackupView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(String(localized: "Encrypted portable backup"), systemImage: "lock.doc.fill")
                         .font(.headline)
-                    Text(String(localized: "Export a password-protected .minisbak file for local storage or transfer to another device."))
+                    Text(String(localized: "Export a password-protected .zebak file for local storage or transfer to another device."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(ICloudBackupManager.BackupCategory.allCases) { category in
@@ -113,7 +113,7 @@ struct ICloudBackupView: View {
                         passwordMode = .restore
                         showFileImporter = true
                     } label: {
-                        Label(String(localized: "Restore .minisbak file"), systemImage: "square.and.arrow.down")
+                        Label(String(localized: "Restore .zebak file"), systemImage: "square.and.arrow.down")
                     }
                     .disabled(manager.isBackingUp || manager.isRestoring)
                     if let url = manager.lastExportURL {

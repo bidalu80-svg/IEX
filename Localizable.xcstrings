@@ -108,11 +108,11 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加密可攜備份" } }
       }
     },
-    "Export a password-protected .minisbak file for local storage or transfer to another device." : {
+    "Export a password-protected .zebak file for local storage or transfer to another device." : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export a password-protected .minisbak file for local storage or transfer to another device." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出受密码保护的 .minisbak 文件，可用于本地保存或传输到其他设备。" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出受密碼保護的 .minisbak 檔案，可用於本機儲存或傳輸到其他裝置。" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export a password-protected .zebak file for local storage or transfer to another device." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出受密码保护的 .zebak 文件，可用于本地保存或传输到其他设备。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出受密碼保護的 .zebak 檔案，可用於本機儲存或傳輸到其他裝置。" } }
       }
     },
     "Export %@" : {
@@ -122,11 +122,11 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出 %@" } }
       }
     },
-    "Restore .minisbak file" : {
+    "Restore .zebak file" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore .minisbak file" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复 .minisbak 文件" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原 .minisbak 檔案" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore .zebak file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复 .zebak 文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原 .zebak 檔案" } }
       }
     },
     "Share latest backup" : {
