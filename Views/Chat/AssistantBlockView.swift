@@ -189,7 +189,7 @@ struct ShimmerOverlay: View {
     }
 }
 
-// MARK: - Tool Capsule View (unified pill for all tool types)
+// MARK: - Tool Step View (unified text row for all tool types)
 
 struct ToolCapsuleView: View {
     @ObservedObject var block: AssistantBlock
@@ -309,6 +309,30 @@ struct ToolCapsuleView: View {
         }
     }
 
+    /// The visible label shape used to constrain the existing shimmer sweep.
+    /// Keeping the mask separate means the sweep remains visible on the text
+    /// while the row itself no longer has a filled capsule background.
+    private var shimmerMask: some View {
+        HStack(spacing: 8) {
+            statusOrIcon
+            HStack(spacing: 0) {
+                Text(displayText)
+                    .font(.system(size: 13, weight: .medium))
+                if isStreaming {
+                    Text("...")
+                        .font(.system(size: 13, weight: .medium))
+                }
+            }
+            .lineLimit(1)
+            if durationText != nil {
+                Text("00s")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 4)
+    }
+
     var body: some View {
         HStack {
             HStack(spacing: 8) {
@@ -319,13 +343,13 @@ struct ToolCapsuleView: View {
                 HStack(spacing: 0) {
                     Text(displayText)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(ChatColors.primaryText)
+                        .foregroundStyle(ChatColors.secondaryText)
                         .lineLimit(1)
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
                             Text(".")
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(ChatColors.primaryText)
+                                .foregroundStyle(ChatColors.secondaryText)
                                 .offset(y: dotsActive ? -2 : 1)
                                 .animation(
                                     .easeInOut(duration: 0.35)
@@ -341,7 +365,7 @@ struct ToolCapsuleView: View {
                 // Execution duration (shown after completion). The HH:mm:ss
                 // start time is surfaced inside the detail view's bottom bar
                 // (ToolLiveSheet.bottomBar) instead of here — the inline
-                // pill list stays clean.
+                // tool-step list stays clean.
                 if let dur = durationText {
                     Text(dur)
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
@@ -367,20 +391,14 @@ struct ToolCapsuleView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 4)
             .frame(height: 36)
-            .background(Color(UIColor.systemGray6))
-            .clipShape(Capsule())
             .overlay(
                 ShimmerOverlay(isActive: isActive)
-                    .clipShape(Capsule())
+                    .mask(shimmerMask)
                     .allowsHitTesting(false)
             )
-            .overlay(
-                Capsule()
-                    .stroke(ChatColors.toolBorder, lineWidth: 0.5)
-            )
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
             .onTapGesture {
                 detailBlock = block
             }
