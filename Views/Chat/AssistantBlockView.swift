@@ -154,7 +154,22 @@ private struct ChatShimmerText: View {
     let font: Font
     let color: Color
     let isActive: Bool
+    let lineLimit: Int?
     @State private var startedAt = Date()
+
+    init(
+        text: String,
+        font: Font,
+        color: Color,
+        isActive: Bool,
+        lineLimit: Int? = 1
+    ) {
+        self.text = text
+        self.font = font
+        self.color = color
+        self.isActive = isActive
+        self.lineLimit = lineLimit
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -171,7 +186,7 @@ private struct ChatShimmerText: View {
                 }
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: lineLimit != nil, vertical: lineLimit == nil)
         .onAppear { startedAt = Date() }
         .onChange(of: isActive) { active in
             if active { startedAt = Date() }
@@ -181,7 +196,7 @@ private struct ChatShimmerText: View {
     private var label: some View {
         Text(text)
             .font(font)
-            .lineLimit(1)
+            .lineLimit(lineLimit)
     }
 
     private func sweepMask(phase: CGFloat) -> some View {
@@ -417,12 +432,12 @@ struct ToolCapsuleView: View {
                     Button {
                         onStop?()
                     } label: {
-                        // Visual: 10×10 red square unchanged. Hit area enlarged to
+                        // Visual: 10×10 blue square. Hit area enlarged to
                         // 24×24 via an expanded contentShape, while the negative
                         // padding pins the *layout* footprint back to 18×18 so the
                         // capsule width/height is identical to before.
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(.red)
+                            .fill(Color.accentColor)
                             .frame(width: 10, height: 10)
                             .frame(width: 24, height: 24)
                             .contentShape(Rectangle())
@@ -788,6 +803,10 @@ struct ThinkingBlockView: View {
                     Text(thinkingLevelCompactLabel)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(ChatColors.tertiaryText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(ChatColors.primaryText.opacity(0.09))
+                        .clipShape(Capsule())
                         .accessibilityLabel("思考强度 \(thinkingLevelCompactLabel)")
                 }
                 if isStreaming {
@@ -860,9 +879,13 @@ struct ThinkingBlockView: View {
                                     .padding(.horizontal, 12)
                                     .padding(.bottom, 4)
                             }
-                            Text(displayContent)
-                                .font(.system(size: 13))
-                                .foregroundStyle(ChatColors.tertiaryText)
+                            ChatShimmerText(
+                                text: displayContent,
+                                font: .system(size: 13),
+                                color: ChatColors.tertiaryText,
+                                isActive: isStreaming,
+                                lineLimit: nil
+                            )
                                 .lineSpacing(3)
                                 .textSelection(.enabled)
                                 .padding(.horizontal, 4)
