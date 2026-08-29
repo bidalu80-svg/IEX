@@ -163,14 +163,6 @@ struct TaskPlanView: View {
         }
     }
 
-    private var elapsedText: String? {
-        if let duration = block.toolDuration {
-            return Self.formatDuration(duration)
-        }
-        guard isActive, let start = block.toolStartTime else { return nil }
-        return Self.formatDuration(Date().timeIntervalSince(start))
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: expanded ? 8 : 0) {
             HStack(spacing: 8) {
@@ -178,27 +170,18 @@ struct TaskPlanView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ChatColors.secondaryText)
 
-                Text("任务计划")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(ChatColors.secondaryText)
+                ChatShimmerText(
+                    text: "任务计划",
+                    font: .system(size: 13, weight: .semibold),
+                    color: ChatColors.secondaryText,
+                    isActive: isActive
+                )
 
                 Text("\(completedCount)/\(items.count)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(ChatColors.tertiaryText)
 
-                if let elapsedText {
-                    if isActive {
-                        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                            Text(elapsedText)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(ChatColors.tertiaryText)
-                        }
-                    } else {
-                        Text(elapsedText)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(ChatColors.tertiaryText)
-                    }
-                }
+                TaskPlanElapsedView(block: block, isActive: isActive)
 
                 Spacer(minLength: 4)
 
@@ -249,15 +232,9 @@ struct TaskPlanView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: expanded ? 14 : 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: expanded ? 14 : 22, style: .continuous)
-                .stroke(ChatColors.primaryText.opacity(0.08), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
         .contentShape(Rectangle())
     }
 
@@ -277,7 +254,7 @@ struct TaskPlanView: View {
         }
     }
 
-    private static func formatDuration(_ duration: TimeInterval) -> String {
+    fileprivate static func formatDuration(_ duration: TimeInterval) -> String {
         let seconds = max(0, duration)
         if seconds < 60 {
             return String(format: "%.1fs", seconds)
@@ -285,6 +262,42 @@ struct TaskPlanView: View {
         let minutes = Int(seconds) / 60
         let remainder = Int(seconds) % 60
         return String(format: "%dm %02ds", minutes, remainder)
+    }
+}
+
+/// Timeline-backed elapsed label. `toolStartTime` is intentionally not
+/// published, so the timeline is the redraw source while a plan is running;
+/// completed plans use the frozen `toolDuration` value.
+private struct TaskPlanElapsedView: View {
+    @ObservedObject var block: AssistantBlock
+    let isActive: Bool
+
+    var body: some View {
+        if isActive {
+            TimelineView(.periodic(from: .now, by: 0.25)) { timeline in
+                label(at: timeline.date)
+            }
+        } else if let duration = block.toolDuration {
+            label(text: TaskPlanView.formatDuration(duration))
+        }
+    }
+
+    private func label(at date: Date) -> some View {
+        let text: String
+        if let duration = block.toolDuration {
+            text = TaskPlanView.formatDuration(duration)
+        } else if let start = block.toolStartTime {
+            text = TaskPlanView.formatDuration(date.timeIntervalSince(start))
+        } else {
+            text = TaskPlanView.formatDuration(0)
+        }
+        return label(text: text)
+    }
+
+    private func label(text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(ChatColors.tertiaryText)
     }
 }
 

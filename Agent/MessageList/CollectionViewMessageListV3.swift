@@ -2198,9 +2198,10 @@ extension CollectionViewMessageListV3 {
                     newItems.append(.wholeMessage(message.id))
                 case .assistant:
                     newItems.append(.assistantHeader(message.id))
-                    // A todo_write call replaces the complete plan. Keep only
-                    // the latest plan block in the message list so each update
-                    // does not leave another full plan surface behind.
+                    // Persisted sessions created before the single-block
+                    // replacement behavior may still contain several plan
+                    // updates. Keep only the newest one visible; live updates
+                    // now reuse that block and therefore do not create holes.
                     let latestTaskPlanID = message.blocks.last(where: { $0.isTaskPlan })?.id
                     for block in message.blocks where !block.isTaskPlan || block.id == latestTaskPlanID {
                         newItems.append(.assistantBlock(message.id, block.id))
