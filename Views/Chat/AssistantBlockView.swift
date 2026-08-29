@@ -145,6 +145,59 @@ private enum ChatShimmerStyle {
     static let sweepDuration: TimeInterval = 1.65
 }
 
+/// A single text layer with a moving highlight. The highlighted copy is an
+/// exact second render of the base text, so the sweep cannot drift and leave a
+/// ghost behind when surrounding row content changes size.
+private struct ChatShimmerText: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let text: String
+    let font: Font
+    let color: Color
+    let isActive: Bool
+    @State private var startedAt = Date()
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            label.foregroundStyle(color)
+            if isActive && !reduceMotion {
+                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+                    let elapsed = timeline.date.timeIntervalSince(startedAt)
+                    let phase = CGFloat((elapsed / ChatShimmerStyle.sweepDuration).truncatingRemainder(dividingBy: 1.0))
+                    label
+                        .foregroundStyle(.white)
+                        .mask(sweepMask(phase: phase))
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .onAppear { startedAt = Date() }
+        .onChange(of: isActive) { active in
+            if active { startedAt = Date() }
+        }
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(font)
+            .lineLimit(1)
+    }
+
+    private func sweepMask(phase: CGFloat) -> some View {
+        GeometryReader { proxy in
+            let bandWidth = max(52, proxy.size.width * 0.42)
+            LinearGradient(
+                colors: [.white.opacity(0), .white.opacity(0.75), .white.opacity(0)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: bandWidth, height: proxy.size.height)
+            .offset(x: -bandWidth + phase * (proxy.size.width + bandWidth))
+        }
+    }
+}
+
 /// A narrow shimmer band that sweeps from leading to trailing.
 /// Its offset is time-driven, so a collection-view cell cannot retain a
 /// stopped repeat-forever animation after it has been reused for another tool.
@@ -318,24 +371,6 @@ struct ToolCapsuleView: View {
         }
     }
 
-    /// The visible label shape used to constrain the existing shimmer sweep.
-    /// Keeping the mask separate means the sweep remains visible on the text
-    /// while the row itself no longer has a filled capsule background.
-    private var shimmerMask: some View {
-        HStack(spacing: 8) {
-            statusOrIcon
-            Text(displayText)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-            if let durationText {
-                Text(durationText)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-            }
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 4)
-    }
-
     var body: some View {
         HStack {
             HStack(spacing: 8) {
@@ -344,10 +379,12 @@ struct ToolCapsuleView: View {
 
                 // Description text with bouncing dots during streaming
                 HStack(spacing: 0) {
-                    Text(displayText)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(ChatColors.secondaryText)
-                        .lineLimit(1)
+                    ChatShimmerText(
+                        text: displayText,
+                        font: .system(size: 13, weight: .medium),
+                        color: ChatColors.secondaryText,
+                        isActive: isActive
+                    )
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
                             Text(".")
@@ -396,11 +433,6 @@ struct ToolCapsuleView: View {
             }
             .padding(.horizontal, 4)
             .frame(height: 36)
-            .overlay(
-                ShimmerOverlay(isActive: isActive)
-                    .mask(shimmerMask)
-                    .allowsHitTesting(false)
-            )
             .contentShape(Rectangle())
             .onTapGesture {
                 detailBlock = block
@@ -745,9 +777,12 @@ struct ThinkingBlockView: View {
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(ChatColors.secondaryText)
-                Text(thinkingHeaderTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(ChatColors.secondaryText)
+                ChatShimmerText(
+                    text: thinkingHeaderTitle,
+                    font: .system(size: 13, weight: .semibold),
+                    color: ChatColors.secondaryText,
+                    isActive: isStreaming
+                )
                 ThinkingDurationLabel(block: block, isStreaming: isStreaming)
                 if thinkingLevel.isEnabled {
                     Text(thinkingLevelCompactLabel)
@@ -773,11 +808,6 @@ struct ThinkingBlockView: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 5)
             .contentShape(Rectangle())
-            .overlay(
-                ShimmerOverlay(isActive: isStreaming)
-                    .mask(thinkingHeaderShimmerMask)
-                    .allowsHitTesting(false)
-            )
             .onTapGesture {
                 // Mark before flipping so any concurrent stream-end collapse
                 // observer in this view sees `thinkingUserToggled = true`
@@ -925,29 +955,6 @@ struct ThinkingBlockView: View {
         case .max: return "最高"
         case .ultra: return "极限"
         }
-    }
-
-    private var thinkingHeaderShimmerMask: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 14, weight: .semibold))
-            Text(thinkingHeaderTitle)
-                .font(.system(size: 13, weight: .semibold))
-            ThinkingDurationLabel(block: block, isStreaming: isStreaming)
-            if thinkingLevel.isEnabled {
-                Text(thinkingLevelCompactLabel)
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
-                let count = max(block.content.count, block.thinkingContentBuffer.count)
-                Text(count > 1000 ? "\(count / 1000)K" : "\(count)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-            }
-            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                .font(.system(size: 11, weight: .medium))
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 4)
     }
 
     private var thinkingHeaderTitle: String {
