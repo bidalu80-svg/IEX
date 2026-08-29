@@ -1002,7 +1002,7 @@ struct AddProviderView: View {
         case .openRouter: return "OpenRouter"
         case .openAIResponses: return "Responses API"
         case .xAI: return "xAI (Grok)"
-        case .kimiCode: return "Kimi Code"
+        case .kimiCode: return String(localized: "Kimi Code")
         case .unsupported: return String(localized: "Unsupported")
         }
     }

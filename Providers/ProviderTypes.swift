@@ -42,7 +42,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .openRouter: return "OpenRouter"
         case .openAIResponses: return "Responses API (v3)"
         case .xAI: return "xAI (Grok)"
-        case .kimiCode: return "Kimi Code"
+        case .kimiCode: return String(localized: "Kimi Code")
         case .unsupported: return "Unsupported"
         }
     }

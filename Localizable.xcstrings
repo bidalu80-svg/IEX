@@ -1,6 +1,249 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Optional emoji" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional emoji" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自定义 Emoji（可选）" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "自訂 Emoji（可選）" } }
+      }
+    },
+    "Assistant icon" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Assistant icon" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "助手图标" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "助理圖示" } }
+      }
+    },
+    "Delete Model Group" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete Model Group" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除模型分组" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "刪除模型群組" } } } },
+    "This removes the group assignment but keeps the provider models." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes the group assignment but keeps the provider models." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这会删除分组关系，但保留服务商模型。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "這會刪除群組關聯，但保留服務商模型。" } } } },
+    "Choose image" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose image" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择图片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選擇圖片" } }
+      }
+    },
+    "Remove image" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove image" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "移除图片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "移除圖片" } }
+      }
+    },
+    "Custom assistant image" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Custom assistant image" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自定义助手图片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "自訂助理圖片" } }
+      }
+    },
+    "Ze assistant icon" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ze assistant icon" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze 助手图标" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze 助理圖示" } }
+      }
+    },
+    "Assistant icon (emoji)" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Assistant icon (emoji)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "助手图标（Emoji）" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "助理圖示（Emoji）" } }
+      }
+    },
+    "Unable to load selected image" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to load selected image" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载所选图片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法載入所選圖片" } }
+      }
+    },
+    "Delete from here" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete from here" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从此处删除" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從此處刪除" } }
+      }
+    },
+    "Endpoint configured · key not set" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Endpoint configured · key not set" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "端点已配置 · 尚未设置密钥" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "端點已設定 · 尚未設定金鑰" } }
+      }
+    },
+    "Enter a valid HTTP(S) base URL." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a valid HTTP(S) base URL." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入有效的 HTTP(S) 基础地址。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請輸入有效的 HTTP(S) 基礎網址。" } }
+      }
+    },
+    "Enter an API key, or provide a valid HTTP(S) custom endpoint for a compatible service." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter an API key, or provide a valid HTTP(S) custom endpoint for a compatible service." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入 API Key，或为兼容服务提供有效的 HTTP(S) 自定义端点。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請輸入 API Key，或為相容服務提供有效的 HTTP(S) 自訂端點。" } }
+      }
+    },
+    "This removes the provider, its models, and stored credentials." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes the provider, its models, and stored credentials." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这会删除服务商、关联模型和已保存的凭据。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "這會刪除服務商、關聯模型和已儲存的憑據。" } }
+      }
+    },
+    "Spanish" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Spanish" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "西班牙语" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "西班牙語" } }
+      }
+    },
+    "Encrypted portable backup" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Encrypted portable backup" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加密便携备份" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加密可攜備份" } }
+      }
+    },
+    "Export a password-protected .minisbak file for local storage or transfer to another device." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export a password-protected .minisbak file for local storage or transfer to another device." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出受密码保护的 .minisbak 文件，可用于本地保存或传输到其他设备。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出受密碼保護的 .minisbak 檔案，可用於本機儲存或傳輸到其他裝置。" } }
+      }
+    },
+    "Export %@" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出 %@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出 %@" } }
+      }
+    },
+    "Restore .minisbak file" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore .minisbak file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复 .minisbak 文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原 .minisbak 檔案" } }
+      }
+    },
+    "Share latest backup" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Share latest backup" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "分享最新备份" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "分享最新備份" } }
+      }
+    },
+    "Backup password" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Backup password" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份密码" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份密碼" } }
+      }
+    },
+    "The password is used only for this operation and is never stored." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The password is used only for this operation and is never stored." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "密码仅用于本次操作，不会被保存。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "密碼僅用於本次操作，不會被儲存。" } }
+      }
+    },
+    "Preparing encrypted backup…" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing encrypted backup…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在准备加密备份…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在準備加密備份…" } }
+      }
+    },
+    "Extracting encrypted backup…" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Extracting encrypted backup…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在解压加密备份…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在解壓加密備份…" } }
+      }
+    },
+    "Choose a password for this backup." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose a password for this backup." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请为此备份设置密码。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請為此備份設定密碼。" } }
+      }
+    },
+    "The selected file is not a valid Ze encrypted backup." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The selected file is not a valid Ze encrypted backup." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所选文件不是有效的 Ze 加密备份。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "所選檔案不是有效的 Ze 加密備份。" } }
+      }
+    },
+    "The backup password is incorrect." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The backup password is incorrect." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份密码不正确。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份密碼不正確。" } }
+      }
+    },
+    "Unable to encrypt the backup." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unable to encrypt the backup." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加密备份。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法加密備份。" } }
+      }
+    },
+    "Backup operation cancelled." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Backup operation cancelled." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份操作已取消。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份操作已取消。" } }
+      }
+    },
+    "Another backup operation is already running." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Another backup operation is already running." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "另一个备份操作正在运行。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "另一個備份操作正在執行。" } }
+      }
+    },
+    "iCloud is not available. Please sign in to iCloud in Settings." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "iCloud is not available. Please sign in to iCloud in Settings." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 不可用，请在设置中登录 iCloud。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 無法使用，請在設定中登入 iCloud。" } }
+      }
+    },
+    "Database error: %@" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Database error: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "数据库错误：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "資料庫錯誤：%@" } }
+      }
+    },
+    "Archive error: %@" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Archive error: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "归档错误：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "封存錯誤：%@" } }
+      }
+    },
+    "Timed out downloading backup from iCloud." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out downloading backup from iCloud." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从 iCloud 下载备份超时。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從 iCloud 下載備份逾時。" } }
+      }
+    },
+    "Preparing backup…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing backup…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在准备备份…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在準備備份…" } } } },
+    "Copying files…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Copying files…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在复制文件…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在複製檔案…" } } } },
+    "Creating archive…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Creating archive…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在创建归档…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在建立封存…" } } } },
+    "Uploading to iCloud…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Uploading to iCloud…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在上传到 iCloud…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在上傳到 iCloud…" } } } },
+    "Backup complete" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Backup complete" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份完成" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份完成" } } } },
+    "Downloading backup…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloading backup…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在下载备份…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在下載備份…" } } } },
+    "Extracting backup…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Extracting backup…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在解压备份…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在解壓備份…" } } } },
+    "Restoring data…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restoring data…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在恢复数据…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在還原資料…" } } } },
+    "Reloading…" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reloading…" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在重新加载…" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在重新載入…" } } } },
+    "Restore complete" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore complete" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复完成" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "還原完成" } } } },
     "" : {
 
     },
@@ -77860,6 +78103,150 @@
             "value" : "正在壓縮對話…（正在合併摘要）"
           }
         }
+      }
+    },
+    "Kimi Code" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi Code" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi Code" } }
+      }
+    },
+    "Sign in with Kimi Code" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "登录 Kimi Code" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "登入 Kimi Code" } }
+      }
+    },
+    "Sign in with your Kimi Code / Coding Plan subscription." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用你的 Kimi Code / Coding Plan 订阅登录。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "使用你的 Kimi Code / Coding Plan 訂閱登入。" } }
+      }
+    },
+    "Sign in with your Kimi Code / Coding Plan subscription" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用你的 Kimi Code / Coding Plan 订阅登录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "使用你的 Kimi Code / Coding Plan 訂閱登入" } }
+      }
+    },
+    "Use a Kimi Coding API key." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用 Kimi Coding API Key。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "使用 Kimi Coding API Key。" } }
+      }
+    },
+    "Kimi device authorization response missing required fields" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 设备授权响应缺少必要字段" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 裝置授權回應缺少必要欄位" } }
+      }
+    },
+    "Kimi: OAuth client ID not configured — login unavailable" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：尚未配置 OAuth 客户端 ID，无法登录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：尚未設定 OAuth 用戶端 ID，無法登入" } }
+      }
+    },
+    "Kimi device authorization failed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 设备授权失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 裝置授權失敗" } }
+      }
+    },
+    "Kimi login denied" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登录被拒绝" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登入遭拒" } }
+      }
+    },
+    "Kimi login code expired" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登录验证码已过期" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登入驗證碼已過期" } }
+      }
+    },
+    "Kimi login failed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登录失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登入失敗" } }
+      }
+    },
+    "Kimi login timed out" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登录超时" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 登入逾時" } }
+      }
+    },
+    "Kimi: no OAuth token found" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：未找到 OAuth 令牌" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：找不到 OAuth 權杖" } }
+      }
+    },
+    "Kimi: access token is empty" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：访问令牌为空" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：存取權杖為空" } }
+      }
+    },
+    "Kimi token refresh failed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 令牌刷新失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi 權杖重新整理失敗" } }
+      }
+    },
+    "Kimi: refresh token invalid" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：刷新令牌无效" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：重新整理權杖無效" } }
+      }
+    },
+    "Kimi: token expired and refresh failed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：令牌已过期且刷新失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Kimi：權杖已過期且重新整理失敗" } }
+      }
+    },
+    "Stop tool" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "停止工具" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "停止工具" } }
+      }
+    },
+    "in progress" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "进行中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "進行中" } }
+      }
+    },
+    "completed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已完成" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已完成" } }
+      }
+    },
+    "failed" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "失敗" } }
+      }
+    },
+    "cancelled" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已取消" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已取消" } }
+      }
+    },
+    "pending" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "等待中" } }
+      }
+    },
+    "Ze正在思考中" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze正在思考中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze正在思考中" } }
       }
     },
     "Compacting conversation... (%lld chars)" : {

@@ -40,7 +40,7 @@ enum KimiDeviceFlow {
               let verificationURI = (json["verification_uri"] as? String)
                 ?? (json["verification_url"] as? String)
         else {
-            throw LLMError.providerError(message: "Kimi device authorization response missing required fields")
+            throw LLMError.providerError(message: String(localized: "Kimi device authorization response missing required fields"))
         }
         let complete = (json["verification_uri_complete"] as? String)
             ?? (json["verification_url_complete"] as? String)

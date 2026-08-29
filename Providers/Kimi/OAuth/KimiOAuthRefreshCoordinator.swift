@@ -73,7 +73,7 @@ enum KimiOAuthRefreshCoordinator {
             }
             log?("Refresh token invalid, clearing credentials: \(llmError)")
             deleteCredentials()
-            throw LLMError.invalidAPIKey(detail: "Kimi: refresh token invalid — \(llmError)")
+            throw LLMError.invalidAPIKey(detail: "\(String(localized: "Kimi: refresh token invalid")) — \(llmError)")
         }
 
         // Non-fatal (network / transient). Prefer whatever is now stored (a
@@ -82,7 +82,7 @@ enum KimiOAuthRefreshCoordinator {
         log?("Refresh failed, keeping existing token: \(error)")
         if fallback.isExpired {
             log?("Existing token is also expired — re-auth required")
-            throw LLMError.invalidAPIKey(detail: "Kimi: token expired and refresh failed — \(error)")
+            throw LLMError.invalidAPIKey(detail: "\(String(localized: "Kimi: token expired and refresh failed")) — \(error)")
         }
         return fallback
     }

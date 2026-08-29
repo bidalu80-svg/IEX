@@ -8,6 +8,8 @@ struct ModelGroupsView: View {
     @State private var showAddAgentModels = false
     @State private var showAddAgentGroups = false
     @State private var forceSyncToast: String?
+    @State private var editingGroupID: String?
+    @State private var deletingGroupID: String?
     @AppStorage("cloudSync.v2.enabled") private var iCloudSyncEnabled: Bool = false
 
     var body: some View {
@@ -38,6 +40,19 @@ struct ModelGroupsView: View {
                             ModelGroupDetailView(groupId: group.id)
                         } label: {
                             GroupRow(group: group)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button {
+                                editingGroupID = group.id
+                            } label: {
+                                Label(String(localized: "Edit"), systemImage: "pencil")
+                            }
+                            .tint(.blue)
+                            Button(role: .destructive) {
+                                deletingGroupID = group.id
+                            } label: {
+                                Label(String(localized: "Delete"), systemImage: "trash")
+                            }
                         }
                     }
                     .onMove(perform: moveGroups)
@@ -116,6 +131,26 @@ struct ModelGroupsView: View {
             NavigationStack {
                 AddAgentLoopGroupsSheet()
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { editingGroupID != nil },
+            set: { if !$0 { editingGroupID = nil } }
+        )) {
+            if let id = editingGroupID {
+                NavigationStack { ModelGroupDetailView(groupId: id) }
+            }
+        }
+        .alert(String(localized: "Delete Model Group"), isPresented: Binding(
+            get: { deletingGroupID != nil },
+            set: { if !$0 { deletingGroupID = nil } }
+        )) {
+            Button(String(localized: "Delete"), role: .destructive) {
+                if let id = deletingGroupID { store.removeGroup(id) }
+                deletingGroupID = nil
+            }
+            Button(String(localized: "Cancel"), role: .cancel) { deletingGroupID = nil }
+        } message: {
+            Text(String(localized: "This removes the group assignment but keeps the provider models."))
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

@@ -444,11 +444,14 @@ struct ToolCapsuleView: View {
                             .padding(-3)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "Stop tool"))
                 }
             }
             .padding(.horizontal, 4)
             .frame(height: 36)
             .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(toolAccessibilityLabel)
             .onTapGesture {
                 detailBlock = block
             }
@@ -559,6 +562,19 @@ struct ToolCapsuleView: View {
         case .cancelled: return .yellow
         default: return accentColor
         }
+    }
+
+    private var toolAccessibilityLabel: String {
+        let state: String
+        switch block.toolStatus {
+        case .running, .streaming: state = String(localized: "in progress")
+        case .success: state = String(localized: "completed")
+        case .failed: state = String(localized: "failed")
+        case .cancelled: state = String(localized: "cancelled")
+        case .none: state = String(localized: "pending")
+        }
+        if let durationText { return "\(displayText), \(state), \(durationText)" }
+        return "\(displayText), \(state)"
     }
 
     /// Formatted execution duration (e.g. "1.2s", "45s", "2m 10s").
@@ -1062,7 +1078,7 @@ struct TypingIndicator: View {
         .fixedSize(horizontal: true, vertical: false)
         .frame(minHeight: 24, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Ze正在思考中")
+            .accessibilityLabel(String(localized: "Ze正在思考中"))
         .onAppear { startedAt = Date() }
     }
 

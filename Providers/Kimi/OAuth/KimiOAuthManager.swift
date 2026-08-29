@@ -84,7 +84,7 @@ final class KimiOAuthManager: ObservableObject {
     ) async throws {
         logger.info("Kimi device login START (instance: \(instanceId), clientIDset=\(isLoginAvailable))")
         guard isLoginAvailable else {
-            throw LLMError.invalidAPIKey(detail: "Kimi: OAuth client ID not configured — login unavailable")
+            throw LLMError.invalidAPIKey(detail: String(localized: "Kimi: OAuth client ID not configured — login unavailable"))
         }
         let auth = try await requestDeviceAuthorization()
         logger.info("Kimi device authorization OK — userCode=\(auth.userCode)")
@@ -120,7 +120,8 @@ final class KimiOAuthManager: ObservableObject {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             let bodyErr = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error_description"] as? String
-            throw LLMError.providerError(message: "Kimi device authorization failed: HTTP \(code)\(bodyErr.map { " — \($0)" } ?? "")")
+            let prefix = String(localized: "Kimi device authorization failed")
+            throw LLMError.providerError(message: "\(prefix): HTTP \(code)\(bodyErr.map { " — \($0)" } ?? "")")
         }
         let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         return try KimiDeviceFlow.parseDeviceAuthorization(json)
@@ -155,27 +156,27 @@ final class KimiOAuthManager: ObservableObject {
             case .slowDown:
                 currentInterval = KimiDeviceFlow.bumpedInterval(currentInterval)
             case let .denied(msg):
-                throw LLMError.providerError(message: "Kimi login denied: \(msg)")
+                throw LLMError.providerError(message: "\(String(localized: "Kimi login denied")): \(msg)")
             case let .expired(msg):
-                throw LLMError.providerError(message: "Kimi login code expired: \(msg)")
+                throw LLMError.providerError(message: "\(String(localized: "Kimi login code expired")): \(msg)")
             case let .fatal(msg):
-                throw LLMError.providerError(message: "Kimi login failed: \(msg)")
+                throw LLMError.providerError(message: "\(String(localized: "Kimi login failed")): \(msg)")
             }
         }
-        throw LLMError.providerError(message: "Kimi login timed out")
+        throw LLMError.providerError(message: String(localized: "Kimi login timed out"))
     }
 
     // MARK: - On-demand access token (with single-flight refresh)
 
     func validAccessToken(instanceId: String) async throws -> String {
         guard let storage = ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: KimiTokenStorage.self) else {
-            throw LLMError.invalidAPIKey(detail: "Kimi: no OAuth token found for instance \(instanceId)")
+            throw LLMError.invalidAPIKey(detail: "\(String(localized: "Kimi: no OAuth token found")) (\(instanceId))")
         }
         let needsRefresh = storage.refreshToken != nil
             && (storage.expireDate.map { $0.timeIntervalSinceNow <= refreshBuffer } ?? false)
         guard needsRefresh else {
             guard !storage.accessToken.isEmpty else {
-                throw LLMError.invalidAPIKey(detail: "Kimi: access token is empty for instance \(instanceId)")
+                throw LLMError.invalidAPIKey(detail: "\(String(localized: "Kimi: access token is empty")) (\(instanceId))")
             }
             return storage.accessToken
         }
@@ -225,7 +226,7 @@ final class KimiOAuthManager: ObservableObject {
         ])
         guard httpOK, let access = json["access_token"] as? String else {
             let err = (json["error"] as? String) ?? "unknown"
-            throw LLMError.providerError(message: "Kimi token refresh failed: \(err)")
+            throw LLMError.providerError(message: "\(String(localized: "Kimi token refresh failed")): \(err)")
         }
         return KimiTokenStorage(
             accessToken: access,

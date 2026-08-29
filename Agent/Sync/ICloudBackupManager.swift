@@ -1,9 +1,10 @@
-#if DEBUG
 import Foundation
 import SwiftUI
 import UIKit
 import SQLite3
 import Compression
+import CryptoKit
+import Security
 import os.log
 
 private let logger = AppLogger(category: "ICloudBackup")
@@ -80,6 +81,8 @@ final class ICloudBackupManager: ObservableObject {
     @Published var progress: Double = 0
     @Published var statusMessage: String = ""
     @Published var availableBackups: [BackupEntry] = []
+    @Published var lastExportURL: URL?
+    @Published var isCancelled = false
 
     private let fm = FileManager.default
     private let containerID = "iCloud.com.ze.app"
@@ -120,6 +123,121 @@ final class ICloudBackupManager: ObservableObject {
     private var skillsURL: URL { zeBaseURL.appendingPathComponent("skills", isDirectory: true) }
     private var memoryURL: URL { zeBaseURL.appendingPathComponent("memory", isDirectory: true) }
 
+    /// Local encrypted backup directory. Files use the portable `.minisbak`
+    /// envelope so they can be shared or copied to another device without
+    /// exposing the staged ZIP contents.
+    private var localBackupDirectoryURL: URL {
+        fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Ze/Backups", isDirectory: true)
+    }
+
+    func cancelCurrentOperation() {
+        isCancelled = true
+    }
+
+    /// Export an encrypted, portable `.minisbak` file. The password is never
+    /// persisted or written to logs; callers should collect it in a secure
+    /// text field and discard it after this method returns.
+    func exportEncryptedBackup(category: BackupCategory, password: String) async throws -> URL {
+        guard !password.isEmpty else { throw BackupError.emptyPassword }
+        guard !isBackingUp, !isRestoring else { throw BackupError.busy }
+        isBackingUp = true
+        isCancelled = false
+        progress = 0
+        defer { isBackingUp = false; statusMessage = "" }
+
+        try fm.createDirectory(at: localBackupDirectoryURL, withIntermediateDirectories: true)
+        let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+        let stageDir = tempDir.appendingPathComponent("backup", isDirectory: true)
+        try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
+        statusMessage = String(localized: "Preparing encrypted backup…")
+        try checkCancelled()
+        switch category {
+        case .sessions: try await stageSessionFiles(to: stageDir)
+        case .skillsAndMemories: try await stageSkillsAndMemoryFiles(to: stageDir)
+        case .full:
+            try await stageSessionFiles(to: stageDir)
+            try await stageSkillsAndMemoryFiles(to: stageDir)
+        }
+        progress = 0.55
+        try checkCancelled()
+        let zipURL = tempDir.appendingPathComponent("payload.zip")
+        try await createZip(from: stageDir, to: zipURL)
+        progress = 0.75
+        let encrypted = try encryptArchive(Data(contentsOf: zipURL), password: password)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "").replacingOccurrences(of: "-", with: "")
+        let output = localBackupDirectoryURL.appendingPathComponent("\(category.filePrefix)_\(stamp).minisbak")
+        try encrypted.write(to: output, options: .atomic)
+        progress = 1
+        lastExportURL = output
+        logger.info("Encrypted backup exported (category=\(category.rawValue), bytes=\(encrypted.count))")
+        return output
+    }
+
+    /// Restore from a password-protected `.minisbak` file. The decrypted
+    /// payload is kept in a temporary directory and removed on every path.
+    func restoreEncrypted(from url: URL, password: String) async throws {
+        guard !password.isEmpty else { throw BackupError.emptyPassword }
+        guard !isBackingUp, !isRestoring else { throw BackupError.busy }
+        isRestoring = true
+        isCancelled = false
+        progress = 0
+        defer { isRestoring = false; statusMessage = "" }
+        let data = try Data(contentsOf: url)
+        let zipData = try decryptArchive(data, password: password)
+        try checkCancelled()
+        let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+        let zipURL = tempDir.appendingPathComponent("payload.zip")
+        try zipData.write(to: zipURL, options: .atomic)
+        let extractDir = tempDir.appendingPathComponent("extracted", isDirectory: true)
+        statusMessage = String(localized: "Extracting encrypted backup…")
+        try extractZip(at: zipURL, to: extractDir)
+        let contentDir = extractDir.appendingPathComponent("backup", isDirectory: true)
+        let root = fm.fileExists(atPath: contentDir.path) ? contentDir : extractDir
+        progress = 0.55
+        if fm.fileExists(atPath: root.appendingPathComponent("ze.db").path) || fm.fileExists(atPath: root.appendingPathComponent("media").path) {
+            try await restoreSessionFiles(from: root)
+        }
+        if fm.fileExists(atPath: root.appendingPathComponent("skills.db").path) || fm.fileExists(atPath: root.appendingPathComponent("skills").path) || fm.fileExists(atPath: root.appendingPathComponent("memory").path) {
+            try await restoreSkillsAndMemoryFiles(from: root)
+        }
+        await ChatStore.shared.reloadDatabase()
+        await SkillStore.shared.reloadDatabase()
+        progress = 1
+        logger.info("Encrypted backup restored")
+    }
+
+    private func checkCancelled() throws {
+        if isCancelled || Task.isCancelled { throw BackupError.cancelled }
+    }
+
+    private func encryptArchive(_ archive: Data, password: String) throws -> Data {
+        var salt = Data(count: 16)
+        let saltResult = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!) }
+        guard saltResult == errSecSuccess else { throw BackupError.encryptionError }
+        let material = SymmetricKey(data: Data(password.utf8))
+        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeMiniSBak-v1".utf8), outputByteCount: 32)
+        let sealed = try AES.GCM.seal(archive, using: key)
+        guard let combined = sealed.combined else { throw BackupError.encryptionError }
+        return Data("ZEMINISBAK1".utf8) + salt + combined
+    }
+
+    private func decryptArchive(_ data: Data, password: String) throws -> Data {
+        let header = Data("ZEMINISBAK1".utf8)
+        guard data.count > header.count + 16, data.prefix(header.count) == header else { throw BackupError.invalidEncryptedBackup }
+        let saltStart = header.count
+        let salt = data.subdata(in: saltStart..<(saltStart + 16))
+        let combined = data.subdata(in: (saltStart + 16)..<data.count)
+        let material = SymmetricKey(data: Data(password.utf8))
+        let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: salt, info: Data("ZeMiniSBak-v1".utf8), outputByteCount: 32)
+        do { return try AES.GCM.open(try AES.GCM.SealedBox(combined: combined), using: key) }
+        catch { throw BackupError.invalidPassword }
+    }
+
     // MARK: - Backup
 
     func backup(category: BackupCategory) async throws {
@@ -130,7 +248,7 @@ final class ICloudBackupManager: ObservableObject {
 
         isBackingUp = true
         progress = 0
-        statusMessage = "Preparing backup..."
+        statusMessage = String(localized: "Preparing backup…")
         defer {
             isBackingUp = false
             statusMessage = ""
@@ -148,7 +266,8 @@ final class ICloudBackupManager: ObservableObject {
         try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
 
         // Stage files based on category
-        statusMessage = "Copying files..."
+        try checkCancelled()
+        statusMessage = String(localized: "Copying files…")
         progress = 0.1
 
         switch category {
@@ -162,7 +281,8 @@ final class ICloudBackupManager: ObservableObject {
         }
 
         progress = 0.6
-        statusMessage = "Creating archive..."
+        try checkCancelled()
+        statusMessage = String(localized: "Creating archive…")
 
         // Create ZIP
         let formatter = DateFormatter()
@@ -174,7 +294,8 @@ final class ICloudBackupManager: ObservableObject {
         try await createZip(from: stageDir, to: zipURL)
 
         progress = 0.8
-        statusMessage = "Uploading to iCloud..."
+        try checkCancelled()
+        statusMessage = String(localized: "Uploading to iCloud…")
 
         // Move ZIP to iCloud
         let destURL = destDir.appendingPathComponent(zipName)
@@ -184,7 +305,7 @@ final class ICloudBackupManager: ObservableObject {
         try fm.copyItem(at: zipURL, to: destURL)
 
         progress = 1.0
-        statusMessage = "Backup complete"
+        statusMessage = String(localized: "Backup complete")
         logger.info("Backup created: \(zipName)")
 
         // Refresh backup list
@@ -347,7 +468,19 @@ final class ICloudBackupManager: ObservableObject {
                 let localExtraLen = Int(base.load(fromByteOffset: localHeaderOffset + 28, as: UInt16.self))
                 let dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen
 
-                let fileURL = destination.appendingPathComponent(name)
+                // Reject absolute paths and traversal components before
+                // materialising archive entries. Backups can come from
+                // another device, so the archive is untrusted input.
+                guard !name.hasPrefix("/"), !name.contains("\\0") else {
+                    throw BackupError.zipError("Archive contains an unsafe path")
+                }
+                let fileURL = destination.appendingPathComponent(name).standardizedFileURL
+                let destinationPrefix = destination.standardizedFileURL.path.hasSuffix("/")
+                    ? destination.standardizedFileURL.path
+                    : destination.standardizedFileURL.path + "/"
+                guard fileURL.path == destination.standardizedFileURL.path || fileURL.path.hasPrefix(destinationPrefix) else {
+                    throw BackupError.zipError("Archive contains a path traversal entry")
+                }
 
                 if name.hasSuffix("/") {
                     // Directory
@@ -359,10 +492,18 @@ final class ICloudBackupManager: ObservableObject {
 
                     if method == 0 {
                         // Stored (no compression)
+                        guard dataStart >= 0, uncompressedSize >= 0,
+                              dataStart <= size, uncompressedSize <= size - dataStart else {
+                            throw BackupError.zipError("Invalid stored entry bounds")
+                        }
                         let fileData = Data(bytes: base + dataStart, count: uncompressedSize)
                         try fileData.write(to: fileURL)
                     } else if method == 8 {
                         // Deflate
+                        guard dataStart >= 0, compressedSize >= 0,
+                              dataStart <= size, compressedSize <= size - dataStart else {
+                            throw BackupError.zipError("Invalid compressed entry bounds")
+                        }
                         let compressedData = Data(bytes: base + dataStart, count: compressedSize)
                         let decompressed = try decompressDeflate(compressedData, expectedSize: uncompressedSize)
                         try decompressed.write(to: fileURL)
@@ -487,7 +628,7 @@ final class ICloudBackupManager: ObservableObject {
 
         isRestoring = true
         progress = 0
-        statusMessage = "Downloading backup..."
+        statusMessage = String(localized: "Downloading backup…")
         defer {
             isRestoring = false
             statusMessage = ""
@@ -495,9 +636,10 @@ final class ICloudBackupManager: ObservableObject {
 
         // Ensure file is downloaded from iCloud
         try await ensureDownloaded(entry.url)
+        try checkCancelled()
 
         progress = 0.3
-        statusMessage = "Extracting backup..."
+        statusMessage = String(localized: "Extracting backup…")
 
         // Extract to temp directory
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -506,6 +648,7 @@ final class ICloudBackupManager: ObservableObject {
 
         let extractDir = tempDir.appendingPathComponent("extracted", isDirectory: true)
         try await unzip(from: entry.url, to: extractDir)
+        try checkCancelled()
 
         // The ZIP may contain a "backup" subdirectory from our staging
         let contentDir: URL
@@ -517,7 +660,8 @@ final class ICloudBackupManager: ObservableObject {
         }
 
         progress = 0.5
-        statusMessage = "Restoring data..."
+        try checkCancelled()
+        statusMessage = String(localized: "Restoring data…")
 
         // Restore based on category
         switch entry.category {
@@ -531,14 +675,14 @@ final class ICloudBackupManager: ObservableObject {
         }
 
         progress = 0.9
-        statusMessage = "Reloading..."
+        statusMessage = String(localized: "Reloading…")
 
         // Reload stores
         await ChatStore.shared.reloadDatabase()
         await SkillStore.shared.reloadDatabase()
 
         progress = 1.0
-        statusMessage = "Restore complete"
+        statusMessage = String(localized: "Restore complete")
         logger.info("Restored backup: \(entry.id)")
     }
 
@@ -647,13 +791,25 @@ final class ICloudBackupManager: ObservableObject {
         case databaseError(String)
         case zipError(String)
         case downloadTimeout
+        case emptyPassword
+        case invalidEncryptedBackup
+        case invalidPassword
+        case encryptionError
+        case cancelled
+        case busy
 
         var errorDescription: String? {
             switch self {
-            case .iCloudUnavailable: return "iCloud is not available. Please sign in to iCloud in Settings."
-            case .databaseError(let msg): return "Database error: \(msg)"
-            case .zipError(let msg): return "Archive error: \(msg)"
-            case .downloadTimeout: return "Timed out downloading backup from iCloud."
+            case .iCloudUnavailable: return String(localized: "iCloud is not available. Please sign in to iCloud in Settings.")
+            case .databaseError(let msg): return String(localized: "Database error: \(msg)")
+            case .zipError(let msg): return String(localized: "Archive error: \(msg)")
+            case .downloadTimeout: return String(localized: "Timed out downloading backup from iCloud.")
+            case .emptyPassword: return String(localized: "Choose a password for this backup.")
+            case .invalidEncryptedBackup: return String(localized: "The selected file is not a valid Ze encrypted backup.")
+            case .invalidPassword: return String(localized: "The backup password is incorrect.")
+            case .encryptionError: return String(localized: "Unable to encrypt the backup.")
+            case .cancelled: return String(localized: "Backup operation cancelled.")
+            case .busy: return String(localized: "Another backup operation is already running.")
             }
         }
     }
@@ -666,4 +822,3 @@ extension Int64 {
         ByteCountFormatter.string(fromByteCount: self, countStyle: .file)
     }
 }
-#endif
