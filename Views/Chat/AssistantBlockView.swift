@@ -739,44 +739,43 @@ struct ThinkingBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 6) {
+                Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ChatColors.tertiaryText)
+
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.purple)
-                Text("思考")
+                    .foregroundStyle(ChatColors.secondaryText)
+                Text(thinkingHeaderTitle)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(ChatColors.secondaryText)
+                ThinkingDurationLabel(block: block, isStreaming: isStreaming)
                 if thinkingLevel.isEnabled {
                     Text(thinkingLevelCompactLabel)
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.purple.opacity(0.82))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.purple.opacity(0.10), in: Capsule())
-                        .overlay {
-                            Capsule()
-                                .stroke(.purple.opacity(0.16), lineWidth: 0.5)
-                        }
+                        .foregroundStyle(ChatColors.tertiaryText)
                         .accessibilityLabel("思考强度 \(thinkingLevelCompactLabel)")
                 }
                 if isStreaming {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.purple)
+                        .tint(ChatColors.secondaryText)
                 }
-                Spacer()
                 if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
                     let charCount = max(block.content.count, block.thinkingContentBuffer.count)
                     Text(charCount > 1000 ? "\(charCount / 1000)K" : "\(charCount)")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.purple.opacity(0.65))
+                        .foregroundStyle(ChatColors.tertiaryText)
                 }
-                Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.purple.opacity(0.6))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
+            .overlay(
+                ShimmerOverlay(isActive: isStreaming)
+                    .mask(thinkingHeaderShimmerMask)
+                    .allowsHitTesting(false)
+            )
             .onTapGesture {
                 // Mark before flipping so any concurrent stream-end collapse
                 // observer in this view sees `thinkingUserToggled = true`
@@ -834,9 +833,17 @@ struct ThinkingBlockView: View {
                                 .foregroundStyle(ChatColors.tertiaryText)
                                 .lineSpacing(3)
                                 .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
+                                .padding(.horizontal, 4)
                                 .padding(.bottom, 10)
+                                .overlay(
+                                    ShimmerOverlay(isActive: isStreaming)
+                                        .mask(
+                                            Text(displayContent)
+                                                .font(.system(size: 13))
+                                                .lineSpacing(3)
+                                        )
+                                        .allowsHitTesting(false)
+                                )
                                 .id("thinkingBottom")
                         }
                     }
@@ -875,12 +882,6 @@ struct ThinkingBlockView: View {
         .onDisappear {
             ThinkingHitchMonitor.shared.stop(owner: block.id)
         }
-        .background(Color.purple.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.purple.opacity(0.15), lineWidth: 0.5)
-        )
         .task(id: block.id) {
             // One-shot per-block auto-expand. Runs when this cell first hosts
             // a given thinking block (block.id is stable across content
@@ -931,6 +932,61 @@ struct ThinkingBlockView: View {
         case .max: return "最高"
         case .ultra: return "极限"
         }
+    }
+
+    private var thinkingHeaderShimmerMask: some View {
+        HStack(spacing: 6) {
+            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+            Image(systemName: "brain.head.profile")
+            Text(thinkingHeaderTitle)
+            ThinkingDurationLabel(block: block, isStreaming: isStreaming)
+            if thinkingLevel.isEnabled { Text(thinkingLevelCompactLabel) }
+            if isStreaming { ProgressView().controlSize(.mini) }
+            if block.content.count > 0 || block.thinkingContentBuffer.count > 0 {
+                let count = max(block.content.count, block.thinkingContentBuffer.count)
+                Text(count > 1000 ? "\(count / 1000)K" : "\(count)")
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 4)
+    }
+
+    private var thinkingHeaderTitle: String {
+        isStreaming ? "思考中" : "思考了"
+    }
+}
+
+/// Live elapsed label for a thinking block; finished blocks use the frozen
+/// duration so collapsed rows remain stable and cheap to render.
+private struct ThinkingDurationLabel: View {
+    @ObservedObject var block: AssistantBlock
+    let isStreaming: Bool
+
+    var body: some View {
+        if let duration = block.thinkingDuration {
+            Text(Self.format(duration))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ChatColors.secondaryText)
+        } else if isStreaming, let start = block.thinkingStartTime {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                Text(Self.format(max(0, timeline.date.timeIntervalSince(start))))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ChatColors.secondaryText)
+            }
+        } else {
+            Text("0s")
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ChatColors.secondaryText)
+        }
+    }
+
+    private static func format(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let remaining = total % 60
+        return remaining == 0 ? "\(minutes)m" : "\(minutes)m \(remaining)s"
     }
 }
 

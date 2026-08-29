@@ -329,6 +329,10 @@ final class AssistantBlock: Identifiable, ObservableObject {
     @Published var streamingFileContent: String?
     /// Whether a thinking block is expanded (persisted across cell reuse).
     @Published var isThinkingExpanded: Bool = false
+    /// Wall-clock timing for the visible thinking summary. These values are
+    /// transient UI state; persisted history has no block-level timestamps.
+    @Published var thinkingDuration: TimeInterval? = nil
+    var thinkingStartTime: Date? = nil
     /// True once the user has manually tapped this thinking block's header.
     /// While this is false the view is allowed to auto-expand on stream start
     /// and auto-collapse on stream end; once the user takes control we leave
@@ -341,6 +345,16 @@ final class AssistantBlock: Identifiable, ObservableObject {
         self.content = content
         self.toolStatus = toolStatus
         self.toolUseId = toolUseId
+        if kind == .thinking {
+            self.thinkingStartTime = Date()
+        }
+    }
+
+    /// Freeze the elapsed thinking time when the provider moves on to another
+    /// block. Calling this repeatedly is harmless and keeps the summary stable.
+    func finishThinking(at date: Date = Date()) {
+        guard kind == .thinking, thinkingDuration == nil, let start = thinkingStartTime else { return }
+        thinkingDuration = max(0, date.timeIntervalSince(start))
     }
 
     /// Concise one-line description for compact tool card display.

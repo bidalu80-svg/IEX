@@ -319,6 +319,7 @@ extension AIChatViewModel {
                             guard msgIdx < messages.count,
                                   thinkIdx < messages[msgIdx].blocks.count else { return }
                             messages[msgIdx].blocks[thinkIdx].flushThinkingBuffer()
+                            messages[msgIdx].blocks[thinkIdx].finishThinking()
                         }
                         currentThinkingBlockIdx = nil
                         result.thinkingText = ""
@@ -353,6 +354,7 @@ extension AIChatViewModel {
                             guard msgIdx < messages.count,
                                   thinkIdx < messages[msgIdx].blocks.count else { return }
                             messages[msgIdx].blocks[thinkIdx].flushThinkingBuffer()
+                            messages[msgIdx].blocks[thinkIdx].finishThinking()
                         }
                         currentThinkingBlockIdx = nil
                         result.thinkingText = ""
@@ -869,6 +871,7 @@ extension AIChatViewModel {
                         guard msgIdx < messages.count,
                               thinkIdx < messages[msgIdx].blocks.count else { return }
                         messages[msgIdx].blocks[thinkIdx].content = finalThinking
+                        messages[msgIdx].blocks[thinkIdx].finishThinking()
                     }
                 }
                 result.stopReason = reason
@@ -881,6 +884,12 @@ extension AIChatViewModel {
         } catch is CancellationError {
             // Flush any throttled text to the block before propagating cancellation,
             // so handleUserCancelledCleanup sees the full streamed content.
+            if let thinkIdx = currentThinkingBlockIdx {
+                await MainActor.run {
+                    guard msgIdx < messages.count, thinkIdx < messages[msgIdx].blocks.count else { return }
+                    messages[msgIdx].blocks[thinkIdx].finishThinking()
+                }
+            }
             if let blockIdx = currentTextBlockIdx, !result.assistantText.isEmpty {
                 await MainActor.run {
                     guard msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count else { return }
@@ -898,6 +907,12 @@ extension AIChatViewModel {
         } catch {
             result.isStreamInterrupted = true
             _streamError = error
+            if let thinkIdx = currentThinkingBlockIdx {
+                await MainActor.run {
+                    guard msgIdx < messages.count, thinkIdx < messages[msgIdx].blocks.count else { return }
+                    messages[msgIdx].blocks[thinkIdx].finishThinking()
+                }
+            }
         }
         if let err = _streamError { throw err }
         // Stream ended cleanly. First drain any un-extracted tail past

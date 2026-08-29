@@ -2595,9 +2595,11 @@ struct AIChatView: View {
                 vm.browserTakeoverActive = true
             }, onTakeoverDone: {
                 vm.resumeFromBrowserTakeover()
-            })
-                .frame(maxWidth: maxContentWidth)
-                .padding(.horizontal, 12)
+                })
+                    .frame(maxWidth: maxContentWidth)
+                    // Keep the floating status bar aligned with the composer
+                    // edges in both compact resting and expanded keyboard states.
+                    .padding(.horizontal, composerHorizontalPadding)
                 // [T-ios-geometry-observer-crash] onGeometryChange replaces the
                 // GeometryReader+onAppear+onChange scaffold: writing state from
                 // onChange(of: geo.*) inside the geometry-observer path re-drives
