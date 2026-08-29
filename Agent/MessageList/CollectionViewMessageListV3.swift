@@ -2198,7 +2198,11 @@ extension CollectionViewMessageListV3 {
                     newItems.append(.wholeMessage(message.id))
                 case .assistant:
                     newItems.append(.assistantHeader(message.id))
-                    for block in message.blocks {
+                    // A todo_write call replaces the complete plan. Keep only
+                    // the latest plan block in the message list so each update
+                    // does not leave another full plan surface behind.
+                    let latestTaskPlanID = message.blocks.last(where: { $0.isTaskPlan })?.id
+                    for block in message.blocks where !block.isTaskPlan || block.id == latestTaskPlanID {
                         newItems.append(.assistantBlock(message.id, block.id))
                     }
                     // Only emit a footer cell when it will actually render

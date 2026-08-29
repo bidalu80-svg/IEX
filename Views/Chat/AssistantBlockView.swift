@@ -25,9 +25,11 @@ struct AssistantBlockView: View {
 
     var body: some View {
         if block.isTaskPlan {
-            TaskPlanView(block: block) {
-                detailBlock = block
-            }
+            TaskPlanView(
+                block: block,
+                onOpenDetails: { detailBlock = block },
+                onStop: onStop
+            )
         } else { switch block.kind {
         case .text:
             if !block.content.isEmpty {
@@ -148,6 +150,9 @@ struct AssistantBlockView: View {
 struct TaskPlanView: View {
     @ObservedObject var block: AssistantBlock
     let onOpenDetails: () -> Void
+    var onStop: (() -> Void)?
+
+    @State private var expanded = false
 
     private var items: [TaskPlanItem] { block.taskPlanItems }
     private var completedCount: Int { items.filter { $0.status == .completed }.count }
@@ -158,48 +163,102 @@ struct TaskPlanView: View {
         }
     }
 
+    private var elapsedText: String? {
+        if let duration = block.toolDuration {
+            return Self.formatDuration(duration)
+        }
+        guard isActive, let start = block.toolStartTime else { return nil }
+        return Self.formatDuration(Date().timeIntervalSince(start))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: expanded ? 8 : 0) {
+            HStack(spacing: 8) {
                 Image(systemName: "checklist")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ChatColors.secondaryText)
-                ChatShimmerText(
-                    text: isActive ? "更新任务计划" : "任务计划",
-                    font: .system(size: 13, weight: .semibold),
-                    color: ChatColors.secondaryText,
-                    isActive: isActive
-                )
-                Spacer(minLength: 4)
+
+                Text("任务计划")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ChatColors.secondaryText)
+
                 Text("\(completedCount)/\(items.count)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(ChatColors.tertiaryText)
-            }
 
-            if items.isEmpty {
-                Text(isActive ? "正在接收计划…" : "暂无可显示的计划")
-                    .font(.system(size: 12))
-                    .foregroundStyle(ChatColors.tertiaryText)
-            } else {
-                ForEach(items) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        planMarker(for: item.status)
-                        Text(item.content)
-                            .font(.system(size: 12))
-                            .foregroundStyle(item.status == .completed ? ChatColors.tertiaryText : ChatColors.secondaryText)
-                            .strikethrough(item.status == .completed, color: ChatColors.tertiaryText)
-                            .lineLimit(2)
-                        Spacer(minLength: 0)
+                if let elapsedText {
+                    if isActive {
+                        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                            Text(elapsedText)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(ChatColors.tertiaryText)
+                        }
+                    } else {
+                        Text(elapsedText)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ChatColors.tertiaryText)
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if isActive, let onStop {
+                    Button(action: onStop) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24, height: 24)
+                            .background(ChatColors.composerAction, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("停止任务计划")
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ChatColors.tertiaryText)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "收起任务计划" : "展开任务计划")
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onOpenDetails)
+
+            if expanded {
+                if items.isEmpty {
+                    Text(isActive ? "正在接收计划…" : "暂无可显示的计划")
+                        .font(.system(size: 12))
+                        .foregroundStyle(ChatColors.tertiaryText)
+                } else {
+                    ForEach(items) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            planMarker(for: item.status)
+                            Text(item.content)
+                                .font(.system(size: 12))
+                                .foregroundStyle(item.status == .completed ? ChatColors.tertiaryText : ChatColors.secondaryText)
+                                .strikethrough(item.status == .completed, color: ChatColors.tertiaryText)
+                                .lineLimit(2)
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ChatColors.primaryText.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: expanded ? 14 : 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: expanded ? 14 : 22, style: .continuous)
+                .stroke(ChatColors.primaryText.opacity(0.08), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
         .contentShape(Rectangle())
-        .onTapGesture(perform: onOpenDetails)
     }
 
     @ViewBuilder
@@ -209,13 +268,23 @@ struct TaskPlanView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .inProgress:
-            ProgressView()
-                .controlSize(.mini)
-                .tint(ChatColors.secondaryText)
+            Image(systemName: "circle.inset.filled")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ChatColors.composerAction)
         case .pending:
             Image(systemName: "circle")
                 .foregroundStyle(ChatColors.tertiaryText)
         }
+    }
+
+    private static func formatDuration(_ duration: TimeInterval) -> String {
+        let seconds = max(0, duration)
+        if seconds < 60 {
+            return String(format: "%.1fs", seconds)
+        }
+        let minutes = Int(seconds) / 60
+        let remainder = Int(seconds) % 60
+        return String(format: "%dm %02ds", minutes, remainder)
     }
 }
 
