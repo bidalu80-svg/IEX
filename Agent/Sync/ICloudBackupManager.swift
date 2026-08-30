@@ -244,8 +244,7 @@ final class ICloudBackupManager: ObservableObject {
 
     private var backupDirectoryURL: URL? {
         guard let container = iCloudContainerURL else { return nil }
-        let configuredName = UserDefaults.standard.string(forKey: "ze.backup.deviceName")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let deviceName = (configuredName?.isEmpty == false ? configuredName! : UIDevice.current.name)
+        let deviceName = UIDevice.current.name
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         return container
@@ -538,7 +537,7 @@ final class ICloudBackupManager: ObservableObject {
 
     private func copyDirectory(_ source: URL, to destination: URL) throws {
         let limit = UserDefaults.standard.integer(forKey: "ze.backup.maxFileSizeMB")
-        let maximumBytes = max(1, limit == 0 ? 100 : limit) * 1_024 * 1_024
+        let maximumBytes = limit < 0 ? 0 : max(1, limit == 0 ? 100 : limit) * 1_024 * 1_024
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
         guard let enumerator = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey], options: []) else { return }
         for case let item as URL in enumerator {
@@ -547,7 +546,7 @@ final class ICloudBackupManager: ObservableObject {
             let values = try item.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)
-            } else if (values.fileSize ?? 0) <= maximumBytes {
+            } else if maximumBytes > 0 && (values.fileSize ?? 0) <= maximumBytes {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try fm.copyItem(at: item, to: target)
             } else {

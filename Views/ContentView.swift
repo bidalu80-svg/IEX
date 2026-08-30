@@ -5380,19 +5380,6 @@ private struct SettingsSheet: View {
 
                 Section("Storage") {
                     NavigationLink {
-                        ICloudBackupView()
-                    } label: {
-                        Label {
-                            Text(String(localized: "Backup and Restore"))
-                        } icon: {
-                            Image(systemName: "arrow.triangle.2.circlepath.icloud")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.indigo, in: Circle())
-                        }
-                    }
-                    NavigationLink {
                         StorageManagementView()
                     } label: {
                         Label {
@@ -5495,6 +5482,19 @@ private struct SettingsSheet: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 21, height: 21)
                                 .background(.gray, in: Circle())
+                        }
+                    }
+                    NavigationLink {
+                        ICloudBackupView()
+                    } label: {
+                        Label {
+                            Text(String(localized: "Backup and Restore"))
+                        } icon: {
+                            Image(systemName: "arrow.triangle.2.circlepath.icloud")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.indigo, in: Circle())
                         }
                     }
 

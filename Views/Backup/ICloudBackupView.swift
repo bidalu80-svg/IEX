@@ -19,8 +19,8 @@ struct ICloudBackupView: View {
     @State private var remoteFiles: [UUID: [RemoteSFTPEntry]] = [:]
     @State private var remoteLoading: UUID?
     @State private var showProtocolPicker = false
-    @AppStorage("ze.backup.deviceName") private var deviceName = ""
     @AppStorage("ze.backup.maxFileSizeMB") private var maxFileSizeMB = 100
+    @AppStorage("ze.backup.encryptionEnabled") private var encryptionEnabled = true
 
     private enum PasswordMode: Identifiable {
         case export(ICloudBackupManager.BackupCategory)
@@ -44,8 +44,8 @@ struct ICloudBackupView: View {
             .pickerStyle(.segmented)
 
             if selectedMode == 0 {
-                backupSettingsSection
                 backupOptionsSection
+                encryptionSection
                 destinationsSection
             } else {
                 restoreSection
@@ -131,14 +131,12 @@ struct ICloudBackupView: View {
                     Text(String(localized: "Export a password-protected .zebak file for local storage or transfer to another device."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach(ICloudBackupManager.BackupCategory.allCases) { category in
-                        Button {
-                            passwordMode = .export(category)
-                            showPasswordSheet = true
-                        } label: {
-                            Label(String.localizedStringWithFormat(String(localized: "Export %@"), category.displayName), systemImage: "square.and.arrow.up")
+                    NavigationLink {
+                        BackupCategoryDetailView(category: .full, selection: $backupSelection) {
+                            passwordMode = .export(.full); showPasswordSheet = true
                         }
-                        .disabled(manager.isBackingUp || manager.isRestoring)
+                    } label: {
+                        Label(String(localized: "Choose backup contents"), systemImage: "slider.horizontal.3")
                     }
                     Button {
                         passwordMode = .restore
@@ -201,7 +199,7 @@ struct ICloudBackupView: View {
             }
             }
         }
-        .navigationTitle(String(localized: "iCloud Backup"))
+        .navigationTitle(String(localized: "Backup and Restore"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             loadBackupSelection()
@@ -271,7 +269,12 @@ struct ICloudBackupView: View {
     }
 
     private var backupOptionsSection: some View {
-        Section(String(localized: "Backup contents")) {
+        Section {
+            HStack {
+                Label(String(localized: "Device name"), systemImage: "iphone")
+                Spacer()
+                Text(UIDevice.current.name).foregroundStyle(.secondary)
+            }
             Toggle(isOn: selectionBinding(\.chats)) { Label(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right") }
             Toggle(isOn: selectionBinding(\.sharedFiles)) { Label(String(localized: "Shared files"), systemImage: "folder") }
             Toggle(isOn: selectionBinding(\.skills)) { Label(String(localized: "Skills"), systemImage: "wand.and.stars") }
@@ -279,27 +282,19 @@ struct ICloudBackupView: View {
             Toggle(isOn: selectionBinding(\.providers)) { Label(String(localized: "AI providers"), systemImage: "cpu") }
             Toggle(isOn: selectionBinding(\.mcpServers)) { Label(String(localized: "MCP servers"), systemImage: "server.rack") }
             Toggle(isOn: selectionBinding(\.environmentVariables)) { Label(String(localized: "Environment variables"), systemImage: "key") }
-            Text(String(localized: "The encrypted Ze backup includes local data and configuration. Secrets are protected by the backup password."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var backupSettingsSection: some View {
-        Section(String(localized: "Backup settings")) {
-            TextField(String(localized: "Device name"), text: $deviceName)
-            Stepper(value: $maxFileSizeMB, in: 1...2048, step: 1) {
-                HStack {
-                    Text(String(localized: "Maximum file size"))
-                    Spacer()
-                    Text("\(maxFileSizeMB) MB")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
+            Picker(selection: $maxFileSizeMB) {
+                Text(String(localized: "Do not back up files")).tag(-1)
+                Text("1 MB").tag(1); Text("2 MB").tag(2); Text("5 MB").tag(5)
+                Text("10 MB").tag(10); Text("50 MB").tag(50); Text("100 MB").tag(100); Text("500 MB").tag(500)
+                Text(String(localized: "Unlimited")).tag(0)
+            } label: {
+                Label(String(localized: "Maximum file size"), systemImage: "doc")
             }
-            Text(String(localized: "Files larger than this limit are skipped from folder contents."))
+        } header: {
+            Text(String(localized: "Include"))
+        } footer: {
+            Text(String(localized: "The backup includes all selected local data. Files larger than the limit are recorded but their contents are skipped."))
                 .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -326,6 +321,17 @@ struct ICloudBackupView: View {
             Button { showDestinationImporter = true } label: {
                 Label(String(localized: "Add backup folder"), systemImage: "folder.badge.plus")
             }
+        }
+    }
+
+    private var encryptionSection: some View {
+        Section(String(localized: "Encryption")) {
+            Toggle(isOn: $encryptionEnabled) {
+                Label(String(localized: "Encrypted backup"), systemImage: "lock.fill")
+            }
+            Text(String(localized: "Encrypted backups protect provider credentials and other sensitive settings with your password."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -519,6 +525,64 @@ struct ICloudBackupView: View {
             defer { remoteLoading = nil }
             do { remoteFiles[destination.id] = try await manager.listEncryptedBackups(in: destination) }
             catch { showError = error.localizedDescription }
+        }
+    }
+}
+
+private struct BackupCategoryDetailView: View {
+    let category: ICloudBackupManager.BackupCategory
+    @Binding var selection: ICloudBackupManager.BackupSelection
+    let onExport: () -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                Label(category.displayName, systemImage: category.systemImage)
+                    .font(.headline)
+                Text(category.description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Section(String(localized: "Backup contents")) {
+                if category == .sessions || category == .full {
+                    Toggle(String(localized: "Chats"), isOn: $selection.chats)
+                    Toggle(String(localized: "Shared files"), isOn: $selection.sharedFiles)
+                }
+                if category == .skillsAndMemories || category == .full {
+                    Toggle(String(localized: "Skills"), isOn: $selection.skills)
+                    Toggle(String(localized: "Memory and Soul"), isOn: $selection.memory)
+                }
+                if category == .full {
+                    Toggle(String(localized: "AI providers"), isOn: $selection.providers)
+                    Toggle(String(localized: "MCP servers"), isOn: $selection.mcpServers)
+                    Toggle(String(localized: "Environment variables"), isOn: $selection.environmentVariables)
+                }
+            }
+            Section {
+                Button {
+                    onExport()
+                } label: {
+                    Label(String(localized: "Export encrypted backup"), systemImage: "lock.doc.fill")
+                }
+                .disabled(!hasSelection)
+            } footer: {
+                Text(String(localized: "Secrets are included only in the encrypted backup and are protected by your password."))
+            }
+        }
+        .navigationTitle(category.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selection) { value in
+            if let data = try? JSONEncoder().encode(value) {
+                UserDefaults.standard.set(data, forKey: "ze.backup.selection.v1")
+            }
+        }
+    }
+
+    private var hasSelection: Bool {
+        switch category {
+        case .sessions: return selection.chats || selection.sharedFiles
+        case .skillsAndMemories: return selection.skills || selection.memory
+        case .full: return selection.chats || selection.sharedFiles || selection.skills || selection.memory || selection.providers || selection.mcpServers || selection.environmentVariables
         }
     }
 }

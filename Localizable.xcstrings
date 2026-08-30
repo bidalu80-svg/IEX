@@ -78460,6 +78460,60 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入 SFTP 密码后继续" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請輸入 SFTP 密碼後繼續" } }
       }
+    },
+    "Chats and shared files" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "聊天与共享文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "聊天與共享檔案" } }
+      }
+    },
+    "Complete backup" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "完整备份" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "完整備份" } }
+      }
+    },
+    "Choose backup contents" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择备份内容" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選擇備份內容" } }
+      }
+    },
+    "Export encrypted backup" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出加密备份" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出加密備份" } }
+      }
+    },
+    "Secrets are included only in the encrypted backup and are protected by your password." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "敏感信息仅包含在加密备份中，并由你的密码保护。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "敏感資訊僅包含在加密備份中，並由你的密碼保護。" } }
+      }
+    },
+    "Include" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "包含内容" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "包含內容" } }
+      }
+    },
+    "Do not back up files" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不备份文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "不備份檔案" } }
+      }
+    },
+    "Unlimited" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无限制" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無限制" } }
+      }
+    },
+    "The backup includes all selected local data. Files larger than the limit are recorded but their contents are skipped." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份会包含选中的本地数据。超过大小限制的文件会记录在备份中，但不包含文件内容。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份會包含選取的本機資料。超過大小限制的檔案會記錄在備份中，但不包含檔案內容。" } }
+      }
     }
   },
   "version" : "1.0"
