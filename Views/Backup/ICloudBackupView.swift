@@ -268,6 +268,13 @@ struct ICloudBackupView: View {
             BackupProtocolPickerView { server in
                 manager.saveDestination(server)
                 showProtocolPicker = false
+            } onSelectFilesFolder: {
+                // The iOS Files picker can browse SMB/WebDAV/FTP locations
+                // registered in Files. Saving its security-scoped bookmark
+                // gives the backup engine a real read/write destination
+                // without inventing a second, incompatible credential store.
+                showProtocolPicker = false
+                showDestinationImporter = true
             }
         }
     }
@@ -604,6 +611,7 @@ private struct BackupCategoryDetailView: View {
 
 private struct BackupProtocolPickerView: View {
     let onSelectSFTP: (ICloudBackupManager.BackupDestination) -> Void
+    let onSelectFilesFolder: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showServerChooser = false
     @State private var showSFTPForm = false
@@ -617,11 +625,11 @@ private struct BackupProtocolPickerView: View {
     }
 
     private let rows: [ProtocolRow] = [
-        .init(id: "smb", title: "SMB / Windows Share", subtitle: "NAS、Windows 共享文件夹、Samba", icon: "externaldrive.connected.to.line.below", enabled: false),
-        .init(id: "webdav", title: "WebDAV", subtitle: "Nextcloud、ownCloud、群晖、alist", icon: "globe", enabled: false),
+        .init(id: "smb", title: "SMB / Windows Share", subtitle: "NAS、Windows 共享文件夹、Samba（通过 Files 选择）", icon: "externaldrive.connected.to.line.below", enabled: true),
+        .init(id: "webdav", title: "WebDAV", subtitle: "Nextcloud、ownCloud、群晖、alist（通过 Files 选择）", icon: "globe", enabled: true),
         .init(id: "sftp", title: "SFTP", subtitle: "通过 SSH 访问的 Linux 服务器或 NAS", icon: "terminal", enabled: true),
-        .init(id: "s3", title: "S3 兼容存储", subtitle: "MinIO、Cloudflare R2、Wasabi、阿里云 OSS、腾讯 COS", icon: "cylinder", enabled: false),
-        .init(id: "ftp", title: "FTP", subtitle: "旧式文件服务器和路由器", icon: "arrow.up.arrow.down.circle", enabled: false)
+        .init(id: "s3", title: "S3 兼容存储", subtitle: "MinIO、Cloudflare R2、Wasabi、阿里云 OSS、腾讯 COS（通过 Files 选择）", icon: "cylinder", enabled: true),
+        .init(id: "ftp", title: "FTP", subtitle: "旧式文件服务器和路由器（通过 Files 选择）", icon: "arrow.up.arrow.down.circle", enabled: true)
     ]
 
     var body: some View {
@@ -631,7 +639,11 @@ private struct BackupProtocolPickerView: View {
                     ForEach(rows) { row in
                         Button {
                             guard row.enabled else { return }
-                            if row.id == "sftp" { selectSFTP() }
+                            if row.id == "sftp" {
+                                selectSFTP()
+                            } else if row.id == "smb" || row.id == "webdav" || row.id == "s3" || row.id == "ftp" {
+                                onSelectFilesFolder()
+                            }
                         } label: {
                             HStack(spacing: 14) {
                                 Image(systemName: row.icon)
