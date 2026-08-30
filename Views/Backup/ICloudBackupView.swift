@@ -271,24 +271,24 @@ struct ICloudBackupView: View {
     private var backupOptionsSection: some View {
         Section {
             HStack {
-                Label(String(localized: "Device name"), systemImage: "iphone")
+                backupIconLabel(String(localized: "Device name"), systemImage: "iphone", color: .blue)
                 Spacer()
                 Text(UIDevice.current.name).foregroundStyle(.secondary)
             }
-            Toggle(isOn: selectionBinding(\.chats)) { Label(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right") }
-            Toggle(isOn: selectionBinding(\.sharedFiles)) { Label(String(localized: "Shared files"), systemImage: "folder") }
-            Toggle(isOn: selectionBinding(\.skills)) { Label(String(localized: "Skills"), systemImage: "wand.and.stars") }
-            Toggle(isOn: selectionBinding(\.memory)) { Label(String(localized: "Memory and Soul"), systemImage: "brain") }
-            Toggle(isOn: selectionBinding(\.providers)) { Label(String(localized: "AI providers"), systemImage: "cpu") }
-            Toggle(isOn: selectionBinding(\.mcpServers)) { Label(String(localized: "MCP servers"), systemImage: "server.rack") }
-            Toggle(isOn: selectionBinding(\.environmentVariables)) { Label(String(localized: "Environment variables"), systemImage: "key") }
+            Toggle(isOn: selectionBinding(\.chats)) { backupIconLabel(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", color: .blue) }
+            Toggle(isOn: selectionBinding(\.sharedFiles)) { backupIconLabel(String(localized: "Shared files"), systemImage: "doc.fill", color: .indigo) }
+            Toggle(isOn: selectionBinding(\.skills)) { backupIconLabel(String(localized: "Skills"), systemImage: "puzzlepiece.fill", color: .orange) }
+            Toggle(isOn: selectionBinding(\.memory)) { backupIconLabel(String(localized: "Memory and Soul"), systemImage: "brain", color: .pink) }
+            Toggle(isOn: selectionBinding(\.providers)) { backupIconLabel(String(localized: "AI providers"), systemImage: "link", color: .teal) }
+            Toggle(isOn: selectionBinding(\.mcpServers)) { backupIconLabel(String(localized: "MCP servers"), systemImage: "square.stack.3d.down.right.fill", color: .cyan) }
+            Toggle(isOn: selectionBinding(\.environmentVariables)) { backupIconLabel(String(localized: "Environment variables"), systemImage: "terminal.fill", color: .brown) }
             Picker(selection: $maxFileSizeMB) {
                 Text(String(localized: "Do not back up files")).tag(-1)
                 Text("1 MB").tag(1); Text("2 MB").tag(2); Text("5 MB").tag(5)
                 Text("10 MB").tag(10); Text("50 MB").tag(50); Text("100 MB").tag(100); Text("500 MB").tag(500)
                 Text(String(localized: "Unlimited")).tag(0)
             } label: {
-                Label(String(localized: "Maximum file size"), systemImage: "doc")
+                backupIconLabel(String(localized: "Maximum file size"), systemImage: "scroll", color: .gray)
             }
         } header: {
             Text(String(localized: "Include"))
@@ -324,10 +324,21 @@ struct ICloudBackupView: View {
         }
     }
 
+    private func backupIconLabel(_ title: String, systemImage: String, color: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(color, in: Circle())
+            Text(title)
+        }
+    }
+
     private var encryptionSection: some View {
         Section(String(localized: "Encryption")) {
             Toggle(isOn: $encryptionEnabled) {
-                Label(String(localized: "Encrypted backup"), systemImage: "lock.fill")
+                backupIconLabel(String(localized: "Encrypted backup"), systemImage: "lock.open.fill", color: .gray)
             }
             Text(String(localized: "Encrypted backups protect provider credentials and other sensitive settings with your password."))
                 .font(.caption)

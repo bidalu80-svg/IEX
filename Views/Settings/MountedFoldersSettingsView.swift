@@ -116,8 +116,12 @@ struct MountedFoldersSettingsView: View {
                 )
                 // The picker is already dismissing itself. Scheduling the
                 // confirmation separately avoids a presentation request in
-                // the delegate callback's UIKit transition.
+                // the delegate callback's UIKit transition. Explicitly close
+                // the SwiftUI wrapper as well: when the Files provider keeps
+                // its own sheet alive, leaving this flag true makes the
+                // system's “Open” button appear to do nothing.
                 DispatchQueue.main.async {
+                    showingPicker = false
                     pendingMount = mount
                     mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
                 }
