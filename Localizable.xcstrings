@@ -78346,6 +78346,120 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "超过此限制的文件将从文件夹内容中跳过。" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "超過此限制的檔案將從資料夾內容中略過。" } }
       }
+    },
+    "Add server…" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加服务器…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入伺服器…" } }
+      }
+    },
+    "Protocol type" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "协议类型" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "協定類型" } }
+      }
+    },
+    "Add server" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加服务器" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入伺服器" } }
+      }
+    },
+    "This protocol is not available yet" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此协议暂未启用" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "此協定尚未啟用" } }
+      }
+    },
+    "SMB / Windows Share" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "SMB / Windows 共享" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "SMB / Windows 共享" } }
+      }
+    },
+    "S3 兼容存储" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "S3 兼容存储" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "S3 相容儲存" } }
+      }
+    },
+    "Displayed in backup destinations" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示在备份目标列表中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "顯示在備份目標列表中" } }
+      }
+    },
+    "Connection information" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接信息" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "連線資訊" } }
+      }
+    },
+    "Server" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "服务器" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "伺服器" } }
+      }
+    },
+    "Username" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "用户名" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "使用者名稱" } }
+      }
+    },
+    "Password" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "密码" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "密碼" } }
+      }
+    },
+    "Port (optional)" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "端口（可选）" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "連接埠（選填）" } }
+      }
+    },
+    "Remote folder" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "远程文件夹" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "遠端資料夾" } }
+      }
+    },
+    "The password is kept in the device session and is never written into a backup file." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "密码仅保存在本机当前会话中，绝不会写入备份文件。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "密碼僅保存在本機目前工作階段中，絕不會寫入備份檔案。" } }
+      }
+    },
+    "The server host key must be confirmed in Ze server settings before connecting." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接前必须先在 Ze 服务器设置中确认主机密钥。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "連線前必須先在 Ze 伺服器設定中確認主機金鑰。" } }
+      }
+    },
+    "Add SFTP server" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加 SFTP 服务器" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入 SFTP 伺服器" } }
+      }
+    },
+    "Name, server, and username are required" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名称、服务器和用户名为必填项" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "名稱、伺服器和使用者名稱為必填項目" } }
+      }
+    },
+    "Port must be a number between 1 and 65535" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "端口必须是 1 到 65535 之间的数字" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "連接埠必須是 1 到 65535 之間的數字" } }
+      }
+    },
+    "Enter the SFTP password to continue" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入 SFTP 密码后继续" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請輸入 SFTP 密碼後繼續" } }
+      }
     }
   },
   "version" : "1.0"

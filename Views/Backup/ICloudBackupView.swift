@@ -18,6 +18,7 @@ struct ICloudBackupView: View {
     @State private var backupSelection = ICloudBackupManager.BackupSelection.forCategory(.full)
     @State private var remoteFiles: [UUID: [RemoteSFTPEntry]] = [:]
     @State private var remoteLoading: UUID?
+    @State private var showProtocolPicker = false
     @AppStorage("ze.backup.deviceName") private var deviceName = ""
     @AppStorage("ze.backup.maxFileSizeMB") private var maxFileSizeMB = 100
 
@@ -261,6 +262,12 @@ struct ICloudBackupView: View {
                 }
             }
         }
+        .sheet(isPresented: $showProtocolPicker) {
+            BackupProtocolPickerView { server in
+                manager.saveDestination(server)
+                showProtocolPicker = false
+            }
+        }
     }
 
     private var backupOptionsSection: some View {
@@ -313,20 +320,11 @@ struct ICloudBackupView: View {
                     }
                 }
             }
-            Button {
-                showDestinationImporter = true
-            } label: {
-                Label(String(localized: "Add backup folder"), systemImage: "plus.circle.fill")
+            Button { showProtocolPicker = true } label: {
+                Label(String(localized: "Add server…"), systemImage: "globe")
             }
-            if !RemoteServerStore.shared.servers.isEmpty {
-                ForEach(RemoteServerStore.shared.servers) { server in
-                    Button {
-                        let destination = ICloudBackupManager.BackupDestination(name: server.name, kind: .sftpServer, serverID: server.id, remotePath: "/")
-                        manager.saveDestination(destination)
-                    } label: {
-                        Label(String.localizedStringWithFormat(String(localized: "Add SFTP destination: %@"), server.name), systemImage: "server.rack")
-                    }
-                }
+            Button { showDestinationImporter = true } label: {
+                Label(String(localized: "Add backup folder"), systemImage: "folder.badge.plus")
             }
         }
     }
@@ -521,6 +519,177 @@ struct ICloudBackupView: View {
             defer { remoteLoading = nil }
             do { remoteFiles[destination.id] = try await manager.listEncryptedBackups(in: destination) }
             catch { showError = error.localizedDescription }
+        }
+    }
+}
+
+private struct BackupProtocolPickerView: View {
+    let onSelectSFTP: (ICloudBackupManager.BackupDestination) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var showServerChooser = false
+    @State private var showSFTPForm = false
+
+    private struct ProtocolRow: Identifiable {
+        let id: String
+        let title: LocalizedStringKey
+        let subtitle: LocalizedStringKey
+        let icon: String
+        let enabled: Bool
+    }
+
+    private let rows: [ProtocolRow] = [
+        .init(id: "smb", title: "SMB / Windows Share", subtitle: "NAS、Windows 共享文件夹、Samba", icon: "externaldrive.connected.to.line.below", enabled: false),
+        .init(id: "webdav", title: "WebDAV", subtitle: "Nextcloud、ownCloud、群晖、alist", icon: "globe", enabled: false),
+        .init(id: "sftp", title: "SFTP", subtitle: "通过 SSH 访问的 Linux 服务器或 NAS", icon: "terminal", enabled: true),
+        .init(id: "s3", title: "S3 兼容存储", subtitle: "MinIO、Cloudflare R2、Wasabi、阿里云 OSS、腾讯 COS", icon: "cylinder", enabled: false),
+        .init(id: "ftp", title: "FTP", subtitle: "旧式文件服务器和路由器", icon: "arrow.up.arrow.down.circle", enabled: false)
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section(String(localized: "Protocol type")) {
+                    ForEach(rows) { row in
+                        Button {
+                            guard row.enabled else { return }
+                            if row.id == "sftp" { selectSFTP() }
+                        } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: row.icon)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 36, height: 36)
+                                    .background(row.enabled ? Color.blue : Color.gray, in: Circle())
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(row.title).font(.headline)
+                                    Text(row.subtitle).font(.subheadline).foregroundStyle(.secondary)
+                                    if !row.enabled {
+                                        Text(String(localized: "This protocol is not available yet"))
+                                            .font(.caption).foregroundStyle(.orange)
+                                    }
+                                }
+                                Spacer()
+                                if row.enabled { Image(systemName: "chevron.right").foregroundStyle(.tertiary) }
+                            }
+                            .padding(.vertical, 5)
+                        }
+                        .disabled(!row.enabled)
+                    }
+                }
+            }
+            .navigationTitle(String(localized: "Add server"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "Cancel")) { dismiss() }
+                }
+            }
+            .confirmationDialog(String(localized: "Choose an SFTP server"), isPresented: $showServerChooser) {
+                ForEach(RemoteServerStore.shared.servers) { server in
+                    Button(server.name) {
+                        onSelectSFTP(.init(name: server.name, kind: .sftpServer, serverID: server.id, remotePath: "/"))
+                        dismiss()
+                    }
+                }
+                Button(String(localized: "Cancel"), role: .cancel) { }
+            }
+            .sheet(isPresented: $showSFTPForm) {
+                SFTPBackupServerEditor { destination in
+                    onSelectSFTP(destination)
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func selectSFTP() {
+        let servers = RemoteServerStore.shared.servers
+        guard !servers.isEmpty else { showSFTPForm = true; return }
+        if servers.count == 1, let server = servers.first {
+            onSelectSFTP(.init(name: server.name, kind: .sftpServer, serverID: server.id, remotePath: "/"))
+            dismiss()
+        } else {
+            showServerChooser = true
+        }
+    }
+}
+
+private struct SFTPBackupServerEditor: View {
+    let onSave: (ICloudBackupManager.BackupDestination) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var host = ""
+    @State private var port = "22"
+    @State private var username = ""
+    @State private var password = ""
+    @State private var remotePath = "/"
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(String(localized: "Name")) {
+                    TextField(String(localized: "Displayed in backup destinations"), text: $name)
+                }
+                Section(String(localized: "Connection information")) {
+                    TextField(String(localized: "Server"), text: $host)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField(String(localized: "Username"), text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField(String(localized: "Password"), text: $password)
+                    TextField(String(localized: "Port (optional)"), text: $port)
+                        .keyboardType(.numberPad)
+                    TextField(String(localized: "Remote folder"), text: $remotePath)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Section {
+                    Text(String(localized: "The password is kept in the device session and is never written into a backup file."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(String(localized: "The server host key must be confirmed in Ze server settings before connecting."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let errorMessage {
+                    Section { Text(errorMessage).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle(String(localized: "Add SFTP server"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(String(localized: "Cancel")) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "Save"), action: save) }
+            }
+        }
+    }
+
+    private func save() {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanUser = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, !cleanHost.isEmpty, !cleanUser.isEmpty else {
+            errorMessage = String(localized: "Name, server, and username are required")
+            return
+        }
+        guard let portValue = Int(port), (1...65_535).contains(portValue) else {
+            errorMessage = String(localized: "Port must be a number between 1 and 65535")
+            return
+        }
+        guard !password.isEmpty else {
+            errorMessage = String(localized: "Enter the SFTP password to continue")
+            return
+        }
+        do {
+            let id = UUID()
+            let profile = RemoteServerProfile(id: id, name: cleanName, host: cleanHost, port: portValue,
+                                              username: cleanUser, authentication: .password)
+            try RemoteServerStore.shared.save(profile)
+            RemoteServerSessionCredentials.shared.setPassword(password, for: id)
+            let path = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            onSave(.init(name: cleanName, kind: .sftpServer, serverID: id, remotePath: path.isEmpty ? "/" : path))
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

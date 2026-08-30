@@ -105,7 +105,7 @@ struct MountedFoldersSettingsView: View {
         // Let UIDocumentPicker own its normal dismissal after a selection.
         // Calling dismiss on its delegate callback races Files' own transition
         // and can leave the picker on screen. This matches the proven
-        // OpenMinis handoff. The delegate only returns the selected URL so
+        // Ze handoff. The delegate only returns the selected URL so
         // Files can complete its own transition before bookmark generation.
         .sheet(isPresented: $showingPicker) {
             FolderPicker { url in
@@ -460,7 +460,7 @@ final class MountedFoldersViewModel: ObservableObject {
 
     @discardableResult
     func add(pickedURL: URL, customName: String, userAllowWrite: Bool) throws -> MountedFolderEntry {
-        // Match the working OpenMinis lifecycle: return promptly from Files'
+        // Match the working Ze lifecycle: return promptly from Files'
         // delegate, then create the bookmark when the user confirms the mount.
         // The scope result is only used to balance stopAccessing; a false value
         // is not treated as a cancelled/invalid picker selection.
