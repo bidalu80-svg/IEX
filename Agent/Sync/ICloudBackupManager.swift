@@ -76,6 +76,56 @@ final class ICloudBackupManager: ObservableObject {
         let url: URL
     }
 
+    struct BackupSelection: Codable, Equatable {
+        var chats: Bool
+        var sharedFiles: Bool
+        var skills: Bool
+        var memory: Bool
+        var providers: Bool
+        var mcpServers: Bool
+        var environmentVariables: Bool
+
+        static func forCategory(_ category: BackupCategory) -> BackupSelection {
+            switch category {
+            case .sessions:
+                return .init(chats: true, sharedFiles: true, skills: false, memory: false,
+                             providers: false, mcpServers: false, environmentVariables: false)
+            case .skillsAndMemories:
+                return .init(chats: false, sharedFiles: false, skills: true, memory: true,
+                             providers: false, mcpServers: false, environmentVariables: false)
+            case .full:
+                return .init(chats: true, sharedFiles: true, skills: true, memory: true,
+                             providers: true, mcpServers: true, environmentVariables: true)
+            }
+        }
+    }
+
+    enum BackupDestinationKind: String, Codable, CaseIterable, Identifiable {
+        case localFolder
+        case sftpServer
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .localFolder: return String(localized: "Files folder")
+            case .sftpServer: return String(localized: "SFTP server")
+            }
+        }
+    }
+
+    struct BackupDestination: Codable, Identifiable, Hashable {
+        var id: UUID
+        var name: String
+        var kind: BackupDestinationKind
+        var bookmarkData: Data?
+        var serverID: UUID?
+        var remotePath: String?
+        init(id: UUID = UUID(), name: String, kind: BackupDestinationKind,
+             bookmarkData: Data? = nil, serverID: UUID? = nil, remotePath: String? = nil) {
+            self.id = id; self.name = name; self.kind = kind
+            self.bookmarkData = bookmarkData; self.serverID = serverID; self.remotePath = remotePath
+        }
+    }
+
     @Published var isBackingUp = false
     @Published var isRestoring = false
     @Published var progress: Double = 0
@@ -83,9 +133,106 @@ final class ICloudBackupManager: ObservableObject {
     @Published var availableBackups: [BackupEntry] = []
     @Published var lastExportURL: URL?
     @Published var isCancelled = false
+    @Published private(set) var destinations: [BackupDestination] = []
 
     private let fm = FileManager.default
     private let containerID = "iCloud.com.ze.app"
+    private let destinationsKey = "ze.backup.destinations.v1"
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: destinationsKey),
+           let saved = try? JSONDecoder().decode([BackupDestination].self, from: data) {
+            destinations = saved
+        }
+    }
+
+    func saveDestination(_ destination: BackupDestination) {
+        if let index = destinations.firstIndex(where: { $0.id == destination.id }) { destinations[index] = destination }
+        else { destinations.append(destination) }
+        persistDestinations()
+    }
+
+    func removeDestination(_ destination: BackupDestination) {
+        destinations.removeAll { $0.id == destination.id }
+        persistDestinations()
+    }
+
+    private func persistDestinations() {
+        if let data = try? JSONEncoder().encode(destinations) { UserDefaults.standard.set(data, forKey: destinationsKey) }
+    }
+
+    func backupEncrypted(category: BackupCategory, to destination: BackupDestination, password: String) async throws -> URL {
+        try await backupEncrypted(category: category, selection: .forCategory(category), to: destination, password: password)
+    }
+
+    func backupEncrypted(category: BackupCategory, selection: BackupSelection, to destination: BackupDestination, password: String) async throws -> URL {
+        let localURL = try await exportEncryptedBackup(category: category, selection: selection, password: password)
+        switch destination.kind {
+        case .localFolder:
+            guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
+            let target = folder.appendingPathComponent(localURL.lastPathComponent)
+            if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+            try fm.copyItem(at: localURL, to: target)
+            return target
+        case .sftpServer:
+            guard let serverID = destination.serverID,
+                  let profile = RemoteServerStore.shared.servers.first(where: { $0.id == serverID }) else { throw BackupError.invalidDestination }
+            if !RemoteSSHConnectionService.shared.isConnected(to: serverID) { try await RemoteSSHConnectionService.shared.connect(to: profile) }
+            let path = (destination.remotePath ?? "/").trimmingCharacters(in: .whitespacesAndNewlines)
+            let remote = path.hasSuffix("/") ? path + localURL.lastPathComponent : path + "/" + localURL.lastPathComponent
+            try await RemoteSSHConnectionService.shared.uploadFile(try Data(contentsOf: localURL), to: remote, on: serverID)
+            return localURL
+        }
+    }
+
+    func restoreEncrypted(from destination: BackupDestination, fileName: String, password: String) async throws {
+        switch destination.kind {
+        case .localFolder:
+            guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
+            try await restoreEncrypted(from: folder.appendingPathComponent(fileName), password: password)
+        case .sftpServer:
+            guard let serverID = destination.serverID,
+                  let profile = RemoteServerStore.shared.servers.first(where: { $0.id == serverID }) else { throw BackupError.invalidDestination }
+            if !RemoteSSHConnectionService.shared.isConnected(to: serverID) { try await RemoteSSHConnectionService.shared.connect(to: profile) }
+            let path = (destination.remotePath ?? "/").trimmingCharacters(in: .whitespacesAndNewlines)
+            let remote = path.hasSuffix("/") ? path + fileName : path + "/" + fileName
+            let data = try await RemoteSSHConnectionService.shared.downloadFile(at: remote, on: serverID)
+            let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zebak")
+            try data.write(to: temp, options: .atomic); defer { try? fm.removeItem(at: temp) }
+            try await restoreEncrypted(from: temp, password: password)
+        }
+    }
+
+    func listEncryptedBackups(in destination: BackupDestination) async throws -> [RemoteSFTPEntry] {
+        switch destination.kind {
+        case .localFolder:
+            guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
+            return try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey], options: [.skipsHiddenFiles])
+                .filter { $0.pathExtension.lowercased() == "zebak" }
+                .map { url in
+                    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                    return RemoteSFTPEntry(path: url.path, name: url.lastPathComponent, isDirectory: false,
+                                           size: UInt64(values?.fileSize ?? 0), modifiedAt: values?.contentModificationDate, permissions: nil)
+                }
+                .sorted { ($0.modifiedAt ?? .distantPast) > ($1.modifiedAt ?? .distantPast) }
+        case .sftpServer:
+            guard let serverID = destination.serverID,
+                  let profile = RemoteServerStore.shared.servers.first(where: { $0.id == serverID }) else { throw BackupError.invalidDestination }
+            if !RemoteSSHConnectionService.shared.isConnected(to: serverID) { try await RemoteSSHConnectionService.shared.connect(to: profile) }
+            let path = (destination.remotePath ?? "/").trimmingCharacters(in: .whitespacesAndNewlines)
+            return try await RemoteSSHConnectionService.shared.listDirectory(at: path.isEmpty ? "/" : path, on: serverID)
+                .filter { !$0.isDirectory && $0.name.lowercased().hasSuffix(".zebak") }
+        }
+    }
 
     // MARK: - iCloud Container
 
@@ -97,7 +244,8 @@ final class ICloudBackupManager: ObservableObject {
 
     private var backupDirectoryURL: URL? {
         guard let container = iCloudContainerURL else { return nil }
-        let deviceName = UIDevice.current.name
+        let configuredName = UserDefaults.standard.string(forKey: "ze.backup.deviceName")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let deviceName = (configuredName?.isEmpty == false ? configuredName! : UIDevice.current.name)
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         return container
@@ -139,6 +287,10 @@ final class ICloudBackupManager: ObservableObject {
     /// persisted or written to logs; callers should collect it in a secure
     /// text field and discard it after this method returns.
     func exportEncryptedBackup(category: BackupCategory, password: String) async throws -> URL {
+        try await exportEncryptedBackup(category: category, selection: .forCategory(category), password: password)
+    }
+
+    func exportEncryptedBackup(category: BackupCategory, selection: BackupSelection, password: String) async throws -> URL {
         guard !password.isEmpty else { throw BackupError.emptyPassword }
         guard !isBackingUp, !isRestoring else { throw BackupError.busy }
         isBackingUp = true
@@ -154,13 +306,7 @@ final class ICloudBackupManager: ObservableObject {
         try fm.createDirectory(at: stageDir, withIntermediateDirectories: true)
         statusMessage = String(localized: "Preparing encrypted backup…")
         try checkCancelled()
-        switch category {
-        case .sessions: try await stageSessionFiles(to: stageDir)
-        case .skillsAndMemories: try await stageSkillsAndMemoryFiles(to: stageDir)
-        case .full:
-            try await stageSessionFiles(to: stageDir)
-            try await stageSkillsAndMemoryFiles(to: stageDir)
-        }
+        try await stageSelectedFiles(selection, to: stageDir)
         progress = 0.55
         try checkCancelled()
         let zipURL = tempDir.appendingPathComponent("payload.zip")
@@ -202,9 +348,19 @@ final class ICloudBackupManager: ObservableObject {
         if fm.fileExists(atPath: root.appendingPathComponent("ze.db").path) || fm.fileExists(atPath: root.appendingPathComponent("media").path) {
             try await restoreSessionFiles(from: root)
         }
+        let sharedSrc = root.appendingPathComponent("shared-files")
+        if fm.fileExists(atPath: sharedSrc.path), let sharedDir = SharedContainerStore.sharedFileDirectory {
+            try fm.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+            for item in try fm.contentsOfDirectory(at: sharedSrc, includingPropertiesForKeys: nil) {
+                let target = sharedDir.appendingPathComponent(item.lastPathComponent)
+                if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+                try fm.copyItem(at: item, to: target)
+            }
+        }
         if fm.fileExists(atPath: root.appendingPathComponent("skills.db").path) || fm.fileExists(atPath: root.appendingPathComponent("skills").path) || fm.fileExists(atPath: root.appendingPathComponent("memory").path) {
             try await restoreSkillsAndMemoryFiles(from: root)
         }
+        try await restoreConfigurationFiles(from: root)
         await ChatStore.shared.reloadDatabase()
         await SkillStore.shared.reloadDatabase()
         progress = 1
@@ -326,12 +482,12 @@ final class ICloudBackupManager: ObservableObject {
 
         // Copy media/
         if fm.fileExists(atPath: mediaURL.path) {
-            try fm.copyItem(at: mediaURL, to: dir.appendingPathComponent("media"))
+            try copyDirectory(mediaURL, to: dir.appendingPathComponent("media"))
         }
 
         // Copy ze/ (session workspace files)
         if fm.fileExists(atPath: sessionZeURL.path) {
-            try fm.copyItem(at: sessionZeURL, to: dir.appendingPathComponent("ze"))
+            try copyDirectory(sessionZeURL, to: dir.appendingPathComponent("ze"))
         }
     }
 
@@ -352,6 +508,87 @@ final class ICloudBackupManager: ObservableObject {
         // Copy memory/
         if fm.fileExists(atPath: memoryURL.path) {
             try fm.copyItem(at: memoryURL, to: dir.appendingPathComponent("memory"))
+        }
+    }
+
+    private func stageSelectedFiles(_ selection: BackupSelection, to dir: URL) async throws {
+        if selection.chats { try await stageSessionFiles(to: dir) }
+        if selection.sharedFiles, let shared = SharedContainerStore.sharedFileDirectory,
+           fm.fileExists(atPath: shared.path) {
+            try copyDirectory(shared, to: dir.appendingPathComponent("shared-files"))
+        }
+        if selection.skills { try await stageSkillsFiles(to: dir) }
+        if selection.memory { try await stageMemoryFiles(to: dir) }
+        if selection.providers || selection.mcpServers || selection.environmentVariables {
+            try await stageConfigurationFiles(to: dir, providers: selection.providers,
+                                              mcpServers: selection.mcpServers,
+                                              environmentVariables: selection.environmentVariables)
+        }
+    }
+
+    private func stageSkillsFiles(to dir: URL) async throws {
+        try walCheckpoint(dbPath: skillsDBURL.path)
+        if fm.fileExists(atPath: skillsDBURL.path) { try fm.copyItem(at: skillsDBURL, to: dir.appendingPathComponent("skills.db")) }
+        if fm.fileExists(atPath: skillsURL.path) { try copyDirectory(skillsURL, to: dir.appendingPathComponent("skills")) }
+    }
+
+    private func stageMemoryFiles(to dir: URL) async throws {
+        if fm.fileExists(atPath: memoryURL.path) { try copyDirectory(memoryURL, to: dir.appendingPathComponent("memory")) }
+    }
+
+    private func copyDirectory(_ source: URL, to destination: URL) throws {
+        let limit = UserDefaults.standard.integer(forKey: "ze.backup.maxFileSizeMB")
+        let maximumBytes = max(1, limit == 0 ? 100 : limit) * 1_024 * 1_024
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        guard let enumerator = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey], options: []) else { return }
+        for case let item as URL in enumerator {
+            let relative = item.path.replacingOccurrences(of: source.path + "/", with: "")
+            let target = destination.appendingPathComponent(relative)
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if values.isDirectory == true {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+            } else if (values.fileSize ?? 0) <= maximumBytes {
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: item, to: target)
+            } else {
+                logger.warning("Skipped backup file over configured limit: \(relative)")
+            }
+        }
+    }
+
+    private func stageConfigurationFiles(to dir: URL, providers: Bool = true, mcpServers: Bool = true, environmentVariables: Bool = true) async throws {
+        if providers {
+            let providersDir = dir.appendingPathComponent("providers", isDirectory: true)
+            try fm.createDirectory(at: providersDir, withIntermediateDirectories: true)
+            let exports = ProviderConfigStore.shared.instances.compactMap { ProviderConfigStore.shared.exportInstanceJSON($0.id) }
+            try JSONEncoder().encode(exports).write(to: providersDir.appendingPathComponent("providers.json"), options: .atomic)
+        }
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let envURL = library.appendingPathComponent("ZeChat/env-vars.json")
+        if environmentVariables, fm.fileExists(atPath: envURL.path) { try fm.copyItem(at: envURL, to: dir.appendingPathComponent("env-vars.json")) }
+        let mcpURL = MCPStore.syncFileURL
+        if mcpServers, fm.fileExists(atPath: mcpURL.path) { try fm.copyItem(at: mcpURL, to: dir.appendingPathComponent("mcp-servers.json")) }
+    }
+
+    private func restoreConfigurationFiles(from dir: URL) async throws {
+        let providersURL = dir.appendingPathComponent("providers/providers.json")
+        if let data = try? Data(contentsOf: providersURL), let exports = try? JSONDecoder().decode([String].self, from: data) {
+            for json in exports { _ = ProviderConfigStore.shared.importInstanceJSON(json) }
+        }
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let envURL = library.appendingPathComponent("ZeChat/env-vars.json")
+        let envSrc = dir.appendingPathComponent("env-vars.json")
+        if fm.fileExists(atPath: envSrc.path) {
+            try fm.createDirectory(at: envURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: envURL)
+            try fm.copyItem(at: envSrc, to: envURL)
+        }
+        let mcpSrc = dir.appendingPathComponent("mcp-servers.json")
+        if fm.fileExists(atPath: mcpSrc.path) {
+            try fm.createDirectory(at: MCPStore.syncFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: MCPStore.syncFileURL)
+            try fm.copyItem(at: mcpSrc, to: MCPStore.syncFileURL)
+            MCPStore.shared.load()
         }
     }
 
@@ -797,6 +1034,7 @@ final class ICloudBackupManager: ObservableObject {
         case encryptionError
         case cancelled
         case busy
+        case invalidDestination
 
         var errorDescription: String? {
             switch self {
@@ -810,6 +1048,7 @@ final class ICloudBackupManager: ObservableObject {
             case .encryptionError: return String(localized: "Unable to encrypt the backup.")
             case .cancelled: return String(localized: "Backup operation cancelled.")
             case .busy: return String(localized: "Another backup operation is already running.")
+            case .invalidDestination: return String(localized: "The backup destination is unavailable or incomplete.")
             }
         }
     }

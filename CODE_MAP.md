@@ -84,7 +84,7 @@ Vendor/                      第三方或原生依赖源码
 | 路径 | 职责 |
 | --- | --- |
 | `Views/Settings/` | 通用设置、权限、语言、外观、后台能力和诊断入口 |
-| `Views/Backup/ICloudBackupView.swift` | iCloud 备份、加密便携备份导出/恢复和进度显示 |
+| `Views/Backup/ICloudBackupView.swift` | iCloud 备份、加密便携备份导出/恢复、内容选择、本地文件夹/SFTP 目标和进度显示 |
 | `Views/Sync/` | 同步状态、迁移、冲突和设备状态 |
 | `Views/Skills/` | 技能列表、编辑和导入导出 |
 | `Views/Servers/` | MCP/外部服务器配置和连接状态 |
@@ -97,6 +97,14 @@ Vendor/                      第三方或原生依赖源码
 - `Views/Backup/ICloudBackupView.swift` 的导出/恢复文案；
 - `Localizable.xcstrings` 的中英文键；
 - 备份相关测试和 CI 产物审计。
+
+备份恢复维护要点：
+
+- `ICloudBackupManager.BackupSelection` 保存聊天、共享文件、技能、记忆与灵魂、服务商、MCP 和环境变量开关；选择写入 `ze.backup.selection.v1`。
+- `exportEncryptedBackup` 只把选择的内容写入临时 ZIP，再用 AES-GCM 生成 `.zebak`；服务商凭据只存在加密载荷中。
+- `BackupDestination` 持久化本地 security-scoped bookmark 或已有 SSH/SFTP 服务器 ID，不保存密码和私钥。
+- SFTP 恢复通过 `RemoteSSHConnectionService.listDirectory/downloadFile` 获取 `.zebak`，本地文件夹使用 bookmark 访问。
+- `ze.backup.deviceName` 控制 iCloud 备份设备目录；`ze.backup.maxFileSizeMB` 控制文件夹内容的单文件上限，超限文件会跳过并记录日志。
 
 ## 4. Agent 编排层（`Agent/`）
 

@@ -1,6 +1,28 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Backup and Restore" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份与恢复" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份與還原" } } } },
+    "Backup contents" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份内容" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份內容" } } } },
+    "Chats" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "聊天记录" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "聊天記錄" } } } },
+    "Shared files" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "共享文件" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "共享檔案" } } } },
+    "Skills and Memory" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "技能与记忆" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "技能與記憶" } } } },
+    "AI providers" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "AI 服务商" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "AI 服務商" } } } },
+    "MCP servers and environment variables" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "MCP 服务器和环境变量" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "MCP 伺服器與環境變數" } } } },
+    "The encrypted Ze backup includes local data and configuration. Secrets are protected by the backup password." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加密 Ze 备份包含本地数据和配置。敏感信息由备份密码保护。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加密 Ze 備份包含本機資料與設定。敏感資訊由備份密碼保護。" } } } },
+    "Backup destinations" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份目标" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份目標" } } } },
+    "Files folder" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件夹" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "檔案夾" } } } },
+    "SFTP server" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "SFTP 服务器" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "SFTP 伺服器" } } } },
+    "Add backup folder" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加备份文件夹" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入備份檔案夾" } } } },
+    "Add SFTP destination: %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加 SFTP 目标：%@" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入 SFTP 目標：%@" } } } },
+    "Restore from a destination" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从备份目标恢复" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從備份目標還原" } } } },
+    "Add a Files folder or SFTP destination to restore a Ze backup." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加文件夹或 SFTP 目标后即可恢复 Ze 备份。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入檔案夾或 SFTP 目標後即可還原 Ze 備份。" } } } },
+    "Choose a Ze backup file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择 Ze 备份文件" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選擇 Ze 備份檔案" } } } },
+    "Destination name" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目标名称" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目標名稱" } } } },
+    "Name" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名称" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "名稱" } } } },
+    "The folder is accessed only when a backup is exported or restored." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "仅在导出或恢复备份时访问此文件夹。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "僅在匯出或還原備份時存取此檔案夾。" } } } },
+    "Add backup destination" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加备份目标" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入備份目標" } } } },
+    "Save" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "儲存" } } } },
+    "The backup destination is unavailable or incomplete." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份目标不可用或配置不完整。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份目標無法使用或設定不完整。" } } } },
     "Optional emoji" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional emoji" } },
@@ -78263,6 +78285,66 @@
             "value" : "正在壓縮對話…（%lld 個字元）"
           }
         }
+      }
+    },
+    "Memory and Soul" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "记忆与灵魂" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "記憶與靈魂" } }
+      }
+    },
+    "MCP servers" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "MCP 服务" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "MCP 服務" } }
+      }
+    },
+    "Environment variables" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "环境变量" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "環境變數" } }
+      }
+    },
+    "Remote backup files" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "远程备份文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "遠端備份檔案" } }
+      }
+    },
+    "Load remote backups" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "加载远程备份" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "載入遠端備份" } }
+      }
+    },
+    "Loading remote backups…" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载远程备份…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在載入遠端備份…" } }
+      }
+    },
+    "Backup settings" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份设置" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份設定" } }
+      }
+    },
+    "Device name" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设备名称" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "裝置名稱" } }
+      }
+    },
+    "Maximum file size" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "单个文件最大大小" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "單一檔案最大大小" } }
+      }
+    },
+    "Files larger than this limit are skipped from folder contents." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "超过此限制的文件将从文件夹内容中跳过。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "超過此限制的檔案將從資料夾內容中略過。" } }
       }
     }
   },

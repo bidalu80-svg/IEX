@@ -9,17 +9,47 @@ struct ICloudBackupView: View {
     @State private var passwordMode: PasswordMode?
     @State private var showFileImporter = false
     @State private var importedURL: URL?
+    @State private var selectedMode = 0
+    @State private var showDestinationImporter = false
+    @State private var showDestinationEditor = false
+    @State private var pendingDestinationFolder: URL?
+    @State private var selectedDestination: ICloudBackupManager.BackupDestination?
+    @State private var destinationCategory: ICloudBackupManager.BackupCategory = .full
+    @State private var backupSelection = ICloudBackupManager.BackupSelection.forCategory(.full)
+    @State private var remoteFiles: [UUID: [RemoteSFTPEntry]] = [:]
+    @State private var remoteLoading: UUID?
+    @AppStorage("ze.backup.deviceName") private var deviceName = ""
+    @AppStorage("ze.backup.maxFileSizeMB") private var maxFileSizeMB = 100
 
     private enum PasswordMode: Identifiable {
         case export(ICloudBackupManager.BackupCategory)
         case restore
+        case restoreDestination(ICloudBackupManager.BackupDestination, String)
         var id: String {
-            switch self { case .export(let c): return "export-\(c.rawValue)"; case .restore: return "restore" }
+            switch self {
+            case .export(let c): return "export-\(c.rawValue)"
+            case .restore: return "restore"
+            case .restoreDestination(let destination, let fileName): return "restore-\(destination.id)-\(fileName)"
+            }
         }
     }
 
     var body: some View {
         List {
+            Picker(String(localized: "Backup and Restore"), selection: $selectedMode) {
+                Text(String(localized: "Backup")).tag(0)
+                Text(String(localized: "Restore")).tag(1)
+            }
+            .pickerStyle(.segmented)
+
+            if selectedMode == 0 {
+                backupSettingsSection
+                backupOptionsSection
+                destinationsSection
+            } else {
+                restoreSection
+            }
+
             // MARK: - Status & Backup Actions
             Section {
                 if !manager.isICloudAvailable {
@@ -47,7 +77,7 @@ struct ICloudBackupView: View {
                 }
             }
 
-            if manager.isICloudAvailable {
+            if selectedMode == 0 && manager.isICloudAvailable {
                 Section(String(localized: "Backup")) {
                     ForEach(ICloudBackupManager.BackupCategory.allCases) { category in
                         Button {
@@ -93,7 +123,7 @@ struct ICloudBackupView: View {
                 }
             }
 
-            Section {
+            if selectedMode == 0 { Section {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(String(localized: "Encrypted portable backup"), systemImage: "lock.doc.fill")
                         .font(.headline)
@@ -126,9 +156,9 @@ struct ICloudBackupView: View {
                             .lineLimit(1)
                     }
                 }
-            }
+            } }
 
-            if manager.isRestoring {
+            if selectedMode == 1 && manager.isRestoring {
                 Section(String(localized: "Restoring")) {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: manager.progress)
@@ -156,22 +186,24 @@ struct ICloudBackupView: View {
                 }
             }
 
-            if manager.availableBackups.isEmpty && manager.isICloudAvailable {
+            if selectedMode == 1 && manager.availableBackups.isEmpty && manager.isICloudAvailable {
                 Section {
                     Text(String(localized: "No backups found"))
                         .foregroundColor(.secondary)
                 }
             }
 
-            Section {
+            if selectedMode == 1 { Section {
                 // empty section for footer
             } footer: {
                 Text(String(localized: "Backups are stored in iCloud Drive and sync across your devices. Restoring will replace your current local data."))
+            }
             }
         }
         .navigationTitle(String(localized: "iCloud Backup"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            loadBackupSelection()
             await manager.listBackups()
         }
         .refreshable {
@@ -209,13 +241,143 @@ struct ICloudBackupView: View {
             } onCancel: {
                 showPasswordSheet = false
                 passwordMode = nil
-            }
+            } }
         }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [UTType.data, UTType.item], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             importedURL = url
             passwordMode = .restore
             showPasswordSheet = true
+        }
+        .fileImporter(isPresented: $showDestinationImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            pendingDestinationFolder = url
+            showDestinationEditor = true
+        }
+        .sheet(isPresented: $showDestinationEditor) {
+            if let folder = pendingDestinationFolder {
+                BackupDestinationEditor(folderURL: folder) { destination in
+                    manager.saveDestination(destination)
+                    pendingDestinationFolder = nil
+                }
+            }
+        }
+    }
+
+    private var backupOptionsSection: some View {
+        Section(String(localized: "Backup contents")) {
+            Toggle(isOn: selectionBinding(\.chats)) { Label(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right") }
+            Toggle(isOn: selectionBinding(\.sharedFiles)) { Label(String(localized: "Shared files"), systemImage: "folder") }
+            Toggle(isOn: selectionBinding(\.skills)) { Label(String(localized: "Skills"), systemImage: "wand.and.stars") }
+            Toggle(isOn: selectionBinding(\.memory)) { Label(String(localized: "Memory and Soul"), systemImage: "brain") }
+            Toggle(isOn: selectionBinding(\.providers)) { Label(String(localized: "AI providers"), systemImage: "cpu") }
+            Toggle(isOn: selectionBinding(\.mcpServers)) { Label(String(localized: "MCP servers"), systemImage: "server.rack") }
+            Toggle(isOn: selectionBinding(\.environmentVariables)) { Label(String(localized: "Environment variables"), systemImage: "key") }
+            Text(String(localized: "The encrypted Ze backup includes local data and configuration. Secrets are protected by the backup password."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var backupSettingsSection: some View {
+        Section(String(localized: "Backup settings")) {
+            TextField(String(localized: "Device name"), text: $deviceName)
+            Stepper(value: $maxFileSizeMB, in: 1...2048, step: 1) {
+                HStack {
+                    Text(String(localized: "Maximum file size"))
+                    Spacer()
+                    Text("\(maxFileSizeMB) MB")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            Text(String(localized: "Files larger than this limit are skipped from folder contents."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var destinationsSection: some View {
+        Section(String(localized: "Backup destinations")) {
+            ForEach(manager.destinations) { destination in
+                Button {
+                    selectedDestination = destination
+                    destinationCategory = .full
+                    passwordMode = .export(.full)
+                    showPasswordSheet = true
+                } label: {
+                    Label(destination.name, systemImage: destination.kind == .localFolder ? "folder" : "server.rack")
+                }
+                .contextMenu {
+                    Button(role: .destructive) { manager.removeDestination(destination) } label: {
+                        Label(String(localized: "Delete"), systemImage: "trash")
+                    }
+                }
+            }
+            Button {
+                showDestinationImporter = true
+            } label: {
+                Label(String(localized: "Add backup folder"), systemImage: "plus.circle.fill")
+            }
+            if !RemoteServerStore.shared.servers.isEmpty {
+                ForEach(RemoteServerStore.shared.servers) { server in
+                    Button {
+                        let destination = ICloudBackupManager.BackupDestination(name: server.name, kind: .sftpServer, serverID: server.id, remotePath: "/")
+                        manager.saveDestination(destination)
+                    } label: {
+                        Label(String.localizedStringWithFormat(String(localized: "Add SFTP destination: %@"), server.name), systemImage: "server.rack")
+                    }
+                }
+            }
+        }
+    }
+
+    private var restoreSection: some View {
+        Section(String(localized: "Restore from a destination")) {
+            if manager.destinations.isEmpty {
+                Text(String(localized: "Add a Files folder or SFTP destination to restore a Ze backup."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(manager.destinations) { destination in
+                    Button {
+                        selectedDestination = destination
+                        showFileImporter = destination.kind == .localFolder
+                    } label: {
+                        Label(destination.name, systemImage: destination.kind == .localFolder ? "folder" : "server.rack")
+                    }
+                }
+            }
+            if !manager.destinations.isEmpty {
+                Text(String(localized: "Remote backup files"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(manager.destinations.filter { $0.kind == .sftpServer }) { destination in
+                if let files = remoteFiles[destination.id], !files.isEmpty {
+                    ForEach(files) { file in
+                        Button {
+                            passwordMode = .restoreDestination(destination, file.name)
+                            showPasswordSheet = true
+                        } label: {
+                            Label(file.name, systemImage: "doc.zipper")
+                        }
+                    }
+                } else if remoteLoading == destination.id {
+                    ProgressView(String(localized: "Loading remote backups…"))
+                } else {
+                    Button {
+                        loadRemoteFiles(for: destination)
+                    } label: {
+                        Label(String(localized: "Load remote backups"), systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+            Button {
+                showFileImporter = true
+            } label: {
+                Label(String(localized: "Choose a Ze backup file"), systemImage: "doc.badge.arrow.down")
+            }
         }
     }
 
@@ -309,17 +471,57 @@ struct ICloudBackupView: View {
             do {
                 switch mode {
                 case .export(let category):
-                    _ = try await manager.exportEncryptedBackup(category: category, password: password)
+                    if let destination = selectedDestination {
+                        _ = try await manager.backupEncrypted(category: category, selection: backupSelection, to: destination, password: password)
+                    } else {
+                        _ = try await manager.exportEncryptedBackup(category: category, selection: backupSelection, password: password)
+                    }
                 case .restore:
                     guard let importedURL else { return }
                     let accessed = importedURL.startAccessingSecurityScopedResource()
                     defer { if accessed { importedURL.stopAccessingSecurityScopedResource() } }
-                    try await manager.restoreEncrypted(from: importedURL, password: password)
+                    if let destination = selectedDestination {
+                        try await manager.restoreEncrypted(from: destination, fileName: importedURL.lastPathComponent, password: password)
+                    } else {
+                        try await manager.restoreEncrypted(from: importedURL, password: password)
+                    }
                     self.importedURL = nil
+                case .restoreDestination(let destination, let fileName):
+                    try await manager.restoreEncrypted(from: destination, fileName: fileName, password: password)
                 }
+                selectedDestination = nil
             } catch {
                 showError = error.localizedDescription
             }
+        }
+    }
+
+    private func selectionBinding(_ keyPath: WritableKeyPath<ICloudBackupManager.BackupSelection, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { backupSelection[keyPath: keyPath] },
+            set: {
+                backupSelection[keyPath: keyPath] = $0
+                if let data = try? JSONEncoder().encode(backupSelection) {
+                    UserDefaults.standard.set(data, forKey: "ze.backup.selection.v1")
+                }
+            }
+        )
+    }
+
+    private func loadBackupSelection() {
+        if let data = UserDefaults.standard.data(forKey: "ze.backup.selection.v1"),
+           let value = try? JSONDecoder().decode(ICloudBackupManager.BackupSelection.self, from: data) {
+            backupSelection = value
+        }
+    }
+
+    private func loadRemoteFiles(for destination: ICloudBackupManager.BackupDestination) {
+        guard destination.kind == .sftpServer else { return }
+        remoteLoading = destination.id
+        Task {
+            defer { remoteLoading = nil }
+            do { remoteFiles[destination.id] = try await manager.listEncryptedBackups(in: destination) }
+            catch { showError = error.localizedDescription }
         }
     }
 }
@@ -348,6 +550,50 @@ private struct BackupPasswordSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Continue")) { onSubmit(password); dismiss() }
                         .disabled(password.isEmpty)
+                }
+            }
+        }
+    }
+}
+
+@available(iOS 16.0, *)
+private struct BackupDestinationEditor: View {
+    let folderURL: URL
+    let onSave: (ICloudBackupManager.BackupDestination) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(String(localized: "Destination name")) {
+                    TextField(String(localized: "Name"), text: $name)
+                }
+                Section {
+                    Text(folderURL.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                } header: {
+                    Text(String(localized: "Files folder"))
+                } footer: {
+                    Text(String(localized: "The folder is accessed only when a backup is exported or restored."))
+                }
+            }
+            .navigationTitle(String(localized: "Add backup destination"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "Cancel")) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "Save")) {
+                        let bookmark = try? folderURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                        let title = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? folderURL.lastPathComponent : name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave(.init(name: title, kind: .localFolder, bookmarkData: bookmark))
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
