@@ -268,13 +268,6 @@ struct ICloudBackupView: View {
             BackupProtocolPickerView { server in
                 manager.saveDestination(server)
                 showProtocolPicker = false
-            } onSelectFilesFolder: {
-                // The iOS Files picker can browse SMB/WebDAV/FTP locations
-                // registered in Files. Saving its security-scoped bookmark
-                // gives the backup engine a real read/write destination
-                // without inventing a second, incompatible credential store.
-                showProtocolPicker = false
-                showDestinationImporter = true
             }
         }
     }
@@ -360,14 +353,15 @@ struct ICloudBackupView: View {
     private var restoreSection: some View {
         Section(String(localized: "Restore from a destination")) {
             if manager.destinations.isEmpty {
-                Text(String(localized: "Add a Files folder or SFTP destination to restore a Ze backup."))
+                Text(String(localized: "添加本地文件夹或网络协议目标后即可恢复 Ze 备份。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(manager.destinations) { destination in
                     Button {
                         selectedDestination = destination
-                        showFileImporter = destination.kind == .localFolder
+                        if destination.kind == .localFolder { showFileImporter = true }
+                        else { loadRemoteFiles(for: destination) }
                     } label: {
                         Label(destination.name, systemImage: destination.kind == .localFolder ? "folder" : "server.rack")
                     }
@@ -378,7 +372,7 @@ struct ICloudBackupView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            ForEach(manager.destinations.filter { $0.kind == .sftpServer }) { destination in
+            ForEach(manager.destinations.filter { $0.kind != .localFolder }) { destination in
                 if let files = remoteFiles[destination.id], !files.isEmpty {
                     ForEach(files) { file in
                         Button {
@@ -541,7 +535,7 @@ struct ICloudBackupView: View {
     }
 
     private func loadRemoteFiles(for destination: ICloudBackupManager.BackupDestination) {
-        guard destination.kind == .sftpServer else { return }
+        guard destination.kind != .localFolder else { return }
         remoteLoading = destination.id
         Task {
             defer { remoteLoading = nil }
@@ -611,10 +605,10 @@ private struct BackupCategoryDetailView: View {
 
 private struct BackupProtocolPickerView: View {
     let onSelectSFTP: (ICloudBackupManager.BackupDestination) -> Void
-    let onSelectFilesFolder: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showServerChooser = false
     @State private var showSFTPForm = false
+    @State private var selectedRemoteProtocol: RemoteStorageProtocol?
 
     private struct ProtocolRow: Identifiable {
         let id: String
@@ -625,11 +619,11 @@ private struct BackupProtocolPickerView: View {
     }
 
     private let rows: [ProtocolRow] = [
-        .init(id: "smb", title: "SMB / Windows Share", subtitle: "NAS、Windows 共享文件夹、Samba（通过 Files 选择）", icon: "externaldrive.connected.to.line.below", enabled: true),
-        .init(id: "webdav", title: "WebDAV", subtitle: "Nextcloud、ownCloud、群晖、alist（通过 Files 选择）", icon: "globe", enabled: true),
+        .init(id: "smb", title: "SMB / Windows 共享", subtitle: "NAS、Windows 共享文件夹、Samba（Ze 内置客户端）", icon: "externaldrive.connected.to.line.below", enabled: true),
+        .init(id: "webdav", title: "WebDAV", subtitle: "Nextcloud、ownCloud、群晖、alist（Ze 内置客户端）", icon: "globe", enabled: true),
         .init(id: "sftp", title: "SFTP", subtitle: "通过 SSH 访问的 Linux 服务器或 NAS", icon: "terminal", enabled: true),
-        .init(id: "s3", title: "S3 兼容存储", subtitle: "MinIO、Cloudflare R2、Wasabi、阿里云 OSS、腾讯 COS（通过 Files 选择）", icon: "cylinder", enabled: true),
-        .init(id: "ftp", title: "FTP", subtitle: "旧式文件服务器和路由器（通过 Files 选择）", icon: "arrow.up.arrow.down.circle", enabled: true)
+        .init(id: "s3", title: "S3 兼容存储", subtitle: "MinIO、Cloudflare R2、Wasabi、阿里云 OSS、腾讯 COS（Ze 内置客户端）", icon: "cylinder", enabled: true),
+        .init(id: "ftp", title: "FTP", subtitle: "旧式文件服务器和路由器（Ze 内置客户端）", icon: "arrow.up.arrow.down.circle", enabled: true)
     ]
 
     var body: some View {
@@ -641,8 +635,8 @@ private struct BackupProtocolPickerView: View {
                             guard row.enabled else { return }
                             if row.id == "sftp" {
                                 selectSFTP()
-                            } else if row.id == "smb" || row.id == "webdav" || row.id == "s3" || row.id == "ftp" {
-                                onSelectFilesFolder()
+                            } else if let proto = RemoteStorageProtocol(rawValue: row.id) {
+                                selectedRemoteProtocol = proto
                             }
                         } label: {
                             HStack(spacing: 14) {
@@ -689,6 +683,12 @@ private struct BackupProtocolPickerView: View {
                     dismiss()
                 }
             }
+            .sheet(item: $selectedRemoteProtocol) { proto in
+                RemoteStorageBackupEditor(proto: proto) { destination in
+                    onSelectSFTP(destination)
+                    dismiss()
+                }
+            }
         }
     }
 
@@ -700,6 +700,103 @@ private struct BackupProtocolPickerView: View {
             dismiss()
         } else {
             showServerChooser = true
+        }
+    }
+}
+
+private struct RemoteStorageBackupEditor: View {
+    let proto: RemoteStorageProtocol
+    let onSave: (ICloudBackupManager.BackupDestination) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var host = ""
+    @State private var port = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var path = "/"
+    @State private var share = ""
+    @State private var bucket = ""
+    @State private var region = "us-east-1"
+    @State private var tls = true
+    @State private var errorMessage: String?
+    @State private var testing = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(String(localized: "基本信息")) {
+                    TextField(String(localized: "名称"), text: $name)
+                    TextField(proto == .webdav ? String(localized: "服务器 URL 或主机") : String(localized: "主机"), text: $host)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField(String(localized: "端口"), text: $port).keyboardType(.numberPad)
+                    Toggle(String(localized: "使用 TLS / HTTPS"), isOn: $tls)
+                }
+                Section(String(localized: "认证信息")) {
+                    TextField(String(localized: "用户名 / Access Key"), text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField(proto == .s3 ? String(localized: "Secret Key") : String(localized: "密码"), text: $password)
+                }
+                if proto == .smb { Section(String(localized: "SMB 共享")) { TextField(String(localized: "共享名称"), text: $share) } }
+                if proto == .s3 { Section(String(localized: "S3 设置")) { TextField(String(localized: "存储桶"), text: $bucket); TextField(String(localized: "区域"), text: $region) } }
+                Section(String(localized: "远程路径")) { TextField(String(localized: "文件夹路径"), text: $path).textInputAutocapitalization(.never).autocorrectionDisabled() }
+                if let errorMessage { Section { Text(errorMessage).foregroundStyle(.red) } }
+                Section { Button { testConnection() } label: { if testing { ProgressView() } else { Label(String(localized: "测试连接"), systemImage: "checkmark.circle") } }.disabled(testing) }
+            }
+            .navigationTitle(proto.title)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(String(localized: "取消")) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "保存")) { save() }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+            }
+        }
+    }
+
+    private func makeProfile() throws -> RemoteStorageProfile {
+        let defaultPort: Int = proto == .smb ? 445 : (proto == .ftp ? 21 : (proto == .s3 ? 443 : (tls ? 443 : 80)))
+        let value = Int(port) ?? defaultPort
+        guard (1...65535).contains(value) else { throw RemoteStorageClientError.invalidConfiguration(String(localized: "端口必须是 1 到 65535 之间的数字")) }
+        return RemoteStorageProfile(name: name.trimmingCharacters(in: .whitespacesAndNewlines), proto: proto,
+                                     host: host.trimmingCharacters(in: .whitespacesAndNewlines), port: value,
+                                     username: username.trimmingCharacters(in: .whitespacesAndNewlines), path: path.isEmpty ? "/" : path,
+                                     share: share.isEmpty ? nil : share, bucket: bucket.isEmpty ? nil : bucket,
+                                     region: region.isEmpty ? nil : region, useTLS: tls)
+    }
+
+    private func save() {
+        do {
+            let profile = try makeProfile()
+            guard !password.isEmpty else { throw RemoteStorageClientError.invalidConfiguration(String(localized: "请输入密码或密钥")) }
+            try RemoteServerSecretStore.save(password, kind: .remoteSecret, for: profile.id)
+            let kind: ICloudBackupManager.BackupDestinationKind
+            switch proto {
+            case .smb: kind = .smbServer
+            case .webdav: kind = .webDAVServer
+            case .s3: kind = .s3Bucket
+            case .ftp: kind = .ftpServer
+            case .sftp: throw RemoteStorageClientError.invalidConfiguration(String(localized: "请选择支持的协议"))
+            }
+            onSave(.init(name: profile.name, kind: kind, remotePath: profile.path, remoteProfile: profile))
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func testConnection() {
+        testing = true
+        errorMessage = nil
+        Task {
+            do {
+                let profile = try makeProfile()
+                guard !password.isEmpty else { throw RemoteStorageClientError.invalidConfiguration(String(localized: "请输入密码或密钥")) }
+                let client: any RemoteStorageClient
+                switch proto {
+                case .smb: client = try SMBRemoteStorageClient(profile: profile, password: password)
+                case .webdav: client = try WebDAVRemoteStorageClient(profile: profile, password: password)
+                case .s3: client = try S3RemoteStorageClient(profile: profile, secret: password)
+                case .ftp: client = try FTPRemoteStorageClient(profile: profile, password: password)
+                case .sftp: throw RemoteStorageClientError.invalidConfiguration(String(localized: "请选择支持的协议"))
+                }
+                try await client.testConnection()
+                await MainActor.run { testing = false; errorMessage = String(localized: "连接成功") }
+            } catch {
+                await MainActor.run { testing = false; errorMessage = error.localizedDescription }
+            }
         }
     }
 }

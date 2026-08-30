@@ -9,6 +9,9 @@ enum RemoteServerSecretStore {
     enum Kind: String, CaseIterable {
         case privateKey
         case privateKeyPassphrase
+        /// Passwords and S3 secret keys for backup destinations. They are
+        /// device-only and intentionally excluded from Codable profiles.
+        case remoteSecret
     }
 
     static func save(_ value: String, kind: Kind, for serverID: UUID) throws {

@@ -103,11 +103,19 @@ final class ICloudBackupManager: ObservableObject {
     enum BackupDestinationKind: String, Codable, CaseIterable, Identifiable {
         case localFolder
         case sftpServer
+        case smbServer
+        case webDAVServer
+        case s3Bucket
+        case ftpServer
         var id: String { rawValue }
         var title: String {
             switch self {
             case .localFolder: return String(localized: "Files folder")
             case .sftpServer: return String(localized: "SFTP server")
+            case .smbServer: return String(localized: "SMB 共享")
+            case .webDAVServer: return String(localized: "WebDAV")
+            case .s3Bucket: return String(localized: "S3 兼容存储")
+            case .ftpServer: return String(localized: "FTP")
             }
         }
     }
@@ -119,10 +127,12 @@ final class ICloudBackupManager: ObservableObject {
         var bookmarkData: Data?
         var serverID: UUID?
         var remotePath: String?
+        var remoteProfile: RemoteStorageProfile?
         init(id: UUID = UUID(), name: String, kind: BackupDestinationKind,
-             bookmarkData: Data? = nil, serverID: UUID? = nil, remotePath: String? = nil) {
+             bookmarkData: Data? = nil, serverID: UUID? = nil, remotePath: String? = nil,
+             remoteProfile: RemoteStorageProfile? = nil) {
             self.id = id; self.name = name; self.kind = kind
-            self.bookmarkData = bookmarkData; self.serverID = serverID; self.remotePath = remotePath
+            self.bookmarkData = bookmarkData; self.serverID = serverID; self.remotePath = remotePath; self.remoteProfile = remoteProfile
         }
     }
 
@@ -185,6 +195,12 @@ final class ICloudBackupManager: ObservableObject {
             let remote = path.hasSuffix("/") ? path + localURL.lastPathComponent : path + "/" + localURL.lastPathComponent
             try await RemoteSSHConnectionService.shared.uploadFile(try Data(contentsOf: localURL), to: remote, on: serverID)
             return localURL
+        case .smbServer, .webDAVServer, .s3Bucket, .ftpServer:
+            let client = try makeRemoteClient(for: destination)
+            let remotePath = destination.remotePath ?? destination.remoteProfile?.path ?? "/"
+            let remote = appendRemoteFile(remotePath, name: localURL.lastPathComponent)
+            try await client.upload(data: Data(contentsOf: localURL), to: remote)
+            return localURL
         }
     }
 
@@ -203,6 +219,13 @@ final class ICloudBackupManager: ObservableObject {
             let path = (destination.remotePath ?? "/").trimmingCharacters(in: .whitespacesAndNewlines)
             let remote = path.hasSuffix("/") ? path + fileName : path + "/" + fileName
             let data = try await RemoteSSHConnectionService.shared.downloadFile(at: remote, on: serverID)
+            let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zebak")
+            try data.write(to: temp, options: .atomic); defer { try? fm.removeItem(at: temp) }
+            try await restoreEncrypted(from: temp, password: password)
+        case .smbServer, .webDAVServer, .s3Bucket, .ftpServer:
+            let client = try makeRemoteClient(for: destination)
+            let remote = appendRemoteFile(destination.remotePath ?? destination.remoteProfile?.path ?? "/", name: fileName)
+            let data = try await client.download(path: remote)
             let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zebak")
             try data.write(to: temp, options: .atomic); defer { try? fm.removeItem(at: temp) }
             try await restoreEncrypted(from: temp, password: password)
@@ -231,6 +254,28 @@ final class ICloudBackupManager: ObservableObject {
             let path = (destination.remotePath ?? "/").trimmingCharacters(in: .whitespacesAndNewlines)
             return try await RemoteSSHConnectionService.shared.listDirectory(at: path.isEmpty ? "/" : path, on: serverID)
                 .filter { !$0.isDirectory && $0.name.lowercased().hasSuffix(".zebak") }
+        case .smbServer, .webDAVServer, .s3Bucket, .ftpServer:
+            let client = try makeRemoteClient(for: destination)
+            return try await client.list(path: destination.remotePath ?? destination.remoteProfile?.path ?? "/")
+                .filter { !$0.isDirectory && $0.name.lowercased().hasSuffix(".zebak") }
+        }
+    }
+
+    private func appendRemoteFile(_ path: String, name: String) -> String {
+        let root = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if root.isEmpty || root == "/" { return "/" + name }
+        return root.hasSuffix("/") ? root + name : root + "/" + name
+    }
+
+    private func makeRemoteClient(for destination: BackupDestination) throws -> any RemoteStorageClient {
+        guard let profile = destination.remoteProfile else { throw BackupError.invalidDestination }
+        let secret = try RemoteServerSecretStore.value(kind: .remoteSecret, for: profile.id) ?? ""
+        switch profile.proto {
+        case .smb: return try SMBRemoteStorageClient(profile: profile, password: secret)
+        case .webdav: return try WebDAVRemoteStorageClient(profile: profile, password: secret)
+        case .s3: return try S3RemoteStorageClient(profile: profile, secret: secret)
+        case .ftp: return try FTPRemoteStorageClient(profile: profile, password: secret)
+        case .sftp: throw BackupError.invalidDestination
         }
     }
 

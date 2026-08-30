@@ -1,5 +1,68 @@
 import Foundation
 
+/// Independent network storage protocols used by backup destinations. These
+/// profiles describe connection metadata only; passwords and access keys are
+/// stored in the Keychain under the profile ID.
+enum RemoteStorageProtocol: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case smb
+    case webdav
+    case sftp
+    case s3
+    case ftp
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .smb: return "SMB / Windows 共享"
+        case .webdav: return "WebDAV"
+        case .sftp: return "SFTP"
+        case .s3: return "S3 兼容存储"
+        case .ftp: return "FTP"
+        }
+    }
+}
+
+/// Persisted connection metadata for a Ze-owned network storage destination.
+/// `secretKey` identifies a Keychain item; credentials never enter Codable
+/// backups or UserDefaults.
+struct RemoteStorageProfile: Codable, Identifiable, Hashable, Sendable {
+    var id: UUID
+    var name: String
+    var proto: RemoteStorageProtocol
+    var host: String
+    var port: Int
+    var username: String
+    var path: String
+    var share: String?
+    var bucket: String?
+    var region: String?
+    var useTLS: Bool
+    var secretKey: String
+
+    init(
+        id: UUID = UUID(), name: String, proto: RemoteStorageProtocol,
+        host: String, port: Int, username: String = "", path: String = "/",
+        share: String? = nil, bucket: String? = nil, region: String? = nil,
+        useTLS: Bool = true, secretKey: String = ""
+    ) {
+        self.id = id; self.name = name; self.proto = proto; self.host = host
+        self.port = port; self.username = username; self.path = path
+        self.share = share; self.bucket = bucket; self.region = region
+        self.useTLS = useTLS; self.secretKey = secretKey
+    }
+}
+
+/// Common contract consumed by backup/restore. Implementations are protocol
+/// clients owned by Ze (WebDAV, S3, FTP, SMB2, or the existing SFTP bridge),
+/// so the backup engine never needs to know wire-level details.
+protocol RemoteStorageClient: Sendable {
+    func testConnection() async throws
+    func list(path: String) async throws -> [RemoteSFTPEntry]
+    func upload(data: Data, to path: String) async throws
+    func download(path: String) async throws -> Data
+}
+
 /// A user-owned SSH endpoint. Secrets deliberately do not live in this model:
 /// the profile can be backed up or synced without exporting a private key,
 /// passphrase, or password.
@@ -167,7 +230,7 @@ struct RemoteServerConnectionDiagnostic: Identifiable, Hashable {
 
 /// Public metadata returned by an SFTP directory listing. This deliberately
 /// contains no file content, local bookmark, or credential information.
-struct RemoteSFTPEntry: Identifiable, Hashable {
+struct RemoteSFTPEntry: Identifiable, Hashable, Sendable {
     var path: String
     var name: String
     var isDirectory: Bool
