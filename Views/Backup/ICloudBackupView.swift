@@ -756,7 +756,7 @@ private struct BackupDestinationEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Save")) {
-                        let bookmark = try? folderURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                        let bookmark = try? folderURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
                         let title = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? folderURL.lastPathComponent : name.trimmingCharacters(in: .whitespacesAndNewlines)
                         onSave(.init(name: title, kind: .localFolder, bookmarkData: bookmark))
                         dismiss()

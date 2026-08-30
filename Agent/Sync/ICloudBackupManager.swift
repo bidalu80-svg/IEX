@@ -171,7 +171,7 @@ final class ICloudBackupManager: ObservableObject {
         case .localFolder:
             guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
             var stale = false
-            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
             let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
             let target = folder.appendingPathComponent(localURL.lastPathComponent)
             if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
@@ -193,7 +193,7 @@ final class ICloudBackupManager: ObservableObject {
         case .localFolder:
             guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
             var stale = false
-            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
             let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
             try await restoreEncrypted(from: folder.appendingPathComponent(fileName), password: password)
         case .sftpServer:
@@ -214,7 +214,7 @@ final class ICloudBackupManager: ObservableObject {
         case .localFolder:
             guard let bookmark = destination.bookmarkData else { throw BackupError.invalidDestination }
             var stale = false
-            let folder = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let folder = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
             let accessed = folder.startAccessingSecurityScopedResource(); defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
             return try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey], options: [.skipsHiddenFiles])
                 .filter { $0.pathExtension.lowercased() == "zebak" }
