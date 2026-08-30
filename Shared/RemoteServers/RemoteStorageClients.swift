@@ -35,7 +35,6 @@ final actor WebDAVRemoteStorageClient: RemoteStorageClient {
         guard URLComponents(string: "\(profile.useTLS ? "https" : "http")://\(profile.host)") != nil else {
             throw RemoteStorageClientError.invalidConfiguration(String(localized: "Invalid server address"))
         }
-        components.port = profile.port > 0 ? profile.port : (profile.useTLS ? 443 : 80)
         var config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 45
         config.timeoutIntervalForResource = 300
@@ -279,7 +278,7 @@ final actor FTPRemoteStorageClient: RemoteStorageClient {
     }
 
     private func waitReady(_ connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready: continuation.resume()
@@ -297,7 +296,7 @@ final actor FTPRemoteStorageClient: RemoteStorageClient {
     }
 
     private func send(_ data: Data, on connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: RemoteStorageClientError.requestFailed(0, error.localizedDescription)) }
                 else { continuation.resume() }
@@ -322,7 +321,7 @@ final actor FTPRemoteStorageClient: RemoteStorageClient {
     }
 
     private func receive(from connection: NWConnection) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, complete, error in
                 if let error { continuation.resume(throwing: RemoteStorageClientError.requestFailed(0, error.localizedDescription)) }
                 else if let data, !data.isEmpty { continuation.resume(returning: data) }
@@ -488,7 +487,7 @@ final actor S3RemoteStorageClient: RemoteStorageClient {
         request.setValue(host, forHTTPHeaderField: "Host")
         request.setValue(amzDate, forHTTPHeaderField: "x-amz-date")
         request.setValue(payloadHash, forHTTPHeaderField: "x-amz-content-sha256")
-        let canonicalURI = url.percentEncodedPath.isEmpty ? "/" : (url.percentEncodedPath)
+        let canonicalURI = url.path.isEmpty ? "/" : url.path
         let canonicalQuery = canonicalQueryString(query)
         let canonicalHeaders = "host:\(host)\nx-amz-content-sha256:\(payloadHash)\nx-amz-date:\(amzDate)\n"
         let signedHeaders = "host;x-amz-content-sha256;x-amz-date"
@@ -498,7 +497,7 @@ final actor S3RemoteStorageClient: RemoteStorageClient {
         let hash = SHA256.hash(data: Data(canonical.utf8)).hex
         let stringToSign = "AWS4-HMAC-SHA256\n\(amzDate)\n\(scope)\n\(hash)"
         let signingKey = Self.signingKey(secret: secret, date: shortDate, region: region, service: service)
-        let signature = Self.hmac(key: signingKey, data: stringToSign).hex
+        let signature = Data(Self.hmac(key: signingKey, data: stringToSign)).map { String(format: "%02x", $0) }.joined()
         request.setValue("AWS4-HMAC-SHA256 Credential=\(credential), SignedHeaders=\(signedHeaders), Signature=\(signature)", forHTTPHeaderField: "Authorization")
         return try await session.data(for: request)
     }
@@ -526,13 +525,15 @@ final actor S3RemoteStorageClient: RemoteStorageClient {
 
     private func canonicalQueryString(_ query: String?) -> String {
         guard let query, !query.isEmpty else { return "" }
-        return query.split(separator: "&", omittingEmptySubsequences: false).map { part in
+        var pairs: [(String, String)] = []
+        for part in query.split(separator: "&", omittingEmptySubsequences: false) {
             let pair = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             let name = rfc3986(String(pair[0]).removingPercentEncoding ?? String(pair[0]))
             let value = pair.count > 1 ? rfc3986(String(pair[1]).removingPercentEncoding ?? String(pair[1])) : ""
-            return (name, value)
-        }.sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
-            .map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+            pairs.append((name, value))
+        }
+        pairs.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+        return pairs.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
     }
 
     private func rfc3986(_ value: String) -> String {
