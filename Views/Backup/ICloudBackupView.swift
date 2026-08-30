@@ -273,7 +273,7 @@ struct ICloudBackupView: View {
             HStack {
                 backupIconLabel(String(localized: "Device name"), systemImage: "iphone", color: .blue)
                 Spacer()
-                Text(UIDevice.current.name).foregroundStyle(.secondary)
+                Text(DeviceIdentity.modelName).foregroundStyle(.secondary)
             }
             Toggle(isOn: selectionBinding(\.chats)) { backupIconLabel(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", color: .blue) }
             Toggle(isOn: selectionBinding(\.sharedFiles)) { backupIconLabel(String(localized: "Shared files"), systemImage: "doc.fill", color: .indigo) }

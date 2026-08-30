@@ -8,7 +8,6 @@
 //
 
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
 
 private let mountUILogger = AppLogger(category: "MountedFoldersUI")
@@ -102,31 +101,27 @@ struct MountedFoldersSettingsView: View {
                 .disabled(model.isAtCapacity)
             }
         }
-        // Let UIDocumentPicker own its normal dismissal after a selection.
-        // Calling dismiss on its delegate callback races Files' own transition
-        // and can leave the picker on screen. This matches the proven
-        // Ze handoff. The delegate only returns the selected URL so
-        // Files can complete its own transition before bookmark generation.
-        .sheet(isPresented: $showingPicker) {
-            FolderPicker { url in
-                let mount = PendingMount(
-                    url: url,
-                    name: Self.defaultMountName(for: url),
-                    allowWrite: true
-                )
-                // The picker is already dismissing itself. Scheduling the
-                // confirmation separately avoids a presentation request in
-                // the delegate callback's UIKit transition. Explicitly close
-                // the SwiftUI wrapper as well: when the Files provider keeps
-                // its own sheet alive, leaving this flag true makes the
-                // system's “Open” button appear to do nothing.
-                DispatchQueue.main.async {
-                    showingPicker = false
-                    pendingMount = mount
-                    mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
-                }
-            } onCancel: {
-                showingPicker = false
+        // Use SwiftUI's system file importer directly. It owns the Files
+        // presentation/dismissal lifecycle, so the provider's “Open” button
+        // reliably returns the selected security-scoped folder URL instead of
+        // leaving a nested UIDocumentPicker sheet stuck on screen.
+        .fileImporter(
+            isPresented: $showingPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let mount = PendingMount(
+                url: url,
+                name: Self.defaultMountName(for: url),
+                allowWrite: true
+            )
+            // Wait for Files' dismissal transaction before presenting the
+            // confirmation sheet. This avoids competing presentations while
+            // retaining the security-scoped URL for bookmark creation.
+            DispatchQueue.main.async {
+                pendingMount = mount
+                mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
             }
         }
         .sheet(item: $pendingMount) { pending in
@@ -391,43 +386,6 @@ private struct AddMountSheet: View {
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-        }
-    }
-}
-
-// MARK: - Folder picker
-
-private struct FolderPicker: UIViewControllerRepresentable {
-    let onPick: (URL) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
-        picker.delegate = context.coordinator
-        picker.allowsMultipleSelection = false
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick, onCancel: onCancel) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
-        let onCancel: () -> Void
-
-        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
-            self.onPick = onPick
-            self.onCancel = onCancel
-        }
-
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { return }
-            onPick(url)
-        }
-
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onCancel()
         }
     }
 }

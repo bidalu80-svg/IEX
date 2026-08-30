@@ -244,7 +244,7 @@ final class ICloudBackupManager: ObservableObject {
 
     private var backupDirectoryURL: URL? {
         guard let container = iCloudContainerURL else { return nil }
-        let deviceName = UIDevice.current.name
+        let deviceName = DeviceIdentity.modelName
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
         return container
