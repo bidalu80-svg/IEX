@@ -17,6 +17,7 @@ struct CloudSyncSettingsV2View: View {
     @State private var maxFileSizeMB: Int = 1
     @State private var remoteDevices: [SyncDevice] = []
     @State private var statusText: String = ""
+    @State private var cloudKitError: String?
     // [T-ios-migration-timer-sessionlist-uaf-crash] 5s refresh cadence is driven by
     // a `.task` async loop (see refreshLoop), NOT a process-lived
     // `Timer.publish(every:5).autoconnect()` + `.onReceive`. A graph-bound Combine
@@ -34,6 +35,10 @@ struct CloudSyncSettingsV2View: View {
                 Toggle(isOn: Binding(
                     get: { v2Enabled },
                     set: { newValue in
+                        if newValue && CloudKitAvailability.defaultContainer() == nil {
+                            cloudKitError = CloudKitAvailability.unavailableMessage
+                            return
+                        }
                         if #available(iOS 17.0, *) { SyncV2Bootstrap.setEnabled(newValue) }
                         v2Enabled = newValue
                     }
@@ -179,6 +184,14 @@ struct CloudSyncSettingsV2View: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Friendly name shown to your other Ze devices.")
+        }
+        .alert(String(localized: "iCloud unavailable"), isPresented: Binding(
+            get: { cloudKitError != nil },
+            set: { if !$0 { cloudKitError = nil } }
+        )) {
+            Button(String(localized: "OK"), role: .cancel) { cloudKitError = nil }
+        } message: {
+            Text(cloudKitError ?? "")
         }
     }
 
