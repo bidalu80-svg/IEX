@@ -25,6 +25,7 @@ struct MountedFoldersSettingsView: View {
     @StateObject private var model = MountedFoldersViewModel()
     @State private var showingPicker = false
     @State private var pendingMount: PendingMount?
+    @State private var reauthorizeID: UUID?
     @State private var errorText: String?
 
     var body: some View {
@@ -69,6 +70,21 @@ struct MountedFoldersSettingsView: View {
                                 model.remove(id: entry.id)
                             } label: {
                                 Label("Remove", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button {
+                                reauthorizeID = entry.id
+                            } label: {
+                                Label(String(localized: "Re-authorize"), systemImage: "key.fill")
+                            }
+                            .tint(.blue)
+                        }
+                        .contextMenu {
+                            Button {
+                                reauthorizeID = entry.id
+                            } label: {
+                                Label(String(localized: "Re-authorize"), systemImage: "key.fill")
                             }
                         }
                     }
@@ -122,6 +138,23 @@ struct MountedFoldersSettingsView: View {
             DispatchQueue.main.async {
                 pendingMount = mount
                 mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
+            }
+        }
+        .fileImporter(
+            isPresented: Binding(
+                get: { reauthorizeID != nil },
+                set: { if !$0 { reauthorizeID = nil } }
+            ),
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let id = reauthorizeID else { return }
+            reauthorizeID = nil
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            do {
+                try model.reauthorize(id: id, pickedURL: url)
+            } catch {
+                errorText = error.localizedDescription
             }
         }
         .sheet(item: $pendingMount) { pending in
@@ -459,6 +492,11 @@ final class MountedFoldersViewModel: ObservableObject {
 
     func setUserAllowWrite(id: UUID, to allow: Bool) {
         MountedFoldersManager.shared.setUserAllowWrite(id: id, to: allow)
+        refresh()
+    }
+
+    func reauthorize(id: UUID, pickedURL: URL) throws {
+        try MountedFoldersManager.shared.reauthorize(id: id, pickedURL: pickedURL)
         refresh()
     }
 }

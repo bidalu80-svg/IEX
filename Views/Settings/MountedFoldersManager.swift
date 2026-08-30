@@ -312,6 +312,44 @@ final class MountedFoldersManager {
         mountLog.info("user allow-write for '\(entries[idx].name)' -> \(allow)")
     }
 
+    /// Replace a mount's security-scoped bookmark after a re-sign, app restore,
+    /// or provider migration invalidated the previous access grant. The user
+    /// must select the folder again in Files; iOS then issues a fresh grant
+    /// tied to the current app signature. Existing mount name and write policy
+    /// are retained.
+    func reauthorize(id: UUID, pickedURL: URL) throws {
+        guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        let scoped = pickedURL.startAccessingSecurityScopedResource()
+        defer {
+            if scoped { pickedURL.stopAccessingSecurityScopedResource() }
+        }
+        guard scoped else { throw AddError.scopeDenied }
+        let bookmark: Data
+        do {
+            bookmark = try pickedURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            throw AddError.bookmarkFailed(error.localizedDescription)
+        }
+
+        if let oldURL = activeURLs.removeValue(forKey: id) {
+            oldURL.stopAccessingSecurityScopedResource()
+        }
+        activationStates.removeValue(forKey: id)
+        entries[idx].bookmark = bookmark
+        entries[idx].isWritable = Self.probeWritable(at: pickedURL)
+        save()
+
+        let updated = entries[idx]
+        _ = activate(entry: updated)
+        AIChatViewModel.refreshMountedFolderSymlinks()
+        pushExternalMountSnapshot()
+        mountLog.info("reauthorized mount '\(updated.name)' -> \(pickedURL.path)")
+    }
+
     /// Re-probe the writability of a mount (useful if the user changed
     /// permissions on the source folder in another app). Updates `isWritable`
     /// and re-pushes the snapshot so iSH rebinds with the new mode.
