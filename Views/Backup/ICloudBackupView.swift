@@ -78,7 +78,11 @@ struct ICloudBackupView: View {
                 }
             }
 
-            if selectedMode == 0 && manager.isICloudAvailable {
+            // Local Files and remote destinations remain usable even when the
+            // optional iCloud container is unavailable (for example in a
+            // re-signed build). Only the iCloud history/status above depends
+            // on the container entitlement.
+            if selectedMode == 0 {
                 Section(String(localized: "Backup")) {
                     ForEach(ICloudBackupManager.BackupCategory.allCases) { category in
                         Button {
