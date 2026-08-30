@@ -8,6 +8,47 @@ import XCTest
 /// thinking-heavy or safety-stripped turn).
 final class GeminiWireFormatTests: XCTestCase {
 
+    // MARK: - Tagged thinking parser
+
+    func testTaggedThinkingParserSeparatesInlineThinking() {
+        var parser = GeminiTaggedThinkingParser()
+        let segments = parser.feed("正文前<thinking>先分析一下</thinking>正文后") + parser.finish()
+        XCTAssertEqual(segments, [
+            .init(isThinking: false, text: "正文前"),
+            .init(isThinking: true, text: "先分析一下"),
+            .init(isThinking: false, text: "正文后")
+        ])
+    }
+
+    func testTaggedThinkingParserHandlesTagsSplitAcrossSSEChunks() {
+        var parser = GeminiTaggedThinkingParser()
+        var segments: [GeminiTaggedThinkingParser.Segment] = []
+        for chunk in ["<thin", "king>分片", "思考</think", "ing>完成"] {
+            segments += parser.feed(chunk)
+        }
+        segments += parser.finish()
+        XCTAssertEqual(segments, [
+            .init(isThinking: true, text: "分片思考"),
+            .init(isThinking: false, text: "完成")
+        ])
+    }
+
+    func testTaggedThinkingParserIsCaseInsensitive() {
+        var parser = GeminiTaggedThinkingParser()
+        let segments = parser.feed("<THINKING>reason</THINKING>answer") + parser.finish()
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertTrue(segments[0].isThinking)
+        XCTAssertEqual(segments[0].text, "reason")
+        XCTAssertFalse(segments[1].isThinking)
+        XCTAssertEqual(segments[1].text, "answer")
+    }
+
+    func testTaggedThinkingParserFlushesUnclosedThinkingAtEnd() {
+        var parser = GeminiTaggedThinkingParser()
+        let segments = parser.feed("<thinking>未闭合") + parser.finish()
+        XCTAssertEqual(segments, [.init(isThinking: true, text: "未闭合")])
+    }
+
     // MARK: - nonEmptyText
 
     func testNonEmptyText_emptyString_becomesSpace() {

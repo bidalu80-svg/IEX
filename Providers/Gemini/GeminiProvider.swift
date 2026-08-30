@@ -202,6 +202,7 @@ final class GeminiProvider: LLMProvider {
 
         return AsyncThrowingStream { continuation in
             let task = Task {
+                var taggedThinkingParser = GeminiTaggedThinkingParser()
                 do {
                     for try await line in bytes.lines {
                         guard !Task.isCancelled else { break }
@@ -218,8 +219,17 @@ final class GeminiProvider: LLMProvider {
                         }
                         #endif
                         for event in events {
-                            continuation.yield(event)
+                            if case .textDelta(let text) = event {
+                                for segment in taggedThinkingParser.feed(text) {
+                                    continuation.yield(segment.isThinking ? .thinkingDelta(segment.text) : .textDelta(segment.text))
+                                }
+                            } else {
+                                continuation.yield(event)
+                            }
                         }
+                    }
+                    for segment in taggedThinkingParser.finish() {
+                        continuation.yield(segment.isThinking ? .thinkingDelta(segment.text) : .textDelta(segment.text))
                     }
                     continuation.yield(.done)
                     continuation.finish()

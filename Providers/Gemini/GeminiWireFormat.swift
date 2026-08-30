@@ -44,3 +44,72 @@ enum GeminiWireFormat {
         ["result": nonEmptyText(content)]
     }
 }
+
+/// Parses reasoning emitted by OpenAI-compatible Gemini gateways as inline
+/// `<thinking>...</thinking>` text. Native Gemini responses mark thought parts
+/// with `thought: true`; some relays instead serialize the same content into
+/// ordinary text, and SSE boundaries may split either tag across chunks.
+struct GeminiTaggedThinkingParser: Sendable {
+    struct Segment: Equatable, Sendable {
+        let isThinking: Bool
+        let text: String
+    }
+
+    private static let openTag = "<thinking>"
+    private static let closeTag = "</thinking>"
+    private var buffer = ""
+    private var inThinking = false
+
+    mutating func feed(_ chunk: String) -> [Segment] {
+        guard !chunk.isEmpty else { return [] }
+        buffer += chunk
+        return drain(final: false)
+    }
+
+    mutating func finish() -> [Segment] {
+        drain(final: true)
+    }
+
+    private mutating func drain(final: Bool) -> [Segment] {
+        var output: [Segment] = []
+        while true {
+            let marker = inThinking ? Self.closeTag : Self.openTag
+            if let range = buffer.range(of: marker, options: [.caseInsensitive]) {
+                let prefix = String(buffer[..<range.lowerBound])
+                if !prefix.isEmpty { output.append(Segment(isThinking: inThinking, text: prefix)) }
+                buffer.removeSubrange(buffer.startIndex..<range.upperBound)
+                inThinking.toggle()
+                continue
+            }
+
+            if final {
+                if !buffer.isEmpty { output.append(Segment(isThinking: inThinking, text: buffer)) }
+                buffer.removeAll(keepingCapacity: false)
+                break
+            }
+
+            // Keep a possible partial marker for the next SSE chunk. Everything
+            // before that suffix is safe to emit immediately.
+            let markerLower = marker.lowercased()
+            let bufferLower = buffer.lowercased()
+            var keep = 0
+            let maxKeep = min(markerLower.count - 1, bufferLower.count)
+            if maxKeep > 0 {
+                for count in stride(from: maxKeep, through: 1, by: -1) {
+                    if bufferLower.suffix(count) == markerLower.prefix(count) {
+                        keep = count
+                        break
+                    }
+                }
+            }
+            let emitCount = buffer.count - keep
+            if emitCount > 0 {
+                let end = buffer.index(buffer.startIndex, offsetBy: emitCount)
+                output.append(Segment(isThinking: inThinking, text: String(buffer[..<end])))
+                buffer.removeSubrange(buffer.startIndex..<end)
+            }
+            break
+        }
+        return output
+    }
+}
