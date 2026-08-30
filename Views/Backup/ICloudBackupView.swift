@@ -242,7 +242,6 @@ struct ICloudBackupView: View {
                 showPasswordSheet = false
                 passwordMode = nil
             } }
-        }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [UTType.data, UTType.item], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             importedURL = url
