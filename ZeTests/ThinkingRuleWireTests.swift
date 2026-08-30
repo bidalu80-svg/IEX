@@ -6,6 +6,63 @@ import XCTest
 /// a seemingly harmless UI or provider refactor.
 final class ThinkingRuleWireTests: XCTestCase {
 
+    // MARK: - OpenAI-compatible inline thinking tags
+
+    func testOpenAIThinkPrefixParserSupportsGeminiThinkingTag() {
+        var parser = OpenAIAgentProvider.ThinkPrefixStreamParser()
+        var thinking = ""
+        var visible = ""
+
+        let first = parser.consume("<thinking>先分析")
+        thinking += first.thinking
+        visible += first.visible
+        let second = parser.consume("一下</thinking>最终答案")
+        thinking += second.thinking
+        visible += second.visible
+        let tail = parser.finishTurn()
+        thinking += tail.thinking
+        visible += tail.visible
+
+        XCTAssertEqual(thinking, "先分析一下")
+        XCTAssertEqual(visible, "最终答案")
+    }
+
+    func testOpenAIThinkPrefixParserHandlesThinkingTagSplitAcrossChunks() {
+        var parser = OpenAIAgentProvider.ThinkPrefixStreamParser()
+        var thinking = ""
+        var visible = ""
+
+        for chunk in ["<thin", "king>分片", "思考</think", "ing>完成"] {
+            let output = parser.consume(chunk)
+            thinking += output.thinking
+            visible += output.visible
+        }
+        let tail = parser.finishTurn()
+        thinking += tail.thinking
+        visible += tail.visible
+
+        XCTAssertEqual(thinking, "分片思考")
+        XCTAssertEqual(visible, "完成")
+    }
+
+    func testOpenAIThinkPrefixParserMatchesThinkingTagCaseInsensitively() {
+        var parser = OpenAIAgentProvider.ThinkPrefixStreamParser()
+        let output = parser.consume("<THINKING>reason</THINKING>answer")
+        let tail = parser.finishTurn()
+
+        XCTAssertEqual(output.thinking + tail.thinking, "reason")
+        XCTAssertEqual(output.visible + tail.visible, "answer")
+    }
+
+    func testOpenAIThinkPrefixParserLeavesMidBodyTagUntouched() {
+        var parser = OpenAIAgentProvider.ThinkPrefixStreamParser()
+        let output = parser.consume("普通正文 <thinking>不是前缀")
+        let tail = parser.finishTurn()
+
+        XCTAssertEqual(output.thinking + tail.thinking, "")
+        XCTAssertEqual(output.visible + tail.visible, "普通正文 <thinking>不是前缀")
+    }
+
     private let instanceId = "thinking-rule-wire-tests"
 
     override func tearDown() {

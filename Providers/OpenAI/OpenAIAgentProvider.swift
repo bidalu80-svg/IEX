@@ -1729,7 +1729,9 @@ final class OpenAIAgentProvider: AgentProvider {
     // MARK: - <think> Tag Extraction
 
     /// [T-ios-think-prefix-live-stream] Streaming parser for models that embed
-    /// reasoning as a `<think>…</think>` PREFIX of the `content` field
+    /// reasoning as a `<think>…</think>` or `<thinking>…</thinking>` PREFIX
+    /// of the `content` field. Several Gemini OpenAI-compatible relays use
+    /// the longer `<thinking>` spelling.
     /// (MiniMax M-series, Qwen, some DeepSeek proxies) instead of using the
     /// `reasoning_content` field. Rules:
     ///
@@ -1762,8 +1764,8 @@ final class OpenAIAgentProvider: AgentProvider {
         /// non-whitespace body character.
         private var trimLeadingBody = false
 
-        private static let openTag = "<think>"
-        private static let closeTag = "</think>"
+        private static let openTags = ["<thinking>", "<think>"]
+        private var closeTag = "</think>"
 
         /// Feed one streamed content chunk. Returns text to emit now.
         mutating func consume(_ chunk: String) -> (thinking: String, visible: String) {
@@ -1777,14 +1779,17 @@ final class OpenAIAgentProvider: AgentProvider {
                     // Decide against the buffer with leading whitespace skipped.
                     let t = buf.drop(while: { $0.isWhitespace })
                     if t.isEmpty { break loop }          // whitespace so far — wait
-                    if t.count < Self.openTag.count {
-                        if Self.openTag.hasPrefix(String(t)) { break loop }  // may still become <think>
-                    } else if t.hasPrefix(Self.openTag) {
+                    let lowerT = String(t).lowercased()
+                    if Self.openTags.contains(where: { $0.lowercased().hasPrefix(lowerT) }) {
+                        if !Self.openTags.contains(where: { lowerT.count >= $0.count && lowerT.hasPrefix($0.lowercased()) }) { break loop }
+                    }
+                    if let openTag = Self.openTags.first(where: { lowerT.count >= $0.count && lowerT.hasPrefix($0.lowercased()) }) {
                         // Think turn: drop the pre-tag whitespace + the tag itself.
                         hadThinkPrefix = true
                         trimLeadingBody = true
+                        closeTag = openTag == "<thinking>" ? "</thinking>" : "</think>"
                         mode = .thinking
-                        buf = String(t.dropFirst(Self.openTag.count))
+                        buf = String(t.dropFirst(openTag.count))
                         continue loop
                     }
                     // Plain turn: everything buffered (incl. leading
@@ -1794,17 +1799,18 @@ final class OpenAIAgentProvider: AgentProvider {
                     buf = ""
 
                 case .thinking:
-                    if let close = buf.range(of: Self.closeTag) {
+                    if let close = buf.range(of: closeTag, options: [.caseInsensitive]) {
                         thinking += String(buf[..<close.lowerBound])
                         buf = String(buf[close.upperBound...])
                         mode = .body
                         continue loop
                     }
-                    // No close tag yet — emit all but the last 8 chars, which
-                    // could be a partial "</think>" spanning chunks.
-                    if buf.count > 8 {
-                        thinking += String(buf.dropLast(8))
-                        buf = String(buf.suffix(8))
+                    // No close tag yet — retain enough trailing characters for
+                    // a partial closing tag (which may span SSE chunks).
+                    let keepCount = max(1, closeTag.count - 1)
+                    if buf.count > keepCount {
+                        thinking += String(buf.dropLast(keepCount))
+                        buf = String(buf.suffix(keepCount))
                     }
                     break loop
 
