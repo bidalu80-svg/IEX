@@ -495,7 +495,8 @@ private struct FileEditorView: View {
                 content = text
                 hasChanges = false
             case .failure(let error):
-                errorMessage = "\(String(localized: \"Could not read file\")): \(error.localizedDescription)"
+                let prefix = String(localized: "Could not read file")
+                errorMessage = "\(prefix): \(error.localizedDescription)"
             }
         }
     }
