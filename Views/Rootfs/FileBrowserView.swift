@@ -473,9 +473,7 @@ private struct FileEditorView: View {
                         userInfo: [NSLocalizedDescriptionKey: String(localized: "This file is too large to edit.")]
                     )
                 }
-                let text = String(data: data, encoding: .utf8)
-                    ?? String(data: data, encoding: .isoLatin1)
-                guard let text else {
+                guard let text = String(data: data, encoding: .utf8) else {
                     throw NSError(
                         domain: "ZeFileEditor",
                         code: 2,
@@ -552,6 +550,27 @@ private func richPreviewKind(for item: FileItem) -> RichPreviewKind {
         }
         return .info
     }
+}
+
+/// Code/configuration files do not have a finite extension list, so every
+/// regular file is considered editable unless it is a clearly binary asset or
+/// a document reserved for Quick Look. FileEditorView performs a strict UTF-8
+/// check before loading as a second guard for unknown extensions.
+private func isEditableSourceFile(_ item: FileItem) -> Bool {
+    guard !item.isDirectory else { return false }
+    let url = item.isSymlink ? item.url.resolvingSymlinksInPath() : item.url
+    let ext = url.pathExtension.lowercased()
+    let binaryExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tif", "tiff", "bmp", "ico",
+        "pdf", "zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "dmg", "iso",
+        "mp3", "m4a", "wav", "aac", "flac", "ogg", "opus", "mp4", "mov", "m4v", "avi", "mkv",
+        "woff", "woff2", "ttf", "otf", "eot", "sqlite", "sqlite3", "db", "realm", "car",
+        "a", "o", "dylib", "framework", "xcarchive", "ipa", "app", "bin", "dat", "class",
+        "pyc", "pyo", "wasm", "so"
+    ]
+    guard !binaryExtensions.contains(ext) else { return false }
+    if case .quickLook = richPreviewKind(for: item) { return false }
+    return true
 }
 
 private struct FilePreviewSheet: View {
@@ -873,11 +892,7 @@ private struct FileBrowserRow: View {
     }
 
     private var isEditable: Bool {
-        guard !item.isDirectory else { return false }
-        switch richPreviewKind(for: item) {
-        case .text, .markdown, .html: return true
-        case .quickLook, .info: return false
-        }
+        isEditableSourceFile(item)
     }
 
     var body: some View {
