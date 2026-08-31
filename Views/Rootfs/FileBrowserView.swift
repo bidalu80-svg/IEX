@@ -43,6 +43,7 @@ struct FileBrowserView: View {
     @State private var exportingFile: FileItem?
     @State private var showExportSheet = false
     @State private var previewingFile: FileItem?
+    @State private var editingFile: FileItem?
     @State private var showImportPicker = false
     @State private var itemToDelete: FileItem?
     @State private var moveOrCopyItem: FileItem?
@@ -121,6 +122,8 @@ struct FileBrowserView: View {
                             } onExport: {
                                 exportingFile = item
                                 showExportSheet = true
+                            } onEdit: {
+                                editingFile = item
                             } onMove: {
                                 moveOrCopyItem = item
                                 moveOrCopyMode = .move
@@ -210,6 +213,11 @@ struct FileBrowserView: View {
         }
         .sheet(item: $previewingFile) { file in
             FilePreviewSheet(item: file)
+        }
+        .sheet(item: $editingFile) { file in
+            FileEditorView(item: file) {
+                viewModel.loadItems()
+            }
         }
         .sheet(isPresented: $showImportPicker) {
             FileImportPicker { urls in
@@ -379,6 +387,137 @@ private enum RichPreviewKind {
     case text
     case quickLook
     case info
+}
+
+// MARK: - Source editor
+
+/// Lightweight in-app editor for text and source files exposed by the file
+/// browser. Reads and writes go through MountedFolderCoordinator so edits to
+/// iCloud-backed or user-mounted folders receive the same coordination and
+/// read-only checks as the existing move/copy/delete operations.
+private struct FileEditorView: View {
+    let item: FileItem
+    let onSaved: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var content = ""
+    @State private var isLoading = true
+    @State private var hasChanges = false
+    @State private var errorMessage: String?
+    @State private var showDiscardAlert = false
+
+    private var fileURL: URL {
+        item.isSymlink ? item.url.resolvingSymlinksInPath() : item.url
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+
+            if isLoading {
+                Spacer()
+                ProgressView(String(localized: "Loading..."))
+                Spacer()
+            } else {
+                TextEditor(text: $content)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .onChange(of: content) { _ in hasChanges = true }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(item.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .interactiveDismissDisabled(hasChanges)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(String(localized: "Cancel")) {
+                    if hasChanges { showDiscardAlert = true } else { dismiss() }
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(String(localized: "Save")) { save() }
+                    .disabled(isLoading)
+            }
+        }
+        .alert(String(localized: "Discard Changes?"), isPresented: $showDiscardAlert) {
+            Button(String(localized: "Discard"), role: .destructive) { dismiss() }
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "Your changes have not been saved."))
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        let url = fileURL
+        let result: Result<String, Error> = await Task.detached(priority: .userInitiated) {
+            do {
+                let data = try MountedFolderCoordinator.read(at: url)
+                // Keep the editor responsive and avoid accidentally loading a
+                // binary/very large asset into a TextEditor.
+                guard data.count <= 4 * 1024 * 1024 else {
+                    throw NSError(
+                        domain: "ZeFileEditor",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: String(localized: "This file is too large to edit.")]
+                    )
+                }
+                let text = String(data: data, encoding: .utf8)
+                    ?? String(data: data, encoding: .isoLatin1)
+                guard let text else {
+                    throw NSError(
+                        domain: "ZeFileEditor",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: String(localized: "This file is not a text file.")]
+                    )
+                }
+                return .success(text)
+            } catch {
+                return .failure(error)
+            }
+        }.value
+
+        await MainActor.run {
+            isLoading = false
+            switch result {
+            case .success(let text):
+                content = text
+                hasChanges = false
+            case .failure(let error):
+                errorMessage = "\(String(localized: \"Could not read file\")): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func save() {
+        guard let data = content.data(using: .utf8) else {
+            errorMessage = String(localized: "Could not save file")
+            return
+        }
+        do {
+            try MountedFolderCoordinator.write(data, to: fileURL)
+            hasChanges = false
+            errorMessage = nil
+            onSaved()
+            ZeToast.show(String(localized: "Saved"))
+        } catch {
+            errorMessage = String(
+                format: String(localized: "Save failed: %@"),
+                error.localizedDescription
+            )
+        }
+    }
 }
 
 private func richPreviewKind(for item: FileItem) -> RichPreviewKind {
@@ -717,6 +856,7 @@ private struct FileBrowserRow: View {
     @Binding var itemToDelete: FileItem?
     let onTap: () -> Void
     let onExport: () -> Void
+    let onEdit: () -> Void
     let onMove: () -> Void
     let onCopy: () -> Void
     /// Called after the guest path is placed on the clipboard, so the parent
@@ -729,6 +869,14 @@ private struct FileBrowserRow: View {
         guard !item.isDirectory else { return false }
         let ext = (item.name as NSString).pathExtension.lowercased()
         return ext == "html" || ext == "htm"
+    }
+
+    private var isEditable: Bool {
+        guard !item.isDirectory else { return false }
+        switch richPreviewKind(for: item) {
+        case .text, .markdown, .html: return true
+        case .quickLook, .info: return false
+        }
     }
 
     var body: some View {
@@ -754,6 +902,11 @@ private struct FileBrowserRow: View {
                 }
                 Divider()
                 if !item.isDirectory {
+                    if isEditable {
+                        Button { onEdit() } label: {
+                            Label(String(localized: "Edit file"), systemImage: "square.and.pencil")
+                        }
+                    }
                     Button { onExport() } label: {
                         Label("Export", systemImage: "square.and.arrow.up")
                     }
@@ -775,6 +928,14 @@ private struct FileBrowserRow: View {
                 }
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if isEditable {
+                    Button {
+                        onEdit()
+                    } label: {
+                        Label(String(localized: "Edit"), systemImage: "square.and.pencil")
+                    }
+                    .tint(.blue)
+                }
                 Button(role: .destructive) {
                     itemToDelete = item
                 } label: {

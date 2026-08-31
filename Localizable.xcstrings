@@ -78517,6 +78517,48 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份会包含选中的本地数据。超过大小限制的文件会记录在备份中，但不包含文件内容。" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份會包含選取的本機資料。超過大小限制的檔案會記錄在備份中，但不包含檔案內容。" } }
       }
+    },
+    "Discard Changes?" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard Changes?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "放弃更改？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "放棄更改？" } }
+      }
+    },
+    "Discard" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "放弃" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "放棄" } }
+      }
+    },
+    "Your changes have not been saved." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your changes have not been saved." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的更改尚未保存。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "你的更改尚未儲存。" } }
+      }
+    },
+    "This file is too large to edit." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This file is too large to edit." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件太大，无法编辑。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "檔案太大，無法編輯。" } }
+      }
+    },
+    "This file is not a text file." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This file is not a text file." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此文件不是文本文件。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "此檔案不是文字檔案。" } }
+      }
+    },
+    "Could not save file" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save file" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存文件" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法儲存檔案" } }
+      }
     }
   },
   "version" : "1.0"
