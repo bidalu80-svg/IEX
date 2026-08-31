@@ -215,8 +215,10 @@ struct FileBrowserView: View {
             FilePreviewSheet(item: file)
         }
         .sheet(item: $editingFile) { file in
-            FileEditorView(item: file) {
-                viewModel.loadItems()
+            NavigationStack {
+                FileEditorView(item: file) {
+                    viewModel.loadItems()
+                }
             }
         }
         .sheet(isPresented: $showImportPicker) {
