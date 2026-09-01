@@ -30,6 +30,17 @@ Vendor/                      第三方或原生依赖源码
 
 ## 2. 应用启动与根视图
 
+## 3. 浏览器引擎与网页自动化
+
+Ze 的 iOS 浏览器统一使用 Apple `WKWebView` / WebKit：
+
+- `Agent/BrowserUse/BrowserUseManager.swift` 创建并管理网页实例、导航、下载、Cookie、JavaScript 和窗口弹出。
+- `Agent/BrowserUse/BrowserTabPool.swift` 管理多标签页及其生命周期。
+- `Agent/BrowserUse/BrowserWebView.swift` 和 `Agent/BrowserUse/BrowserSheetView.swift` 将网页实例嵌入 SwiftUI。
+- `Views/Chat/WebPreviewSheet.swift` 提供聊天中的网页预览；`Views/Rootfs/FileBrowserView.swift` 提供本地 HTML 预览。
+
+当前工程没有集成 Chromium Blink、V8 或 CEF 的 iOS 二进制、源码和链接配置。已核对的同类开源 iOS 实现也基于 `WKWebView`，不能作为 Blink/V8 的现成移植来源。若未来要引入真正的 Blink/V8，需要单独准备 iOS arm64 构建的引擎 framework、许可证与第三方声明、进程/沙箱适配、WebKit 功能替代层、内存和包体积预算，以及 iOS 16 真机回归测试；仅修改 User-Agent 或 SwiftUI 包装不会改变网页渲染引擎。
+
 ### 启动链
 
 1. `ZeApp.swift` 创建 SwiftUI `App`，配置持久化容器、全局状态对象和根窗口。
