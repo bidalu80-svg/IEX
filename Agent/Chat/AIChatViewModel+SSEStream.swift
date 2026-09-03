@@ -283,7 +283,11 @@ extension AIChatViewModel {
             return "\(raw)-\(n)"
         }
 
-        let stallTimeoutSeconds: TimeInterval = 120
+        // Keep the parser watchdog aligned with the 10-minute idle timeout used
+        // by every provider streaming URLSession. Reasoning-heavy requests can
+        // legitimately emit no parsed AgentStreamEvent for longer than two
+        // minutes; the old 120s guard aborted those live connections early.
+        let stallTimeoutSeconds: TimeInterval = 600
         var _streamError: Error? = nil
         let iterBox = StreamIteratorBox(stream)
         do {
