@@ -213,6 +213,41 @@ private struct ChatShimmerText: View {
     }
 }
 
+/// Keeps completed thinking lines static while applying the shared shimmer to
+/// only the logical line currently receiving streamed content.
+private struct ThinkingContentText: View {
+    let text: String
+    let isStreaming: Bool
+
+    private var activeLine: String {
+        guard isStreaming else { return "" }
+        return text.lastIndex(of: "\n")
+            .map { String(text[text.index(after: $0)...]) } ?? text
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(ChatColors.tertiaryText)
+                .lineSpacing(3)
+
+            if !activeLine.isEmpty {
+                ChatShimmerText(
+                    text: activeLine,
+                    font: .system(size: 13),
+                    color: .clear,
+                    isActive: true,
+                    lineLimit: nil
+                )
+                .lineSpacing(3)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
 /// A narrow shimmer band that sweeps from leading to trailing.
 /// Its offset is time-driven, so a collection-view cell cannot retain a
 /// stopped repeat-forever animation after it has been reused for another tool.
@@ -895,14 +930,10 @@ struct ThinkingBlockView: View {
                                     .padding(.horizontal, 12)
                                     .padding(.bottom, 4)
                             }
-                            ChatShimmerText(
+                            ThinkingContentText(
                                 text: displayContent,
-                                font: .system(size: 13),
-                                color: ChatColors.tertiaryText,
-                                isActive: isStreaming,
-                                lineLimit: nil
+                                isStreaming: isStreaming
                             )
-                                .lineSpacing(3)
                                 .textSelection(.enabled)
                                 .padding(.horizontal, 4)
                                 .padding(.bottom, 10)
