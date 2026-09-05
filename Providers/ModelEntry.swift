@@ -132,16 +132,21 @@ struct ModelEntry: Identifiable, Codable, Hashable {
     /// Effective model as seen by the rest of the app: `baseModel` with `overrides` applied.
     /// New override fields: add them to the memberwise rebuild below.
     var model: LLMModel {
-        guard !overrides.isEmpty else { return baseModel }
+        let lowerId = baseModel.id.lowercased()
+        let isAstraFamily = lowerId.hasPrefix("gpt-6") || lowerId.hasPrefix("gpt6")
+        guard !overrides.isEmpty || isAstraFamily else { return baseModel }
+        let inferredContext = baseModel.contextWindow ?? (isAstraFamily ? 1_000_000 : nil)
+        let inferredReasoning = baseModel.supportsReasoning ?? (isAstraFamily ? true : nil)
+        let inferredModality = baseModel.modalityOverride ?? (isAstraFamily ? .vision : nil)
         // LLMModel.displayName is a `let`, so rebuild via memberwise init to apply any override.
         return LLMModel(
             id: baseModel.id,
             displayName: overrides.displayName ?? baseModel.displayName,
             provider: baseModel.provider,
-            modalityOverride: overrides.modalityOverride ?? baseModel.modalityOverride,
-            contextWindow: overrides.contextWindow ?? baseModel.contextWindow,
+            modalityOverride: overrides.modalityOverride ?? inferredModality,
+            contextWindow: overrides.contextWindow ?? inferredContext,
             maxOutputTokens: overrides.maxOutputTokens ?? baseModel.maxOutputTokens,
-            supportsReasoning: overrides.supportsReasoning ?? baseModel.supportsReasoning,
+            supportsReasoning: overrides.supportsReasoning ?? inferredReasoning,
             interleavedReasoningField: baseModel.interleavedReasoningField
         )
     }

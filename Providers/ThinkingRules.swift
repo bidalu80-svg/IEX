@@ -129,6 +129,71 @@ final class ThinkingRuleCache: @unchecked Sendable {
 }
 
 enum ThinkingRuleResolver {
+
+    /// Build Gemini's native generationConfig.thinkingConfig shape. Gemini
+    /// uses model-family-specific fields rather than OpenAI's reasoning_effort.
+    /// Specialized output models are checked first because their IDs can also
+    /// contain a Gemini family marker while rejecting thinkingConfig entirely.
+    static func geminiThinkingConfig(modelId: String, level: ThinkingLevel) -> [String: Any] {
+        let id = modelId.lowercased()
+        let specialized = ["-tts", "-image", "-embedding", "-vision"]
+        if specialized.contains(where: { id.hasSuffix($0) || id.contains("\($0)-") }) { return [:] }
+
+        if level.isEnabled {
+            if id.contains("gemini-3") {
+                let geminiLevel: String
+                switch level {
+                case .off: geminiLevel = "minimal"
+                case .low: geminiLevel = "low"
+                case .medium: geminiLevel = "medium"
+                case .high, .xhigh, .max, .ultra: geminiLevel = "high"
+                }
+                return ["thinkingLevel": geminiLevel, "includeThoughts": true]
+            }
+            if id.contains("2.5-pro") {
+                let budget: Int = switch level {
+                case .off: 128
+                case .low: 2048
+                case .medium: 8192
+                case .high: 16384
+                case .xhigh, .max, .ultra: 32768
+                }
+                return ["thinkingBudget": budget, "includeThoughts": true]
+            }
+            if id.contains("2.5-flash") && !id.contains("lite") {
+                let budget: Int = switch level {
+                case .off: 0
+                case .low: 1024
+                case .medium: 4096
+                case .high: 8192
+                case .xhigh, .max, .ultra: 16384
+                }
+                return ["thinkingBudget": budget, "includeThoughts": true]
+            }
+            let budget: Int = switch level {
+            case .off: 128
+            case .low: 1024
+            case .medium: 4096
+            case .high: 8192
+            case .xhigh, .max, .ultra: 16384
+            }
+            return ["thinkingBudget": budget, "includeThoughts": true]
+        }
+
+        if id.contains("gemini-3") {
+            let flashAcceptsMinimal = id.contains("flash") && (geminiMinorVersion(id).map { $0 < 7 } ?? true)
+            return ["thinkingLevel": flashAcceptsMinimal ? "minimal" : "low"]
+        }
+        if id.contains("2.5-pro") { return ["thinkingBudget": 128] }
+        if id.contains("2.5-flash-lite") { return [:] }
+        return ["thinkingBudget": 0]
+    }
+
+    private static func geminiMinorVersion(_ id: String) -> Int? {
+        guard let range = id.range(of: #"gemini-\d+\.\d+"#, options: .regularExpression),
+              let dot = id[range].lastIndex(of: ".") else { return nil }
+        return Int(id[id.index(after: dot)..<range.upperBound])
+    }
     @MainActor
     static func builtInRulesForDisplay(instanceId: String) -> [BuiltInThinkingRule] {
         guard let instance = ProviderConfigStore.shared.instance(for: instanceId) else { return [] }

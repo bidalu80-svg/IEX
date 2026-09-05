@@ -127,7 +127,29 @@ enum GeminiModelsAPI {
             guard let methods = item["supportedGenerationMethods"] as? [String],
                   methods.contains("generateContent") else { return nil }
 
-            return LLMModel(id: id, displayName: displayName, provider: "Google")
+            let inputLimit = positiveInt(item["inputTokenLimit"])
+            let outputLimit = positiveInt(item["outputTokenLimit"])
+            let lowerId = id.lowercased()
+            let specialized = ["-tts", "-image", "-embedding", "-vision"]
+            let supportsReasoning: Bool? = if specialized.contains(where: { lowerId.hasSuffix($0) || lowerId.contains("\($0)-") }) {
+                false
+            } else if lowerId.contains("gemini-3") || lowerId.contains("2.5-pro") ||
+                        (lowerId.contains("2.5-flash") && !lowerId.contains("lite")) {
+                true
+            } else if lowerId.contains("2.5-flash-lite") {
+                false
+            } else {
+                nil
+            }
+
+            return LLMModel(
+                id: id,
+                displayName: displayName,
+                provider: "Google",
+                contextWindow: inputLimit,
+                maxOutputTokens: outputLimit,
+                supportsReasoning: supportsReasoning
+            )
         }
 
         let enriched = ModelsDevAPI.enrichModels(models)
@@ -138,6 +160,13 @@ enum GeminiModelsAPI {
             logger.info("First model raw JSON:\n\(debugStr)")
         }
         return enriched
+    }
+
+    private static func positiveInt(_ value: Any?) -> Int? {
+        if let value = value as? Int, value > 0 { return value }
+        if let value = value as? NSNumber, value.intValue > 0 { return value.intValue }
+        if let value = value as? String, let parsed = Int(value), parsed > 0 { return parsed }
+        return nil
     }
 }
 

@@ -94,6 +94,7 @@ enum OpenAIModelsAPI {
             let contextWindow = Self.contextWindow(from: item)
             let maxOutputTokens = Self.maxOutputTokens(from: item)
             let supportsReasoning = Self.supportsReasoning(from: item)
+                ?? ((id.lowercased().hasPrefix("gpt-6") || id.lowercased().hasPrefix("gpt6")) ? true : nil)
 
             // Parse modalities. Two wire shapes are supported:
             //   - OpenRouter: nested under `architecture.input_modalities` /

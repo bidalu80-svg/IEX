@@ -560,6 +560,9 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         // OpenAI
         if lid.contains("gpt-3.5") { return 16_000 }
         if lid.contains("gpt-4o") || lid.contains("gpt-4-turbo") { return 128_000 }
+        // GPT-5.6 Sol and GPT-6 Astra use the same 1M context contract when
+        // a compatible gateway does not return an explicit limit.
+        if lid.hasPrefix("gpt-5.6") || lid.hasPrefix("gpt-6") || lid.hasPrefix("gpt6") { return 1_000_000 }
         if lid.contains("gpt-5") { return 400_000 }
         if lid.contains("gpt-4") { return 8_000 }
         if lid.contains("o3") || lid.contains("o4") { return 200_000 }
