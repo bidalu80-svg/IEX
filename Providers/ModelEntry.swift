@@ -143,8 +143,16 @@ struct ModelEntry: Identifiable, Codable, Hashable {
             ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleMaxOutputTokens : nil)
         let inferredReasoning = baseModel.supportsReasoning
             ?? (isGPT56Compatible ? true : nil)
-        let inferredModality = baseModel.modalityOverride
-            ?? (isGPT56Compatible ? ModelModality.vision : nil)
+        let inferredModality: ModelModality? = if isGPT56Compatible {
+            // Older cached Astra entries were stored as text-only when the
+            // gateway omitted modality metadata. Restore the GPT-5.6 Sol
+            // image/PDF defaults while retaining any real audio/video bits
+            // that the provider may have reported. A user override below
+            // still has final precedence and can explicitly disable them.
+            (baseModel.modalityOverride ?? []).union(.vision)
+        } else {
+            baseModel.modalityOverride
+        }
         // LLMModel.displayName is a `let`, so rebuild via memberwise init to apply any override.
         return LLMModel(
             id: baseModel.id,
