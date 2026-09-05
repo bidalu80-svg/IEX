@@ -115,7 +115,15 @@ enum OpenAIModelsAPI {
             let outputArr = (item["output_modalities"] as? [String])
                 ?? ((item["architecture"] as? [String: Any])?["output_modalities"] as? [String])
 
-            var modality: ModelModality = (inputArr == nil && outputArr == nil) ? [.textInput, .textOutput] : []
+            // GPT-5.6 Sol and GPT-6 Astra share the vision-capable OpenAI
+            // contract. Some compatible gateways omit modality arrays from
+            // /models, so preserve that known family capability instead of
+            // collapsing it to text-only. Explicit API metadata still wins.
+            let lowerId = id.lowercased()
+            let familyDefault: ModelModality =
+                (lowerId.hasPrefix("gpt-5.6") || lowerId.hasPrefix("gpt-6") || lowerId.hasPrefix("gpt6"))
+                ? .vision : [.textInput, .textOutput]
+            var modality: ModelModality = (inputArr == nil && outputArr == nil) ? familyDefault : []
             if let inputs = inputArr {
                 let bare = Set(inputs.map(Self.normalizeModality))
                 if bare.contains("text")  { modality.insert(.textInput) }
