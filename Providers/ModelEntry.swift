@@ -134,14 +134,17 @@ struct ModelEntry: Identifiable, Codable, Hashable {
     var model: LLMModel {
         let isGPT56Compatible = LLMModel.isGPT56CompatibleFamily(baseModel.id)
         guard !overrides.isEmpty || isGPT56Compatible else { return baseModel }
-        let inferredContext = isGPT56Compatible
-            ? LLMModel.gpt56CompatibleContextWindow
-            : baseModel.contextWindow
-        let inferredMaxOutput = isGPT56Compatible
-            ? LLMModel.gpt56CompatibleMaxOutputTokens
-            : baseModel.maxOutputTokens
-        let inferredReasoning = isGPT56Compatible ? true : baseModel.supportsReasoning
-        let inferredModality = isGPT56Compatible ? ModelModality.vision : baseModel.modalityOverride
+        // Provider/API metadata is authoritative when present. The GPT-5.6
+        // compatible values are fallbacks only for gateways that omit a field;
+        // user overrides below remain the highest-priority layer.
+        let inferredContext = baseModel.contextWindow
+            ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleContextWindow : nil)
+        let inferredMaxOutput = baseModel.maxOutputTokens
+            ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleMaxOutputTokens : nil)
+        let inferredReasoning = baseModel.supportsReasoning
+            ?? (isGPT56Compatible ? true : nil)
+        let inferredModality = baseModel.modalityOverride
+            ?? (isGPT56Compatible ? ModelModality.vision : nil)
         // LLMModel.displayName is a `let`, so rebuild via memberwise init to apply any override.
         return LLMModel(
             id: baseModel.id,
