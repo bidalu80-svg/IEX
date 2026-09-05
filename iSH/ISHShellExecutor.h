@@ -121,6 +121,13 @@ typedef void (^ISHShellCompletionCallback)(ISHShellExecutionResult *result);
 /// @param pid Guest process PID — its pgid is used to find the group
 + (void)killProcessGroup:(int)pid;
 
+/// Finalize a command after its timeout path has killed the guest process.
+/// Safe to call after normal completion or more than once.
++ (void)finalizeTimedOutPid:(int)pid;
+
+/// Diagnostic counters for active contexts and pipe reader lifetime guards.
++ (NSString *)leakGuardStatus;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -397,8 +397,7 @@ final class ICloudBackupManager: ObservableObject {
             try fm.createDirectory(at: sharedDir, withIntermediateDirectories: true)
             for item in try fm.contentsOfDirectory(at: sharedSrc, includingPropertiesForKeys: nil) {
                 let target = sharedDir.appendingPathComponent(item.lastPathComponent)
-                if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-                try fm.copyItem(at: item, to: target)
+                try replaceRestoredItem(at: target, with: item)
             }
         }
         if fm.fileExists(atPath: root.appendingPathComponent("skills.db").path) || fm.fileExists(atPath: root.appendingPathComponent("skills").path) || fm.fileExists(atPath: root.appendingPathComponent("memory").path) {
@@ -413,6 +412,38 @@ final class ICloudBackupManager: ObservableObject {
 
     private func checkCancelled() throws {
         if isCancelled || Task.isCancelled { throw BackupError.cancelled }
+    }
+
+    /// Stage beside the destination and swap by rename. The previous item is
+    /// restored if the final rename fails, so restore never deletes first.
+    private func replaceRestoredItem(at target: URL, with source: URL) throws {
+        let parent = target.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let token = UUID().uuidString
+        let staged = parent.appendingPathComponent(".ze-restore-new-\(token)")
+        let previous = parent.appendingPathComponent(".ze-restore-old-\(token)")
+        defer { try? fm.removeItem(at: staged) }
+
+        try fm.copyItem(at: source, to: staged)
+        guard fm.fileExists(atPath: target.path) else {
+            try fm.moveItem(at: staged, to: target)
+            return
+        }
+
+        try fm.moveItem(at: target, to: previous)
+        do {
+            try fm.moveItem(at: staged, to: target)
+            try? fm.removeItem(at: previous)
+        } catch {
+            if !fm.fileExists(atPath: target.path) {
+                do {
+                    try fm.moveItem(at: previous, to: target)
+                } catch let rollbackError {
+                    logger.error("Restore rollback failed for \(target.path): \(rollbackError.localizedDescription)")
+                }
+            }
+            throw error
+        }
     }
 
     private func encryptArchive(_ archive: Data, password: String) throws -> Data {
@@ -441,12 +472,13 @@ final class ICloudBackupManager: ObservableObject {
     // MARK: - Backup
 
     func backup(category: BackupCategory) async throws {
-        guard !isBackingUp else { return }
+        guard !isBackingUp, !isRestoring else { throw BackupError.busy }
         guard let destDir = backupDirectoryURL else {
             throw BackupError.iCloudUnavailable
         }
 
         isBackingUp = true
+        isCancelled = false
         progress = 0
         statusMessage = String(localized: "Preparing backup…")
         defer {
@@ -623,15 +655,11 @@ final class ICloudBackupManager: ObservableObject {
         let envURL = library.appendingPathComponent("ZeChat/env-vars.json")
         let envSrc = dir.appendingPathComponent("env-vars.json")
         if fm.fileExists(atPath: envSrc.path) {
-            try fm.createDirectory(at: envURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: envURL)
-            try fm.copyItem(at: envSrc, to: envURL)
+            try replaceRestoredItem(at: envURL, with: envSrc)
         }
         let mcpSrc = dir.appendingPathComponent("mcp-servers.json")
         if fm.fileExists(atPath: mcpSrc.path) {
-            try fm.createDirectory(at: MCPStore.syncFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: MCPStore.syncFileURL)
-            try fm.copyItem(at: mcpSrc, to: MCPStore.syncFileURL)
+            try replaceRestoredItem(at: MCPStore.syncFileURL, with: mcpSrc)
             MCPStore.shared.load()
         }
     }
@@ -697,6 +725,9 @@ final class ICloudBackupManager: ObservableObject {
     /// ZIP files created by NSFileCoordinator are standard ZIP archives.
     private func extractZip(at zipURL: URL, to destination: URL) throws {
         let zipData = try Data(contentsOf: zipURL)
+        guard zipData.count >= 22 else {
+            throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+        }
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
 
         // Parse ZIP file structure
@@ -722,12 +753,21 @@ final class ICloudBackupManager: ObservableObject {
 
             let cdOffset = Int(base.load(fromByteOffset: eocdOffset + 16, as: UInt32.self))
             let cdEntries = Int(base.load(fromByteOffset: eocdOffset + 10, as: UInt16.self))
+            guard cdEntries <= 100_000, cdOffset >= 0, cdOffset <= size else {
+                throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+            }
 
             var offset = cdOffset
+            var totalUncompressedSize = 0
+            let maximumExtractedSize = 2 * 1_024 * 1_024 * 1_024
             for _ in 0..<cdEntries {
-                guard offset + 46 <= size else { break }
+                guard offset >= 0, offset <= size - 46 else {
+                    throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+                }
                 let sig = base.load(fromByteOffset: offset, as: UInt32.self)
-                guard sig == 0x02014b50 else { break }
+                guard sig == 0x02014b50 else {
+                    throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+                }
 
                 let method = base.load(fromByteOffset: offset + 10, as: UInt16.self)
                 let compressedSize = Int(base.load(fromByteOffset: offset + 20, as: UInt32.self))
@@ -736,15 +776,25 @@ final class ICloudBackupManager: ObservableObject {
                 let extraLen = Int(base.load(fromByteOffset: offset + 30, as: UInt16.self))
                 let commentLen = Int(base.load(fromByteOffset: offset + 32, as: UInt16.self))
                 let localHeaderOffset = Int(base.load(fromByteOffset: offset + 42, as: UInt32.self))
+                let nextOffset = offset + 46 + nameLen + extraLen + commentLen
+                guard nextOffset >= offset, nextOffset <= size else {
+                    throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+                }
+                totalUncompressedSize += uncompressedSize
+                guard totalUncompressedSize <= maximumExtractedSize else {
+                    throw BackupError.zipError(String(localized: "The backup archive is too large."))
+                }
 
                 let nameData = Data(bytes: base + offset + 46, count: nameLen)
                 let name = String(data: nameData, encoding: .utf8) ?? ""
 
                 // Skip to next central directory entry
-                offset += 46 + nameLen + extraLen + commentLen
+                offset = nextOffset
 
                 // Read from local file header
-                guard localHeaderOffset + 30 <= size else { continue }
+                guard localHeaderOffset >= 0, localHeaderOffset <= size - 30 else {
+                    throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
+                }
                 let localNameLen = Int(base.load(fromByteOffset: localHeaderOffset + 26, as: UInt16.self))
                 let localExtraLen = Int(base.load(fromByteOffset: localHeaderOffset + 28, as: UInt16.self))
                 let dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen
@@ -753,14 +803,14 @@ final class ICloudBackupManager: ObservableObject {
                 // materialising archive entries. Backups can come from
                 // another device, so the archive is untrusted input.
                 guard !name.hasPrefix("/"), !name.contains("\\0") else {
-                    throw BackupError.zipError("Archive contains an unsafe path")
+                    throw BackupError.zipError(String(localized: "The backup archive contains an unsafe path."))
                 }
                 let fileURL = destination.appendingPathComponent(name).standardizedFileURL
                 let destinationPrefix = destination.standardizedFileURL.path.hasSuffix("/")
                     ? destination.standardizedFileURL.path
                     : destination.standardizedFileURL.path + "/"
                 guard fileURL.path == destination.standardizedFileURL.path || fileURL.path.hasPrefix(destinationPrefix) else {
-                    throw BackupError.zipError("Archive contains a path traversal entry")
+                    throw BackupError.zipError(String(localized: "The backup archive contains an unsafe path."))
                 }
 
                 if name.hasSuffix("/") {
@@ -775,7 +825,7 @@ final class ICloudBackupManager: ObservableObject {
                         // Stored (no compression)
                         guard dataStart >= 0, uncompressedSize >= 0,
                               dataStart <= size, uncompressedSize <= size - dataStart else {
-                            throw BackupError.zipError("Invalid stored entry bounds")
+                            throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
                         }
                         let fileData = Data(bytes: base + dataStart, count: uncompressedSize)
                         try fileData.write(to: fileURL)
@@ -783,13 +833,13 @@ final class ICloudBackupManager: ObservableObject {
                         // Deflate
                         guard dataStart >= 0, compressedSize >= 0,
                               dataStart <= size, compressedSize <= size - dataStart else {
-                            throw BackupError.zipError("Invalid compressed entry bounds")
+                            throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
                         }
                         let compressedData = Data(bytes: base + dataStart, count: compressedSize)
                         let decompressed = try decompressDeflate(compressedData, expectedSize: uncompressedSize)
                         try decompressed.write(to: fileURL)
                     } else {
-                        logger.warning("Unsupported compression method \(method) for \(name)")
+                        throw BackupError.zipError(String(localized: "The backup archive uses an unsupported compression method."))
                     }
                 }
             }
@@ -797,6 +847,7 @@ final class ICloudBackupManager: ObservableObject {
     }
 
     private func decompressDeflate(_ data: Data, expectedSize: Int) throws -> Data {
+        if expectedSize == 0 { return Data() }
         // Use Compression framework for raw deflate
         let destinationBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: max(expectedSize, 1))
         defer { destinationBuffer.deallocate() }
@@ -811,8 +862,8 @@ final class ICloudBackupManager: ObservableObject {
             )
         }
 
-        guard decompressedSize > 0 else {
-            throw BackupError.zipError("Decompression failed")
+        guard decompressedSize == expectedSize else {
+            throw BackupError.zipError(String(localized: "The backup archive is incomplete or damaged."))
         }
 
         return Data(bytes: destinationBuffer, count: decompressedSize)
@@ -905,9 +956,10 @@ final class ICloudBackupManager: ObservableObject {
     // MARK: - Restore
 
     func restore(from entry: BackupEntry) async throws {
-        guard !isRestoring else { return }
+        guard !isBackingUp, !isRestoring else { throw BackupError.busy }
 
         isRestoring = true
+        isCancelled = false
         progress = 0
         statusMessage = String(localized: "Downloading backup…")
         defer {
@@ -968,70 +1020,66 @@ final class ICloudBackupManager: ObservableObject {
     }
 
     private func restoreSessionFiles(from dir: URL) async throws {
+        var databaseClosed = false
+        do {
         let dbSrc = dir.appendingPathComponent("ze.db")
         if fm.fileExists(atPath: dbSrc.path) {
             // Close existing DB connection before replacing
             await ChatStore.shared.closeDatabase()
+            databaseClosed = true
 
-            if fm.fileExists(atPath: zeDBURL.path) {
-                try fm.removeItem(at: zeDBURL)
-            }
             // Also remove WAL and SHM files
             let walPath = zeDBURL.path + "-wal"
             let shmPath = zeDBURL.path + "-shm"
             try? fm.removeItem(atPath: walPath)
             try? fm.removeItem(atPath: shmPath)
 
-            try fm.copyItem(at: dbSrc, to: zeDBURL)
+            try replaceRestoredItem(at: zeDBURL, with: dbSrc)
         }
 
         let mediaSrc = dir.appendingPathComponent("media")
         if fm.fileExists(atPath: mediaSrc.path) {
-            if fm.fileExists(atPath: mediaURL.path) {
-                try fm.removeItem(at: mediaURL)
-            }
-            try fm.copyItem(at: mediaSrc, to: mediaURL)
+            try replaceRestoredItem(at: mediaURL, with: mediaSrc)
         }
 
         let zeSrc = dir.appendingPathComponent("ze")
         if fm.fileExists(atPath: zeSrc.path) {
-            if fm.fileExists(atPath: sessionZeURL.path) {
-                try fm.removeItem(at: sessionZeURL)
-            }
-            try fm.copyItem(at: zeSrc, to: sessionZeURL)
+            try replaceRestoredItem(at: sessionZeURL, with: zeSrc)
+        }
+        } catch {
+            if databaseClosed { await ChatStore.shared.reloadDatabase() }
+            throw error
         }
     }
 
     private func restoreSkillsAndMemoryFiles(from dir: URL) async throws {
+        var databaseClosed = false
+        do {
         let dbSrc = dir.appendingPathComponent("skills.db")
         if fm.fileExists(atPath: dbSrc.path) {
             await SkillStore.shared.closeDatabase()
+            databaseClosed = true
 
-            if fm.fileExists(atPath: skillsDBURL.path) {
-                try fm.removeItem(at: skillsDBURL)
-            }
             let walPath = skillsDBURL.path + "-wal"
             let shmPath = skillsDBURL.path + "-shm"
             try? fm.removeItem(atPath: walPath)
             try? fm.removeItem(atPath: shmPath)
 
-            try fm.copyItem(at: dbSrc, to: skillsDBURL)
+            try replaceRestoredItem(at: skillsDBURL, with: dbSrc)
         }
 
         let skillsSrc = dir.appendingPathComponent("skills")
         if fm.fileExists(atPath: skillsSrc.path) {
-            if fm.fileExists(atPath: skillsURL.path) {
-                try fm.removeItem(at: skillsURL)
-            }
-            try fm.copyItem(at: skillsSrc, to: skillsURL)
+            try replaceRestoredItem(at: skillsURL, with: skillsSrc)
         }
 
         let memorySrc = dir.appendingPathComponent("memory")
         if fm.fileExists(atPath: memorySrc.path) {
-            if fm.fileExists(atPath: memoryURL.path) {
-                try fm.removeItem(at: memoryURL)
-            }
-            try fm.copyItem(at: memorySrc, to: memoryURL)
+            try replaceRestoredItem(at: memoryURL, with: memorySrc)
+        }
+        } catch {
+            if databaseClosed { await SkillStore.shared.reloadDatabase() }
+            throw error
         }
     }
 
@@ -1083,8 +1131,8 @@ final class ICloudBackupManager: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .iCloudUnavailable: return String(localized: "iCloud is not available. Please sign in to iCloud in Settings.")
-            case .databaseError(let msg): return String(localized: "Database error: \(msg)")
-            case .zipError(let msg): return String(localized: "Archive error: \(msg)")
+            case .databaseError(let msg): return String(format: String(localized: "Database error: %@"), msg)
+            case .zipError(let msg): return String(format: String(localized: "Archive error: %@"), msg)
             case .downloadTimeout: return String(localized: "Timed out downloading backup from iCloud.")
             case .emptyPassword: return String(localized: "Choose a password for this backup.")
             case .invalidEncryptedBackup: return String(localized: "The selected file is not a valid Ze encrypted backup.")

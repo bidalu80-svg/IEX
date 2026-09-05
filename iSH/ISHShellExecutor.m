@@ -9,6 +9,7 @@
 #import "ISHKernel.h"
 
 #include <poll.h>
+#include <libkern/OSAtomic.h>
 #include "ish/kernel/init.h"
 #include "ish/kernel/calls.h"
 #include "ish/kernel/task.h"
@@ -16,6 +17,12 @@
 #include "ish/kernel/fs.h"
 #include "ish/fs/devices.h"
 #include "ish/fs/real.h"
+
+// These are leak guards, not command timeouts. They bound damage if neither
+// the normal exit notification nor a caller timeout manages to release a run.
+static const NSTimeInterval ISHShellExecutorReaderMaxLifetime = 3600.0;
+static const NSTimeInterval ISHShellExecutorSweepInterval = 60.0;
+static const NSTimeInterval ISHShellExecutorStaleContextAge = 7200.0;
 
 #pragma mark - Result Implementation
 
@@ -36,6 +43,7 @@
 @interface ISHShellExecutionContext : NSObject {
     int _stdoutPipe[2];
     int _stderrPipe[2];
+    int32_t _liveReaders;
 }
 @property (nonatomic) int guestPid;
 @property (nonatomic) NSDate *startTime;
@@ -46,10 +54,24 @@
 @property (nonatomic) dispatch_semaphore_t waitSemaphore;
 @property (nonatomic) ISHShellExecutionResult *result;
 @property (atomic) BOOL isCompleted;
+@property (atomic) BOOL didFinalize;
+@property (readonly) int32_t liveReaders;
 
 - (int *)stdoutPipe;
 - (int *)stderrPipe;
+- (void)retainReader;
+- (int32_t)releaseReader;
+- (BOOL)closePipesIfNoReaders;
 
+@end
+
+@interface ISHShellExecutor ()
++ (void)startStaleContextSweeper;
++ (void)sweepStaleContexts;
++ (void)finalizeContext:(ISHShellExecutionContext *)ctx
+               exitCode:(int)exitCode
+                  error:(ISHShellExecutorError)error;
++ (void)finalizeTimedOutPid:(int)pid;
 @end
 
 @implementation ISHShellExecutionContext
@@ -76,17 +98,38 @@
     return self;
 }
 
+- (int32_t)liveReaders {
+    return OSAtomicAdd32(0, &_liveReaders);
+}
+
+- (void)retainReader {
+    OSAtomicIncrement32(&_liveReaders);
+}
+
+- (int32_t)releaseReader {
+    return OSAtomicDecrement32(&_liveReaders);
+}
+
+- (BOOL)closePipesIfNoReaders {
+    if (self.liveReaders > 0) return NO;
+    @synchronized(self) {
+        if (_stdoutPipe[0] >= 0) close(_stdoutPipe[0]);
+        if (_stdoutPipe[1] >= 0) close(_stdoutPipe[1]);
+        if (_stderrPipe[0] >= 0) close(_stderrPipe[0]);
+        if (_stderrPipe[1] >= 0) close(_stderrPipe[1]);
+        _stdoutPipe[0] = _stdoutPipe[1] = -1;
+        _stderrPipe[0] = _stderrPipe[1] = -1;
+    }
+    return YES;
+}
+
 - (void)cleanup {
-    if (_stdoutPipe[0] >= 0) close(_stdoutPipe[0]);
-    if (_stdoutPipe[1] >= 0) close(_stdoutPipe[1]);
-    if (_stderrPipe[0] >= 0) close(_stderrPipe[0]);
-    if (_stderrPipe[1] >= 0) close(_stderrPipe[1]);
-    _stdoutPipe[0] = _stdoutPipe[1] = -1;
-    _stderrPipe[0] = _stderrPipe[1] = -1;
+    self.isCompleted = YES;
+    [self closePipesIfNoReaders];
 }
 
 - (void)dealloc {
-    [self cleanup];
+    [self closePipesIfNoReaders];
 }
 
 @end
@@ -98,6 +141,9 @@
 static NSMutableDictionary<NSNumber *, ISHShellExecutionContext *> *_activeExecutions;
 static dispatch_queue_t _readerQueue;
 static dispatch_once_t _onceToken;
+static dispatch_source_t _sweepTimer;
+static int32_t _globalLiveReaders = 0;
+static int32_t _sweptContexts = 0;
 
 + (void)initialize {
     if (self == [ISHShellExecutor class]) {
@@ -112,7 +158,46 @@ static dispatch_once_t _onceToken;
                                                  selector:@selector(processDidExit:)
                                                      name:ISHProcessExitedNotification
                                                    object:nil];
+        [self startStaleContextSweeper];
     }
+}
+
+#pragma mark - Stale Context Sweeper
+
++ (void)startStaleContextSweeper {
+    _sweepTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+    dispatch_source_set_timer(_sweepTimer,
+                              dispatch_time(DISPATCH_TIME_NOW,
+                                            (int64_t)(ISHShellExecutorSweepInterval * NSEC_PER_SEC)),
+                              (uint64_t)(ISHShellExecutorSweepInterval * NSEC_PER_SEC),
+                              (uint64_t)(5 * NSEC_PER_SEC));
+    dispatch_source_set_event_handler(_sweepTimer, ^{ [self sweepStaleContexts]; });
+    dispatch_resume(_sweepTimer);
+}
+
++ (void)sweepStaleContexts {
+    NSMutableArray<ISHShellExecutionContext *> *stale = [NSMutableArray array];
+    @synchronized(_activeExecutions) {
+        for (NSNumber *key in _activeExecutions) {
+            ISHShellExecutionContext *ctx = _activeExecutions[key];
+            if (-[ctx.startTime timeIntervalSinceNow] > ISHShellExecutorStaleContextAge)
+                [stale addObject:ctx];
+        }
+    }
+    for (ISHShellExecutionContext *ctx in stale) {
+        OSAtomicIncrement32(&_sweptContexts);
+        NSLog(@"ISHShellExecutor[sweep]: reclaiming stale pid=%d readers=%d",
+              ctx.guestPid, ctx.liveReaders);
+        [self finalizeContext:ctx exitCode:-1 error:ISHShellExecutorErrorTimeout];
+    }
+}
+
++ (NSString *)leakGuardStatus {
+    NSUInteger active;
+    @synchronized(_activeExecutions) { active = _activeExecutions.count; }
+    return [NSString stringWithFormat:@"activeExecutions=%lu liveReaders=%d sweptContexts=%d",
+            (unsigned long)active, _globalLiveReaders, _sweptContexts];
 }
 
 #pragma mark - Public API
@@ -517,12 +602,21 @@ static dispatch_once_t _onceToken;
         // emu task threads spinning (gh-NNN leak). killProcessGroup sweeps the
         // pgid + descendants and escalates SIGTERM→SIGKILL.
         [self killProcessGroup:pid];
-        result = [[ISHShellExecutionResult alloc] init];
-        result.error = ISHShellExecutorErrorTimeout;
-        result.pid = pid;
-        result.exitCode = -1;
-        result.output = @"";
-        result.errorOutput = @"";
+        ISHShellExecutionContext *timedOutCtx;
+        @synchronized(_activeExecutions) {
+            timedOutCtx = _activeExecutions[@(pid)];
+        }
+        [self finalizeTimedOutPid:pid];
+        if (timedOutCtx.result) {
+            result = timedOutCtx.result;
+        } else {
+            result = [[ISHShellExecutionResult alloc] init];
+            result.error = ISHShellExecutorErrorTimeout;
+            result.pid = pid;
+            result.exitCode = -1;
+            result.output = @"";
+            result.errorOutput = @"";
+        }
     }
 
     return result;
@@ -627,6 +721,49 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     });
 }
 
+#pragma mark - Finalisation
+
++ (void)finalizeContext:(ISHShellExecutionContext *)ctx
+               exitCode:(int)exitCode
+                  error:(ISHShellExecutorError)error {
+    if (!ctx) return;
+    @synchronized(ctx) {
+        if (ctx.didFinalize) return;
+        ctx.didFinalize = YES;
+    }
+
+    ctx.isCompleted = YES;
+    ctx.result.exitCode = exitCode;
+    ctx.result.error = error;
+    if (ctx.result.duration == 0)
+        ctx.result.duration = -[ctx.startTime timeIntervalSinceNow];
+
+    NSString *outCopy;
+    NSString *errCopy;
+    @synchronized(ctx.stdoutBuffer) { outCopy = [ctx.stdoutBuffer copy]; }
+    @synchronized(ctx.stderrBuffer) { errCopy = [ctx.stderrBuffer copy]; }
+    ctx.result.output = outCopy ?: @"";
+    ctx.result.errorOutput = errCopy ?: @"";
+
+    @synchronized(_activeExecutions) {
+        [_activeExecutions removeObjectForKey:@(ctx.guestPid)];
+    }
+    [ctx closePipesIfNoReaders];
+    if (ctx.completion) ctx.completion(ctx.result);
+    if (ctx.waitSemaphore) dispatch_semaphore_signal(ctx.waitSemaphore);
+}
+
++ (void)finalizeTimedOutPid:(int)pid {
+    ISHShellExecutionContext *ctx;
+    @synchronized(_activeExecutions) {
+        ctx = _activeExecutions[@(pid)];
+    }
+    if (!ctx) return;
+    NSLog(@"ISHShellExecutor[timeout]: finalising pid=%d readers=%d",
+          pid, ctx.liveReaders);
+    [self finalizeContext:ctx exitCode:-1 error:ISHShellExecutorErrorTimeout];
+}
+
 #pragma mark - Process Exit Handling
 
 + (void)processDidExit:(NSNotification *)notification {
@@ -637,13 +774,11 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     @synchronized(_activeExecutions) {
         ctx = _activeExecutions[@(pid)];
         if (!ctx) return;
-        [_activeExecutions removeObjectForKey:@(pid)];
     }
 
-    if (ctx.isCompleted) return;
+    if (ctx.didFinalize) return;
 
-    // Record exit code and duration immediately
-    ctx.result.exitCode = exitCode;
+    // Record duration before the short pipe-drain window.
     ctx.result.duration = -[ctx.startTime timeIntervalSinceNow];
     NSUInteger outLen, errLen;
     @synchronized(ctx.stdoutBuffer) { outLen = ctx.stdoutBuffer.length; }
@@ -657,42 +792,28 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     // Give readers 200ms to flush, then finalize.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC),
                    dispatch_get_main_queue(), ^{
-        ctx.isCompleted = YES;
-
-        // Now capture output after readers have had time to drain pipes.
-        // Reader threads append to stdoutBuffer/stderrBuffer under
-        // @synchronized(buffer) (see processLines / readPipe partial-line
-        // path); take the same lock here so a concurrent appendString
-        // doesn't tear NSMutableString's internal storage during -copy.
-        // Without this, libsystem_malloc on iOS 26.5+ catches the corrupted
-        // free list and traps with EXC_BREAKPOINT inside the reader's next
-        // appendString — see the readPipe heap-corruption crash reports.
-        NSString *outCopy;
-        NSString *errCopy;
-        @synchronized(ctx.stdoutBuffer) { outCopy = [ctx.stdoutBuffer copy]; }
-        @synchronized(ctx.stderrBuffer) { errCopy = [ctx.stderrBuffer copy]; }
-        ctx.result.output = outCopy;
-        ctx.result.errorOutput = errCopy;
-
-        [ctx cleanup];
-
-        // Call completion callback
-        if (ctx.completion) {
-            ctx.completion(ctx.result);
-        }
-
-        // Signal semaphore for sync execution
-        if (ctx.waitSemaphore) {
-            dispatch_semaphore_signal(ctx.waitSemaphore);
-        }
+        [self finalizeContext:ctx
+                     exitCode:exitCode
+                        error:ISHShellExecutorErrorNone];
     });
 }
 
 #pragma mark - Pipe Reading
 
 + (void)startReaderForPipe:(int)fd context:(ISHShellExecutionContext *)ctx isStdErr:(BOOL)isStdErr {
+    // Count before dispatch so cleanup cannot close an fd between scheduling
+    // this reader and the reader block actually beginning.
+    [ctx retainReader];
+    OSAtomicIncrement32(&_globalLiveReaders);
     dispatch_async(_readerQueue, ^{
-        [self readPipe:fd context:ctx isStdErr:isStdErr];
+        @try {
+            [self readPipe:fd context:ctx isStdErr:isStdErr];
+        } @finally {
+            OSAtomicDecrement32(&_globalLiveReaders);
+            int32_t remaining = [ctx releaseReader];
+            if (remaining <= 0 && ctx.isCompleted)
+                [ctx closePipesIfNoReaders];
+        }
     });
 }
 
@@ -743,8 +864,15 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
 
     // Use poll() instead of non-blocking read + usleep for reliable EOF detection
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    NSDate *readerDeadline = [NSDate dateWithTimeIntervalSinceNow:
+                              ISHShellExecutorReaderMaxLifetime];
 
     while (!ctx.isCompleted) {
+        if ([readerDeadline timeIntervalSinceNow] <= 0) {
+            NSLog(@"ISHShellExecutor[reader]: %s lifetime cap reached for pid=%d",
+                  streamName, ctx.guestPid);
+            break;
+        }
         // poll with 500ms timeout so we periodically check isCompleted
         int pr = poll(&pfd, 1, 500);
 

@@ -495,11 +495,10 @@ extension AIChatViewModel {
         // can have many in flight at once and a stop tap should cancel
         // the entire batch. [T-concurrent-tools 2026-05-25]
         if !runningCommandPids.isEmpty {
-            // Coordinator's stopCurrentCommand() is already "kill every
-            // in-flight pid across every session", which matches what we
-            // want for concurrent tool execution: one stop tap = cancel
-            // every shell currently running.
-            Task { await ISHExecutionCoordinator.shared.stopCurrentCommand() }
+            // Keep Stop synchronous and outside the coordinator actor so a
+            // wedged guest cannot queue its own cancellation behind itself.
+            let killed = ISHExecutionCoordinator.stopAllNonisolated()
+            logger.info("⏹️ stopCurrentCommand - signalled \(killed) shell pid(s)")
         }
         runningCommandPids.removeAll()
         commandStartTime = nil

@@ -342,6 +342,14 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
 
         evaluateBackgroundActivitySession()
 
+        // A process relaunched directly into the background does not receive
+        // didEnterBackgroundNotification, so arm the governor during setup too.
+        if UIApplication.shared.applicationState == .background {
+            appIsInBackground = true
+            ISHKernel.shared.beginBackgroundCPUGovernor()
+            logger.info("[BKA] launched in background - iSH CPU governor armed at setup")
+        }
+
         // Observe app lifecycle
         NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
             .receive(on: DispatchQueue.main)
@@ -352,8 +360,8 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 // deferred willEnterForeground handler flip appIsInBackground.
                 self.pendingForegroundTransition = false
                 self.appIsInBackground = true
-                ISHKernel.shared.enableCPUThrottle(withDutyCycle: 0.8)
-                logger.info("[BKA] iSH CPU throttle ENABLED (background, 80%)")
+                ISHKernel.shared.beginBackgroundCPUGovernor()
+                logger.info("[BKA] iSH background CPU governor STARTED")
                 self.logLifecycleSnapshot("Background")
                 // [T-ios-bg-location-arm-delay] Don't start location keep-alive
                 // immediately on backgrounding — arm it after a delay so a brief
@@ -386,8 +394,8 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                     guard self.pendingForegroundTransition else { return }
                     self.pendingForegroundTransition = false
                     self.appIsInBackground = false
-                    ISHKernel.shared.disableCPUThrottle()
-                    logger.info("[BKA] iSH CPU throttle DISABLED (foreground)")
+                    ISHKernel.shared.endBackgroundCPUGovernor()
+                    logger.info("[BKA] iSH background CPU governor STOPPED (foreground)")
                     self.logLifecycleSnapshot("Foreground")
                     // [T-ios-bg-location-arm-delay] Unified location-state
                     // cleanup on every foreground return — disarms, tears down

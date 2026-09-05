@@ -560,6 +560,10 @@ int do_wait(int idtype, pid_t_ id, struct siginfo_ *info, struct rusage_ *rusage
     lock(&pids_lock);
     int err;
     bool got_signal = false;
+    // Back off consecutive fruitless waitpid timeouts so a hung child does
+    // not reacquire the global pids_lock once per second forever.
+    time_t wait_backoff_s = 1;
+    static const time_t WAIT_BACKOFF_MAX_S = 4;
 
 retry:
     ;
@@ -608,15 +612,23 @@ retry:
     if (got_signal)
         goto error;
 
-    // no matching zombie found, wait for one.
-    // Use a bounded 1-second timeout to work around macOS condvar issues
-    // (pthread_cond_wait can block forever under thread contention).
+    // no matching zombie found, wait for one. The child-exit condition remains
+    // the normal immediate wake path; this bounded timeout only protects
+    // against a missed condvar wakeup. Consecutive empty expiries back off
+    // 1s -> 2s -> 4s to reduce pids_lock contention.
     current->blocking = true;
     {
-        struct timespec waitpid_timeout = {.tv_sec = 1, .tv_nsec = 0};
-        if (wait_for(&current->group->child_exit, &pids_lock, &waitpid_timeout)) {
-            // Signal received during wait
+        struct timespec waitpid_timeout = {.tv_sec = wait_backoff_s, .tv_nsec = 0};
+        int wait_err = wait_for(&current->group->child_exit, &pids_lock, &waitpid_timeout);
+        if (wait_err == _EINTR) {
             got_signal = true;
+        }
+        if (wait_err == _ETIMEDOUT) {
+            if (wait_backoff_s < WAIT_BACKOFF_MAX_S)
+                wait_backoff_s *= 2;
+        } else {
+            // A child wake or signal is progress; restore responsive polling.
+            wait_backoff_s = 1;
         }
     }
     current->blocking = false;

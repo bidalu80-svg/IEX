@@ -25,6 +25,7 @@
 #include <sys/syslimits.h> // PATH_MAX
 #include <signal.h>
 #include <setjmp.h>
+#import <mach/mach.h>
 #include <execinfo.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -1169,6 +1170,10 @@ static _Atomic uint64_t g_throttle_elapsed_ns_total = 0;
 static _Atomic uint64_t g_throttle_last_log_ts = 0;
 
 #define THROTTLE_LOG_INTERVAL_NS (60ULL * 1000000000ULL)
+#define THROTTLE_DEBT_CLAMP_NS   (2000ULL * 1000000ULL)
+#define THROTTLE_DEEP_CLAMP_NS   (10000ULL * 1000000ULL)
+#define THROTTLE_DEEP_RATIO_Q16  ((int)((0.95 / 0.05) * 65536))
+#define THROTTLE_EAGER_DEBT_NS   (20ULL * 1000000ULL)
 
 static int ish_throttle_trampoline(void) {
     int ratio = atomic_load_explicit(&g_throttle_ratio_q16, memory_order_relaxed);
@@ -1180,23 +1185,36 @@ static int ish_throttle_trampoline(void) {
     static __thread uint64_t owed_ns = 0;
     static __thread unsigned tick_count = 0;
     uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
-    uint64_t elapsed = now - last_ts;
-    last_ts = now;
+    if (last_ts == 0) {
+        // Seed new guest threads while throttling is active so a burst cannot
+        // run at full speed until each thread reaches its second timer tick.
+        last_ts = now;
+        uint64_t sleeps = atomic_load_explicit(&g_throttle_sleep_total, memory_order_relaxed);
+        uint64_t slept = atomic_load_explicit(&g_throttle_sleep_ns_total, memory_order_relaxed);
+        uint64_t seed = sleeps > 0 ? slept / sleeps
+                                   : ((10000000ULL * (uint64_t)ratio) >> 16);
+        if (seed > THROTTLE_DEBT_CLAMP_NS) seed = THROTTLE_DEBT_CLAMP_NS;
+        owed_ns = seed;
+        tick_count = 0;
+    } else {
+        uint64_t elapsed = now - last_ts;
+        last_ts = now;
+        if (elapsed > 500000000ULL) {
+            tick_count = 0;
+            owed_ns = 0;
+            return 0;
+        }
+        atomic_fetch_add_explicit(&g_throttle_elapsed_ns_total, elapsed, memory_order_relaxed);
+        owed_ns += (elapsed * (uint64_t)ratio) >> 16;
+    }
 
-    // First tick after enable has no baseline — skip
-    if (elapsed == 0 || elapsed > 500000000ULL) { tick_count = 0; owed_ns = 0; return 0; }
-
-    atomic_fetch_add_explicit(&g_throttle_elapsed_ns_total, elapsed, memory_order_relaxed);
-
-    // Accumulate sleep debt: owed += elapsed * ratio / 65536
-    owed_ns += (elapsed * (uint64_t)ratio) >> 16;
-
-    // Sleep every 10 ticks
-    if (++tick_count < 10) return 0;
+    if (owed_ns < THROTTLE_EAGER_DEBT_NS && ++tick_count < 10) return 0;
     tick_count = 0;
+    if (owed_ns == 0) return 0;
 
-    // Clamp to 100ms
-    if (owed_ns > 100000000ULL) owed_ns = 100000000ULL;
+    uint64_t clamp = ratio >= THROTTLE_DEEP_RATIO_Q16 ? THROTTLE_DEEP_CLAMP_NS
+                                                      : THROTTLE_DEBT_CLAMP_NS;
+    if (owed_ns > clamp) owed_ns = clamp;
 
     atomic_fetch_add_explicit(&g_throttle_sleep_total, 1, memory_order_relaxed);
     atomic_fetch_add_explicit(&g_throttle_sleep_ns_total, owed_ns, memory_order_relaxed);
@@ -1220,9 +1238,21 @@ static int ish_throttle_trampoline(void) {
         }
     }
 
-    struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)owed_ns };
-    nanosleep(&ts, NULL);
+    // Pay long debts in 100ms slices so foregrounding and pending signals are
+    // observed promptly even in the governor's deep-brake zone.
+    uint64_t remaining = owed_ns;
+    while (remaining > 0) {
+        if (atomic_load_explicit(&g_throttle_ratio_q16, memory_order_relaxed) <= 0)
+            break;
+        if (current != NULL && current->pending != 0)
+            break;
+        uint64_t slice = remaining > 100000000ULL ? 100000000ULL : remaining;
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)slice };
+        nanosleep(&ts, NULL);
+        remaining -= slice;
+    }
     owed_ns = 0;
+    last_ts = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
     return 0;
 }
 
@@ -1252,6 +1282,186 @@ static int ish_throttle_trampoline(void) {
     uint64_t avg_us = sleeps > 0 ? (sleep_ns / sleeps / 1000) : 0;
     NSLog(@"ISHKernel: [Throttle] DISABLED — ticks=%llu sleeps=%llu avgSleep=%lluµs totalSleep=%.1fs",
           ticks, sleeps, avg_us, (double)sleep_ns / 1e9);
+}
+
+#pragma mark - Background CPU Governor
+
+// iOS accounts background CPU in a moving window. A closed-loop controller is
+// used instead of a fixed duty cycle so device speed and timer drift do not
+// push the process over the background budget.
+#define GOV_CADENCE_NS      (100ULL * 1000000ULL)
+#define GOV_SLOTS           601
+#define GOV_RATE_LOOKBACK   10
+#define GOV_SOFT_CPU_S      30.0
+#define GOV_HARD_CPU_S      38.0
+#define GOV_RED_EXIT_CPU_S  32.0
+#define GOV_YELLOW_MIN_DUTY 0.15
+#define GOV_RED_DUTY        0.03
+#define GOV_PREDICT_S       1.0
+#define GOV_STARTUP_CAP_NS  (2ULL * 1000000000ULL)
+#define GOV_LOG_INTERVAL_NS (5ULL * 1000000000ULL)
+
+static dispatch_queue_t g_gov_queue;
+static dispatch_source_t g_gov_timer;
+static uint64_t g_gov_cpu_ns[GOV_SLOTS];
+static uint64_t g_gov_wall_ns[GOV_SLOTS];
+static int g_gov_head;
+static int g_gov_count;
+static int g_gov_zone;
+static uint64_t g_gov_begin_ts;
+static uint64_t g_gov_last_log_ts;
+
+static uint64_t gov_process_cpu_ns(void) {
+    mach_task_basic_info_data_t basic;
+    mach_msg_type_number_t basic_count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  (task_info_t)&basic, &basic_count) != KERN_SUCCESS)
+        return 0;
+    uint64_t us = (uint64_t)basic.user_time.seconds * 1000000ULL + basic.user_time.microseconds
+                + (uint64_t)basic.system_time.seconds * 1000000ULL + basic.system_time.microseconds;
+    return us * 1000ULL;
+}
+
+static const char *gov_zone_name(int zone) {
+    return zone == 2 ? "RED" : (zone == 1 ? "YELLOW" : "GREEN");
+}
+
+// A poke makes CPU-bound chained guest code observe the timer hook. This is
+// opportunistic: waiting for pids_lock here would add a 10Hz lock contender
+// precisely when waitpid is already wedged. The next timer tick retries.
+static void gov_poke_all_tasks(void) {
+    if (trylock(&pids_lock) != 0)
+        return;
+    for (int i = 1; i < MAX_PID; i++) {
+        struct pid *pid = pid_get(i);
+        if (pid == NULL || pid->task == NULL) continue;
+        cpu_poke(&pid->task->cpu);
+    }
+    unlock(&pids_lock);
+}
+
+static void gov_tick(void) {
+    uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+    uint64_t cpu = gov_process_cpu_ns();
+    if (cpu == 0) return;
+
+    g_gov_cpu_ns[g_gov_head] = cpu;
+    g_gov_wall_ns[g_gov_head] = now;
+    int newest = g_gov_head;
+    g_gov_head = (g_gov_head + 1) % GOV_SLOTS;
+    if (g_gov_count < GOV_SLOTS) g_gov_count++;
+
+    int span = g_gov_count - 1;
+    if (span < 1) return;
+    int oldest = newest;
+    for (int back = 1; back <= span; back++) {
+        int idx = (newest - back + GOV_SLOTS) % GOV_SLOTS;
+        oldest = idx;
+        if (now - g_gov_wall_ns[idx] >= 60ULL * 1000000000ULL)
+            break;
+    }
+    uint64_t base = g_gov_cpu_ns[oldest];
+    double window_cpu = cpu > base ? (double)(cpu - base) / 1e9 : 0.0;
+
+    int rate_span = span < GOV_RATE_LOOKBACK ? span : GOV_RATE_LOOKBACK;
+    int rate_index = (newest - rate_span + GOV_SLOTS) % GOV_SLOTS;
+    uint64_t rate_base = g_gov_cpu_ns[rate_index];
+    uint64_t rate_wall = now - g_gov_wall_ns[rate_index];
+    double rate = (cpu > rate_base && rate_wall > 0)
+        ? (double)(cpu - rate_base) / (double)rate_wall : 0.0;
+    double predicted = window_cpu + rate * GOV_PREDICT_S;
+
+    int zone = g_gov_zone;
+    if (zone == 2) {
+        if (window_cpu < GOV_RED_EXIT_CPU_S)
+            zone = predicted >= GOV_SOFT_CPU_S ? 1 : 0;
+    } else if (predicted >= GOV_HARD_CPU_S) {
+        zone = 2;
+    } else if (predicted >= GOV_SOFT_CPU_S ||
+               (zone == 1 && predicted >= GOV_SOFT_CPU_S - 1.0)) {
+        zone = 1;
+    } else {
+        zone = 0;
+    }
+
+    double duty;
+    if (zone == 2) {
+        duty = GOV_RED_DUTY;
+    } else if (zone == 1) {
+        duty = 1.0 - ((predicted - GOV_SOFT_CPU_S) /
+                     (GOV_HARD_CPU_S - GOV_SOFT_CPU_S)) *
+                     (1.0 - GOV_YELLOW_MIN_DUTY);
+        if (duty < GOV_YELLOW_MIN_DUTY) duty = GOV_YELLOW_MIN_DUTY;
+    } else {
+        duty = 1.0;
+    }
+    if (now - g_gov_begin_ts < GOV_STARTUP_CAP_NS && duty > 0.5)
+        duty = 0.5;
+
+    int ratio_q16 = 0;
+    if (duty < 1.0) {
+        ratio_q16 = (int)(((1.0 - duty) / duty) * 65536.0);
+        if (ratio_q16 <= 0) ratio_q16 = 1;
+    }
+    atomic_store_explicit(&g_throttle_ratio_q16, ratio_q16, memory_order_release);
+    if (ratio_q16 > 0) gov_poke_all_tasks();
+
+    double elapsed = (double)(now - g_gov_begin_ts) / 1e9;
+    if (zone != g_gov_zone) {
+        NSLog(@"ISHKernel: [Governor] zone %s->%s t=+%.1fs W=%.1fs R=%.2f pred=%.1fs duty=%.0f%%",
+              gov_zone_name(g_gov_zone), gov_zone_name(zone), elapsed,
+              window_cpu, rate, predicted, duty * 100);
+        g_gov_zone = zone;
+        g_gov_last_log_ts = now;
+    } else if (now - g_gov_last_log_ts >= GOV_LOG_INTERVAL_NS) {
+        NSLog(@"ISHKernel: [Governor] t=+%.1fs W=%.1fs R=%.2f pred=%.1fs zone=%s duty=%.0f%%",
+              elapsed, window_cpu, rate, predicted, gov_zone_name(zone), duty * 100);
+        g_gov_last_log_ts = now;
+    }
+}
+
+- (void)beginBackgroundCPUGovernor {
+    if (g_gov_timer) return;
+    if (!g_gov_queue) {
+        g_gov_queue = dispatch_queue_create("com.ze.ish.cpugovernor",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,
+                                                     QOS_CLASS_UTILITY, 0));
+    }
+    g_gov_head = 0;
+    g_gov_count = 0;
+    g_gov_zone = 0;
+    g_gov_begin_ts = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+    g_gov_last_log_ts = g_gov_begin_ts;
+    atomic_store_explicit(&g_throttle_tick_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_throttle_sleep_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_throttle_sleep_ns_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_throttle_elapsed_ns_total, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_throttle_last_log_ts, 0, memory_order_relaxed);
+    ish_set_timer_tick_hook(ish_throttle_trampoline);
+
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, g_gov_queue);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 0),
+                              GOV_CADENCE_NS, 50ULL * 1000000ULL);
+    dispatch_source_set_event_handler(timer, ^{ gov_tick(); });
+    dispatch_source_set_cancel_handler(timer, ^{
+        atomic_store_explicit(&g_throttle_ratio_q16, 0, memory_order_release);
+    });
+    g_gov_timer = timer;
+    dispatch_resume(timer);
+    NSLog(@"ISHKernel: [Governor] BEGIN ceiling=%.0fs soft=%.0fs redExit=%.0fs cadence=%llums",
+          GOV_HARD_CPU_S, GOV_SOFT_CPU_S, GOV_RED_EXIT_CPU_S,
+          GOV_CADENCE_NS / 1000000ULL);
+}
+
+- (void)endBackgroundCPUGovernor {
+    if (!g_gov_timer) return;
+    uint64_t sleeps = atomic_load_explicit(&g_throttle_sleep_total, memory_order_relaxed);
+    uint64_t sleep_ns = atomic_load_explicit(&g_throttle_sleep_ns_total, memory_order_relaxed);
+    double elapsed = (double)(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) - g_gov_begin_ts) / 1e9;
+    dispatch_source_cancel(g_gov_timer);
+    g_gov_timer = nil;
+    NSLog(@"ISHKernel: [Governor] END after %.1fs - lastZone=%s sleeps=%llu totalSleep=%.1fs",
+          elapsed, gov_zone_name(g_gov_zone), sleeps, (double)sleep_ns / 1e9);
 }
 
 @end

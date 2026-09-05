@@ -170,6 +170,13 @@ typedef NSString * _Nullable (^ISHPathReverseHandler)(NSString *hostPath);
 /// but fast-paths on dutyCycle==0 (single atomic load).
 - (void)disableCPUThrottle;
 
+/// Start the closed-loop background CPU governor. It samples process CPU in a
+/// 60-second window and dynamically drives the iSH throttle. Idempotent.
+- (void)beginBackgroundCPUGovernor;
+
+/// Stop the background governor and clear any applied throttle. Idempotent.
+- (void)endBackgroundCPUGovernor;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -106,6 +106,7 @@ actor ISHExecutionCoordinator {
         let myId = UUID()
         let head = InflightExec(id: myId, startTime: Date())
         perSessionInflight[sessionId, default: []].append(head)
+        syncInflightPidSnapshot()
 
         try Task.checkCancellation()
 
@@ -120,6 +121,7 @@ actor ISHExecutionCoordinator {
                let idx = queue.firstIndex(where: { $0.id == myId }) {
                 queue.remove(at: idx)
                 perSessionInflight[sessionId] = queue.isEmpty ? nil : queue
+                syncInflightPidSnapshot()
             }
         }
 
@@ -231,6 +233,7 @@ actor ISHExecutionCoordinator {
     /// it wants a hard stop.
     func sessionDidTerminate(sessionId: String) {
         perSessionInflight[sessionId] = nil
+        syncInflightPidSnapshot()
         staticMountsInitialized.remove(sessionId)
         if mountedSessionId == sessionId { mountedSessionId = nil }
     }
@@ -259,6 +262,7 @@ actor ISHExecutionCoordinator {
         else { return }
         let entry = queue.remove(at: idx)
         perSessionInflight[sessionId] = queue.isEmpty ? nil : queue
+        syncInflightPidSnapshot()
         entry.waiterContinuation?.resume(throwing: CancellationError())
     }
 
@@ -300,7 +304,15 @@ actor ISHExecutionCoordinator {
         let stdinData = scriptContent.data(using: .utf8)
 
         return try await withCheckedThrowingContinuation { continuation in
+            let resumeLock = NSLock()
             var resumed = false
+            func claimResume() -> Bool {
+                resumeLock.lock()
+                defer { resumeLock.unlock() }
+                if resumed { return false }
+                resumed = true
+                return true
+            }
             var timeoutWork: DispatchWorkItem?
 
             let pid = ISHShellExecutor.executeExecutable(
@@ -312,8 +324,7 @@ actor ISHExecutionCoordinator {
                 lineCallback: { line, _ in
                 lineCallback(line)
             }, completion: { [weak self] result in
-                guard !resumed else { return }
-                resumed = true
+                guard claimResume() else { return }
                 timeoutWork?.cancel()
 
                 Task { await self?.recordInflightPid(sessionId: sessionId, id: myId, pid: 0) }
@@ -337,8 +348,7 @@ actor ISHExecutionCoordinator {
             })
 
             if pid < 0 {
-                guard !resumed else { return }
-                resumed = true
+                guard claimResume() else { return }
                 let errorMsg: String
                 switch ISHShellExecutorError(rawValue: Int(pid)) {
                 case .processCreationFailed:
@@ -363,8 +373,7 @@ actor ISHExecutionCoordinator {
 
             // Timeout safety net
             let work = DispatchWorkItem { [weak self] in
-                guard !resumed else { return }
-                resumed = true
+                guard claimResume() else { return }
                 // [T-ish-thread-leak] Reap the WHOLE process group, not just the
                 // root pid. A bare killProcess(pid, SIGTERM) leaves children +
                 // their emu task threads alive after the continuation resumes —
@@ -372,6 +381,9 @@ actor ISHExecutionCoordinator {
                 // killProcessGroup sweeps pgid + descendants with a SIGTERM→
                 // SIGKILL escalation, so a hung/ignoring-SIGTERM tree still dies.
                 ISHShellExecutor.killProcessGroup(pid)
+                // A reaped zombie may not emit another exit notification. The
+                // timeout path therefore owns its execution-context cleanup.
+                ISHShellExecutor.finalizeTimedOutPid(pid)
                 Task { await self?.recordInflightPid(sessionId: sessionId, id: myId, pid: 0) }
                 pidCallback(0)
                 logger.warning("Command timed out after \(effectiveTimeout)s — killing process group pid=\(pid)")
@@ -391,6 +403,7 @@ actor ISHExecutionCoordinator {
         else { return }
         queue[idx].pid = pid
         perSessionInflight[sessionId] = queue
+        syncInflightPidSnapshot()
     }
 
     // MARK: - Mount Logic
@@ -575,6 +588,39 @@ actor ISHExecutionCoordinator {
     /// main-queue completion hop, starving the bridge's MainActor task.
     private static let mountedSidLock = NSLock()
     nonisolated(unsafe) private static var mountedSidStorage: String?
+
+    /// Lock-protected PID mirror used by the emergency Stop path. Reading this
+    /// snapshot does not queue behind a blocked coordinator actor.
+    private static let inflightPidLock = NSLock()
+    nonisolated(unsafe) private static var inflightPidStorage: [String: [Int32]] = [:]
+
+    private func syncInflightPidSnapshot() {
+        var snapshot: [String: [Int32]] = [:]
+        for (sessionId, queue) in perSessionInflight {
+            let pids = queue.map(\.pid).filter { $0 > 0 }
+            if !pids.isEmpty { snapshot[sessionId] = pids }
+        }
+        Self.inflightPidLock.lock()
+        Self.inflightPidStorage = snapshot
+        Self.inflightPidLock.unlock()
+    }
+
+    @discardableResult
+    nonisolated static func stopAllNonisolated(sessionId: String? = nil) -> Int {
+        inflightPidLock.lock()
+        let snapshot = inflightPidStorage
+        inflightPidLock.unlock()
+
+        var killed = 0
+        for (sid, pids) in snapshot where sessionId == nil || sid == sessionId {
+            for pid in pids where pid > 0 {
+                logger.info("Coordinator stopping command pid=\(pid) sid=\(sid) (nonisolated)")
+                ISHShellExecutor.killProcessGroup(pid)
+                killed += 1
+            }
+        }
+        return killed
+    }
 
     /// Read the current mount owner without an actor hop. Safe to call from
     /// any thread. Returns nil when no session is mounted (kernel not booted

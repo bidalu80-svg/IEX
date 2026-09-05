@@ -119,11 +119,15 @@ jobs:
             '#ifndef STUB_TASK_H' '#define STUB_TASK_H' \
             '#include <sys/types.h>' '#include <stdint.h>' '#include <pthread.h>' \
             'typedef unsigned long dword_t;' 'typedef pid_t pid_t_;' \
-            'struct task { pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; pthread_t thread; };' \
+            'struct cpu_state { int stub; };' \
+            'struct task { struct cpu_state cpu; pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; pthread_t thread; unsigned long pending; };' \
+            'struct pid { struct task *task; };' \
             'struct task_group { pid_t pgid; void *fs_context; };' \
             'struct fd_table { struct fd *files[256]; };' \
             'extern struct task *current;' \
             'struct task *pid_get_task(dword_t pid);' \
+            'struct pid *pid_get(int pid);' \
+            'int trylock(void *lock);' \
             '#define MAX_PID 4096' \
             '#endif' \
             > "$UP2/deps/include/ish/kernel/task.h"
@@ -222,6 +226,8 @@ jobs:
           # stub ish/emu/cpu.h — cpu throttle hook
           printf '%s\n' \
             '#ifndef STUB_CPU_H' '#define STUB_CPU_H' \
+            'struct cpu_state;' \
+            'void cpu_poke(struct cpu_state *cpu);' \
             'void ish_set_timer_tick_hook(int (*hook)(void));' \
             '#endif' \
             > "$UP2/deps/include/ish/emu/cpu.h"

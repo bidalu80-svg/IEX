@@ -1,6 +1,10 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The backup archive is incomplete or damaged." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The backup archive is incomplete or damaged." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份归档不完整或已损坏。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份封存檔不完整或已損壞。" } } } },
+    "The backup archive contains an unsafe path." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The backup archive contains an unsafe path." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份归档包含不安全的路径。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份封存檔包含不安全的路徑。" } } } },
+    "The backup archive is too large." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The backup archive is too large." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份归档解压后的数据过大。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份封存檔解壓後的資料過大。" } } } },
+    "The backup archive uses an unsupported compression method." : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The backup archive uses an unsupported compression method." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份归档使用了不受支持的压缩方式。" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份封存檔使用了不受支援的壓縮方式。" } } } },
     "Backup and Restore" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份与恢复" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份與還原" } } } },
     "Backup contents" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "备份内容" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "備份內容" } } } },
     "Chats" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "聊天记录" } }, "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "聊天記錄" } } } },

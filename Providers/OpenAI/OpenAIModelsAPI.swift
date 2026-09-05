@@ -16,7 +16,8 @@ enum OpenAIModelsAPI {
     private static let defaultBaseURL = "https://api.openai.com"
 
     static func fetchModels(apiKey: String, baseURL: String? = nil, appendV1Suffix: Bool = true, forceRefresh: Bool = false, userAgent: String? = nil) async throws -> [LLMModel] {
-        if !forceRefresh, let cached = OpenAIModelsCache.load(credential: apiKey) {
+        let cacheBase = baseURL ?? defaultBaseURL
+        if !forceRefresh, let cached = OpenAIModelsCache.load(credential: apiKey, baseURL: cacheBase, appendV1Suffix: appendV1Suffix) {
             logger.info("Returning \(cached.count) cached models (API key)")
             return cached
         }
@@ -33,7 +34,7 @@ enum OpenAIModelsAPI {
         if let ua = userAgent { request.setValue(ua, forHTTPHeaderField: "User-Agent") }
         logger.info("Fetching OpenAI models (API key auth, custom base: \(isCustomBase), appendV1: \(appendV1Suffix))")
         let models = try await performFetch(request, filterOpenAIOnly: !isCustomBase)
-        OpenAIModelsCache.save(models, credential: apiKey)
+        OpenAIModelsCache.save(models, credential: apiKey, baseURL: cacheBase, appendV1Suffix: appendV1Suffix)
         return models
     }
 
@@ -86,6 +87,14 @@ enum OpenAIModelsAPI {
 
             let displayName = (item["name"] as? String) ?? modelDisplayName(from: id)
 
+            // OpenAI-compatible gateways frequently expose capability metadata
+            // using different names and nesting. Preserve it before models.dev
+            // enrichment so a proxy can advertise its real limits (for example
+            // a GPT-6 Astra deployment) without a client-side guess.
+            let contextWindow = Self.contextWindow(from: item)
+            let maxOutputTokens = Self.maxOutputTokens(from: item)
+            let supportsReasoning = Self.supportsReasoning(from: item)
+
             // Parse modalities. Two wire shapes are supported:
             //   - OpenRouter: nested under `architecture.input_modalities` /
             //     `.output_modalities`, suffixed (`image_input`).
@@ -136,7 +145,15 @@ enum OpenAIModelsAPI {
             // text-only endpoints stay text-only, while real OpenAI vision
             // models still get `.imageInput` from the architecture block
             // above (or from models.dev / pattern inference downstream).
-            return LLMModel(id: id, displayName: displayName, provider: "OpenAI", modalityOverride: modality)
+            return LLMModel(
+                id: id,
+                displayName: displayName,
+                provider: "OpenAI",
+                modalityOverride: modality,
+                contextWindow: contextWindow,
+                maxOutputTokens: maxOutputTokens,
+                supportsReasoning: supportsReasoning
+            )
         }
 
         let enriched = ModelsDevAPI.enrichModels(models)
@@ -158,6 +175,92 @@ enum OpenAIModelsAPI {
         if s.hasSuffix("_output") { s = String(s.dropLast("_output".count)) }
         return s
     }
+
+    // MARK: - Capability field normalization
+
+    /// Read a positive integer from the scalar forms returned by JSON APIs.
+    private static func positiveInt(_ value: Any?) -> Int? {
+        if let value = value as? Int, value > 0 { return value }
+        if let value = value as? NSNumber, value.intValue > 0 { return value.intValue }
+        if let value = value as? String, let parsed = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)), parsed > 0 {
+            return parsed
+        }
+        return nil
+    }
+
+    private static func firstPositiveInt(_ dictionaries: [[String: Any]], keys: [String]) -> Int? {
+        for dictionary in dictionaries {
+            for key in keys where positiveInt(dictionary[key]) != nil {
+                return positiveInt(dictionary[key])
+            }
+        }
+        return nil
+    }
+
+    private static func contextWindow(from item: [String: Any]) -> Int? {
+        var sources = [item]
+        for key in ["limits", "limit", "capabilities", "architecture", "top_provider"] {
+            if let nested = item[key] as? [String: Any] { sources.append(nested) }
+        }
+        return firstPositiveInt(sources, keys: [
+            "context_window", "contextWindow", "context_length", "contextLength",
+            "max_context_length", "maxContextLength", "max_input_tokens", "maxInputTokens",
+        ])
+    }
+
+    private static func maxOutputTokens(from item: [String: Any]) -> Int? {
+        var sources = [item]
+        for key in ["limits", "limit", "capabilities", "architecture", "top_provider"] {
+            if let nested = item[key] as? [String: Any] { sources.append(nested) }
+        }
+        return firstPositiveInt(sources, keys: [
+            "max_output_tokens", "maxOutputTokens", "max_completion_tokens", "maxCompletionTokens",
+            "max_output", "maxOutput",
+        ])
+    }
+
+    /// Normalize the several reasoning capability shapes used by OpenAI
+    /// compatible providers. A hard false is respected; an advertised
+    /// `reasoning_effort` parameter is treated as support even when the
+    /// provider omits a separate boolean flag.
+    private static func supportsReasoning(from item: [String: Any]) -> Bool? {
+        var sources = [item]
+        for key in ["capabilities", "architecture", "limits"] {
+            if let nested = item[key] as? [String: Any] { sources.append(nested) }
+        }
+
+        var sawReasoningParameter = false
+        for source in sources {
+            for key in ["supports_reasoning", "supportsReasoning", "reasoning_supported", "reasoningSupported"] {
+                if let value = source[key] as? Bool { return value }
+                if let value = source[key] as? NSNumber { return value.boolValue }
+            }
+            if let value = source["reasoning"] {
+                if let bool = value as? Bool { return bool }
+                if let number = value as? NSNumber { return number.boolValue }
+                if let dictionary = value as? [String: Any] {
+                    for key in ["supported", "enabled", "supports_reasoning", "supportsReasoning"] {
+                        if let bool = dictionary[key] as? Bool { return bool }
+                        if let number = dictionary[key] as? NSNumber { return number.boolValue }
+                    }
+                    if dictionary.keys.contains(where: { $0.lowercased().contains("effort") }) {
+                        sawReasoningParameter = true
+                    }
+                } else if value is [Any] || value is String {
+                    sawReasoningParameter = true
+                }
+            }
+            if let parameters = source["supported_parameters"] as? [String],
+               parameters.contains(where: { $0.lowercased().contains("reasoning") }) {
+                sawReasoningParameter = true
+            }
+            if let parameters = source["supportedParameters"] as? [String],
+               parameters.contains(where: { $0.lowercased().contains("reasoning") }) {
+                sawReasoningParameter = true
+            }
+        }
+        return sawReasoningParameter ? true : nil
+    }
 }
 
 // MARK: - Cache
@@ -176,17 +279,18 @@ private enum OpenAIModelsCache {
             .appendingPathComponent("com.ze.app.openai-models-cache", isDirectory: true)
     }
 
-    private static func cacheKey(for credential: String) -> String {
-        let digest = SHA256.hash(data: Data(credential.utf8))
+    private static func cacheKey(for credential: String, baseURL: String, appendV1Suffix: Bool) -> String {
+        let material = "\(credential)\n\(baseURL)\nappendV1=\(appendV1Suffix)"
+        let digest = SHA256.hash(data: Data(material.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func cacheFile(for credential: String) -> URL {
-        cacheDir.appendingPathComponent(cacheKey(for: credential) + ".json")
+    private static func cacheFile(for credential: String, baseURL: String, appendV1Suffix: Bool) -> URL {
+        cacheDir.appendingPathComponent(cacheKey(for: credential, baseURL: baseURL, appendV1Suffix: appendV1Suffix) + ".json")
     }
 
-    static func load(credential: String) -> [LLMModel]? {
-        let file = cacheFile(for: credential)
+    static func load(credential: String, baseURL: String, appendV1Suffix: Bool) -> [LLMModel]? {
+        let file = cacheFile(for: credential, baseURL: baseURL, appendV1Suffix: appendV1Suffix)
         guard let data = try? Data(contentsOf: file),
               let entry = try? JSONDecoder().decode(Entry.self, from: data),
               Date().timeIntervalSince(entry.date) < ttl else {
@@ -195,10 +299,10 @@ private enum OpenAIModelsCache {
         return entry.models
     }
 
-    static func save(_ models: [LLMModel], credential: String) {
+    static func save(_ models: [LLMModel], credential: String, baseURL: String, appendV1Suffix: Bool) {
         let entry = Entry(models: models, date: Date())
         guard let data = try? JSONEncoder().encode(entry) else { return }
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        try? data.write(to: cacheFile(for: credential), options: .atomic)
+        try? data.write(to: cacheFile(for: credential, baseURL: baseURL, appendV1Suffix: appendV1Suffix), options: .atomic)
     }
 }

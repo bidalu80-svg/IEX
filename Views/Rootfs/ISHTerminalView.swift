@@ -340,21 +340,35 @@ class ISHTerminalViewModel: ObservableObject {
 
         Task { @MainActor in MirrorSpeedTestViewModel.shared.autoDetectOnceIfNeeded() }
 
-        // Mount /var/ze/* for this session BEFORE starting the shell.
-        // We must do this synchronously before executeCommand so the shell sees the mounts.
-        // Use Task.detached to avoid inheriting main actor isolation (which would deadlock
-        // the semaphore since .onAppear runs on the main actor).
+        // The shell must see /var/ze before it starts, but waiting on a
+        // semaphore here blocks SwiftUI's main-thread frame commit. Resume the
+        // startup sequence on the main actor after the coordinator finishes.
         if let sid = sessionId {
-            stepStart = CFAbsoluteTimeGetCurrent()
-            print("[ISHTerminal] Mounting /var/ze for session \(sid) before shell start")
-            let semaphore = DispatchSemaphore(value: 0)
-            Task.detached {
+            let mountStart = CFAbsoluteTimeGetCurrent()
+            logger.info("[StartShell] mountForSession dispatched asynchronously for \(sid)")
+            Task.detached { [weak self] in
                 await ISHExecutionCoordinator.shared.mountForSession(sid)
-                semaphore.signal()
+                await MainActor.run {
+                    guard let self else { return }
+                    self.logger.info("[StartShell] mountForSession: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - mountStart) * 1000))ms")
+                    self.finishStartShell(totalStart: totalStart,
+                                          sessionId: sessionId,
+                                          initCommand: initCommand)
+                }
             }
-            semaphore.wait()
-            logger.info("[StartShell] mountForSession: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
+            return
         }
+
+        finishStartShell(totalStart: totalStart,
+                         sessionId: sessionId,
+                         initCommand: initCommand)
+    }
+
+    /// Finish terminal startup only after the session mount is visible.
+    private func finishStartShell(totalStart: CFAbsoluteTime,
+                                  sessionId: String?,
+                                  initCommand: String?) {
+        var stepStart = CFAbsoluteTimeGetCurrent()
 
         // Inject user-defined environment variables
         stepStart = CFAbsoluteTimeGetCurrent()

@@ -412,7 +412,7 @@ final class OpenAIAgentProvider: AgentProvider {
         // custom-base). Previously only Codex honored the user's level, so
         // Responses-API provider types silently ignored thinking settings.
         var reasoningRequested = false
-        if thinkingLevel.isEnabled, let effort = Self.reasoningEffort(for: model, level: thinkingLevel) {
+        if thinkingLevel.isEnabled, let effort = Self.reasoningEffort(for: model, level: thinkingLevel, allowUnknownGPT6: true) {
             // `summary: "auto"` opts in to streaming the human-readable
             // reasoning summary (delivered as `response.reasoning_summary_text.delta`
             // SSE events). Without it the Responses API only returns
@@ -821,8 +821,14 @@ final class OpenAIAgentProvider: AgentProvider {
     /// [T-xhigh-effort-clamp] Model families whose backends only accept
     /// low/medium/high for reasoning_effort and reject "xhigh" outright
     /// (MiMo-2.5/Pro → 400 literal_error; Agnes → 422 unknown variant).
-    static func reasoningEffort(for model: LLMModel, level: ThinkingLevel = .medium) -> String? {
-        guard model.supportsReasoning ?? false else { return nil }
+    static func isGPT6Family(_ modelId: String) -> Bool {
+        let id = modelId.lowercased()
+        return id.hasPrefix("gpt-6") || id.hasPrefix("gpt6")
+    }
+
+    static func reasoningEffort(for model: LLMModel, level: ThinkingLevel = .medium, allowUnknownGPT6: Bool = false) -> String? {
+        let allowUnknown = allowUnknownGPT6 && isGPT6Family(model.id)
+        guard model.supportsReasoning == true || (allowUnknown && model.supportsReasoning == nil) else { return nil }
         return switch level {
         case .off: nil
         case .low: "low"
@@ -904,10 +910,13 @@ final class OpenAIAgentProvider: AgentProvider {
             return
         }
 
-        // OpenAI native o-series and GPT-5.x: reasoning_effort
+        // OpenAI native o-series and GPT-5.x/GPT-6.x: reasoning_effort.
+        // GPT-6 Astra gateways may omit a boolean capability flag; its model
+        // family is nevertheless reasoning-capable, so allow the explicit
+        // user toggle to send the standard field when metadata is unknown.
         if lid.hasPrefix("o1") || lid.hasPrefix("o3") || lid.hasPrefix("o4")
-            || lid.hasPrefix("gpt-5") || lid.hasPrefix("gpt-4") {
-            if let effort = reasoningEffort(for: model, level: level) {
+            || lid.hasPrefix("gpt-5") || lid.hasPrefix("gpt-6") || lid.hasPrefix("gpt6") || lid.hasPrefix("gpt-4") {
+            if let effort = reasoningEffort(for: model, level: level, allowUnknownGPT6: true) {
                 body["reasoning_effort"] = effort
             } else if !level.isEnabled, let offEffort, model.supportsReasoning ?? false {
                 // [T-thinking-off-explicit] OFF must be SENT, not omitted:
