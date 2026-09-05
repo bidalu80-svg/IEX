@@ -1051,14 +1051,21 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         if !enabled {
             level = "—"
         } else {
-            let thinkLvl = cfg.thinkingLevel
+            // Read the same clamped value used by the request path and the
+            // thinking header. This keeps the Token Usage sheet from showing
+            // an empty/unsupported level for a persisted or stale setting.
+            let thinkLvl = currentThinkingLevel
             switch instance.providerType {
             case .anthropic:
                 level = "budget: \(AnthropicAgentProvider.thinkingBudget(for: model, maxTokens: 64000, level: thinkLvl))"
             case .gemini:
                 level = thinkLvl.displayName
             case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode:
-                level = OpenAIAgentProvider.reasoningEffort(for: model, level: thinkLvl) ?? "—"
+                level = OpenAIAgentProvider.reasoningEffort(
+                    for: model,
+                    level: thinkLvl,
+                    allowUnknownGPT6: true
+                ) ?? thinkLvl.displayName
             case .unsupported:
                 level = "—"
             case .antigravity:

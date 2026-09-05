@@ -1230,7 +1230,6 @@ struct ModelEntryDetailSheet: View {
     @State private var audioOutput: Bool = false
     @State private var contextWindowText: String = ""
     @State private var supportsThinking: Bool = false
-    @State private var maxThinkingLevel: ThinkingLevel = .xhigh
     @State private var maxTokensText: String = ""
     /// [T-ios-model-quick-test] Presents the modality-matched Quick Test sheet.
     @State private var showQuickTest: Bool = false
@@ -1305,9 +1304,6 @@ struct ModelEntryDetailSheet: View {
                         }
                         maxTokensField()
                         Toggle(String(localized: "Thinking"), isOn: $supportsThinking)
-                        if supportsThinking {
-                            thinkingIntensityPicker
-                        }
                     } header: {
                         Text(String(localized: "Capabilities"))
                     } footer: {
@@ -1350,9 +1346,6 @@ struct ModelEntryDetailSheet: View {
                                 .buttonStyle(.bordered)
                                 .controlSize(.mini)
                             }
-                        }
-                        if supportsThinking {
-                            thinkingIntensityPicker
                         }
                     } header: {
                         Text(String(localized: "Capabilities"))
@@ -1487,29 +1480,6 @@ struct ModelEntryDetailSheet: View {
         return String(localized: "Default")
     }
 
-    /// The model catalog ceiling used as the default for the editable picker.
-    /// This intentionally ignores `supportsReasoning == false`: when a user
-    /// force-enables an undeclared model, a useful conservative ceiling is
-    /// still needed instead of the `.off` sentinel.
-    private var catalogThinkingCeiling: ThinkingLevel {
-        ThinkingLevelCatalog.declaredMaxLevel(for: entry.model.id) ?? .xhigh
-    }
-
-    private var thinkingIntensityOptions: [ThinkingLevel] {
-        let ceiling = max(catalogThinkingCeiling, maxThinkingLevel)
-        return ThinkingLevel.allCases.filter { $0 != .off && $0 <= ceiling }
-    }
-
-    @ViewBuilder
-    private var thinkingIntensityPicker: some View {
-        Picker(String(localized: "Thinking Intensity"), selection: $maxThinkingLevel) {
-            ForEach(thinkingIntensityOptions, id: \.self) { level in
-                Text(level.displayName).tag(level)
-            }
-        }
-        .pickerStyle(.menu)
-    }
-
     /// True when the user has typed a value that exceeds the API-reported maximum.
     /// UI-only check: the data layer accepts any value. Only meaningful for non-custom
     /// entries where `baseModel.maxOutputTokens` reflects real API truth.
@@ -1570,9 +1540,6 @@ struct ModelEntryDetailSheet: View {
             contextWindowText = "\(ctx)"
         }
         supportsThinking = effective.supportsReasoning ?? false
-        maxThinkingLevel = entry.effectiveMaxThinkingLevel == .off
-            ? catalogThinkingCeiling
-            : entry.effectiveMaxThinkingLevel
         // Max tokens text is populated only from the user override — leaving empty
         // means "follow the API/provider default" (shown as placeholder).
         if let mt = entry.overrides.maxOutputTokens {
@@ -1588,11 +1555,8 @@ struct ModelEntryDetailSheet: View {
         store.updateEntry(cleared)
 
         let base = entry.baseModel
-        let lowerId = base.id.lowercased()
-        let isAstraFamily = lowerId.hasPrefix("gpt-6") || lowerId.hasPrefix("gpt6")
         displayName = base.displayName
-        supportsThinking = base.supportsReasoning ?? isAstraFamily
-        maxThinkingLevel = ThinkingLevelCatalog.declaredMaxLevel(for: base.id) ?? .xhigh
+        supportsThinking = base.supportsReasoning ?? false
         maxTokensText = ""
         if let ctx = base.contextWindow {
             contextWindowText = "\(ctx)"
@@ -1671,17 +1635,6 @@ struct ModelEntryDetailSheet: View {
 
         if supportsThinking != (entry.baseModel.supportsReasoning ?? false) {
             newOverrides.supportsReasoning = supportsThinking
-        }
-
-        // Persist a user-selected strength ceiling separately from the
-        // provider-reported capability so model refreshes do not erase it.
-        let defaultThinkingCeiling = catalogThinkingCeiling
-        if supportsThinking {
-            newOverrides.maxThinkingLevel = maxThinkingLevel == defaultThinkingCeiling
-                ? nil
-                : maxThinkingLevel
-        } else {
-            newOverrides.maxThinkingLevel = nil
         }
 
         let updatedEntry = ModelEntry(

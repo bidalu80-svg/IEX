@@ -132,12 +132,16 @@ struct ModelEntry: Identifiable, Codable, Hashable {
     /// Effective model as seen by the rest of the app: `baseModel` with `overrides` applied.
     /// New override fields: add them to the memberwise rebuild below.
     var model: LLMModel {
-        let lowerId = baseModel.id.lowercased()
-        let isAstraFamily = lowerId.hasPrefix("gpt-6") || lowerId.hasPrefix("gpt6")
-        guard !overrides.isEmpty || isAstraFamily else { return baseModel }
-        let inferredContext = baseModel.contextWindow ?? (isAstraFamily ? 1_000_000 : nil)
-        let inferredReasoning = baseModel.supportsReasoning ?? (isAstraFamily ? true : nil)
-        let inferredModality = baseModel.modalityOverride ?? (isAstraFamily ? .vision : nil)
+        let isGPT56Compatible = LLMModel.isGPT56CompatibleFamily(baseModel.id)
+        guard !overrides.isEmpty || isGPT56Compatible else { return baseModel }
+        let inferredContext = isGPT56Compatible
+            ? LLMModel.gpt56CompatibleContextWindow
+            : baseModel.contextWindow
+        let inferredMaxOutput = isGPT56Compatible
+            ? LLMModel.gpt56CompatibleMaxOutputTokens
+            : baseModel.maxOutputTokens
+        let inferredReasoning = isGPT56Compatible ? true : baseModel.supportsReasoning
+        let inferredModality = isGPT56Compatible ? ModelModality.vision : baseModel.modalityOverride
         // LLMModel.displayName is a `let`, so rebuild via memberwise init to apply any override.
         return LLMModel(
             id: baseModel.id,
@@ -145,7 +149,7 @@ struct ModelEntry: Identifiable, Codable, Hashable {
             provider: baseModel.provider,
             modalityOverride: overrides.modalityOverride ?? inferredModality,
             contextWindow: overrides.contextWindow ?? inferredContext,
-            maxOutputTokens: overrides.maxOutputTokens ?? baseModel.maxOutputTokens,
+            maxOutputTokens: overrides.maxOutputTokens ?? inferredMaxOutput,
             supportsReasoning: overrides.supportsReasoning ?? inferredReasoning,
             interleavedReasoningField: baseModel.interleavedReasoningField
         )

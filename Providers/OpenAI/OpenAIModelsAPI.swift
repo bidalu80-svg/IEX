@@ -91,10 +91,13 @@ enum OpenAIModelsAPI {
             // using different names and nesting. Preserve it before models.dev
             // enrichment so a proxy can advertise its real limits (for example
             // a GPT-6 Astra deployment) without a client-side guess.
+            let isGPT56Compatible = LLMModel.isGPT56CompatibleFamily(id)
             let contextWindow = Self.contextWindow(from: item)
+                ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleContextWindow : nil)
             let maxOutputTokens = Self.maxOutputTokens(from: item)
+                ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleMaxOutputTokens : nil)
             let supportsReasoning = Self.supportsReasoning(from: item)
-                ?? ((id.lowercased().hasPrefix("gpt-6") || id.lowercased().hasPrefix("gpt6")) ? true : nil)
+                ?? (isGPT56Compatible ? true : nil)
 
             // Parse modalities. Two wire shapes are supported:
             //   - OpenRouter: nested under `architecture.input_modalities` /

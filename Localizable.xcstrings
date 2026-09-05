@@ -38699,6 +38699,27 @@
         }
       }
     },
+    "Always use /v1/images/edits for image-to-image requests with an input image." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Always use /v1/images/edits for image-to-image requests with an input image." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "始终对带有输入图片的图生图请求使用 /v1/images/edits。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "始終對帶有輸入圖片的圖生圖請求使用 /v1/images/edits。" } }
+      }
+    },
+    "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Caches the working endpoint after the first call." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Caches the working endpoint after the first call." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自动：优先使用 Images API，遇到 4xx 时回退到 /v1/chat/completions。首次调用后会缓存可用端点。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "自動：優先使用 Images API，遇到 4xx 時回退到 /v1/chat/completions。首次呼叫後會快取可用端點。" } }
+      }
+    },
+    "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Last successful endpoint: %@." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto: uses the Images API first and falls back to /v1/chat/completions on 4xx. Last successful endpoint: %@." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自动：优先使用 Images API，遇到 4xx 时回退到 /v1/chat/completions。上次成功端点：%@。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "自動：優先使用 Images API，遇到 4xx 時回退到 /v1/chat/completions。上次成功端點：%@。" } }
+      }
+    },
     "Ze Assistant is your portable assistant. The best privacy strategy is to let it run." : {
       "localizations" : {
         "en" : {

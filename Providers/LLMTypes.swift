@@ -60,6 +60,19 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     /// nil means the provider uses native thinking blocks (Anthropic) or thought parts (Gemini).
     var interleavedReasoningField: String?
 
+    /// GPT-5.6 Sol and GPT-6 Astra are treated as one compatible capability
+    /// family in the app. Gateways frequently omit or under-report these
+    /// fields, so the shared defaults must stay identical across both ids.
+    static let gpt56CompatibleContextWindow = 1_050_000
+    static let gpt56CompatibleMaxOutputTokens = 128_000
+
+    static func isGPT56CompatibleFamily(_ modelId: String) -> Bool {
+        let lowerId = modelId.lowercased()
+        return lowerId.hasPrefix("gpt-5.6")
+            || lowerId.hasPrefix("gpt-6")
+            || lowerId.hasPrefix("gpt6")
+    }
+
     init(id: String, displayName: String, provider: String, modalityOverride: ModelModality? = nil,
          contextWindow: Int? = nil, maxOutputTokens: Int? = nil,
          supportsReasoning: Bool? = nil, interleavedReasoningField: String? = nil) {
@@ -560,9 +573,9 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         // OpenAI
         if lid.contains("gpt-3.5") { return 16_000 }
         if lid.contains("gpt-4o") || lid.contains("gpt-4-turbo") { return 128_000 }
-        // GPT-5.6 Sol and GPT-6 Astra use the same 1M context contract when
+        // GPT-5.6 Sol and GPT-6 Astra use the same 1.05M context contract when
         // a compatible gateway does not return an explicit limit.
-        if lid.hasPrefix("gpt-5.6") || lid.hasPrefix("gpt-6") || lid.hasPrefix("gpt6") { return 1_000_000 }
+        if Self.isGPT56CompatibleFamily(id) { return Self.gpt56CompatibleContextWindow }
         if lid.contains("gpt-5") { return 400_000 }
         if lid.contains("gpt-4") { return 8_000 }
         if lid.contains("o3") || lid.contains("o4") { return 200_000 }
