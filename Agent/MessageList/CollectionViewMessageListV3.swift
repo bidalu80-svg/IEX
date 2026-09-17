@@ -830,6 +830,19 @@ extension CollectionViewMessageListV3 {
         /// can produce a corrupted final offset. Instead, defer via scheduleCoalescedScroll().
         private var isAnimatingScrollToBottom = false
 
+        /// Viewport coordinate captured immediately before a user-message
+        /// disclosure mutates. The generation prevents delayed self-sizing
+        /// passes from an older tap from overriding a newer tap.
+        private struct UserMessageViewportAnchor {
+            let messageId: UUID
+            let screenMinY: CGFloat
+            let generation: UUID
+            let wasExpanded: Bool?
+            let initialOffsetY: CGFloat
+            let initialContentHeight: CGFloat
+        }
+        private var userMessageViewportAnchor: UserMessageViewportAnchor?
+
         // === O(1) Lookup Indices ===
         private var messageIndex: [UUID: Int] = [:]
         private var itemToIndex: [MessageListItem: Int] = [:]
@@ -1853,30 +1866,195 @@ extension CollectionViewMessageListV3 {
                 }
                 .store(in: &subscriptions)
 
-            // 10. A long user bubble was expanded/collapsed. Invalidate both
-            // the cell-side self-sizing memo and the custom layout's height,
-            // then remount the hosting configuration at the new intrinsic size.
-            NotificationCenter.default.publisher(for: .userMessageExpansionToggled)
-                .receive(on: DispatchQueue.main)
+            // 10a. Capture the tapped message's viewport position synchronously,
+            // BEFORE @Published changes its SwiftUI body. Do not add receive(on:)
+            // here: NotificationCenter delivery from the main-thread tap must
+            // remain synchronous so bottom pinning is disabled before mutation.
+            NotificationCenter.default.publisher(for: .userMessageExpansionWillToggle)
                 .sink { [weak self] notification in
-                    guard let self,
-                          let messageId = notification.object as? UUID,
-                          let cv = self.viewController?.collectionView,
-                          let layout = self.viewController?.messageListLayout,
-                          let ds = self.dataSource else { return }
-
-                    let item = MessageListItem.wholeMessage(messageId)
-                    var snapshot = ds.snapshot()
-                    guard let index = snapshot.itemIdentifiers.firstIndex(of: item) else { return }
-
-                    let indexPath = IndexPath(item: index, section: 0)
-                    (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
-                    layout.invalidateHeight(at: index)
-                    snapshot.reconfigureItems([item])
-                    ds.apply(snapshot, animatingDifferences: false)
-                    layout.invalidateLayout()
+                    self?.beginUserMessageExpansionToggle(notification)
                 }
                 .store(in: &subscriptions)
+
+            // 10b. A long user bubble was expanded/collapsed. Re-measure it and
+            // explicitly restore the pre-toggle viewport anchor after both the
+            // immediate and deferred UIHostingConfiguration sizing passes.
+            NotificationCenter.default.publisher(for: .userMessageExpansionToggled)
+                .sink { [weak self] notification in
+                    self?.finishUserMessageExpansionToggle(notification)
+                }
+                .store(in: &subscriptions)
+        }
+
+        /// Begins a manual disclosure transaction. Expansion/collapse is a
+        /// browsing action, even if the list happened to be pinned at bottom:
+        /// automatic following resumes only after the user explicitly returns
+        /// to the bottom (or uses the jump-to-bottom action).
+        private func beginUserMessageExpansionToggle(_ notification: Notification) {
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard let messageId = notification.object as? UUID,
+                  let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout,
+                  let ds = dataSource else { return }
+
+            let item = MessageListItem.wholeMessage(messageId)
+            guard let index = ds.snapshot().itemIdentifiers.firstIndex(of: item) else { return }
+
+            let oldMode = scrollMode
+            scrollMode = .userBrowsing
+            clampAfterSessionLoad = false
+            pendingScrollWork?.cancel()
+            pendingScrollWork = nil
+            isAnimatingScrollToBottom = false
+            cv.setContentOffset(cv.contentOffset, animated: false)
+
+            // Generic visible-cell compensation preserves content below a cell;
+            // disclosure instead preserves the tapped cell itself explicitly.
+            layout.suppressContentOffsetAdjustment = true
+            cv.layoutIfNeeded()
+
+            let indexPath = IndexPath(item: index, section: 0)
+            guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else {
+                layout.suppressContentOffsetAdjustment = false
+                return
+            }
+
+            let anchor = UserMessageViewportAnchor(
+                messageId: messageId,
+                screenMinY: frame.minY - cv.contentOffset.y,
+                generation: UUID(),
+                wasExpanded: notification.userInfo?["expanded"] as? Bool,
+                initialOffsetY: cv.contentOffset.y,
+                initialContentHeight: cv.contentSize.height
+            )
+            userMessageViewportAnchor = anchor
+
+            AppLogger(category: "UserMessageCollapse").info(
+                "[ToggleWill] id=\(messageId.uuidString.prefix(8)) expanded=\(anchor.wasExpanded.map { String(describing: $0) } ?? "unknown") mode=\(oldMode == .autoScrolling ? "auto" : "browse")→browse offset=\(String(format: "%.1f", anchor.initialOffsetY)) screenY=\(String(format: "%.1f", anchor.screenMinY)) contentH=\(String(format: "%.1f", anchor.initialContentHeight))"
+            )
+        }
+
+        private func finishUserMessageExpansionToggle(_ notification: Notification) {
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard let messageId = notification.object as? UUID,
+                  let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout,
+                  let ds = dataSource else { return }
+
+            // Defensive fallback for any caller that posts only the historical
+            // did-toggle notification. In the normal path the synchronous will
+            // notification has already captured the still-collapsed frame.
+            if userMessageViewportAnchor?.messageId != messageId {
+                beginUserMessageExpansionToggle(notification)
+            }
+            guard let anchor = userMessageViewportAnchor,
+                  anchor.messageId == messageId else { return }
+
+            let item = MessageListItem.wholeMessage(messageId)
+            var snapshot = ds.snapshot()
+            guard let index = snapshot.itemIdentifiers.firstIndex(of: item) else {
+                cancelUserMessageExpansionAnchor(anchor.generation)
+                return
+            }
+
+            let indexPath = IndexPath(item: index, section: 0)
+            (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+            layout.invalidateHeight(at: index)
+            snapshot.reconfigureItems([item])
+
+            let expanded = notification.userInfo?["expanded"] as? Bool
+            AppLogger(category: "UserMessageCollapse").info(
+                "[ToggleDid] id=\(messageId.uuidString.prefix(8)) expanded=\(expanded.map { String(describing: $0) } ?? "unknown") invalidateIndex=\(index)"
+            )
+
+            ds.apply(snapshot, animatingDifferences: false) { [weak self] in
+                guard let self else { return }
+                layout.invalidateLayout()
+                cv.setNeedsLayout()
+                cv.layoutIfNeeded()
+                self.restoreUserMessageExpansionAnchor(anchor.generation, phase: "apply", finalize: false)
+
+                // UIHostingConfiguration can publish its intrinsic size one or
+                // more runloop turns after reconfiguration. Re-anchor after the
+                // next layout turn and once more after the coalesced sizing window.
+                DispatchQueue.main.async { [weak self] in
+                    self?.restoreUserMessageExpansionAnchor(
+                        anchor.generation,
+                        phase: "nextRunloop",
+                        finalize: false
+                    )
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                    self?.restoreUserMessageExpansionAnchor(
+                        anchor.generation,
+                        phase: "settled",
+                        finalize: true
+                    )
+                }
+            }
+        }
+
+        private func restoreUserMessageExpansionAnchor(
+            _ generation: UUID,
+            phase: String,
+            finalize: Bool
+        ) {
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard let anchor = userMessageViewportAnchor,
+                  anchor.generation == generation,
+                  let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout,
+                  let ds = dataSource else { return }
+
+            let item = MessageListItem.wholeMessage(anchor.messageId)
+            guard let index = ds.snapshot().itemIdentifiers.firstIndex(of: item) else {
+                cancelUserMessageExpansionAnchor(generation)
+                return
+            }
+
+            cv.layoutIfNeeded()
+            let indexPath = IndexPath(item: index, section: 0)
+            guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else {
+                if finalize { cancelUserMessageExpansionAnchor(generation) }
+                return
+            }
+
+            let minimumOffset = -cv.adjustedContentInset.top
+            let maximumOffset = max(
+                minimumOffset,
+                cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom
+            )
+            let desiredOffset = frame.minY - anchor.screenMinY
+            let targetOffset = CGFloat(UserMessageCollapsePolicy.viewportOffset(
+                itemMinY: Double(frame.minY),
+                preservedScreenMinY: Double(anchor.screenMinY),
+                minimumOffset: Double(minimumOffset),
+                maximumOffset: Double(maximumOffset)
+            ))
+
+            UIView.performWithoutAnimation {
+                cv.setContentOffset(
+                    CGPoint(x: cv.contentOffset.x, y: targetOffset),
+                    animated: false
+                )
+                cv.layoutIfNeeded()
+            }
+
+            AppLogger(category: "UserMessageCollapse").info(
+                "[ToggleAnchor] id=\(anchor.messageId.uuidString.prefix(8)) phase=\(phase) frameY=\(String(format: "%.1f", frame.minY)) desired=\(String(format: "%.1f", desiredOffset)) target=\(String(format: "%.1f", targetOffset)) bounds=[\(String(format: "%.1f", minimumOffset)),\(String(format: "%.1f", maximumOffset))] contentH=\(String(format: "%.1f", cv.contentSize.height))"
+            )
+
+            if finalize {
+                layout.suppressContentOffsetAdjustment = false
+                userMessageViewportAnchor = nil
+                syncScrollFlags()
+            }
+        }
+
+        private func cancelUserMessageExpansionAnchor(_ generation: UUID) {
+            guard userMessageViewportAnchor?.generation == generation else { return }
+            viewController?.messageListLayout?.suppressContentOffsetAdjustment = false
+            userMessageViewportAnchor = nil
         }
 
         // MARK: - Content Length Helper

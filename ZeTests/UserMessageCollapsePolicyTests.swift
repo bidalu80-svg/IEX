@@ -39,4 +39,40 @@ final class UserMessageCollapsePolicyTests: XCTestCase {
         XCTAssertTrue(result)
         XCTAssertTrue(tokenizerCalled)
     }
+
+    func testViewportOffsetPreservesMessageScreenPosition() {
+        let offset = UserMessageCollapsePolicy.viewportOffset(
+            itemMinY: 960,
+            preservedScreenMinY: 140,
+            minimumOffset: -59,
+            maximumOffset: 1_800
+        )
+
+        XCTAssertEqual(offset, 820)
+        XCTAssertEqual(960 - offset, 140)
+    }
+
+    func testViewportOffsetClampsAtTopBoundary() {
+        XCTAssertEqual(
+            UserMessageCollapsePolicy.viewportOffset(
+                itemMinY: 10,
+                preservedScreenMinY: 100,
+                minimumOffset: -59,
+                maximumOffset: 1_800
+            ),
+            -59
+        )
+    }
+
+    func testViewportOffsetClampsAtBottomBoundaryAfterCollapse() {
+        XCTAssertEqual(
+            UserMessageCollapsePolicy.viewportOffset(
+                itemMinY: 1_900,
+                preservedScreenMinY: 100,
+                minimumOffset: -59,
+                maximumOffset: 1_600
+            ),
+            1_600
+        )
+    }
 }

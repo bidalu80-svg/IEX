@@ -16,4 +16,20 @@ enum UserMessageCollapsePolicy {
         guard text.utf8.count > tokenThreshold else { return false }
         return shouldCollapse(tokenCount: tokenCounter())
     }
+
+    /// Returns the collection-view offset that keeps an item's top edge at the
+    /// same screen coordinate after its height changes, clamped to the actual
+    /// scrollable range. Kept here with the disclosure policy so the anchoring
+    /// equation and its top/bottom boundary behavior stay unit-testable.
+    static func viewportOffset(
+        itemMinY: Double,
+        preservedScreenMinY: Double,
+        minimumOffset: Double,
+        maximumOffset: Double
+    ) -> Double {
+        let lowerBound = min(minimumOffset, maximumOffset)
+        let upperBound = max(minimumOffset, maximumOffset)
+        let desiredOffset = itemMinY - preservedScreenMinY
+        return min(max(desiredOffset, lowerBound), upperBound)
+    }
 }

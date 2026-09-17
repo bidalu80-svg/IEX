@@ -1,7 +1,11 @@
 import SwiftUI
 
 extension Notification.Name {
-    /// `object` is the UUID of the user message whose bubble changed height.
+    /// Synchronous pre-mutation hook. `object` is the UUID of the user message
+    /// and `userInfo["expanded"]` is its current state.
+    static let userMessageExpansionWillToggle = Notification.Name("userMessageExpansionWillToggle")
+    /// Post-mutation hook. `object` is the UUID of the user message whose
+    /// bubble changed height and `userInfo["expanded"]` is its new state.
     static let userMessageExpansionToggled = Notification.Name("userMessageExpansionToggled")
 }
 
@@ -361,10 +365,19 @@ struct ChatMessageRow: View {
                 // collection-view screenshot path can observe an incomplete
                 // hierarchy and capture only the source user bubble.
                 .onTapGesture {
+                    // The collection view must switch out of bottom-pinning and
+                    // capture this cell's viewport coordinate BEFORE @Published
+                    // schedules the expanded SwiftUI body for remeasurement.
+                    NotificationCenter.default.post(
+                        name: .userMessageExpansionWillToggle,
+                        object: message.id,
+                        userInfo: ["expanded": message.isUserTextExpanded]
+                    )
                     message.isUserTextExpanded.toggle()
                     NotificationCenter.default.post(
                         name: .userMessageExpansionToggled,
-                        object: message.id
+                        object: message.id,
+                        userInfo: ["expanded": message.isUserTextExpanded]
                     )
                 }
             }
