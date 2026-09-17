@@ -1389,7 +1389,8 @@ extension CollectionViewMessageListV3 {
                 switch anchor.role {
                 case .user:
                     userId = anchor.id
-                    assistantId = msgs[(anchorIdx + 1)...].first(where: { $0.role == .assistant })?.id
+                    assistantId = msgs[(anchorIdx + 1)...]
+                        .first(where: { $0.role == .assistant && !$0.isInternalBridge })?.id
                 case .assistant:
                     userId = msgs[..<anchorIdx].reversed().first(where: { $0.role == .user })?.id
                     assistantId = anchor.id
@@ -1402,8 +1403,20 @@ extension CollectionViewMessageListV3 {
                 // catches the FULL chain, including which message they
                 // long-pressed and the resolved user→assistant pair.
                 self.chatScreenshotLogger.info("[Entry-MenuCallback] anchor=\(message.id.uuidString.prefix(8)) role=\(anchor.role) anchorIdx=\(anchorIdx)/\(msgs.count) → userId=\(userId.uuidString.prefix(8)) assistantId=\(assistantId?.uuidString.prefix(8) ?? "nil")")
-                if let image = self.captureScrollingTurnScreenshot(userMessageId: userId, assistantMessageId: assistantId) {
-                    self.onScreenshotImage?(image)
+                // [T-ios-user-collapse-contextmenu-screenshot] Let the context
+                // menu and its lifted source view finish dismissing before the
+                // capture scrolls and snapshots the live collection hierarchy.
+                // Capturing synchronously from a long user bubble containing
+                // an inline disclosure control could yield only that source
+                // bubble while the rest of the collection was mid-transition.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    guard let self else { return }
+                    if let image = self.captureScrollingTurnScreenshot(
+                        userMessageId: userId,
+                        assistantMessageId: assistantId
+                    ) {
+                        self.onScreenshotImage?(image)
+                    }
                 }
             }
 
@@ -3587,8 +3600,7 @@ extension CollectionViewMessageListV3 {
             let endIdx: Int
             if let assistantMessageId,
                let i = items.lastIndex(where: {
-                   if case .assistantFooter(let id) = $0, id == assistantMessageId { return true }
-                   return false
+                   $0.messageId == assistantMessageId
                }) {
                 endIdx = i
             } else {

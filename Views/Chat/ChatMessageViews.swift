@@ -340,28 +340,33 @@ struct ChatMessageRow: View {
                 .truncationMode(.tail)
 
             if collapsible {
-                Button {
+                HStack(spacing: 4) {
+                    Text(expanded
+                        ? String(localized: "Show less")
+                        : String(localized: "Show more"))
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                }
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+                .foregroundStyle(ChatColors.userMessageText.opacity(0.9))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier(expanded
+                    ? "userMessageCollapseButton"
+                    : "userMessageExpandButton")
+                // [T-ios-user-collapse-contextmenu-screenshot] Keep this as a
+                // tappable view rather than a nested SwiftUI Button. A Button
+                // becomes its own interaction host inside the parent user-row
+                // contextMenu; while that host is being dismissed, the live
+                // collection-view screenshot path can observe an incomplete
+                // hierarchy and capture only the source user bubble.
+                .onTapGesture {
                     message.isUserTextExpanded.toggle()
                     NotificationCenter.default.post(
                         name: .userMessageExpansionToggled,
                         object: message.id
                     )
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(expanded
-                            ? String(localized: "Show less")
-                            : String(localized: "Show more"))
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(ChatColors.userMessageText.opacity(0.9))
-                .accessibilityIdentifier(expanded
-                    ? "userMessageCollapseButton"
-                    : "userMessageExpandButton")
             }
         }
         .padding(.horizontal, 14)
