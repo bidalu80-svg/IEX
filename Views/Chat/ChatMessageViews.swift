@@ -1,5 +1,10 @@
 import SwiftUI
 
+extension Notification.Name {
+    /// `object` is the UUID of the user message whose bubble changed height.
+    static let userMessageExpansionToggled = Notification.Name("userMessageExpansionToggled")
+}
+
 // MARK: - Context-menu preview
 
 /// Opaque rounded-card preview shown under a message's long-press context menu.
@@ -312,6 +317,61 @@ struct ChatMessageRow: View {
             : "\(String(localized: "Queued")): \(userDisplayText)")
     }
 
+    private var isUserTextCollapsible: Bool {
+        UserMessageCollapsePolicy.shouldCollapse(userDisplayText) {
+            message.userDisplayTokenCount(for: userDisplayText)
+        }
+    }
+
+    /// Bubble content is separated from `userRow` so the collapse control stays
+    /// inside the same rounded card and participates in one intrinsic-height
+    /// measurement.
+    private var userMessageBubble: some View {
+        let collapsible = isUserTextCollapsible
+        let expanded = message.isUserTextExpanded
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(userDisplayText)
+                .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
+                .foregroundStyle(ChatColors.userMessageText)
+                .lineLimit(collapsible && !expanded
+                    ? UserMessageCollapsePolicy.collapsedLineLimit
+                    : nil)
+                .truncationMode(.tail)
+
+            if collapsible {
+                Button {
+                    message.isUserTextExpanded.toggle()
+                    NotificationCenter.default.post(
+                        name: .userMessageExpansionToggled,
+                        object: message.id
+                    )
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(expanded
+                            ? String(localized: "Show less")
+                            : String(localized: "Show more"))
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(ChatColors.userMessageText.opacity(0.9))
+                .accessibilityIdentifier(expanded
+                    ? "userMessageCollapseButton"
+                    : "userMessageExpandButton")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(ChatColors.userMessageBubble)
+        )
+    }
+
     private var userRow: some View {
         HStack {
             Spacer(minLength: 60)
@@ -328,15 +388,7 @@ struct ChatMessageRow: View {
                 if message.isQueued {
                     queuedMessageIndicator
                 } else if !userDisplayText.isEmpty {
-                    Text(userDisplayText)
-                        .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
-                        .foregroundStyle(ChatColors.userMessageText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18)
-                                .fill(ChatColors.userMessageBubble)
-                        )
+                    userMessageBubble
                 }
             }
             .modifier(ZeOpenURLHandler())

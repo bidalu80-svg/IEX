@@ -68,6 +68,12 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var isAwaitingModelResponse = false
     /// True when this message is queued but not yet injected into the agent loop.
     @Published var isQueued = false
+    /// Presentation-only expansion state for long user-message bubbles.
+    ///
+    /// Keeping this on the message (rather than in a cell-local `@State`) makes
+    /// the choice survive UICollectionView cell reuse and prevents one reused
+    /// cell from leaking its expansion state into another message.
+    @Published var isUserTextExpanded = false
     /// True if this message is from the compacted history zone (read-only, no actions).
     @Published var isCompactedHistory = false
     /// True when this compact divider is still loading (LLM generating summary).
@@ -94,6 +100,12 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// so user-message context menus show the original send time.
     let timestamp: Date
 
+    /// Exact BPE count cached by the stripped text that is actually rendered in
+    /// the user bubble. SwiftUI may evaluate a row body many times while the
+    /// collection view measures it, so counting the same long prompt on every
+    /// evaluation would add avoidable main-thread work.
+    private var userDisplayTokenCountCache: (text: String, count: Int)?
+
     init(
         role: ChatMessageRole,
         content: String,
@@ -106,6 +118,15 @@ final class ChatMessage: Identifiable, ObservableObject {
         self.blocks = blocks
         self.isQueued = isQueued
         self.timestamp = timestamp
+    }
+
+    func userDisplayTokenCount(for text: String) -> Int {
+        if let cached = userDisplayTokenCountCache, cached.text == text {
+            return cached.count
+        }
+        let count = BPETokenizer.shared.countTokens(text)
+        userDisplayTokenCountCache = (text, count)
+        return count
     }
 
     /// [T-bridge-message-ui-leak] True when this UI message is the internal

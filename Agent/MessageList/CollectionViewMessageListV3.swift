@@ -1839,6 +1839,31 @@ extension CollectionViewMessageListV3 {
                     self.applySnapshot(messages: vm.messages)
                 }
                 .store(in: &subscriptions)
+
+            // 10. A long user bubble was expanded/collapsed. Invalidate both
+            // the cell-side self-sizing memo and the custom layout's height,
+            // then remount the hosting configuration at the new intrinsic size.
+            NotificationCenter.default.publisher(for: .userMessageExpansionToggled)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] notification in
+                    guard let self,
+                          let messageId = notification.object as? UUID,
+                          let cv = self.viewController?.collectionView,
+                          let layout = self.viewController?.messageListLayout,
+                          let ds = self.dataSource else { return }
+
+                    let item = MessageListItem.wholeMessage(messageId)
+                    var snapshot = ds.snapshot()
+                    guard let index = snapshot.itemIdentifiers.firstIndex(of: item) else { return }
+
+                    let indexPath = IndexPath(item: index, section: 0)
+                    (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+                    layout.invalidateHeight(at: index)
+                    snapshot.reconfigureItems([item])
+                    ds.apply(snapshot, animatingDifferences: false)
+                    layout.invalidateLayout()
+                }
+                .store(in: &subscriptions)
         }
 
         // MARK: - Content Length Helper
@@ -2754,7 +2779,11 @@ extension CollectionViewMessageListV3 {
                 return attachCount > 0 ? attachH : nil
             }
 
-            let key = "\(text.count)|\(Int(usableTextWidth))|\(Int(fontSize))|\(attachCount)|\(text.hashValue)"
+            let collapsible = UserMessageCollapsePolicy.shouldCollapse(text) {
+                message.userDisplayTokenCount(for: text)
+            }
+            let collapsed = collapsible && !message.isUserTextExpanded
+            let key = "\(text.count)|\(Int(usableTextWidth))|\(Int(fontSize))|\(attachCount)|collapsed:\(collapsed)|\(text.hashValue)"
             if let cached = cache[key] { return cached }
 
             // [T-ios-user-msg-estimate-tail-jitter] Measure with UILabel, NOT raw
@@ -2780,7 +2809,11 @@ extension CollectionViewMessageListV3 {
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
                 context: nil
             )
-            let textH = ceil(bounds.height)
+            let fullTextH = ceil(bounds.height)
+            let collapsedTextH = ceil(
+                font.lineHeight * CGFloat(UserMessageCollapsePolicy.collapsedLineLimit)
+            )
+            let textH = collapsed ? min(fullTextH, collapsedTextH) : fullTextH
             // [T-ios-decel-inv-estimate-calibration] CJK bubble correction: all
             // five first-measure samples in the debug.scrollMetrics trace showed
             // CJK bubbles landing +6.3–7.0 taller than this boundingRect-based
@@ -2792,8 +2825,12 @@ extension CollectionViewMessageListV3 {
             // +7 overshot it to a -6.7 shrink correction — while all five
             // validated +7 samples were att=0.
             let cjk = text.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) || (0x3000...0x30FF).contains($0.value) }
+            // Both collapsed and expanded long bubbles include the control:
+            // 8pt VStack spacing + roughly one caption line (15pt).
+            let disclosureH: CGFloat = collapsible ? 23 : 0
             // bubble vertical padding (10*2) + attachment block + 1pt safety.
-            let total = textH + 20 + attachH + 1 + (cjk && attachCount == 0 ? 7 : 0)
+            let total = textH + disclosureH + 20 + attachH + 1
+                + (cjk && attachCount == 0 ? 7 : 0)
             cache[key] = total
             return total
         }
@@ -2866,7 +2903,8 @@ extension CollectionViewMessageListV3 {
             case .wholeMessage(let id):
                 let n = msg(id)?.content.count ?? 0
                 let a = msg(id)?.attachments.count ?? 0
-                return "w:\(id.uuidString):\(n):\(a)"
+                let x = msg(id)?.isUserTextExpanded == true ? 1 : 0
+                return "w:\(id.uuidString):\(n):\(a):x\(x)"
             case .assistantHeader(let id):
                 return "h:\(id.uuidString)"
             case .assistantFooter(let id):

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E5UMC0001 /* UserMessageCollapsePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5UMC0011 /* UserMessageCollapsePolicy.swift */; };
+		E5UMC0002 /* UserMessageCollapsePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5UMC0011 /* UserMessageCollapsePolicy.swift */; };
 		21FED4B7BB6F6D9476C9992E /* VoiceProvider+System.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88993FC8E3F0199C6638F664 /* VoiceProvider+System.swift */; };
 		241D530017827D7F0EB604DE /* VoiceProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941B643B8A2F048A2B154E /* VoiceProviderFactory.swift */; };
 		2A4FD49F872431D703328384 /* VoiceOutputPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 424510790AF3FB2452D3CCE3 /* VoiceOutputPlayer.swift */; };
@@ -558,6 +560,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E5UMC0011 /* UserMessageCollapsePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageCollapsePolicy.swift; sourceTree = "<group>"; };
 		0ED149397BEA7E0408C92688 /* GroupVoiceModelsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupVoiceModelsView.swift; sourceTree = "<group>"; };
 		0F5379380323FA8C6477708C /* GroupSlotPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupSlotPicker.swift; sourceTree = "<group>"; };
 		16FF3462D09402F14B610CD6 /* VoiceWaveformView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceWaveformView.swift; sourceTree = "<group>"; };
@@ -1610,6 +1613,7 @@
 		E5E000031 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				E5UMC0011 /* UserMessageCollapsePolicy.swift */,
 				D7A900000000000000000020 /* RemoteServers */,
 				E5G000014 /* AgentActivityAttributes.swift */,
 				E5AT00011 /* AudioTogglePlaybackIntent.swift */,
@@ -2494,6 +2498,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5UMC0002 /* UserMessageCollapsePolicy.swift in Sources */,
 				BB1000120F700000000000AA /* ContextPolicy.swift in Sources */,
 				E5LD00002 /* ToolLoopDetector.swift in Sources */,
 				E5GWF0004 /* GeminiWireFormat.swift in Sources */,
@@ -2523,6 +2528,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5UMC0001 /* UserMessageCollapsePolicy.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,

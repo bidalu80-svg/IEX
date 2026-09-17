@@ -131,7 +131,7 @@ enum ChatColors {
     })
     static let userMessageText = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.58, green: 0.80, blue: 1.00, alpha: 1)
+            ? UIColor.white
             : UIColor(red: 0.03, green: 0.38, blue: 0.68, alpha: 1)
     })
     static let toolBg = Color(UIColor.tertiarySystemGroupedBackground)
