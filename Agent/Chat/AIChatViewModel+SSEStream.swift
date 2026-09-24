@@ -375,7 +375,7 @@ extension AIChatViewModel {
                     case "file_edit": .fileEditTool(path: "")
                     case "browser_use": .browserTool(action: "")
                     case "read_image": .readImageTool(path: "")
-                    case "memory_write", "memory_get": .memoryTool(action: name)
+                    case "memory_write", "memory_get", "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent": .memoryTool(action: name)
                     default: .shellTool(command: name)
                     }
                     if name == "file_write" || name == "file_edit" {
@@ -994,6 +994,17 @@ extension AIChatViewModel {
         case "read_image":
             let d = detail ?? fileName(args["path"] as? String)
             return zh ? "正在读取图片:\(d)" : "Reading image: \(d)"
+        case "spawn_agent":
+            let d = detail ?? clip(args["message"] as? String, 40) ?? ""
+            return zh ? "正在派发子代理:\(d)" : "Spawning child agent: \(d)"
+        case "send_input":
+            return zh ? "正在向子代理发送补充任务" : "Sending child-agent follow-up"
+        case "wait_agent":
+            return zh ? "正在等待子代理结果" : "Waiting for child agents"
+        case "close_agent":
+            return zh ? "正在关闭子代理" : "Closing child agent"
+        case "resume_agent":
+            return zh ? "正在恢复子代理" : "Resuming child agent"
         default:
             let d = detail ?? name
             return zh ? "正在执行:\(d)" : "Running: \(d)"

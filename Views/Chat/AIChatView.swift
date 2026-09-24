@@ -493,6 +493,9 @@ struct AIChatView: View {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
                 .safeAreaInset(edge: .top, spacing: 0) {
+                    if !isReadOnly, let rootSessionId = vm.sessionId {
+                        ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
+                    }
                     // Error banner
                     if let error = vm.errorMessage {
                         errorBanner(error)

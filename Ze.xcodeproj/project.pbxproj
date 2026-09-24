@@ -401,6 +401,8 @@
 		E5VMB0005 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0015 /* ChatModels.swift */; };
 		E5VMB0006 /* ChatLifecycleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0016 /* ChatLifecycleSupport.swift */; };
 		E5VMB0007 /* ChatURLBrokerage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0017 /* ChatURLBrokerage.swift */; };
+		ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0011 /* ZeSubAgentCoordinator.swift */; };
+		ZESA0002 /* ZeSubAgentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0012 /* ZeSubAgentViews.swift */; };
 		E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0011 /* AIChatViewModel+ISHCommand.swift */; };
 		E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0012 /* AIChatViewModel+FileTools.swift */; };
 		E5VMC0003 /* AIChatViewModel+Offloading.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0013 /* AIChatViewModel+Offloading.swift */; };
@@ -1029,6 +1031,8 @@
 		E5VMB0015 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		E5VMB0016 /* ChatLifecycleSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLifecycleSupport.swift; sourceTree = "<group>"; };
 		E5VMB0017 /* ChatURLBrokerage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatURLBrokerage.swift; sourceTree = "<group>"; };
+		ZESA0011 /* ZeSubAgentCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentCoordinator.swift; sourceTree = "<group>"; };
+		ZESA0012 /* ZeSubAgentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentViews.swift; sourceTree = "<group>"; };
 		E5VMC0011 /* AIChatViewModel+ISHCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ISHCommand.swift"; sourceTree = "<group>"; };
 		E5VMC0012 /* AIChatViewModel+FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+FileTools.swift"; sourceTree = "<group>"; };
 		E5VMC0013 /* AIChatViewModel+Offloading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Offloading.swift"; sourceTree = "<group>"; };
@@ -1899,6 +1903,7 @@
 				E5VMB0015 /* ChatModels.swift */,
 				E5VMB0016 /* ChatLifecycleSupport.swift */,
 				E5VMB0017 /* ChatURLBrokerage.swift */,
+				ZESA0011 /* ZeSubAgentCoordinator.swift */,
 				E5VMC0011 /* AIChatViewModel+ISHCommand.swift */,
 				E5VMC0012 /* AIChatViewModel+FileTools.swift */,
 				E5VMD0011 /* ZeURLPathDecoding.swift */,
@@ -2050,6 +2055,7 @@
 			isa = PBXGroup;
 			children = (
 				E53000012 /* AIChatView.swift */,
+				ZESA0012 /* ZeSubAgentViews.swift */,
 				E5F200011 /* MarkdownPrepRegex.swift */,
 				E5F200012 /* ZeMediaViews.swift */,
 				E5F200013 /* AssistantBlockView.swift */,
@@ -2604,6 +2610,7 @@
 				E5VMB0005 /* ChatModels.swift in Sources */,
 				E5VMB0006 /* ChatLifecycleSupport.swift in Sources */,
 				E5VMB0007 /* ChatURLBrokerage.swift in Sources */,
+				ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */,
 				E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */,
 				E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */,
 				E5VMD0001 /* ZeURLPathDecoding.swift in Sources */,
@@ -2614,6 +2621,7 @@
 				E5VMC0007 /* AIChatViewModel+ConcurrentTools.swift in Sources */,
 				E5LD00001 /* ToolLoopDetector.swift in Sources */,
 				E53000002 /* AIChatView.swift in Sources */,
+				ZESA0002 /* ZeSubAgentViews.swift in Sources */,
 				E5CAL0001 /* CookieAuditLogger.swift in Sources */,
 				E5F200001 /* MarkdownPrepRegex.swift in Sources */,
 				E5F200002 /* ZeMediaViews.swift in Sources */,

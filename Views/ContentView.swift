@@ -1092,7 +1092,7 @@ struct ContentView: View {
 
     /// Sessions filtered by active search query, or all sessions if not searching.
     private var filteredSessions: [ChatSession] {
-        let visible = sessions.filter { $0.isArchived == showingArchivedSessions }
+        let visible = sessions.filter { $0.isArchived == showingArchivedSessions && $0.source != "subagent" }
         guard let matchedIds = searchMatchedIds else { return visible }
         return visible.filter { matchedIds.contains($0.id) }
     }

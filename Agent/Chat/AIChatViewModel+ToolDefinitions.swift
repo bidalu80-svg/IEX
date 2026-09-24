@@ -107,6 +107,65 @@ extension AIChatViewModel {
             ),
         ]
 
+        // Multi-agent orchestration. These tools are local to the current
+        // conversation and reuse Ze's existing agent loop/provider stack.
+        tools.append(contentsOf: [
+            AgentToolDefinition(
+                name: "spawn_agent",
+                description: "Start an independent child agent asynchronously. It inherits the current model and permissions, uses the shared workspace, and returns immediately with an agent ID. Use for bounded independent tasks; maximum 6 open children per conversation and depth 3.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
+                    "message": AgentToolParam(type: .string, description: "The concrete, bounded task for the child agent."),
+                    "fork_context": AgentToolParam(type: .boolean, description: "Copy a bounded slice of the current conversation context."),
+                    "nickname": AgentToolParam(type: .string, description: "Short display name for the child agent."),
+                ],
+                required: ["tool_title", "message"],
+                propertyOrdering: ["tool_title", "message", "fork_context", "nickname"]
+            ),
+            AgentToolDefinition(
+                name: "send_input",
+                description: "Send a follow-up task to an existing direct child agent. Set interrupt=true to stop its current work before the follow-up.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
+                    "id": AgentToolParam(type: .string, description: "The child agent ID returned by spawn_agent."),
+                    "message": AgentToolParam(type: .string, description: "Follow-up input."),
+                    "interrupt": AgentToolParam(type: .boolean, description: "Stop current work before sending the follow-up."),
+                ],
+                required: ["tool_title", "id", "message"],
+                propertyOrdering: ["tool_title", "id", "message", "interrupt"]
+            ),
+            AgentToolDefinition(
+                name: "wait_agent",
+                description: "Wait until one or more child agents finish or a timeout expires. IDs are a comma-separated string.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
+                    "ids": AgentToolParam(type: .string, description: "Comma-separated child agent IDs."),
+                    "timeout_ms": AgentToolParam(type: .integer, description: "Wait time in milliseconds, 0 to 300000; default 30000."),
+                ],
+                required: ["tool_title", "ids"],
+                propertyOrdering: ["tool_title", "ids", "timeout_ms"]
+            ),
+            AgentToolDefinition(
+                name: "close_agent",
+                description: "Cancel and close a child agent while retaining its result in the local child-agent history.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
+                    "id": AgentToolParam(type: .string, description: "The child agent ID."),
+                ],
+                required: ["tool_title", "id"],
+                propertyOrdering: ["tool_title", "id"]
+            ),
+            AgentToolDefinition(
+                name: "resume_agent",
+                description: "Mark a stopped, failed, interrupted, or closed child agent ready for a new follow-up task. It does not repeat the old task automatically.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
+                    "id": AgentToolParam(type: .string, description: "The child agent ID."),
+                ],
+                required: ["tool_title", "id"],
+                propertyOrdering: ["tool_title", "id"]
+            ),
+        ])
         if includeMemoryTools {
             tools.append(AgentToolDefinition(
                 name: "memory_write",

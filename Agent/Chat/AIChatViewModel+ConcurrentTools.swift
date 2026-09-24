@@ -656,6 +656,72 @@ extension AIChatViewModel {
             toolOutput = memResult.output
             toolSuccess = memResult.success
 
+        case "spawn_agent":
+            let message = toolArgs["message"] as? String ?? ""
+            let forkContext = toolArgs["fork_context"] as? Bool ?? false
+            let nickname = toolArgs["nickname"] as? String ?? ""
+            let record = ZeSubAgentCoordinator.shared.spawn(from: self, message: message, forkContext: forkContext, nickname: nickname)
+            if let error = record.error {
+                toolOutput = error
+                toolSuccess = false
+            } else {
+                toolOutput = "子代理已排队：id=\(record.id)，名称=\(record.nickname)，层级=\(record.depth)。它会与当前任务并发运行；使用 wait_agent 查询结果。"
+                toolSuccess = true
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
+
+        case "send_input":
+            let id = toolArgs["id"] as? String ?? ""
+            let message = toolArgs["message"] as? String ?? ""
+            let interrupt = toolArgs["interrupt"] as? Bool ?? false
+            if ZeSubAgentCoordinator.shared.owns(id: id, parent: self),
+               let record = ZeSubAgentCoordinator.shared.sendInput(id: id, message: message, interrupt: interrupt) {
+                toolOutput = ZeSubAgentCoordinator.shared.toolSummary(record)
+                toolSuccess = record.error == nil
+            } else {
+                toolOutput = "未知子代理：\(id)"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
+
+        case "wait_agent":
+            let ids = (toolArgs["ids"] as? String ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { ZeSubAgentCoordinator.shared.owns(id: $0, parent: self) }
+            let timeout = Double(toolArgs["timeout_ms"] as? Int ?? 30_000) / 1000.0
+            let records = await ZeSubAgentCoordinator.shared.wait(ids: ids, timeout: timeout)
+            if let data = try? JSONEncoder().encode(records), let json = String(data: data, encoding: .utf8) {
+                toolOutput = json
+                toolSuccess = true
+            } else {
+                toolOutput = "无法序列化子代理状态"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
+
+        case "close_agent":
+            let id = toolArgs["id"] as? String ?? ""
+            if ZeSubAgentCoordinator.shared.owns(id: id, parent: self),
+               let location = ZeSubAgentCoordinator.shared.record(id: id) {
+                ZeSubAgentCoordinator.shared.close(id: location.id)
+                toolOutput = "已关闭子代理：\(location.nickname)"
+                toolSuccess = true
+            } else {
+                toolOutput = "未知子代理：\(id)"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
+
+        case "resume_agent":
+            let id = toolArgs["id"] as? String ?? ""
+            if ZeSubAgentCoordinator.shared.owns(id: id, parent: self),
+               let record = ZeSubAgentCoordinator.shared.resume(id: id) {
+                toolOutput = ZeSubAgentCoordinator.shared.toolSummary(record)
+                toolSuccess = record.error == nil
+            } else {
+                toolOutput = "未知子代理：\(id)"
+                toolSuccess = false
+            }
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
+
         case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
