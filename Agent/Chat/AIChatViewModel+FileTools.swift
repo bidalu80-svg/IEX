@@ -23,41 +23,51 @@ extension AIChatViewModel {
         let success: Bool
     }
 
-    /// Snapshot all files under /var/ze/ with their modification dates.
+    /// Snapshot files in the static and per-session /var/ze buckets.
+    /// The latter must resolve through the current filesystem identity so a
+    /// child agent's writes are reported in the shared root workspace.
     func snapshotZeFiles() -> [String: Date] {
         let fm = FileManager.default
-        guard let hostBase = resolveHostPath(Self.zeLinuxBaseDir) else { return [:] }
-        guard fm.fileExists(atPath: hostBase.path) else { return [:] }
-        // Resolve symlinks (e.g. /var → /private/var) so path prefix stripping works reliably.
-        let resolvedBase = hostBase.resolvingSymlinksInPath().path
-
-        // Collect file URLs first in an autoreleasepool, then process.
-        // FileManager.enumerator can encounter stale entries when iSH modifies
-        // the filesystem concurrently — guard against nil / invalid URLs.
-        var fileURLs: [URL] = []
-        autoreleasepool {
-            guard let enumerator = fm.enumerator(at: hostBase,
-                                                 includingPropertiesForKeys: [.contentModificationDateKey],
-                                                 options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return }
-            while let obj = enumerator.nextObject() {
-                guard let fileURL = obj as? URL else { continue }
-                fileURLs.append(fileURL)
-            }
+        let rootCandidates: [(linux: String, host: URL?)] = [
+            (Self.zeAttachmentsLinuxDir, resolveHostPath(Self.zeAttachmentsLinuxDir)),
+            (Self.zeOffloadsLinuxDir, resolveHostPath(Self.zeOffloadsLinuxDir)),
+            (Self.zeWorkspaceLinuxDir, resolveHostPath(Self.zeWorkspaceLinuxDir)),
+            (Self.zeBrowserLinuxDir, resolveHostPath(Self.zeBrowserLinuxDir)),
+            (Self.zeMemoryLinuxDir, resolveHostPath(Self.zeMemoryLinuxDir)),
+            (Self.zeSkillsLinuxDir, resolveHostPath(Self.zeSkillsLinuxDir)),
+            (Self.zeSharedLinuxDir, resolveHostPath(Self.zeSharedLinuxDir))
+        ]
+        let roots: [(linux: String, host: URL)] = rootCandidates.compactMap { candidate in
+            candidate.host.map { (linux: candidate.linux, host: $0) }
         }
 
         var result: [String: Date] = [:]
-        result.reserveCapacity(fileURLs.count)
-        for fileURL in fileURLs {
+        for (linuxBase, hostBase) in roots {
+            guard fm.fileExists(atPath: hostBase.path) else { continue }
+            let resolvedBase = hostBase.resolvingSymlinksInPath().path
+            var fileURLs: [URL] = []
             autoreleasepool {
-                var isDir: ObjCBool = false
-                guard fm.fileExists(atPath: fileURL.path, isDirectory: &isDir) else { return }
-                if isDir.boolValue { return }
+                guard let enumerator = fm.enumerator(
+                    at: hostBase,
+                    includingPropertiesForKeys: [.contentModificationDateKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                ) else { return }
+                while let obj = enumerator.nextObject() {
+                    guard let fileURL = obj as? URL else { continue }
+                    fileURLs.append(fileURL)
+                }
+            }
 
-                let resolvedFile = fileURL.resolvingSymlinksInPath().path
-                let relativePath = resolvedFile.replacingOccurrences(of: resolvedBase, with: "")
-                let linuxPath = Self.zeLinuxBaseDir + relativePath
-                let modDate = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
-                result[linuxPath] = modDate
+            for fileURL in fileURLs {
+                autoreleasepool {
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: fileURL.path, isDirectory: &isDir), !isDir.boolValue else { return }
+                    let resolvedFile = fileURL.resolvingSymlinksInPath().path
+                    let relativePath = resolvedFile.replacingOccurrences(of: resolvedBase, with: "")
+                    let linuxPath = linuxBase + relativePath
+                    let modDate = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                    result[linuxPath] = modDate
+                }
             }
         }
         return result
@@ -80,7 +90,7 @@ extension AIChatViewModel {
         case "shared": base = Self.zeSharedPersistentDir
         case "mcp-servers": base = Self.zeMcpServersPersistentDir
         default:
-            guard let sid = sessionId else { return nil }
+            guard let sid = fileSystemSessionId else { return nil }
             base = Self.zePersistentBase
                 .appendingPathComponent(sid, isDirectory: true)
                 .appendingPathComponent(host, isDirectory: true)
@@ -109,9 +119,11 @@ extension AIChatViewModel {
     /// Falls back to resolveHostPath for non-/var/ze/ paths (e.g. /tmp, /root).
     func resolvePathForDirectRead(_ linuxPath: String) async -> URL? {
         if linuxPath.hasPrefix("/var/ze/") || linuxPath == "/var/ze" {
-            if let resolved = await ISHExecutionCoordinator.shared.hostURL(for: linuxPath) {
+            if let resolved = await ISHExecutionCoordinator.shared.hostURL(
+                for: linuxPath, sessionId: fileSystemSessionId
+            ) {
                 let exists = FileManager.default.fileExists(atPath: resolved.path)
-                logger.notice("📂[RESOLVE] \(linuxPath) → \(resolved.path) exists=\(exists) sid=\(self.sessionId ?? "nil")")
+                logger.notice("📂[RESOLVE] \(linuxPath) → \(resolved.path) exists=\(exists) sid=\(self.fileSystemSessionId ?? "nil")")
                 if exists { return resolved }
                 // Mount table returned a stale path — fall through to session/rootfs fallbacks
                 logger.notice("📂[RESOLVE] stale mount entry, trying fallbacks…")
@@ -120,7 +132,7 @@ extension AIChatViewModel {
             if let zeURL = linuxPathToZeURL(linuxPath),
                let resolved = resolveZeURL(zeURL) {
                 let exists = FileManager.default.fileExists(atPath: resolved.path)
-                logger.notice("📂[RESOLVE-sessionFallback] \(linuxPath) → \(resolved.path) exists=\(exists) sid=\(self.sessionId ?? "nil")")
+                logger.notice("📂[RESOLVE-sessionFallback] \(linuxPath) → \(resolved.path) exists=\(exists) sid=\(self.fileSystemSessionId ?? "nil")")
                 return resolved
             }
         }
@@ -147,6 +159,13 @@ extension AIChatViewModel {
     /// Returns nil for invalid paths.
     func resolveHostPath(_ linuxPath: String) -> URL? {
         guard linuxPath.hasPrefix("/"), !linuxPath.contains("..") else { return nil }
+        // Child agents retain separate chat records but share the root
+        // conversation's per-session filesystem identity. Resolve routed
+        // /var/ze buckets before falling back to the raw fakefs data path.
+        if let sid = fileSystemSessionId,
+           let routed = ZeFsRouter.shared.hostURL(forGuest: linuxPath, sid: sid) {
+            return routed
+        }
         // Strip leading / — fix_path() convention from iSH
         let relative = String(linuxPath.dropFirst())
         if relative.isEmpty {
@@ -335,7 +354,7 @@ extension AIChatViewModel {
         }
 
         #if DEBUG
-        print("[FileWrite] ▶ START path=\(path) sessionId=\(self.sessionId ?? "<nil>") contentBytes=\(content.utf8.count)")
+        print("[FileWrite] ▶ START path=\(path) sessionId=\(self.fileSystemSessionId ?? "<nil>") contentBytes=\(content.utf8.count)")
         #endif
 
         // Pre-reject writes to read-only mounts using the Linux path directly.
@@ -356,7 +375,7 @@ extension AIChatViewModel {
         // returns nil and we fall back to `resolveHostPath` which writes to
         // the fakefs data/ directory, silently diverging from the real host
         // folder. Force a mount prime here so the lookup hits the real path.
-        if path.hasPrefix("/var/ze/mounts/"), let sid = self.sessionId {
+        if path.hasPrefix("/var/ze/mounts/"), let sid = self.fileSystemSessionId {
             #if DEBUG
             let beforeSnap = await ISHExecutionCoordinator.shared.debugMountSnapshot()
             print("[FileWrite] ensureMounted BEFORE sid=\(sid) mountedSid=\(beforeSnap.sessionId ?? "<nil>") mountedPaths.count=\(beforeSnap.paths.count) keys=\(Array(beforeSnap.paths.keys))")
@@ -392,7 +411,9 @@ extension AIChatViewModel {
         // into iSH and visible in iOS Files).
         let hostURL: URL?
         if path.hasPrefix("/var/ze/mounts/") {
-            let mountURL = await ISHExecutionCoordinator.shared.hostURL(for: path)
+            let mountURL = await ISHExecutionCoordinator.shared.hostURL(
+                for: path, sessionId: self.fileSystemSessionId
+            )
             #if DEBUG
             print("[FileWrite] hostURL(for:\(path)) → \(mountURL?.path ?? "<nil>")")
             #endif

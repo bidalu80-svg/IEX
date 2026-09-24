@@ -738,7 +738,7 @@ struct ToolLiveSheet: View {
         case .fileEditTool: Image(systemName: "square.and.pencil")
         case .browserTool: Image(systemName: "globe")
         case .readImageTool: Image(systemName: "photo")
-        case .memoryTool: Image(systemName: "archivebox.fill")
+        case .memoryTool: Image(systemName: block.kind.toolIconName)
         case .info: Image(systemName: "arrow.triangle.2.circlepath")
         case .text: Image(systemName: "text.alignleft")
         case .thinking: Image(systemName: "brain.head.profile")
@@ -760,8 +760,12 @@ struct ToolLiveSheet: View {
                 fileDiffContent(isStreaming: true)
             case .fileReadTool: fileEditorContent(block.content)
             case .memoryTool:
-                let content = memoryWriteContentFromArgs() ?? block.content
-                memoryEditorContent(content, action: memoryActionName(), isStreaming: true)
+                if block.kind.isSubAgentTool {
+                    textContent
+                } else {
+                    let content = memoryWriteContentFromArgs() ?? block.content
+                    memoryEditorContent(content, action: memoryActionName(), isStreaming: true)
+                }
             default: textContent
             }
         } else if let snap = currentSnapshot {
@@ -794,8 +798,12 @@ struct ToolLiveSheet: View {
                     fileEditorContent(block.content)
                 }
             case .memoryTool:
-                let content = memoryWriteContentFromArgs() ?? block.content
-                memoryEditorContent(content, action: memoryActionName(), resultText: block.content)
+                if block.kind.isSubAgentTool {
+                    textContent
+                } else {
+                    let content = memoryWriteContentFromArgs() ?? block.content
+                    memoryEditorContent(content, action: memoryActionName(), resultText: block.content)
+                }
             default:
                 textContent
             }
@@ -825,8 +833,12 @@ struct ToolLiveSheet: View {
             } else if case .fileReadTool = block.kind, let text = item.snapshot.text, !text.isEmpty {
                 fileEditorContent(text)
             } else if case .memoryTool = block.kind {
-                let content = memoryWriteContentFromArgs() ?? item.snapshot.text ?? block.content
-                memoryEditorContent(content, action: memoryActionName(), resultText: block.content)
+                if block.kind.isSubAgentTool {
+                    textContent
+                } else {
+                    let content = memoryWriteContentFromArgs() ?? item.snapshot.text ?? block.content
+                    memoryEditorContent(content, action: memoryActionName(), resultText: block.content)
+                }
             } else if case .browserTool = block.kind, let text = item.snapshot.text, !text.isEmpty {
                 browserTextResultContent(text)
             } else if let text = item.snapshot.text, !text.isEmpty {
@@ -2006,7 +2018,8 @@ struct ToolLiveSheet: View {
         case .fileEditTool: return "Ze 正在修改文件"
         case .browserTool: return "Ze 正在使用浏览器"
         case .readImageTool: return "Ze 正在读取图片"
-        case .memoryTool: return "Ze 正在使用记忆"
+        case .memoryTool:
+            return block.kind.isSubAgentTool ? "Ze 正在调度子代理" : "Ze 正在使用记忆"
         case .info: return "Ze"
         case .text: return "Ze"
         case .thinking: return "Ze"
@@ -2039,7 +2052,7 @@ struct ToolLiveSheet: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return .pink
+        case .memoryTool: return block.kind.isSubAgentTool ? .green : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple
@@ -2379,7 +2392,7 @@ private struct ToolPreviewThumbnail: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return .pink
+        case .memoryTool: return block.kind.isSubAgentTool ? .green : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple

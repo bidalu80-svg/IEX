@@ -1920,6 +1920,17 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         didSet { browserTabPool.sessionId = sessionId }
     }
 
+    /// Filesystem routing identity used by shell/file tools. Child agents keep
+    /// their own chat/session IDs, but their workspace is intentionally shared
+    /// with the root conversation so files produced by one agent are visible to
+    /// the parent and sibling agents.
+    var workspaceSessionId: String?
+
+    /// Session identity used for /var/ze per-session filesystem routing.
+    /// Normal sessions route to themselves; sub-agents inherit the root
+    /// conversation's workspace identity.
+    var fileSystemSessionId: String? { workspaceSessionId ?? sessionId }
+
     /// The draft ID assigned by the parent view (e.g. "__new__<UUID>").
     /// Included in `.sessionDidCreate` notification so the parent can correlate.
     var draftId: String?

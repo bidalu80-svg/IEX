@@ -432,6 +432,26 @@ enum AssistantBlockKind: Equatable {
     case info
 }
 
+extension AssistantBlockKind {
+    /// Tool calls that belong to the child-agent scheduler. They are stored in
+    /// the legacy memoryTool payload for persistence compatibility, but must
+    /// keep their own visual identity in the UI.
+    static let subAgentToolNames: Set<String> = [
+        "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent"
+    ]
+
+    var isSubAgentTool: Bool {
+        guard case .memoryTool(let action) = self else { return false }
+        return Self.subAgentToolNames.contains(action)
+    }
+
+    var toolIconName: String {
+        if isSubAgentTool { return "person.3.fill" }
+        if case .memoryTool = self { return "archivebox.fill" }
+        return "ellipsis.circle"
+    }
+}
+
 enum KernelStatus: Equatable {
     case notBooted
     case booting

@@ -71,9 +71,13 @@ struct AssistantBlockView: View {
                             commandStartTime: commandStartTime, onStop: onStop,
                             toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
         case .memoryTool:
-            ToolCapsuleView(block: block, icon: "archivebox.fill", accentColor: .pink,
-                            commandStartTime: commandStartTime, onStop: onStop,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+            ToolCapsuleView(
+                block: block,
+                icon: block.kind.toolIconName,
+                accentColor: block.kind.isSubAgentTool ? .green : .pink,
+                commandStartTime: commandStartTime, onStop: onStop,
+                toolSnapshots: toolSnapshots, detailBlock: $detailBlock
+            )
         case .info:
             let allLines = block.content.components(separatedBy: "\n").filter { !$0.isEmpty }
             // Separate reason lines (⚠️) from the final switched line (✅)

@@ -313,6 +313,8 @@ final class AgentLiveActivityManager {
         case "file_edit":                       return "pencil.line"
         case "read_image":                      return "photo"
         case "memory":                          return "archivebox.fill"
+        case "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent":
+            return "person.3.fill"
         case "text":                            return "bubble.left"
         case "thinking":                        return "brain.head.profile"
         case "code_interpret":                  return "chevron.left.forwardslash.chevron.right"
@@ -329,6 +331,8 @@ final class AgentLiveActivityManager {
         case "file_edit":                       return "编辑文件"
         case "read_image":                      return "读取图片"
         case "memory":                          return "记忆"
+        case "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent":
+            return "子代理"
         case "text":                            return "正在回复"
         case "thinking":                        return "思考过程"
         case "code_interpret":                  return "代码"

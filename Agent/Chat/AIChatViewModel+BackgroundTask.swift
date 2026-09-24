@@ -257,7 +257,8 @@ extension AIChatViewModel {
         case .fileEditTool: toolName = "file_edit"
         case .browserTool: toolName = "browser"
         case .readImageTool: toolName = "read_image"
-        case .memoryTool: toolName = "memory"
+        case .memoryTool(let action):
+            toolName = AssistantBlockKind.subAgentToolNames.contains(action) ? action : "memory"
         case .info: toolName = "info"
         }
 

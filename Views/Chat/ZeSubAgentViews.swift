@@ -12,14 +12,21 @@ struct ZeSubAgentDockView: View {
         coordinator.records(for: rootSessionId).filter { $0.status != .closed }
     }
 
+    /// The top dock is a live-running indicator, not a history list. Keep the
+    /// full records available to the sheet while automatically removing the
+    /// floating bar once the last child reaches a terminal state.
+    private var activeRecords: [ZeSubAgentRecord] {
+        records.filter { $0.status.isActive }
+    }
+
     var body: some View {
         Group {
-            if !records.isEmpty {
+            if !activeRecords.isEmpty {
                 Button {
                     isPresented = true
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "person.3.sequence.fill")
+                        Image(systemName: "person.3.fill")
                             .font(.system(size: 13, weight: .semibold))
                         Text("子代理")
                             .font(.system(size: 13, weight: .semibold))

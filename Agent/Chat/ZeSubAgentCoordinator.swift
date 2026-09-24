@@ -149,6 +149,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
         let child = AIChatViewModel()
         child.sessionSource = "subagent"
+        // Keep the child chat session independent, but route /var/ze workspace,
+        // attachments, offloads, and browser files through the root session's
+        // filesystem context. This makes real file artifacts visible to the
+        // parent and sibling agents instead of leaving them in isolated folders.
+        child.workspaceSessionId = parent.fileSystemSessionId ?? root
         child.selectedModel = parent.selectedModel
         child.initialGroupId = parent.initialGroupId
         child.memoryEnabled = parent.memoryEnabled
@@ -180,6 +185,9 @@ final class ZeSubAgentCoordinator: ObservableObject {
             // VM on the first follow-up instead of silently losing the agent.
             let rehydrated = AIChatViewModel()
             rehydrated.sessionSource = "subagent"
+            // Persisted child records retain the root session ID, which is the
+            // shared filesystem identity needed after app relaunch.
+            rehydrated.workspaceSessionId = location.root
             children[id] = rehydrated
             childAgentIds[ObjectIdentifier(rehydrated)] = id
             child = rehydrated
