@@ -247,7 +247,7 @@ private struct ZeSubAgentDetailView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
-                                Label(record.status.displayName, systemImage: record.status.isActive ? "bolt.fill" : "checkmark.circle.fill")
+                                Label(record.status.displayName, systemImage: statusIcon(for: record.status))
                                     .foregroundStyle(record.status.isActive ? Color.accentColor : .secondary)
                                 Spacer()
                                 Text("层级 \(record.depth)")
@@ -280,32 +280,9 @@ private struct ZeSubAgentDetailView: View {
                                     .font(.callout)
                                     .foregroundStyle(.red)
                             }
-                            if record.status.isActive {
-                                Button(role: .destructive) {
-                                    coordinator.cancel(id: recordId)
-                                } label: {
-                                    Label(String(localized: "停止任务"), systemImage: "stop.fill")
-                                }
-                                .buttonStyle(.bordered)
-                            } else if record.status != .closed {
-                                Button {
-                                    _ = coordinator.resume(id: recordId)
-                                } label: {
-                                    Label(String(localized: "准备继续"), systemImage: "arrow.clockwise")
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                            if record.status != .closed {
-                                Button(role: .destructive) {
-                                    coordinator.close(id: recordId)
-                                    dismiss()
-                                } label: {
-                                    Label(String(localized: "关闭代理"), systemImage: "xmark.circle")
-                                }
-                                .buttonStyle(.bordered)
-                            }
                         }
                         .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
                     VStack(spacing: 10) {
@@ -320,33 +297,89 @@ private struct ZeSubAgentDetailView: View {
             }
             .navigationTitle(record?.nickname ?? String(localized: "子代理"))
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) {
-                if record != nil {
-                    HStack(alignment: .bottom, spacing: 8) {
-                        TextField(String(localized: "给子代理补充任务…"), text: $followUp, axis: .vertical)
-                            .lineLimit(1...4)
-                            .textFieldStyle(.roundedBorder)
-                        Button {
-                            let message = followUp
-                            followUp = ""
-                            _ = coordinator.sendInput(id: recordId, message: message, interrupt: interrupt)
-                            interrupt = false
+            .toolbar {
+                if let record, record.status != .closed {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            if record.status.isActive {
+                                Button(role: .destructive) {
+                                    coordinator.cancel(id: recordId)
+                                } label: {
+                                    Label(String(localized: "停止任务"), systemImage: "stop.fill")
+                                }
+                            } else if record.status == .cancelled || record.status == .interrupted || record.status == .failed {
+                                Button {
+                                    _ = coordinator.resume(id: recordId)
+                                } label: {
+                                    Label(String(localized: "准备继续"), systemImage: "arrow.clockwise")
+                                }
+                            }
+                            Button(role: .destructive) {
+                                coordinator.close(id: recordId)
+                                dismiss()
+                            } label: {
+                                Label(String(localized: "关闭代理"), systemImage: "xmark.circle")
+                            }
                         } label: {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 28))
+                            Image(systemName: "ellipsis.circle")
                         }
-                        .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel(String(localized: "子代理操作"))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.bar)
-                    .overlay(alignment: .top) { Divider() }
-                    Toggle(String(localized: "中断当前任务"), isOn: $interrupt)
-                        .font(.caption)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 4)
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let record, record.status != .closed {
+                    VStack(spacing: 8) {
+                        if record.status.isActive {
+                            Toggle(isOn: $interrupt) {
+                                Label(String(localized: "中断当前任务后发送"), systemImage: "bolt.slash")
+                                    .font(.subheadline)
+                            }
+                            .tint(.orange)
+                            .padding(.horizontal, 4)
+                        }
+                        HStack(alignment: .bottom, spacing: 8) {
+                            TextField(String(localized: "给子代理补充任务…"), text: $followUp, axis: .vertical)
+                                .lineLimit(1...4)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .accessibilityLabel(String(localized: "给子代理补充任务"))
+                            Button {
+                                guard let result = coordinator.sendInput(id: recordId, message: followUp, interrupt: record.status.isActive && interrupt),
+                                      result.status == .queued else { return }
+                                followUp = ""
+                                interrupt = false
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 30))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (record.status.isActive && !interrupt))
+                            .accessibilityLabel(String(localized: "发送补充任务"))
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.bar)
+                    .overlay(alignment: .top) { Divider() }
+                }
+            }
+            .onChange(of: record?.status.isActive) { isActive in
+                if isActive != true { interrupt = false }
+            }
+        }
+    }
+
+    private func statusIcon(for status: ZeSubAgentStatus) -> String {
+        switch status {
+        case .completed: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.circle.fill"
+        case .cancelled, .interrupted, .cancelling: return "stop.circle.fill"
+        case .idle: return "circle.dotted"
+        case .closed: return "xmark.circle.fill"
+        case .queued, .running, .awaitingApproval: return "bolt.fill"
         }
     }
 }
