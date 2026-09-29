@@ -978,6 +978,7 @@ struct AddProviderView: View {
         case .openAIResponses: return String(localized: "Sign In") // Not reachable — API key only
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
+        case .githubCopilot: return String(localized: "GitHub Copilot 令牌")
         case .unsupported: return String(localized: "Sign In")
         }
     }
@@ -1058,8 +1059,8 @@ struct AddProviderView: View {
             return String(localized: "Sign in with your Kimi Code / Coding Plan subscription.")
         case (.kimiCode, .apiKey):
             return String(localized: "Use a Kimi Coding API key.")
-        case (.githubCopilot, .apiKey):
-            return String(localized: "Use a GitHub token (ghp_/github_pat_) or a Copilot session token.")
+        case (.githubCopilot, .oauth):
+            return String(localized: "使用 GitHub 令牌或 Copilot 会话令牌。")
         case (.unsupported, _):
             return String(localized: "This provider isn't supported in this app version.")
         }
