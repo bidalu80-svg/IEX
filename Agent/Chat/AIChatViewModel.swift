@@ -976,7 +976,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         case .openAI, .openAIResponses:
             // Custom/local base only — never official OpenAI.
             return instance.customBaseURL?.isEmpty == false
-        case .openRouter, .xAI, .kimiCode:
+        case .openRouter, .xAI, .kimiCode, .githubCopilot:
             return true
         case .anthropic, .gemini, .antigravity, .unsupported:
             return false
@@ -1060,7 +1060,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 level = "budget: \(AnthropicAgentProvider.thinkingBudget(for: model, maxTokens: 64000, level: thinkLvl))"
             case .gemini:
                 level = thinkLvl.displayName
-            case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode:
+            case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot:
                 level = OpenAIAgentProvider.reasoningEffort(
                     for: model,
                     level: thinkLvl,
