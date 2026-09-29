@@ -74,7 +74,7 @@ struct AssistantBlockView: View {
             ToolCapsuleView(
                 block: block,
                 icon: block.kind.toolIconName,
-                accentColor: block.kind.isSubAgentTool ? .green : .pink,
+                accentColor: block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink,
                 commandStartTime: commandStartTime, onStop: onStop,
                 toolSnapshots: toolSnapshots, detailBlock: $detailBlock
             )

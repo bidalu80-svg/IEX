@@ -776,6 +776,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "https://api.openai.com"
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
+        case .githubCopilot: return "https://api.githubcopilot.com"
         default: return "https://api.example.com"
         }
     }
@@ -865,6 +866,7 @@ struct AddProviderView: View {
             case .openAIResponses: break // API key only, no OAuth
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet, not here
+            case .githubCopilot: break // token is entered directly
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -896,6 +898,8 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
+        case .githubCopilot:
+            token = nil
         case .unsupported:
             token = nil // free / unsupported — no token
         }
@@ -989,6 +993,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
+        case .githubCopilot: return "GitHub 令牌或 Copilot 会话令牌…"
         case .unsupported: return ""
         }
     }
@@ -1003,6 +1008,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "Responses API"
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return String(localized: "Kimi Code")
+        case .githubCopilot: return "GitHub Copilot"
         case .unsupported: return String(localized: "Unsupported")
         }
     }
@@ -1019,7 +1025,7 @@ struct AddProviderView: View {
         switch type {
         case .antigravity:
             return [.oauth]
-        case .openAIResponses, .gemini:
+        case .openAIResponses, .gemini, .githubCopilot:
             return [.apiKey]
         default:
             return [.apiKey, .oauth]
@@ -1052,6 +1058,8 @@ struct AddProviderView: View {
             return String(localized: "Sign in with your Kimi Code / Coding Plan subscription.")
         case (.kimiCode, .apiKey):
             return String(localized: "Use a Kimi Coding API key.")
+        case (.githubCopilot, .apiKey):
+            return String(localized: "Use a GitHub token (ghp_/github_pat_) or a Copilot session token.")
         case (.unsupported, _):
             return String(localized: "This provider isn't supported in this app version.")
         }
@@ -1084,6 +1092,9 @@ struct AddProviderView: View {
         case .kimiCode:
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
+        case .githubCopilot:
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .foregroundStyle(.purple)
         case .unsupported:
             Image(systemName: "questionmark.circle")
                 .foregroundStyle(.gray)
@@ -1100,6 +1111,7 @@ struct AddProviderView: View {
         case .openAIResponses: return .mint
         case .xAI: return .gray
         case .kimiCode: return .indigo
+        case .githubCopilot: return .purple
         case .unsupported: return .gray
         }
     }

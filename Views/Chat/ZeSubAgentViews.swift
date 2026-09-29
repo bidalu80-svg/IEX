@@ -1,5 +1,16 @@
 import SwiftUI
 
+/// Child-agent visual language: purple identity, compact live
+/// status treatment, and a black terminal-like preview surface.
+enum ZeSubAgentTheme {
+    static let purple = Color(red: 0.55, green: 0.28, blue: 0.95)
+    static let purpleBright = Color(red: 0.68, green: 0.42, blue: 1.0)
+    static let purpleSoft = Color(red: 0.55, green: 0.28, blue: 0.95).opacity(0.14)
+    static let blackCard = Color(red: 0.035, green: 0.028, blue: 0.055)
+    static let blackCardBorder = Color(red: 0.55, green: 0.28, blue: 0.95).opacity(0.42)
+    static let iconName = "person.3.fill"
+}
+
 /// Compact, native iOS dock for child agents. It stays hidden until a session
 /// has at least one non-closed child, so idle conversations pay no layout cost.
 struct ZeSubAgentDockView: View {
@@ -26,7 +37,8 @@ struct ZeSubAgentDockView: View {
                     isPresented = true
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "person.3.fill")
+                        Image(systemName: ZeSubAgentTheme.iconName)
+                            .foregroundStyle(ZeSubAgentTheme.purple)
                             .font(.system(size: 13, weight: .semibold))
                         Text("子代理")
                             .font(.system(size: 13, weight: .semibold))
@@ -42,13 +54,13 @@ struct ZeSubAgentDockView: View {
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.tertiary)
                     }
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(ZeSubAgentTheme.purple)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(ZeSubAgentTheme.purpleSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                            .stroke(ZeSubAgentTheme.purple.opacity(0.28), lineWidth: 0.7)
                     }
                 }
                 .buttonStyle(.plain)
@@ -86,7 +98,7 @@ private struct ZeSubAgentPanelView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "person.3.sequence")
                             .font(.system(size: 28))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(ZeSubAgentTheme.purple)
                         Text(String(localized: "暂无子代理"))
                             .font(.headline)
                         Text(String(localized: "模型可以使用 spawn_agent 并发拆分独立任务。"))
@@ -192,11 +204,11 @@ private struct ZeSubAgentRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(record.status.isActive ? Color.accentColor : statusColor)
+                .fill(record.status.isActive ? ZeSubAgentTheme.purple : statusColor)
                 .frame(width: 9, height: 9)
                 .overlay {
                     if record.status.isActive {
-                        Circle().stroke(Color.accentColor.opacity(0.25), lineWidth: 5)
+                        Circle().stroke(ZeSubAgentTheme.purple.opacity(0.30), lineWidth: 5)
                     }
                 }
             VStack(alignment: .leading, spacing: 3) {
@@ -205,7 +217,7 @@ private struct ZeSubAgentRow: View {
                         .font(.body.weight(.semibold))
                     Text(record.status.displayName)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(record.status.isActive ? Color.accentColor : .secondary)
+                        .foregroundStyle(record.status.isActive ? ZeSubAgentTheme.purple : .secondary)
                 }
                 Text(record.output.isEmpty ? record.shortPrompt : record.output)
                     .font(.caption)
@@ -223,7 +235,7 @@ private struct ZeSubAgentRow: View {
 
     private var statusColor: Color {
         switch record.status {
-        case .completed: return .green
+        case .completed: return ZeSubAgentTheme.purpleBright
         case .failed: return .red
         case .cancelled, .interrupted: return .orange
         default: return .secondary
@@ -248,7 +260,7 @@ private struct ZeSubAgentDetailView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
                                 Label(record.status.displayName, systemImage: statusIcon(for: record.status))
-                                    .foregroundStyle(record.status.isActive ? Color.accentColor : .secondary)
+                                    .foregroundStyle(record.status.isActive ? ZeSubAgentTheme.purple : .secondary)
                                 Spacer()
                                 Text("层级 \(record.depth)")
                                     .font(.caption)
@@ -335,7 +347,7 @@ private struct ZeSubAgentDetailView: View {
                                 Label(String(localized: "中断当前任务后发送"), systemImage: "bolt.slash")
                                     .font(.subheadline)
                             }
-                            .tint(.orange)
+                            .tint(ZeSubAgentTheme.purple)
                             .padding(.horizontal, 4)
                         }
                         HStack(alignment: .bottom, spacing: 8) {
@@ -352,6 +364,7 @@ private struct ZeSubAgentDetailView: View {
                                 interrupt = false
                             } label: {
                                 Image(systemName: "arrow.up.circle.fill")
+                                    .foregroundStyle(ZeSubAgentTheme.purple)
                                     .font(.system(size: 30))
                                     .frame(width: 44, height: 44)
                             }

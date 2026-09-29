@@ -157,7 +157,7 @@ extension AIChatViewModel {
             ),
             AgentToolDefinition(
                 name: "resume_agent",
-                description: "Mark a stopped, failed, interrupted, or closed child agent ready for a new follow-up task. It does not repeat the old task automatically.",
+                description: "Rerun a stopped, failed, interrupted, or closed child agent using its original task prompt.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
                     "id": AgentToolParam(type: .string, description: "The child agent ID."),

@@ -2052,7 +2052,7 @@ struct ToolLiveSheet: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return block.kind.isSubAgentTool ? .green : .pink
+        case .memoryTool: return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple
@@ -2185,7 +2185,13 @@ private struct ToolPreviewThumbnail: View {
         }
         .frame(width: 100, height: 65, alignment: .topLeading)
         .clipped()
-        .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+        .background(block.kind.isSubAgentTool ? ZeSubAgentTheme.blackCard : Color(red: 0.12, green: 0.12, blue: 0.14))
+        .overlay {
+            if block.kind.isSubAgentTool {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(ZeSubAgentTheme.blackCardBorder, lineWidth: 0.7)
+            }
+        }
     }
 
     /// Load image from a snapshot's mediaRef.
@@ -2239,7 +2245,13 @@ private struct ToolPreviewThumbnail: View {
         }
         .frame(width: 100, height: 65, alignment: .topLeading)
         .clipped()
-        .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+        .background(block.kind.isSubAgentTool ? ZeSubAgentTheme.blackCard : Color(red: 0.12, green: 0.12, blue: 0.14))
+        .overlay {
+            if block.kind.isSubAgentTool {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(ZeSubAgentTheme.blackCardBorder, lineWidth: 0.7)
+            }
+        }
     }
 
     /// Diff-style mini preview for file_edit thumbnails.
@@ -2392,7 +2404,7 @@ private struct ToolPreviewThumbnail: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return block.kind.isSubAgentTool ? .green : .pink
+        case .memoryTool: return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple
@@ -2420,7 +2432,13 @@ private struct ToolStatusBar: View {
                 stepNavigation
             }
 
-            statusIcon
+            if block.kind.isSubAgentTool {
+                Image(systemName: ZeSubAgentTheme.iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ZeSubAgentTheme.purple)
+            } else {
+                statusIcon
+            }
 
             // [T-step-timestamp v2 aa8b1128] Inline HH:mm:ss prefix removed
             // — see ToolLiveSheet.sheetNavBar for the new "start +

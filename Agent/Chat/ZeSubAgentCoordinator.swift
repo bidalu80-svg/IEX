@@ -242,12 +242,15 @@ final class ZeSubAgentCoordinator: ObservableObject {
     func resume(id: String) -> ZeSubAgentRecord? {
         guard let location = locate(id: id), var record = record(id: id, rootSessionId: location.root) else { return nil }
         guard record.status == .closed || record.status == .interrupted || record.status == .failed || record.status == .cancelled else { return record }
+        // Resume is an actual rerun, not just a cosmetic state change. This
+        // keeps the UI action and the resume_agent tool useful after an error,
+        // cancellation, or app-relaunch interruption.
         record.status = .idle
         record.error = nil
         record.revision += 1
         record.updatedAt = Date()
         update(record, root: location.root)
-        return record
+        return sendInput(id: id, message: record.prompt, interrupt: false) ?? record
     }
 
     func wait(ids: [String], timeout: TimeInterval = 30) async -> [ZeSubAgentRecord] {

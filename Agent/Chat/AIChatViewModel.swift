@@ -1755,7 +1755,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "- spawn_agent: Start an independent child agent for a bounded task. It returns immediately so multiple independent tasks can run concurrently.\n"
             + "- send_input: Send a follow-up to a child agent; use interrupt=true when its current work should be stopped first.\n"
             + "- wait_agent: Wait for one or more child agents using comma-separated IDs and a bounded timeout.\n"
-            + "- close_agent / resume_agent: Stop or prepare a child agent for another follow-up without repeating old work automatically.\n"
+            + "- close_agent / resume_agent: Stop or rerun a child agent; resume_agent reruns its original task prompt.\n"
             + "Child-agent scheduling: split work only when tasks are independent, keep file ownership disjoint, start children immediately, and collect their outputs with wait_agent before reporting completion. Ze limits each root conversation to 6 open children and 3 nesting levels.\n\n"
             + "Current time (approximate): \(approximateTimeString) (\(TimeZone.current.identifier)). "
             + "Device languages: \((UserDefaults.standard.object(forKey: "AppleLanguages") as? [String] ?? Locale.preferredLanguages).joined(separator: ", ")).\n\n"
@@ -6079,10 +6079,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
 enum LLMProviderError: LocalizedError {
     case noCredentials
+    case providerError(String)
 
     var errorDescription: String? {
         switch self {
         case .noCredentials: return "没有可用的 API 凭据"
+        case .providerError(let message): return message
         }
     }
 }

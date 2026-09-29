@@ -520,6 +520,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return "https://api.openai.com/v1"
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
+        case .githubCopilot: return "https://api.githubcopilot.com"
         case .unsupported: return "—"
         }
     }
@@ -890,6 +891,9 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .githubCopilot:
+            return ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
+                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
         case .unsupported: return false // synced from newer build
         }
     }
@@ -951,6 +955,10 @@ struct ProviderInstanceDetailView: View {
         case .kimiCode:
             return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? String(localized: "Authenticated") : String(localized: "Not authenticated")
+        case .githubCopilot:
+            return (ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
+                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil)
+                ? String(localized: "Token configured") : String(localized: "Not configured")
         case .unsupported:
             return String(localized: "Unsupported in this app version")
         }
@@ -966,6 +974,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return String(localized: "Sign In")
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
+        case .githubCopilot: return String(localized: "GitHub Copilot token")
         case .unsupported: return String(localized: "Sign In")
         }
     }
@@ -981,6 +990,7 @@ struct ProviderInstanceDetailView: View {
             case .openAIResponses: break
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
+            case .githubCopilot: break
             case .unsupported: break
             }
         } catch {
@@ -1000,6 +1010,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: break // API key only
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
+        case .githubCopilot: break
         case .unsupported: break
         }
     }
@@ -1017,12 +1028,16 @@ struct ProviderInstanceDetailView: View {
             token = try? await AntigravityOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .openRouter:
             token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id)
+                ?? ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token")
         case .openAIResponses:
             token = nil
         case .xAI:
             token = try? await XAIOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .kimiCode:
             token = try? await KimiOAuthManager.shared.validAccessToken(instanceId: instance.id)
+        case .githubCopilot:
+            token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id)
+                ?? ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token")
         case .unsupported:
             token = nil
         }
@@ -1039,6 +1054,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
+        case .githubCopilot: return "GitHub 令牌或 Copilot 会话令牌…"
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

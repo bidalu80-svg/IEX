@@ -19,6 +19,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// OpenAI-compatible coding upstream — flows through OpenAIProvider with
     /// custom base URL + OAuth bearer, like xAI. See the Kimi Code OAuth design notes.
     case kimiCode
+    /// GitHub Copilot Chat API. Uses a Copilot session token or a GitHub token that can be exchanged for one.
+    case githubCopilot
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -43,6 +45,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .openAIResponses: return "Responses API (v3)"
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return String(localized: "Kimi Code")
+        case .githubCopilot: return "GitHub Copilot"
         case .unsupported: return "Unsupported"
         }
     }
@@ -58,6 +61,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .openAIResponses: return LLMModel.allOpenAI
         case .xAI: return XAIModelsAPI.allModels
         case .kimiCode: return KimiModelsAPI.allModels
+        case .githubCopilot: return GitHubCopilotModelsAPI.allModels
         case .unsupported: return []
         }
     }
@@ -80,6 +84,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return String(localized: "Works with the Grok series of models")
         case .kimiCode:
             return String(localized: "Sign in with your Kimi Code / Coding Plan subscription")
+        case .githubCopilot:
+            return String(localized: "Use a GitHub token or Copilot session token")
         case .antigravity:
             return String(localized: "\(builtInModels.count) built-in models")
         case .unsupported:
@@ -98,6 +104,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .openAIResponses: return .vision
         case .xAI: return .vision
         case .kimiCode: return .vision
+        case .githubCopilot: return .vision
         case .unsupported: return .vision
         }
     }
@@ -112,4 +119,18 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
 enum ProviderCredential: String, Codable, Hashable, Sendable {
     case apiKey
     case oauth
+}
+
+
+/// Built-in models exposed by GitHub Copilot Chat. The service may expose a
+/// different set for an account; users can still add a custom model entry.
+enum GitHubCopilotModelsAPI {
+    static let allModels: [LLMModel] = [
+        LLMModel(id: "gpt-4o", displayName: "GPT-4o", provider: "GitHub Copilot"),
+        LLMModel(id: "gpt-4.1", displayName: "GPT-4.1", provider: "GitHub Copilot"),
+        LLMModel(id: "o3-mini", displayName: "o3-mini", provider: "GitHub Copilot"),
+        LLMModel(id: "claude-3.7-sonnet", displayName: "Claude 3.7 Sonnet", provider: "GitHub Copilot"),
+        LLMModel(id: "claude-sonnet-4", displayName: "Claude Sonnet 4", provider: "GitHub Copilot"),
+        LLMModel(id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", provider: "GitHub Copilot"),
+    ]
 }

@@ -146,7 +146,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     var supportsCustomUserAgent: Bool {
         guard effectiveCustomBaseURL != nil else { return false }
         switch providerType {
-        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .anthropic:
+        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot, .anthropic:
             return true
         case .gemini, .antigravity, .unsupported:
             return false
@@ -290,6 +290,9 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthToken(
                 instanceId: id, as: KimiTokenStorage.self, caller: "hasAnyCredential"
             ) != nil
+        case .githubCopilot:
+            return ProviderKeychainHelper.loadAPIKey(instanceId: id) != nil
+                || ProviderKeychainHelper.loadOAuthString(instanceId: id, account: "manual-oauth-token") != nil
         case .antigravity, .openRouter, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no

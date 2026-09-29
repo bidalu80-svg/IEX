@@ -40,6 +40,8 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: LLMProviderFactory.makeXAIProvider(instance: instance, model: entry.model))
         case .kimiCode:
             return OpenAIAgentProvider(provider: LLMProviderFactory.makeKimiProvider(instance: instance, model: entry.model))
+        case .githubCopilot:
+            return OpenAIAgentProvider(provider: LLMProviderFactory.makeGitHubCopilotProvider(instance: instance, model: entry.model))
         case .unsupported:
             logger.error("\(instance.providerType) has no agent provider; returning placeholder")
             return AnthropicAgentProvider(provider: AnthropicProvider(apiKey: "", model: entry.model))
@@ -237,6 +239,8 @@ extension AIChatViewModel {
                 provider.appendV1Suffix = kimiAppendV1
                 return provider
             }
+        case .githubCopilot:
+            return LLMProviderFactory.makeGitHubCopilotProvider(instance: instance, model: entry.model)
         case .unsupported:
             throw LLMProviderError.noCredentials
         }

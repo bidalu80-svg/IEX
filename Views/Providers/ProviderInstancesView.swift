@@ -277,6 +277,9 @@ private struct InstanceRow: View {
         case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .githubCopilot:
+            return ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
+                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
         case .unsupported: return false // synced from newer build
         }
     }

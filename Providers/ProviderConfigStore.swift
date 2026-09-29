@@ -1030,6 +1030,8 @@ final class ProviderConfigStore: ObservableObject {
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: XAITokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
             case .kimiCode:
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: KimiTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
+            case .githubCopilot:
+                return nil
             default:
                 return nil
             }
@@ -1165,6 +1167,8 @@ final class ProviderConfigStore: ObservableObject {
                 if let t = try? JSONDecoder().decode(KimiTokenStorage.self, from: blob) {
                     ProviderKeychainHelper.saveOAuthToken(t, instanceId: instance.id)
                 }
+            case .githubCopilot:
+                break
             default:
                 break
             }
@@ -2526,6 +2530,10 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
+        case (.githubCopilot, .apiKey), (.githubCopilot, .oauth):
+            // Copilot model availability is account-dependent; use the stable
+            // built-in catalog instead of probing the private /models endpoint.
+            return ModelsDevAPI.enrichModels(ProviderType.githubCopilot.builtInModels)
         case (.unsupported, _):
             // Synced from a newer build — can't fetch; keep whatever's stored.
             return []
@@ -2705,6 +2713,7 @@ final class ProviderConfigStore: ObservableObject {
         case .openAI, .openAIResponses: return "https://api.openai.com"
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.kimi.com/coding"
+        case .githubCopilot: return "https://api.githubcopilot.com"
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL
