@@ -236,61 +236,44 @@ struct ZeSubAgentBlackCard: View {
         return compact ? Array(steps.suffix(3)) : steps
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 9 : 13) {
-            HStack(spacing: 9) {
-                Image(systemName: ZeSubAgentTheme.iconName)
-                    .font(.system(size: compact ? 15 : 18, weight: .semibold))
-                    .foregroundStyle(ZeSubAgentTheme.purpleBright)
-                Text(record.nickname)
-                    .font(.system(size: compact ? 15 : 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                if record.status.isActive { ProgressView().tint(ZeSubAgentTheme.purpleBright) }
-                Text(record.status.displayName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(ZeSubAgentTheme.purpleBright)
-            }
+    private var cardHeader: some View {
+        HStack(spacing: 9) {
+            Image(systemName: ZeSubAgentTheme.iconName)
+                .font(.system(size: compact ? 15 : 18, weight: .semibold))
+                .foregroundStyle(ZeSubAgentTheme.purpleBright)
+            Text(record.nickname)
+                .font(.system(size: compact ? 15 : 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+            Spacer(minLength: 2)
+            if record.status.isActive { ProgressView().tint(ZeSubAgentTheme.purpleBright) }
+            Text(record.status.displayName)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(ZeSubAgentTheme.purpleBright)
+        }
+    }
 
-            if visibleSteps.isEmpty {
-                Text(record.status.isActive ? String(localized: "正在准备子代理任务…") : record.shortPrompt)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.63))
-                    .lineLimit(compact ? 2 : 5)
-            } else {
-                ForEach(visibleSteps) { step in
-                    HStack(alignment: .top, spacing: 9) {
-                        Image(systemName: step.state == "failed" ? "exclamationmark.circle.fill" : step.state == "success" ? "checkmark.circle.fill" : step.icon)
-                            .font(.system(size: 13))
-                            .foregroundStyle(step.state == "failed" ? Color.orange : ZeSubAgentTheme.purpleBright)
-                            .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(step.title)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                                Text(step.state == "running" ? "进行中" : step.state == "failed" ? "失败" : step.state == "success" ? "完成" : "")
-                                    .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.55))
-                            }
-                            if !step.content.isEmpty {
-                                Text(step.content)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.64))
-                                    .lineLimit(compact ? 2 : 10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(compact ? .disabled : .enabled)
-                            }
-                        }
-                    }
-                    if step.id != visibleSteps.last?.id {
-                        Rectangle().fill(.white.opacity(0.10)).frame(height: 0.5)
-                    }
+    @ViewBuilder
+    private var cardSteps: some View {
+        if visibleSteps.isEmpty {
+            Text(record.status.isActive ? String(localized: "正在准备子代理任务…") : record.shortPrompt)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.63))
+                .lineLimit(compact ? 2 : 5)
+        } else {
+            ForEach(visibleSteps) { step in
+                ZeSubAgentStepRow(step: step, compact: compact)
+                if step.id != visibleSteps.last?.id {
+                    Rectangle().fill(.white.opacity(0.10)).frame(height: 0.5)
                 }
             }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 9 : 13) {
+            cardHeader
+            cardSteps
             if !compact, let error = record.error, !error.isEmpty {
                 Text(error).font(.caption).foregroundStyle(.orange)
             }
@@ -307,6 +290,57 @@ struct ZeSubAgentBlackCard: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ZeSubAgentStepRow: View {
+    let step: ZeSubAgentStep
+    let compact: Bool
+
+    private var stateIcon: String {
+        switch step.state {
+        case "failed": return "exclamationmark.circle.fill"
+        case "success": return "checkmark.circle.fill"
+        default: return step.icon
+        }
+    }
+
+    private var stateLabel: String {
+        switch step.state {
+        case "running": return "进行中"
+        case "failed": return "失败"
+        case "success": return "完成"
+        case "cancelled": return "已停止"
+        default: return ""
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: stateIcon)
+                .font(.system(size: 13))
+                .foregroundStyle(step.state == "failed" ? Color.orange : ZeSubAgentTheme.purpleBright)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(step.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text(stateLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                if !step.content.isEmpty {
+                    Text(step.content)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.64))
+                        .lineLimit(compact ? 2 : 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }
 
