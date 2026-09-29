@@ -253,7 +253,11 @@ enum LLMProviderFactory {
     /// The OAuth manager exchanges the GitHub device-login token for a short-lived Copilot token.
     static func makeGitHubCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
         let iid = instance.id
-        let base = instance.effectiveCustomBaseURL ?? "https://api.githubcopilot.com"
+        // GitHub may route individual Copilot accounts to a dedicated host.
+        // Prefer the host discovered during OAuth; custom relay URLs still win.
+        let base = instance.effectiveCustomBaseURL
+            ?? GitHubCopilotOAuthManager.shared.apiBaseURL(instanceId: iid)
+            ?? "https://api.githubcopilot.com"
         let provider = OpenAIProvider(
             oauthTokenProvider: { try await GitHubCopilotOAuthManager.shared.validAccessToken(instanceId: iid) },
             model: model

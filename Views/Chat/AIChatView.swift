@@ -3840,6 +3840,8 @@ struct AIChatView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     let commands = vm.filteredSlashCommands
+                    let liveContextTokens = vm.sessionTokenStats.context
+                    let contextWindow = vm.currentModelContextWindow
                     ForEach(Array(commands.enumerated()), id: \.element.id) { index, cmd in
                         let isSelected = index == vm.slashMenuSelectedIndex
                         // [T-slash-picker-section-divider] Hairline between
@@ -3860,6 +3862,8 @@ struct AIChatView: View {
                                 thinkingLevel: vm.currentThinkingLevel,
                                 thinkingSupported: supported,
                                 availableLevels: vm.availableThinkingLevels,
+                                contextTokens: liveContextTokens,
+                                contextWindow: contextWindow,
                                 onSetThinkingLevel: supported ? { level in
                                     vm.setThinkingLevel(level)
                                 } : nil,
@@ -3876,7 +3880,9 @@ struct AIChatView: View {
                                 SlashCommandRow(
                                     cmd: cmd,
                                     isSelected: isSelected,
-                                    memoryEnabled: vm.memoryEnabled
+                                    memoryEnabled: vm.memoryEnabled,
+                                    contextTokens: liveContextTokens,
+                                    contextWindow: contextWindow
                                 )
                                 .contentShape(Rectangle())
                             }
@@ -4139,6 +4145,11 @@ struct AIChatView: View {
         var thinkingLevel: ThinkingLevel = .off
         var thinkingSupported: Bool = true
         var availableLevels: [ThinkingLevel] = ThinkingLevel.allCases
+        /// Latest server-reported context size for the active session. This is
+        /// deliberately sourced from `sessionTokenStats`, the same value used
+        /// by the Token Usage sheet, rather than a character estimate.
+        var contextTokens: Int = 0
+        var contextWindow: Int?
         var onSetThinkingLevel: ((ThinkingLevel) -> Void)?
         var onToggleThinking: (() -> Void)?
 
@@ -4188,6 +4199,13 @@ struct AIChatView: View {
                 .contentShape(Rectangle())
                 .allowsHitTesting(cmd.id == "thinking")
                 .onTapGesture { onToggleThinking?() }
+                if cmd.id == "compact", let contextWindow, contextWindow > 0 {
+                    ContextUsageIndicator(
+                        usedTokens: contextTokens,
+                        contextWindow: contextWindow,
+                        isSelected: isSelected
+                    )
+                }
                 if cmd.id == "memory" {
                     Image(systemName: memoryEnabled ? "checkmark.circle.fill" : "slash.circle")
                         .font(.system(size: 16))
@@ -4208,6 +4226,76 @@ struct AIChatView: View {
             }
             if !thinkingSupported { return .secondary }
             return thinkingLevel.isEnabled ? .purple : (isSelected ? .white.opacity(0.8) : ChatColors.secondaryText)
+        }
+
+        /// Small, low-overhead context gauge shown on the Compact row. The
+        /// trimmed circle uses a single shape layer and a one-shot spring, so
+        /// updates remain cheap even while a response is streaming. A round
+        /// line cap gives the progress head the requested soft "worm" feel.
+        private struct ContextUsageIndicator: View {
+            let usedTokens: Int
+            let contextWindow: Int
+            let isSelected: Bool
+            @State private var animatedProgress = 0.0
+
+            private var progress: Double {
+                guard contextWindow > 0 else { return 0 }
+                return min(max(Double(usedTokens) / Double(contextWindow), 0), 1)
+            }
+
+            var body: some View {
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            .stroke((isSelected ? Color.white : ChatColors.secondaryText).opacity(0.18), lineWidth: 4)
+                        Circle()
+                            .trim(from: 0, to: animatedProgress)
+                            .stroke(
+                                AngularGradient(
+                                    gradient: Gradient(colors: [
+                                        .blue, .cyan, .purple, .pink, .orange, .blue
+                                    ]),
+                                    center: .center
+                                ),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 29, height: 29)
+                    .accessibilityHidden(true)
+
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(formatted(usedTokens)) / \(formatted(contextWindow))")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(isSelected ? .white : ChatColors.primaryText)
+                            .monospacedDigit()
+                        Text(String(format: "%.1f%% 已用", progress * 100))
+                            .font(.system(size: 9))
+                            .foregroundStyle(isSelected ? .white.opacity(0.72) : ChatColors.secondaryText)
+                    }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("上下文使用量")
+                .accessibilityValue("\(formatted(usedTokens)) / \(formatted(contextWindow))，\(String(format: "%.1f%%", progress * 100))")
+                .onAppear {
+                    withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
+                        animatedProgress = progress
+                    }
+                }
+                .onChange(of: progress) { newValue in
+                    withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
+                        animatedProgress = newValue
+                    }
+                }
+            }
+
+            private func formatted(_ value: Int) -> String {
+                if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+                if value >= 1_000 { return String(format: "%.1fK", Double(value) / 1_000) }
+                return "\(value)"
+            }
         }
 
         private var thinkingLevelPicker: some View {

@@ -329,6 +329,12 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private func steps(from child: AIChatViewModel) -> [ZeSubAgentStep] {
         child.messages.filter { $0.role == .assistant }.flatMap { message in
             message.blocks.compactMap { block -> ZeSubAgentStep? in
+                // Reasoning is intentionally kept out of the sub-agent card.
+                // Its buffer changes for nearly every streamed token; copying
+                // it into the coordinator record forces persistence, object
+                // publication, and a full card diff on every poll, which causes
+                // visible frame drops while a child model is thinking.
+                guard block.kind != .thinking else { return nil }
                 let title: String
                 let icon: String
                 switch block.kind {
@@ -362,8 +368,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
                 case .cancelled: state = "cancelled"
                 case nil: state = "info"
                 }
-                let detail = block.kind == .thinking
-                    ? block.thinkingContentBuffer : block.content
+                let detail = block.content
                 return ZeSubAgentStep(
                     id: block.id.uuidString,
                     title: String(title.prefix(160)),

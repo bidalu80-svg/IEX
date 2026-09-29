@@ -7,7 +7,6 @@ struct GitHubCopilotDeviceLoginSheet: View {
     var onFinish: (Bool) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var phase: Phase = .starting
-    @AppStorage("GitHubCopilotOAuthClientID") private var clientID = ""
     @State private var copied = false
     @State private var task: Task<Void, Never>?
 
@@ -21,18 +20,6 @@ struct GitHubCopilotDeviceLoginSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 22) {
-                if GitHubCopilotOAuthManager.shared.clientID.isEmpty {
-                    Text("配置 GitHub OAuth")
-                        .font(.headline)
-                    Text("填写已开启设备授权流程的 GitHub OAuth 应用客户端 ID，然后使用 GitHub 登录。")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    TextField("GitHub OAuth 客户端 ID", text: $clientID)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                    Button("继续登录") { start() }
-                        .buttonStyle(.borderedProminent).tint(.pink)
-                } else {
                 switch phase {
                 case .starting:
                     ProgressView()
@@ -64,7 +51,6 @@ struct GitHubCopilotDeviceLoginSheet: View {
                     Text(message).multilineTextAlignment(.center).foregroundStyle(.secondary)
                     Button("重新登录") { start() }.buttonStyle(.borderedProminent).tint(.pink)
                 }
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).padding()
             .navigationTitle("GitHub Copilot 登录")
@@ -72,7 +58,7 @@ struct GitHubCopilotDeviceLoginSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { finish(false) } } }
         }
         .interactiveDismissDisabled(phase == .starting)
-        .onAppear { if !GitHubCopilotOAuthManager.shared.clientID.isEmpty { start() } }
+        .onAppear { start() }
         .onDisappear { task?.cancel() }
     }
 

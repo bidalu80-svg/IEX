@@ -232,7 +232,11 @@ struct ZeSubAgentBlackCard: View {
     var compact = false
 
     private var visibleSteps: [ZeSubAgentStep] {
-        let steps = record.steps ?? []
+        // Filter persisted records too, so agents created before this fix do
+        // not reintroduce the high-frequency reasoning card after reload.
+        let steps = (record.steps ?? []).filter {
+            $0.icon != "brain.head.profile" && $0.title != "正在思考"
+        }
         return compact ? Array(steps.suffix(3)) : steps
     }
 
