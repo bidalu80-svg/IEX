@@ -59,7 +59,10 @@ struct GitHubCopilotDeviceLoginSheet: View {
         }
         .interactiveDismissDisabled(phase == .starting)
         .onAppear { start() }
-        .onDisappear { task?.cancel() }
+        // Opening the external GitHub authorization page can make this sheet
+        // disappear temporarily. Keep the device-code poll alive; finish()
+        // remains the explicit cancellation path.
+        .onDisappear { }
     }
 
     private func start() {

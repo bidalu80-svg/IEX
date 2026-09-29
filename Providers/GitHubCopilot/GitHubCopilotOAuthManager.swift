@@ -92,22 +92,21 @@ final class GitHubCopilotOAuthManager: ObservableObject {
 
     /// GitHub's public Copilot OAuth application id. It is not a user
     /// credential; GitHub device authorization requires it to identify the
-    /// first-party Copilot client. Keep the UserDefaults/Info.plist overrides
-    /// below for enterprise builds that use their own registered OAuth app.
+    /// first-party Copilot client.
     private static let copilotOAuthClientID = "Iv1.b507a08c87ecfe98"
 
     private var cached: [String: CachedToken] = [:]
     private var inFlight: [String: Task<String, Error>] = [:]
 
-    var clientID: String {
-        let local = UserDefaults.standard.string(forKey: "GitHubCopilotOAuthClientID")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !local.isEmpty { return local }
-        if let bundled = Bundle.main.object(forInfoDictionaryKey: "GitHubOAuthClientID") as? String,
-           !bundled.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return bundled.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return Self.copilotOAuthClientID
+    private init() {
+        // v1.0.7 exposed this key as a text field. A stale or invalid value
+        // persisted there makes GitHub return HTTP 404 before the device code
+        // is issued. The Copilot flow owns its public client id now, so remove
+        // the legacy override and always use the known client below.
+        UserDefaults.standard.removeObject(forKey: "GitHubCopilotOAuthClientID")
     }
+
+    var clientID: String { Self.copilotOAuthClientID }
 
     /// The account-specific Copilot API host discovered during device login.
     /// Returning this to the provider factory avoids routing individual

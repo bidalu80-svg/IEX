@@ -72,7 +72,10 @@ struct KimiDeviceLoginSheet: View {
         }
         .interactiveDismissDisabled(phase == .starting)
         .onAppear { start() }
-        .onDisappear { loginTask?.cancel() }
+        // Opening SFSafariViewController covers this sheet and triggers
+        // SwiftUI onDisappear. The device-code poll must keep running until
+        // the user authorizes Kimi; finish() handles real cancellation.
+        .onDisappear { }
     }
 
     @ViewBuilder
@@ -138,15 +141,42 @@ struct KimiDeviceLoginSheet: View {
                 // user cancelled — no error surface
             } catch {
                 if Task.isCancelled { return }
-                phase = .failed(error.localizedDescription)
+                // The verification page is presented above this sheet. Close
+                // it before showing the error so the user is returned to Ze.
+                dismissSafariIfPresented {
+                    phase = .failed(error.localizedDescription)
+                }
             }
         }
     }
 
     private func finish(_ success: Bool) {
         loginTask?.cancel()
-        onFinish(success)
-        dismiss()
+        // SFSafariViewController is presented above this SwiftUI sheet.
+        // Dismissing only the sheet leaves the browser page visible after Kimi
+        // reports “登录成功”, which prevents the expected return to Ze.
+        dismissSafariIfPresented {
+            onFinish(success)
+            dismiss()
+        }
+    }
+
+    private func dismissSafariIfPresented(completion: @escaping () -> Void) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first,
+              let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            completion()
+            return
+        }
+        var top = root
+        while let presented = top.presentedViewController {
+            top = presented
+        }
+        guard top is SFSafariViewController else {
+            completion()
+            return
+        }
+        top.dismiss(animated: true, completion: completion)
     }
 
     /// Open the verification page in an in-app SFSafariViewController — matching
