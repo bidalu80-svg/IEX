@@ -85,7 +85,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .kimiCode:
             return String(localized: "Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
-            return String(localized: "Use a GitHub token or Copilot session token")
+            return String(localized: "使用 GitHub 账号通过 OAuth 登录")
         case .antigravity:
             return String(localized: "\(builtInModels.count) built-in models")
         case .unsupported:

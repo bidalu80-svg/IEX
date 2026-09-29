@@ -203,6 +203,7 @@ struct AddProviderView: View {
     // [T-kimi-oauth] Present the device-code login sheet (user code +
     // verification URL + polling) for Kimi's RFC 8628 flow.
     @State private var showKimiLogin = false
+    @State private var showCopilotLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -275,6 +276,15 @@ struct AddProviderView: View {
                 if success {
                     oauthAuthTime = Date()
                     oauthMaskedToken = loadMaskedToken(type: .kimiCode)
+                    pendingOAuthDone = true
+                }
+            }
+        }
+        .sheet(isPresented: $showCopilotLogin) {
+            GitHubCopilotDeviceLoginSheet(instanceId: pendingInstanceId) { success in
+                if success {
+                    oauthAuthTime = Date()
+                    oauthMaskedToken = loadMaskedToken(type: .githubCopilot)
                     pendingOAuthDone = true
                 }
             }
@@ -656,6 +666,8 @@ struct AddProviderView: View {
                     // provider drives its redirect/PKCE flow inline via startOAuth.
                     if selectedType == .kimiCode {
                         showKimiLogin = true
+                    } else if selectedType == .githubCopilot {
+                        showCopilotLogin = true
                     } else {
                         Task { await startOAuth() }
                     }
@@ -673,7 +685,7 @@ struct AddProviderView: View {
         }
 
         // Manual OAuth entry — available for all providers (supports proxy services, Coding Plan tokens, etc.)
-        if selectedType != .antigravity && !pendingOAuthDone {
+        if selectedType != .antigravity && selectedType != .githubCopilot && !pendingOAuthDone {
             Section {
                 TextField(defaultBaseURL, text: $customBaseURLInput)
                     .font(.system(.body, design: .monospaced))
@@ -866,7 +878,7 @@ struct AddProviderView: View {
             case .openAIResponses: break // API key only, no OAuth
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet, not here
-            case .githubCopilot: break // token is entered directly
+            case .githubCopilot: break // handled by the device-login sheet
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -899,7 +911,7 @@ struct AddProviderView: View {
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
         case .githubCopilot:
-            token = nil
+            token = GitHubCopilotOAuthManager.shared.maskedToken(instanceId: pendingInstanceId)
         case .unsupported:
             token = nil // free / unsupported — no token
         }
@@ -978,7 +990,7 @@ struct AddProviderView: View {
         case .openAIResponses: return String(localized: "Sign In") // Not reachable — API key only
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
-        case .githubCopilot: return String(localized: "GitHub Copilot 令牌")
+        case .githubCopilot: return "使用 GitHub 登录"
         case .unsupported: return String(localized: "Sign In")
         }
     }
@@ -994,7 +1006,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
-        case .githubCopilot: return "GitHub 令牌或 Copilot 会话令牌…"
+        case .githubCopilot: return "使用 GitHub 账号登录"
         case .unsupported: return ""
         }
     }
@@ -1026,7 +1038,9 @@ struct AddProviderView: View {
         switch type {
         case .antigravity:
             return [.oauth]
-        case .openAIResponses, .gemini, .githubCopilot:
+        case .githubCopilot:
+            return [.oauth]
+        case .openAIResponses, .gemini:
             return [.apiKey]
         default:
             return [.apiKey, .oauth]
@@ -1060,7 +1074,7 @@ struct AddProviderView: View {
         case (.kimiCode, .apiKey):
             return String(localized: "Use a Kimi Coding API key.")
         case (.githubCopilot, .oauth):
-            return String(localized: "使用 GitHub 令牌或 Copilot 会话令牌。")
+            return "通过 GitHub OAuth 设备授权登录 Copilot。"
         case (.unsupported, _):
             return String(localized: "This provider isn't supported in this app version.")
         }
@@ -1094,8 +1108,8 @@ struct AddProviderView: View {
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
         case .githubCopilot:
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .foregroundStyle(.purple)
+            GitHubCopilotIcon()
+                .frame(width: 25, height: 25)
         case .unsupported:
             Image(systemName: "questionmark.circle")
                 .foregroundStyle(.gray)
@@ -1112,9 +1126,48 @@ struct AddProviderView: View {
         case .openAIResponses: return .mint
         case .xAI: return .gray
         case .kimiCode: return .indigo
-        case .githubCopilot: return .purple
+        case .githubCopilot: return .pink
         case .unsupported: return .gray
         }
     }
 }
 
+
+/// Vector icon built with native SwiftUI paths, with a pink cat silhouette.
+struct GitHubCopilotIcon: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.pink.opacity(0.13))
+            GitHubCopilotCatShape()
+                .fill(Color.pink)
+                .padding(4)
+        }
+        .accessibilityLabel("GitHub Copilot")
+    }
+}
+
+private struct GitHubCopilotCatShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width, h = rect.height
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * w, y: rect.minY + y * h) }
+        path.move(to: point(0.14, 0.44))
+        path.addLine(to: point(0.12, 0.08))
+        path.addQuadCurve(to: point(0.36, 0.17), control: point(0.22, 0.07))
+        path.addQuadCurve(to: point(0.64, 0.17), control: point(0.50, 0.13))
+        path.addQuadCurve(to: point(0.88, 0.08), control: point(0.78, 0.07))
+        path.addLine(to: point(0.86, 0.44))
+        path.addCurve(to: point(0.65, 0.76), control1: point(0.94, 0.60), control2: point(0.82, 0.72))
+        path.addLine(to: point(0.65, 0.97))
+        path.addLine(to: point(0.56, 0.97))
+        path.addLine(to: point(0.56, 0.77))
+        path.addLine(to: point(0.44, 0.77))
+        path.addLine(to: point(0.44, 0.97))
+        path.addLine(to: point(0.35, 0.97))
+        path.addLine(to: point(0.35, 0.76))
+        path.addCurve(to: point(0.14, 0.44), control1: point(0.18, 0.72), control2: point(0.06, 0.60))
+        path.closeSubpath()
+        return path
+    }
+}

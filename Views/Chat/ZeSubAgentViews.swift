@@ -45,6 +45,13 @@ struct ZeSubAgentDockView: View {
                         Text("\(records.filter { $0.status.isActive }.count)/\(records.count)")
                             .font(.system(size: 12, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
+                        if let latest = activeRecords.first,
+                           let step = latest.steps?.last {
+                            Text(step.title)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 0)
                         if records.contains(where: { $0.status.isActive }) {
                             ProgressView()
@@ -117,6 +124,8 @@ private struct ZeSubAgentPanelView: View {
                                 ZeSubAgentRow(record: record)
                             }
                             .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                         }
                     } header: {
                         Text("\(records.count) 个子代理 · 最多同时运行 \(ZeSubAgentCoordinator.maxAgentsPerRoot) 个")
@@ -198,48 +207,115 @@ private struct ZeSubAgentComposerView: View {
     }
 }
 
+/// Clock-driven purple/pink rim, reused by the black cards and floating preview.
+struct ZeSubAgentAnimatedRim: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let angle = (context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3.2) / 3.2) * 360
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    AngularGradient(colors: [ZeSubAgentTheme.purple.opacity(0.35), ZeSubAgentTheme.purpleBright, .pink.opacity(0.88), ZeSubAgentTheme.purple.opacity(0.35)], center: .center, angle: .degrees(angle)),
+                    lineWidth: 2
+                )
+                .shadow(color: ZeSubAgentTheme.purple.opacity(0.6), radius: 7)
+        }
+    }
+}
+
+/// Shared live black-card treatment for both the panel preview and full details.
+/// The animated border is driven by wall clock time, not by coordinator updates,
+/// so a tool that runs for a long time still has a visibly moving purple rim.
+struct ZeSubAgentBlackCard: View {
+    let record: ZeSubAgentRecord
+    var compact = false
+
+    private var visibleSteps: [ZeSubAgentStep] {
+        let steps = record.steps ?? []
+        return compact ? Array(steps.suffix(3)) : steps
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 9 : 13) {
+            HStack(spacing: 9) {
+                Image(systemName: ZeSubAgentTheme.iconName)
+                    .font(.system(size: compact ? 15 : 18, weight: .semibold))
+                    .foregroundStyle(ZeSubAgentTheme.purpleBright)
+                Text(record.nickname)
+                    .font(.system(size: compact ? 15 : 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                if record.status.isActive { ProgressView().tint(ZeSubAgentTheme.purpleBright) }
+                Text(record.status.displayName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(ZeSubAgentTheme.purpleBright)
+            }
+
+            if visibleSteps.isEmpty {
+                Text(record.status.isActive ? String(localized: "正在准备子代理任务…") : record.shortPrompt)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.63))
+                    .lineLimit(compact ? 2 : 5)
+            } else {
+                ForEach(visibleSteps) { step in
+                    HStack(alignment: .top, spacing: 9) {
+                        Image(systemName: step.state == "failed" ? "exclamationmark.circle.fill" : step.state == "success" ? "checkmark.circle.fill" : step.icon)
+                            .font(.system(size: 13))
+                            .foregroundStyle(step.state == "failed" ? Color.orange : ZeSubAgentTheme.purpleBright)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(step.title)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Text(step.state == "running" ? "进行中" : step.state == "failed" ? "失败" : step.state == "success" ? "完成" : "")
+                                    .font(.caption2)
+                                    .foregroundStyle(.white.opacity(0.55))
+                            }
+                            if !step.content.isEmpty {
+                                Text(step.content)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.64))
+                                    .lineLimit(compact ? 2 : 10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(compact ? .disabled : .enabled)
+                            }
+                        }
+                    }
+                    if step.id != visibleSteps.last?.id {
+                        Rectangle().fill(.white.opacity(0.10)).frame(height: 0.5)
+                    }
+                }
+            }
+            if !compact, let error = record.error, !error.isEmpty {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .padding(compact ? 13 : 17)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ZeSubAgentTheme.blackCard, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay {
+            if record.status.isActive {
+                ZeSubAgentAnimatedRim(cornerRadius: 17)
+            } else {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .strokeBorder(ZeSubAgentTheme.blackCardBorder, lineWidth: 1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct ZeSubAgentRow: View {
     let record: ZeSubAgentRecord
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(record.status.isActive ? ZeSubAgentTheme.purple : statusColor)
-                .frame(width: 9, height: 9)
-                .overlay {
-                    if record.status.isActive {
-                        Circle().stroke(ZeSubAgentTheme.purple.opacity(0.30), lineWidth: 5)
-                    }
-                }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(record.nickname)
-                        .font(.body.weight(.semibold))
-                    Text(record.status.displayName)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(record.status.isActive ? ZeSubAgentTheme.purple : .secondary)
-                }
-                Text(record.output.isEmpty ? record.shortPrompt : record.output)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-
-    private var statusColor: Color {
-        switch record.status {
-        case .completed: return ZeSubAgentTheme.purpleBright
-        case .failed: return .red
-        case .cancelled, .interrupted: return .orange
-        default: return .secondary
-        }
+        ZeSubAgentBlackCard(record: record, compact: true)
+            .contentShape(RoundedRectangle(cornerRadius: 17))
     }
 }
 
@@ -274,6 +350,7 @@ private struct ZeSubAgentDetailView: View {
                                     .font(.body)
                                     .textSelection(.enabled)
                             }
+                            ZeSubAgentBlackCard(record: record)
                             if !record.output.isEmpty {
                                 VStack(alignment: .leading, spacing: 7) {
                                     Text(String(localized: "最新输出"))
@@ -283,14 +360,7 @@ private struct ZeSubAgentDetailView: View {
                                         .font(.callout)
                                         .textSelection(.enabled)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(12)
-                                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 }
-                            }
-                            if let error = record.error, !error.isEmpty {
-                                Label(error, systemImage: "exclamationmark.triangle.fill")
-                                    .font(.callout)
-                                    .foregroundStyle(.red)
                             }
                         }
                         .padding(16)

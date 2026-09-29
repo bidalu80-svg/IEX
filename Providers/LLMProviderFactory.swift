@@ -250,13 +250,12 @@ enum LLMProviderFactory {
     }
 
     /// GitHub Copilot uses the OpenAI-compatible chat-completions surface.
-    /// The keychain value can be either a Copilot session token or a GitHub
-    /// OAuth/PAT token; GitHubCopilotTokenManager exchanges the latter.
+    /// The OAuth manager exchanges the GitHub device-login token for a short-lived Copilot token.
     static func makeGitHubCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
         let iid = instance.id
         let base = instance.effectiveCustomBaseURL ?? "https://api.githubcopilot.com"
         let provider = OpenAIProvider(
-            oauthTokenProvider: { try await GitHubCopilotTokenManager.shared.validAccessToken(instanceId: iid) },
+            oauthTokenProvider: { try await GitHubCopilotOAuthManager.shared.validAccessToken(instanceId: iid) },
             model: model
         )
         provider.customBaseURL = base
@@ -308,50 +307,5 @@ enum LLMProviderFactory {
             provider.activeBaseURL = baseURL
         }
         return provider
-    }
-}
-
-
-/// Exchanges a GitHub token for a short-lived Copilot API token and caches it
-/// until shortly before expiry. A pasted Copilot token is used directly.
-actor GitHubCopilotTokenManager {
-    static let shared = GitHubCopilotTokenManager()
-
-    private struct CachedToken {
-        let value: String
-        let expiresAt: Date
-    }
-    private var cache: [String: CachedToken] = [:]
-
-    func validAccessToken(instanceId: String) async throws -> String {
-        guard let raw = (ProviderKeychainHelper.loadAPIKey(instanceId: instanceId)
-            ?? ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: "manual-oauth-token")), !raw.isEmpty else {
-            throw LLMProviderError.noCredentials
-        }
-        if let cached = cache[instanceId], cached.expiresAt > Date().addingTimeInterval(60) {
-            return cached.value
-        }
-        if raw.contains("tid=") || raw.contains(";exp=") || raw.hasPrefix("tid=") {
-            cache[instanceId] = CachedToken(value: raw, expiresAt: Date().addingTimeInterval(900))
-            return raw
-        }
-        var request = URLRequest(url: URL(string: "https://api.github.com/copilot_internal/v2/token")!)
-        request.httpMethod = "GET"
-        request.setValue("token \(raw)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("GitHubCopilot/1.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("vscode/1.96.2", forHTTPHeaderField: "Editor-Version")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw LLMProviderError.providerError("GitHub Copilot 令牌交换失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)）：\(body.prefix(240))")
-        }
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let token = object?["token"] as? String, !token.isEmpty else {
-            throw LLMProviderError.providerError("GitHub Copilot 令牌响应中没有令牌")
-        }
-        let expiry = (object?["expires_at"] as? TimeInterval).map(Date.init(timeIntervalSince1970:)) ?? Date().addingTimeInterval(1800)
-        cache[instanceId] = CachedToken(value: token, expiresAt: expiry)
-        return token
     }
 }

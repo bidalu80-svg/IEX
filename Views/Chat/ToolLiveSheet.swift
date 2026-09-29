@@ -336,6 +336,7 @@ struct ToolLiveSheet: View {
     var onTakeoverDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.chatSessionId) private var sessionId
+    @ObservedObject private var subAgentCoordinator = ZeSubAgentCoordinator.shared
 
     @State private var browserSnapshot: UIImage?
     @State private var snapshotTimer: Timer?
@@ -450,8 +451,18 @@ struct ToolLiveSheet: View {
 
             // Content area — `blockUpdateTick` dependency ensures live refresh
             let _ = blockUpdateTick
-            liveContent
+            if block.kind.isSubAgentTool,
+               let sessionId,
+               let active = subAgentCoordinator.records(for: sessionId).first(where: { $0.status.isActive }) {
+                ScrollView {
+                    ZeSubAgentBlackCard(record: active)
+                        .padding(16)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                liveContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
             // Bottom bar: tool info + navigation
             bottomBar
@@ -2097,6 +2108,8 @@ struct ToolLiveSheet: View {
 /// Small preview thumbnail for the collapsed state.
 private struct ToolPreviewThumbnail: View {
     @ObservedObject var block: AssistantBlock
+    @ObservedObject private var subAgentCoordinator = ZeSubAgentCoordinator.shared
+    @Environment(\.chatSessionId) private var sessionId
     var snapshot: ToolSnapshotItem?
     var browserPool: BrowserTabPool?
     var onTap: () -> Void
@@ -2112,6 +2125,29 @@ private struct ToolPreviewThumbnail: View {
 
     var body: some View {
         Group {
+            if block.kind.isSubAgentTool,
+               let sessionId,
+               let active = subAgentCoordinator.records(for: sessionId).first(where: { $0.status.isActive }) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("✦ " + active.nickname)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(ZeSubAgentTheme.purpleBright)
+                    ForEach(Array((active.steps ?? []).suffix(2))) { step in
+                        Text("› " + step.title)
+                            .font(.system(size: 6))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(2)
+                    }
+                    if active.steps?.isEmpty != false {
+                        Text("正在执行子代理任务…")
+                            .font(.system(size: 6))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                .frame(width: 100, height: 65, alignment: .topLeading)
+                .padding(4)
+                .background(ZeSubAgentTheme.blackCard)
+            } else {
             // If we have a persisted snapshot, prefer using it for the thumbnail
             if let snapshot, let snapshotImage = loadSnapshotImage(snapshot) {
                 Image(uiImage: snapshotImage)
@@ -2135,12 +2171,17 @@ private struct ToolPreviewThumbnail: View {
                     textPreview
                 }
             }
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(UIColor.separator).opacity(0.4), lineWidth: 0.5)
-        )
+        .overlay {
+            if block.kind.isSubAgentTool && isLive {
+                ZeSubAgentAnimatedRim(cornerRadius: 8)
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(UIColor.separator).opacity(0.4), lineWidth: 0.5)
+            }
+        }
         .overlay(alignment: .bottom) {
             if isLive && isShell {
                 Text("\(resourceMonitor.formattedCPU)  \(resourceMonitor.formattedMem(compact: true))")

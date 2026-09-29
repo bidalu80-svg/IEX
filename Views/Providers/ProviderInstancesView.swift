@@ -278,8 +278,7 @@ private struct InstanceRow: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot:
-            return ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
-                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
+            return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }
@@ -305,9 +304,14 @@ private struct InstanceRow: View {
     var body: some View {
         let _ = store.authRevision  // subscribe to OAuth state changes
         HStack(spacing: 12) {
-            Circle()
-                .fill(isConfigured && instance.isEnabled ? Color.green : Color(UIColor.quaternaryLabel))
-                .frame(width: 8, height: 8)
+            if instance.providerType == .githubCopilot {
+                GitHubCopilotIcon()
+                    .frame(width: 25, height: 25)
+            } else {
+                Circle()
+                    .fill(isConfigured && instance.isEnabled ? Color.green : Color(UIColor.quaternaryLabel))
+                    .frame(width: 8, height: 8)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(instance.label)

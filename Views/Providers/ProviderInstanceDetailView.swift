@@ -9,6 +9,7 @@ struct ProviderInstanceDetailView: View {
 
     @State private var editingLabel = ""
     @State private var showKimiLogin = false
+    @State private var showCopilotLogin = false
     @State private var keyInputText = ""
     @State private var isFetchingModels = false
     @State private var fetchError: String?
@@ -80,6 +81,11 @@ struct ProviderInstanceDetailView: View {
                 KimiDeviceLoginSheet(instanceId: instance.id) { _ in
                     oauthRefreshTrigger.toggle()
                 }
+            }
+        }
+        .sheet(isPresented: $showCopilotLogin) {
+            GitHubCopilotDeviceLoginSheet(instanceId: instanceId) { _ in
+                oauthRefreshTrigger.toggle()
             }
         }
         .sheet(isPresented: $showManualTokenInput) {
@@ -247,7 +253,7 @@ struct ProviderInstanceDetailView: View {
             }
 
             // MARK: Manual OAuth Token (for OAuth instances with manual token)
-            if instance.credentialType == .oauth && instance.providerType != .antigravity {
+            if instance.credentialType == .oauth && instance.providerType != .antigravity && instance.providerType != .githubCopilot {
                 manualOAuthTokenSection(instance)
             }
 
@@ -490,6 +496,8 @@ struct ProviderInstanceDetailView: View {
                         // Kimi uses the RFC 8628 device-code sheet; others run inline.
                         if instance.providerType == .kimiCode {
                             showKimiLogin = true
+                        } else if instance.providerType == .githubCopilot {
+                            showCopilotLogin = true
                         } else {
                             Task {
                                 await oauthLogin(instance)
@@ -892,8 +900,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot:
-            return ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
-                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
+            return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }
@@ -956,9 +963,8 @@ struct ProviderInstanceDetailView: View {
             return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? String(localized: "Authenticated") : String(localized: "Not authenticated")
         case .githubCopilot:
-            return (ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) != nil
-                || ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil)
-                ? String(localized: "Token configured") : String(localized: "Not configured")
+            return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+                ? String(localized: "Authenticated") : String(localized: "Not authenticated")
         case .unsupported:
             return String(localized: "Unsupported in this app version")
         }
@@ -974,7 +980,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return String(localized: "Sign In")
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
-        case .githubCopilot: return String(localized: "GitHub Copilot token")
+        case .githubCopilot: return "使用 GitHub 登录"
         case .unsupported: return String(localized: "Sign In")
         }
     }
@@ -1010,7 +1016,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: break // API key only
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
-        case .githubCopilot: break
+        case .githubCopilot: GitHubCopilotOAuthManager.shared.logout(instanceId: instance.id)
         case .unsupported: break
         }
     }
@@ -1036,8 +1042,7 @@ struct ProviderInstanceDetailView: View {
         case .kimiCode:
             token = try? await KimiOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .githubCopilot:
-            token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id)
-                ?? ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token")
+            token = try? await GitHubCopilotOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .unsupported:
             token = nil
         }
@@ -1054,7 +1059,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
-        case .githubCopilot: return "GitHub 令牌或 Copilot 会话令牌…"
+        case .githubCopilot: return "使用 GitHub 账号登录"
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

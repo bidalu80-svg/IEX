@@ -291,8 +291,9 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
                 instanceId: id, as: KimiTokenStorage.self, caller: "hasAnyCredential"
             ) != nil
         case .githubCopilot:
-            return ProviderKeychainHelper.loadAPIKey(instanceId: id) != nil
-                || ProviderKeychainHelper.loadOAuthString(instanceId: id, account: "manual-oauth-token") != nil
+            return ProviderKeychainHelper.loadOAuthToken(
+                instanceId: id, as: GitHubCopilotOAuthTokenStorage.self, caller: "hasAnyCredential"
+            ) != nil
         case .antigravity, .openRouter, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no

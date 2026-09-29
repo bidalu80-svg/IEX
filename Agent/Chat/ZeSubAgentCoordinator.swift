@@ -29,6 +29,16 @@ enum ZeSubAgentStatus: String, Codable, CaseIterable {
     }
 }
 
+/// One live tool or text event from the child chat loop. Snapshots are kept
+/// with the child record so the black card remains readable after relaunch.
+struct ZeSubAgentStep: Identifiable, Codable, Equatable {
+    let id: String
+    let title: String
+    let icon: String
+    let content: String
+    let state: String
+}
+
 struct ZeSubAgentRecord: Identifiable, Codable, Equatable {
     let id: String
     let parentId: String
@@ -45,6 +55,8 @@ struct ZeSubAgentRecord: Identifiable, Codable, Equatable {
     var childSessionId: String?
     var inputTokens: Int
     var outputTokens: Int
+    /// Optional for backward-compatible decoding of existing persisted agents.
+    var steps: [ZeSubAgentStep]?
 
     var shortPrompt: String {
         let value = prompt.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -141,7 +153,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
             error: nil,
             childSessionId: nil,
             inputTokens: 0,
-            outputTokens: 0
+            outputTokens: 0,
+            steps: []
         )
         recordsByRoot[root, default: [:]][id] = record
         persist(root)
@@ -201,6 +214,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
         record.status = .queued
         record.error = nil
         record.output = ""
+        record.steps = []
         record.revision += 1
         record.updatedAt = Date()
         update(record, root: location.root)
@@ -292,19 +306,71 @@ final class ZeSubAgentCoordinator: ObservableObject {
                         next.status = child.errorMessage == nil && child.messages.last(where: { $0.role == .assistant })?.error == nil ? .completed : .failed
                     }
                     next.output = self.output(from: child)
+                    next.steps = self.steps(from: child)
                     next.error = child.errorMessage ?? child.messages.last(where: { $0.role == .assistant })?.error
                     next.childSessionId = child.sessionId
                     let usage = child.sessionTokenStats
                     next.inputTokens = usage.input
                     next.outputTokens = usage.output
-                    next.updatedAt = Date()
-                    if next != current { self.update(next, root: root) }
+                    if next != current {
+                        next.updatedAt = Date()
+                        self.update(next, root: root)
+                    }
                     if observedRunning && !child.isProcessing {
                         self.pollTasks[id] = nil
                         return
                     }
                 }
                 try? await Task.sleep(nanoseconds: 350_000_000)
+            }
+        }
+    }
+
+    private func steps(from child: AIChatViewModel) -> [ZeSubAgentStep] {
+        child.messages.filter { $0.role == .assistant }.flatMap { message in
+            message.blocks.compactMap { block -> ZeSubAgentStep? in
+                let title: String
+                let icon: String
+                switch block.kind {
+                case .text:
+                    guard !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                    title = "子代理回复"; icon = "text.bubble"
+                case .thinking:
+                    title = "正在思考"; icon = "brain.head.profile"
+                case .shellTool:
+                    title = "命令 · \(block.toolDescription)"; icon = "terminal"
+                case .fileReadTool:
+                    title = "读取文件 · \(block.toolDescription)"; icon = "doc.text.magnifyingglass"
+                case .fileWriteTool:
+                    title = "写入文件 · \(block.toolDescription)"; icon = "square.and.pencil"
+                case .fileEditTool:
+                    title = "编辑文件 · \(block.toolDescription)"; icon = "pencil.line"
+                case .browserTool:
+                    title = "浏览器 · \(block.toolDescription)"; icon = "safari"
+                case .readImageTool:
+                    title = "查看图片 · \(block.toolDescription)"; icon = "photo"
+                case .memoryTool:
+                    title = "代理工具 · \(block.toolDescription)"; icon = "square.stack.3d.up"
+                case .info:
+                    title = "进度"; icon = "info.circle"
+                }
+                let state: String
+                switch block.toolStatus {
+                case .streaming, .running: state = "running"
+                case .success: state = "success"
+                case .failed: state = "failed"
+                case .cancelled: state = "cancelled"
+                case nil: state = "info"
+                }
+                let detail = block.kind == .thinking
+                    ? block.thinkingContentBuffer : block.content
+                return ZeSubAgentStep(
+                    id: block.id.uuidString,
+                    title: String(title.prefix(160)),
+                    icon: icon,
+                    content: String(detail.suffix(1600)),
+                    state: state
+                )
             }
         }
     }
@@ -332,7 +398,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
     private func failedRecord(root: String, parent: AIChatViewModel, message: String) -> ZeSubAgentRecord {
         let now = Date()
-        return ZeSubAgentRecord(id: UUID().uuidString, parentId: root, rootSessionId: root, nickname: "子代理", depth: 0, status: .failed, revision: 1, createdAt: now, updatedAt: now, prompt: "", output: "", error: message, childSessionId: nil, inputTokens: 0, outputTokens: 0)
+        return ZeSubAgentRecord(id: UUID().uuidString, parentId: root, rootSessionId: root, nickname: "子代理", depth: 0, status: .failed, revision: 1, createdAt: now, updatedAt: now, prompt: "", output: "", error: message, childSessionId: nil, inputTokens: 0, outputTokens: 0, steps: [])
     }
 
     private func update(_ record: ZeSubAgentRecord, root: String) {
