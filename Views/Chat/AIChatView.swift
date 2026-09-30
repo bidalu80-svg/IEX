@@ -342,6 +342,8 @@ struct AIChatView: View {
     @State private var floatingBarHeight: CGFloat = 0
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
+    @AppStorage(ZeSubAgentPreferences.dockEnabledKey) private var subAgentDockEnabled: Bool = true
+    @AppStorage(ZeSubAgentPreferences.enabledKey) private var subAgentsEnabled: Bool = true
     @State private var showFileBrowser = false
     // [T-browser-download-ux-v2] Downloads panel + "Show in Files" locate target.
     @State private var showDownloadsPanel = false
@@ -493,7 +495,7 @@ struct AIChatView: View {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if !isReadOnly, let rootSessionId = vm.sessionId {
+                    if subAgentsEnabled, subAgentDockEnabled, !isReadOnly, let rootSessionId = vm.sessionId {
                         ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
                     }
                     // Error banner

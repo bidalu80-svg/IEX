@@ -2,6 +2,23 @@ import Combine
 import Foundation
 
 /// Persistent state for one independently running child agent.
+enum ZeSubAgentPreferences {
+    static let enabledKey = "subAgentsEnabled"
+    static let dockEnabledKey = "subAgentDockEnabled"
+    static let modelEntryKey = "subAgentModelEntryId"
+    static let settingsRootSessionId = "__ze_subagent_settings__"
+
+    static var isEnabled: Bool {
+        guard let value = UserDefaults.standard.object(forKey: enabledKey) as? NSNumber else { return true }
+        return value.boolValue
+    }
+
+    static var configuredModelEntryReference: String? {
+        guard let value = UserDefaults.standard.string(forKey: modelEntryKey), !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 enum ZeSubAgentStatus: String, Codable, CaseIterable {
     case idle, queued, running, awaitingApproval = "awaiting_approval", cancelling
     case completed, failed, cancelled, interrupted, closed
@@ -55,6 +72,9 @@ struct ZeSubAgentRecord: Identifiable, Codable, Equatable {
     var childSessionId: String?
     var inputTokens: Int
     var outputTokens: Int
+    /// Optional model pin used by this child. nil means it followed the parent
+    /// conversation model when it was created.
+    var modelEntryReference: String?
     /// Optional for backward-compatible decoding of existing persisted agents.
     var steps: [ZeSubAgentStep]?
 
@@ -85,6 +105,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private var children: [String: AIChatViewModel] = [:]
     private var childAgentIds: [ObjectIdentifier: String] = [:]
     private var pollTasks: [String: Task<Void, Never>] = [:]
+    private var settingsParent: AIChatViewModel?
     private let logger = AppLogger(category: "SubAgents")
 
     private init() {}
@@ -120,9 +141,18 @@ final class ZeSubAgentCoordinator: ObservableObject {
     }
 
     @discardableResult
-    func spawn(from parent: AIChatViewModel, message: String, forkContext: Bool = false, nickname: String = "") -> ZeSubAgentRecord {
+    func spawn(
+        from parent: AIChatViewModel,
+        message: String,
+        forkContext: Bool = false,
+        nickname: String = "",
+        modelEntryReference: String? = nil
+    ) -> ZeSubAgentRecord {
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let root = rootSessionId(for: parent)
+        guard ZeSubAgentPreferences.isEnabled else {
+            return failedRecord(root: root, parent: parent, message: "子代理功能已关闭，请在设置中重新启用。")
+        }
         loadRootIfNeeded(root)
         let existing = recordsByRoot[root, default: [:]].values
         guard !prompt.isEmpty else { return failedRecord(root: root, parent: parent, message: "子代理任务不能为空") }
@@ -136,6 +166,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
             return failedRecord(root: root, parent: parent, message: "子代理层级最多为 3 层")
         }
 
+        let requestedModelReference = modelEntryReference ?? ZeSubAgentPreferences.configuredModelEntryReference
+        let configuredEntry = requestedModelReference.flatMap { ProviderConfigStore.shared.entry(for: $0) }
+        let inheritedEntry = parent.resolveCurrentEntry()
+        let effectiveEntry = configuredEntry ?? inheritedEntry
+        let effectiveModelReference = effectiveEntry?.id
         let id = UUID().uuidString
         let now = Date()
         var record = ZeSubAgentRecord(
@@ -154,6 +189,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
             childSessionId: nil,
             inputTokens: 0,
             outputTokens: 0,
+            modelEntryReference: effectiveModelReference,
             steps: []
         )
         recordsByRoot[root, default: [:]][id] = record
@@ -167,8 +203,9 @@ final class ZeSubAgentCoordinator: ObservableObject {
         // filesystem context. This makes real file artifacts visible to the
         // parent and sibling agents instead of leaving them in isolated folders.
         child.workspaceSessionId = parent.fileSystemSessionId ?? root
-        child.selectedModel = parent.selectedModel
-        child.initialGroupId = parent.initialGroupId
+        child.preferredModelEntryReference = effectiveEntry?.id
+        child.selectedModel = effectiveEntry?.model ?? parent.selectedModel
+        child.initialGroupId = effectiveEntry == nil ? parent.initialGroupId : nil
         child.memoryEnabled = parent.memoryEnabled
         child.autoCompactEnabled = true
         if forkContext {
@@ -181,6 +218,21 @@ final class ZeSubAgentCoordinator: ObservableObject {
         logger.info("[SubAgent] spawn id=\(id.prefix(8)) root=\(root.prefix(8)) depth=\(record.depth) fork=\(forkContext)")
         startPolling(id: id, root: root)
         return record
+    }
+
+    @discardableResult
+    func spawnFromSettings(message: String) -> ZeSubAgentRecord {
+        if settingsParent == nil {
+            let parent = AIChatViewModel()
+            parent.sessionId = ZeSubAgentPreferences.settingsRootSessionId
+            parent.workspaceSessionId = ZeSubAgentPreferences.settingsRootSessionId
+            parent.sessionSource = "subagent-settings"
+            settingsParent = parent
+        }
+        guard let parent = settingsParent else {
+            return failedRecord(root: ZeSubAgentPreferences.settingsRootSessionId, parent: AIChatViewModel(), message: "子代理设置初始化失败")
+        }
+        return spawn(from: parent, message: message, forkContext: false, nickname: "")
     }
 
     func sendInput(id: String, message: String, interrupt: Bool = false) -> ZeSubAgentRecord? {
@@ -201,6 +253,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
             // Persisted child records retain the root session ID, which is the
             // shared filesystem identity needed after app relaunch.
             rehydrated.workspaceSessionId = location.root
+            rehydrated.preferredModelEntryReference = record.modelEntryReference
+            if let ref = record.modelEntryReference,
+               let entry = ProviderConfigStore.shared.entry(for: ref) {
+                rehydrated.selectedModel = entry.model
+            }
             children[id] = rehydrated
             childAgentIds[ObjectIdentifier(rehydrated)] = id
             child = rehydrated
@@ -403,7 +460,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
     private func failedRecord(root: String, parent: AIChatViewModel, message: String) -> ZeSubAgentRecord {
         let now = Date()
-        return ZeSubAgentRecord(id: UUID().uuidString, parentId: root, rootSessionId: root, nickname: "子代理", depth: 0, status: .failed, revision: 1, createdAt: now, updatedAt: now, prompt: "", output: "", error: message, childSessionId: nil, inputTokens: 0, outputTokens: 0, steps: [])
+        return ZeSubAgentRecord(id: UUID().uuidString, parentId: root, rootSessionId: root, nickname: "子代理", depth: 0, status: .failed, revision: 1, createdAt: now, updatedAt: now, prompt: "", output: "", error: message, childSessionId: nil, inputTokens: 0, outputTokens: 0, modelEntryReference: nil, steps: [])
     }
 
     private func update(_ record: ZeSubAgentRecord, root: String) {

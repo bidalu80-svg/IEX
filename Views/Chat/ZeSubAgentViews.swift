@@ -504,3 +504,197 @@ private struct ZeSubAgentDetailView: View {
         }
     }
 }
+
+
+// MARK: - Settings / Shared-workspace entry point
+
+/// Settings page for the global child-agent switch, model pin, and direct task
+/// dispatch. Tasks submitted here use the stable settings root and are routed
+/// through /var/ze/shared by explicit prompt contract while retaining the same
+/// file/shell/browser tools as chat-created child agents.
+struct SubAgentSettingsView: View {
+    @AppStorage(ZeSubAgentPreferences.enabledKey) private var enabled: Bool = true
+    @AppStorage(ZeSubAgentPreferences.modelEntryKey) private var modelEntryReference: String = ""
+    @ObservedObject private var store = ProviderConfigStore.shared
+    @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
+    @State private var taskText = ""
+    @State private var selectedRecordId: String?
+
+    private var records: [ZeSubAgentRecord] {
+        coordinator.records(for: ZeSubAgentPreferences.settingsRootSessionId)
+            .filter { $0.status != .closed }
+    }
+
+    private var selectedEntry: ModelEntry? {
+        guard !modelEntryReference.isEmpty else { return nil }
+        return store.entry(for: modelEntryReference)
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Toggle(String(localized: "启用子代理功能"), isOn: $enabled)
+            } footer: {
+                Text(String(localized: "关闭后，模型不会再看到 spawn_agent、send_input、wait_agent 等子代理工具；已经运行的任务仍可在此页查看和停止。"))
+            }
+
+            Section(String(localized: "子代理模型")) {
+                NavigationLink {
+                    ZeSubAgentModelPickerView(selection: $modelEntryReference)
+                } label: {
+                    HStack {
+                        Label(String(localized: "执行模型"), systemImage: "cpu.fill")
+                        Spacer()
+                        Text(selectedEntry?.model.displayName ?? String(localized: "跟随当前对话"))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            } footer: {
+                Text(String(localized: "选择已配置服务商中的具体模型。留空时，聊天内创建的子代理跟随当前用户对话模型；本页直接提交的任务使用当前默认模型组。"))
+            }
+
+            Section(String(localized: "添加任务")) {
+                TextEditor(text: $taskText)
+                    .frame(minHeight: 120)
+                    .overlay(alignment: .topLeading) {
+                        if taskText.isEmpty {
+                            Text(String(localized: "描述要交给子代理完成的任务…"))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 8)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                Button {
+                    submitTask()
+                } label: {
+                    Label(String(localized: "发送给子代理执行"), systemImage: "person.3.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ZeSubAgentTheme.purple)
+                .disabled(!enabled || taskText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } footer: {
+                Text(String(localized: "子代理可在 /var/ze/shared 中读取、创建、修改和执行文件；请在任务中写清楚输入、输出和验收条件。"))
+            }
+
+            Section(String(localized: "任务列表")) {
+                if records.isEmpty {
+                    Text(String(localized: "暂无设置页任务"))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(records) { record in
+                        Button {
+                            selectedRecordId = record.id
+                        } label: {
+                            ZeSubAgentRow(record: record)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(String(localized: "子代理"))
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: Binding<ZeSubAgentRecord?>(
+            get: { selectedRecordId.flatMap { coordinator.record(id: $0) } },
+            set: { selectedRecordId = $0?.id }
+        )) { record in
+            ZeSubAgentDetailView(recordId: record.id)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func submitTask() {
+        let text = taskText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard enabled, !text.isEmpty else { return }
+        let prompt = """
+        Work in the shared directory /var/ze/shared. You may use the shell and file tools to inspect, create, modify, and execute files there. Keep temporary files outside /var/ze/shared. Complete this task and report the exact files changed, commands run, and verification results:
+
+        \(text)
+        """
+        let record = coordinator.spawnFromSettings(message: prompt)
+        if record.error == nil {
+            taskText = ""
+        }
+    }
+}
+
+private struct ZeSubAgentModelPickerView: View {
+    @Binding var selection: String
+    @ObservedObject private var store = ProviderConfigStore.shared
+
+    private var entries: [ModelEntry] {
+        store.modelEntries.filter { entry in
+            guard !entry.isHidden,
+                  let instance = store.instance(for: entry.providerInstanceId) else { return false }
+            return instance.isEnabled && instance.hasAnyCredential
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    selection = ""
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(String(localized: "跟随当前对话"))
+                            Text(String(localized: "不固定子代理模型"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if selection.isEmpty {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+                .foregroundStyle(.primary)
+            }
+
+            Section(String(localized: "已配置服务商模型")) {
+                if entries.isEmpty {
+                    Text(String(localized: "暂无可用的已配置模型"))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(entries) { entry in
+                        Button {
+                            selection = entry.id
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "cpu")
+                                    .foregroundStyle(ZeSubAgentTheme.purple)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.model.displayName)
+                                        .foregroundStyle(.primary)
+                                    Text(providerLabel(for: entry))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if selection == entry.id {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .navigationTitle(String(localized: "子代理模型"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func providerLabel(for entry: ModelEntry) -> String {
+        store.instance(for: entry.providerInstanceId)?.label ?? entry.model.provider
+    }
+}

@@ -162,6 +162,9 @@ enum DeepLinkRouter {
         case "appearance":
             coord.pendingSettingsTarget = .appearance
 
+        case "subagents", "sub-agents", "sub_agents":
+            coord.pendingSettingsTarget = .subAgents
+
         case "background":
             // [T-settings-focus-highlight] Optional `?focus=key=true,key2` —
             // parsing + decision logic lives in DeepLinkCoordinator so the

@@ -257,6 +257,7 @@ extension AIChatViewModel {
     private struct ResolveCacheKey: Hashable {
         let sessionId: String
         let cachedModelId: String
+        let preferredEntryReference: String
         let defaultGroupId: String
         let configRevision: UInt
         let authRevision: UInt
@@ -271,6 +272,7 @@ extension AIChatViewModel {
         let key = ResolveCacheKey(
             sessionId: sessionId ?? "",
             cachedModelId: cachedSessionModelId,
+            preferredEntryReference: preferredModelEntryReference ?? "",
             defaultGroupId: store.defaultPrimaryGroupId ?? "",
             configRevision: store.configRevision,
             authRevision: store.authRevision
@@ -289,6 +291,15 @@ extension AIChatViewModel {
 
     private func resolveCurrentEntryUncached() -> ModelEntry? {
         let store = ProviderConfigStore.shared
+
+        // Child agents may pin a configured provider model without creating a
+        // synthetic ChatStore binding. This takes precedence over the normal
+        // session/default-group resolution and keeps the selected provider
+        // instance stable for the whole child run.
+        if let preferredModelEntryReference,
+           let entry = store.entry(for: preferredModelEntryReference) {
+            return entry
+        }
 
         // 1. Try session binding
         if let sid = sessionId, let binding = store.binding(for: sid) {

@@ -548,27 +548,33 @@ private struct BridgedAssistantFooterV3: View {
                 .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
             }
 
+            // Keep the two feedback choices behind one compact control. The
+            // native Menu expands into a lightweight two-row popover, so the
+            // quiet footer keeps one slot instead of reserving space for both
+            // thumbs on every completed reply.
             completionActionEntry(index: 2) {
-                completionActionButton(
-                    systemImage: bridge.replyFeedback == .positive ? "hand.thumbsup.fill" : "hand.thumbsup",
-                    isSelected: bridge.replyFeedback == .positive,
-                    accessibilityLabel: "点赞"
-                ) {
-                    toggleFeedback(.positive)
+                Menu {
+                    Button {
+                        toggleFeedback(.positive)
+                    } label: {
+                        Label(String(localized: "Good response"), systemImage: "hand.thumbsup.fill")
+                    }
+                    Button {
+                        toggleFeedback(.negative)
+                    } label: {
+                        Label(String(localized: "Poor response"), systemImage: "hand.thumbsdown.fill")
+                    }
+                } label: {
+                    FeedbackCombinedIcon(selection: bridge.replyFeedback)
+                        .frame(width: 32, height: 28)
+                        .contentShape(Rectangle())
                 }
+                .menuStyle(.borderlessButton)
+                .accessibilityLabel(String(localized: "Rate response"))
+                .accessibilityHint(String(localized: "Open positive or negative feedback menu"))
             }
 
             completionActionEntry(index: 3) {
-                completionActionButton(
-                    systemImage: bridge.replyFeedback == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown",
-                    isSelected: bridge.replyFeedback == .negative,
-                    accessibilityLabel: "踩"
-                ) {
-                    toggleFeedback(.negative)
-                }
-            }
-
-            completionActionEntry(index: 4) {
                 completionActionButton(
                     systemImage: "arrow.clockwise",
                     isSelected: transientCompletionAction == .retry,
@@ -597,6 +603,25 @@ private struct BridgedAssistantFooterV3: View {
                 .easeOut(duration: 0.28).delay(Double(index) * 0.07),
                 value: bridge.showsCompletionActions
             )
+    }
+
+    /// Compact feedback affordance: one footer slot that visually combines
+    /// the positive and negative actions. Selecting either option is handled
+    /// by the Menu above, which keeps the normal action row uncluttered.
+    private struct FeedbackCombinedIcon: View {
+        let selection: AssistantResponseFeedback?
+
+        var body: some View {
+            HStack(spacing: -3) {
+                Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    .foregroundStyle(selection == .positive ? Color.green : ChatColors.secondaryText)
+                Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                    .foregroundStyle(selection == .negative ? Color.red : ChatColors.secondaryText)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
     }
 
     private func completionActionButton(

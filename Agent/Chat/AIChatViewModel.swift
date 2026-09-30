@@ -1752,11 +1752,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "Starts with a desktop Safari user agent. Use screenshot to see the page.\n"
             + "- memory_write: Save a memory entry to today's daily log (YYYY-MM-DD.md). Use proactively to note user preferences, project patterns, and important context.\n"
             + "- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge.\n"
-            + "- spawn_agent: Start an independent child agent for a bounded task. It returns immediately so multiple independent tasks can run concurrently.\n"
-            + "- send_input: Send a follow-up to a child agent; use interrupt=true when its current work should be stopped first.\n"
-            + "- wait_agent: Wait for one or more child agents using comma-separated IDs and a bounded timeout.\n"
-            + "- close_agent / resume_agent: Stop or rerun a child agent; resume_agent reruns its original task prompt.\n"
-            + "Child-agent scheduling: split work only when tasks are independent, keep file ownership disjoint, start children immediately, and collect their outputs with wait_agent before reporting completion. Ze limits each root conversation to 6 open children and 3 nesting levels.\n\n"
+            + (ZeSubAgentPreferences.isEnabled
+                ? "- spawn_agent: Start an independent child agent for a bounded task. It returns immediately so multiple independent tasks can run concurrently.\n"
+                  + "- send_input: Send a follow-up to a child agent; use interrupt=true when its current work should be stopped first.\n"
+                  + "- wait_agent: Wait for one or more child agents using comma-separated IDs and a bounded timeout.\n"
+                  + "- close_agent / resume_agent: Stop or rerun a child agent; resume_agent reruns its original task prompt.\n"
+                  + "Child-agent scheduling: split work only when tasks are independent, keep file ownership disjoint, start children immediately, and collect their outputs with wait_agent before reporting completion. Ze limits each root conversation to 6 open children and 3 nesting levels.\n\n"
+                : "")
             + "Current time (approximate): \(approximateTimeString) (\(TimeZone.current.identifier)). "
             + "Device languages: \((UserDefaults.standard.object(forKey: "AppleLanguages") as? [String] ?? Locale.preferredLanguages).joined(separator: ", ")).\n\n"
             + "Shared directory /var/ze/ (bidirectional read/write between shell and app):\n"
@@ -1872,7 +1874,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "[Set ENV_NAME](ze://settings/environments?create_key=ENV_NAME&create_value=&create_note=Used%20by%20XYZ) — "
             + "the user can tap it to open the Environment Variables page with the key and optional note pre-filled. "
             + "create_note is optional; fill it with a brief description of what the variable is used for (e.g. 'API key for OpenAI', 'Used by XYZ skill'); URL-encode it.\n"
-            + "- Settings deep links: when you tell the user \"go to Settings → X\" or want to point them at a specific setting, prefer a Markdown link `[Label](ze://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), skills, memory, storage, shared-folders (Shared Folders: /var/ze/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the ze:// section above: only /var/ze resource URLs may go to browser_use).\n"
+            + "- Settings deep links: when you tell the user \"go to Settings → X\" or want to point them at a specific setting, prefer a Markdown link `[Label](ze://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), subagents, skills, memory, storage, shared-folders (Shared Folders: /var/ze/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat (same action-vs-resource rule as the ze:// section above: only /var/ze resource URLs may go to browser_use).\n"
             + "- To check if a variable is set, use `[ -n \"$VAR\" ] && echo 'set' || echo 'not set'`. "
             + "NEVER use echo $VAR, printenv VAR, or any command that would output the actual value into the conversation context.\n\n"
             + "Memory system:\n"
@@ -2145,6 +2147,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// async hop to the actor. Empty string means "not yet loaded" — treat as
     /// no fallback.
     var cachedSessionModelId: String = ""
+    /// Optional direct model pin used by child agents. A nil value preserves
+    /// the normal session/default-group resolution path.
+    var preferredModelEntryReference: String?
     /// The ModelEntry used in the current/last agent loop, for rebuilding the provider.
     var keepAliveEntry: ModelEntry?
     /// Pending thought signatures loaded from persisted session, keyed by tool call ID.

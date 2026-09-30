@@ -18,6 +18,7 @@ enum SettingsDeepLinkTarget: Equatable {
     case sharedFolders
     case logs
     case appearance
+    case subAgents
     case background
     case permissions
     case environments

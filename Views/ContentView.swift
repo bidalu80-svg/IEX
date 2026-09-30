@@ -4881,6 +4881,7 @@ private struct AppearanceSettingsView: View {
     @AppStorage("launchScreen") private var launchScreen: Int = 0  // 0=Auto, 1=Last Session, 2=New Chat, 3=Home
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
+    @AppStorage(ZeSubAgentPreferences.dockEnabledKey) private var subAgentDockEnabled: Bool = true
     /// 0 = Return inserts a newline (default), 1 = Return sends the message.
     @AppStorage("returnKeyBehavior") private var returnKeyBehavior: Int = 0
     /// When true, holds `UIApplication.isIdleTimerDisabled` while any session
@@ -4976,6 +4977,7 @@ private struct AppearanceSettingsView: View {
             Section {
                 Toggle(String(localized: "Show Tool Status Bar"), isOn: $toolStatusBarEnabled)
                 Toggle(String(localized: "Show Preview Card"), isOn: $toolPreviewEnabled)
+                Toggle(String(localized: "Show Sub-Agent Bar"), isOn: $subAgentDockEnabled)
             } header: {
                 Text("Tool Status Bar")
             } footer: {
@@ -5232,6 +5234,7 @@ private enum SettingsDestination: Hashable {
     case sharedFolders
     case logs
     case appearance
+    case subAgents
     case background
     case permissions
     case environments
@@ -5295,6 +5298,19 @@ private struct SettingsSheet: View {
                 }
 
                 Section("Agent Runtime") {
+                    NavigationLink {
+                        SubAgentSettingsView()
+                    } label: {
+                        Label {
+                            Text("Sub-Agents")
+                        } icon: {
+                            Image(systemName: ZeSubAgentTheme.iconName)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(ZeSubAgentTheme.purple, in: Circle())
+                        }
+                    }
                     NavigationLink {
                         SkillsManagementView()
                     } label: {
@@ -5552,6 +5568,8 @@ private struct SettingsSheet: View {
                     // here is consumed once and reset to nil.
                     LogManagementView(initialTab: deepLink.pendingLogsTab ?? "logs")
                         .onAppear { deepLink.pendingLogsTab = nil }
+                case .subAgents:
+                    SubAgentSettingsView()
                 case .appearance:
                     AppearanceSettingsView()
                 case .background:
@@ -5646,6 +5664,8 @@ private struct SettingsSheet: View {
             navPath.append(SettingsDestination.sharedFolders)
         case .logs:
             navPath.append(SettingsDestination.logs)
+        case .subAgents:
+            navPath.append(SettingsDestination.subAgents)
         case .appearance:
             navPath.append(SettingsDestination.appearance)
         case .background:

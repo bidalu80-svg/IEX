@@ -109,7 +109,8 @@ extension AIChatViewModel {
 
         // Multi-agent orchestration. These tools are local to the current
         // conversation and reuse Ze's existing agent loop/provider stack.
-        tools.append(contentsOf: [
+        if ZeSubAgentPreferences.isEnabled {
+            tools.append(contentsOf: [
             AgentToolDefinition(
                 name: "spawn_agent",
                 description: "Start an independent child agent asynchronously. It inherits the current model and permissions, uses the shared workspace, and returns immediately with an agent ID. Use for bounded independent tasks; maximum 6 open children per conversation and depth 3.",
@@ -165,7 +166,8 @@ extension AIChatViewModel {
                 required: ["tool_title", "id"],
                 propertyOrdering: ["tool_title", "id"]
             ),
-        ])
+            ])
+        }
         if includeMemoryTools {
             tools.append(AgentToolDefinition(
                 name: "memory_write",
