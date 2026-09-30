@@ -4979,9 +4979,9 @@ private struct AppearanceSettingsView: View {
                 Toggle(String(localized: "Show Preview Card"), isOn: $toolPreviewEnabled)
                 Toggle(String(localized: "Show Sub-Agent Bar"), isOn: $subAgentDockEnabled)
             } header: {
-                Text("Tool Status Bar")
+                Text(String(localized: "Tool Status Bar"))
             } footer: {
-                Text("The tool status bar and preview card can be shown independently.")
+                Text(String(localized: "The tool status bar and preview card can be shown independently."))
             }
 
             // [T-thinking-auto-expand-toggle] Whether a NEW streaming thinking
@@ -5297,12 +5297,12 @@ private struct SettingsSheet: View {
                     }
                 }
 
-                Section("Agent Runtime") {
+                Section {
                     NavigationLink {
                         SubAgentSettingsView()
                     } label: {
                         Label {
-                            Text("Sub-Agents")
+                            Text(String(localized: "Sub-Agents"))
                         } icon: {
                             Image(systemName: ZeSubAgentTheme.iconName)
                                 .font(.system(size: 9))
@@ -5376,6 +5376,8 @@ private struct SettingsSheet: View {
                                 .background(.green, in: Circle())
                         }
                     }
+                } header: {
+                    Text(String(localized: "Agent Runtime"))
                 }
 
                 Section("服务器与连接") {

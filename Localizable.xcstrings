@@ -78621,6 +78621,20 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开点赞或踩菜单" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟讚或踩選單" } }
       }
+    },
+    "Show Sub-Agent Bar" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Show Sub-Agent Bar" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示子代理浮条" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "顯示子代理浮條" } }
+      }
+    },
+    "Sub-Agents" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sub-Agents" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "子代理" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "子代理" } }
+      }
     }  },
   "version" : "1.0"
 }
