@@ -1968,6 +1968,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
     var agentHistory: [AgentMessage] = []
 
+    /// Dynamic, credential-free inventory of the server tools that were
+    /// registered for this turn. This is rebuilt per request because the user
+    /// may connect/disconnect a server or alter its AI access from Settings.
+    private var remoteServerStatusFragment: String {
+        RemoteServerAIToolGateway.statusFragment
+    }
+
     #if DEBUG
     /// [T-ios-log-noise-reduction] High-water mark of how many agentHistory
     /// entries the Debug `📋 agentHistory[i]` dump has already printed. The
