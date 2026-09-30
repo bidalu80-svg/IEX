@@ -78592,35 +78592,6 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存文件" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法儲存檔案" } }
       }
-    }
-,
-    "Good response" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Good response" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复优秀" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆優秀" } }
-      }
-    },
-    "Poor response" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Poor response" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复不佳" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆不佳" } }
-      }
-    },
-    "Rate response" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate response" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "评价回复" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "評價回覆" } }
-      }
-    },
-    "Open positive or negative feedback menu" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open positive or negative feedback menu" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开点赞或踩菜单" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟讚或踩選單" } }
-      }
     },
     "Show Sub-Agent Bar" : {
       "localizations" : {

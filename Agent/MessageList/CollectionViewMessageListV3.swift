@@ -548,33 +548,8 @@ private struct BridgedAssistantFooterV3: View {
                 .disabled(bridge.onReadAloud == nil || bridge.isStreaming)
             }
 
-            // Keep the two feedback choices behind one compact control. The
-            // native Menu expands into a lightweight two-row popover, so the
-            // quiet footer keeps one slot instead of reserving space for both
-            // thumbs on every completed reply.
-            completionActionEntry(index: 2) {
-                Menu {
-                    Button {
-                        toggleFeedback(.positive)
-                    } label: {
-                        Label(String(localized: "Good response"), systemImage: "hand.thumbsup.fill")
-                    }
-                    Button {
-                        toggleFeedback(.negative)
-                    } label: {
-                        Label(String(localized: "Poor response"), systemImage: "hand.thumbsdown.fill")
-                    }
-                } label: {
-                    FeedbackCombinedIcon(selection: bridge.replyFeedback)
-                        .frame(width: 48, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .accessibilityLabel(String(localized: "Rate response"))
-                .accessibilityHint(String(localized: "Open positive or negative feedback menu"))
-            }
 
-            completionActionEntry(index: 3) {
+            completionActionEntry(index: 2) {
                 completionActionButton(
                     systemImage: "arrow.clockwise",
                     isSelected: transientCompletionAction == .retry,
@@ -603,35 +578,6 @@ private struct BridgedAssistantFooterV3: View {
                 .easeOut(duration: 0.28).delay(Double(index) * 0.07),
                 value: bridge.showsCompletionActions
             )
-    }
-
-    /// Compact feedback affordance: one footer slot that visually combines
-    /// the positive and negative actions. Selecting either option is handled
-    /// by the Menu above, which keeps the normal action row uncluttered.
-    private struct FeedbackCombinedIcon: View {
-        let selection: AssistantResponseFeedback?
-
-        private let neutralColor = Color(UIColor.label).opacity(0.62)
-
-        var body: some View {
-            // The reference is two separate outlined hands: thumbs-up sits
-            // slightly higher/left, while thumbs-down sits lower/right.
-            // Avoid the combined SF Symbol because its contours collide into
-            // the tangled shape shown in the old implementation.
-            HStack(spacing: -7) {
-                Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    .foregroundStyle(selection == .positive ? Color.green : neutralColor)
-                    .offset(x: 2, y: -5)
-
-                Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .foregroundStyle(selection == .negative ? Color.red : neutralColor)
-                    .offset(x: -2, y: 5)
-            }
-            .font(.system(size: 27, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .frame(width: 48, height: 44)
-            .contentShape(Rectangle())
-        }
     }
 
     private func completionActionButton(
@@ -665,13 +611,6 @@ private struct BridgedAssistantFooterV3: View {
                 transientCompletionAction = nil
             }
         }
-    }
-
-    private func toggleFeedback(_ feedback: AssistantResponseFeedback) {
-        let selectedFeedback: AssistantResponseFeedback? = bridge.replyFeedback == feedback ? nil : feedback
-        bridge.replyFeedback = selectedFeedback
-        bridge.onReplyFeedback?(selectedFeedback)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     @ViewBuilder
@@ -1393,11 +1332,6 @@ extension CollectionViewMessageListV3 {
                 && !vm.isProcessing
                 && message.error == nil
                 && Self.hasReplyText(message)
-            bridge.replyFeedback = bridge.showsCompletionActions ? vm.replyFeedback(for: message) : nil
-            bridge.onReplyFeedback = bridge.showsCompletionActions ? { [weak vm, weak message] feedback in
-                guard let vm, let message else { return }
-                vm.recordReplyFeedback(for: message, feedback: feedback)
-            } : nil
             // [T-ios-session-status-mismatch] Defense-in-depth: even if vm.canResume
             // is somehow stale-true and vm.isProcessing hasn't flipped yet, do NOT
             // show the "Interrupted — tap Resume" banner while SessionActivityTracker
