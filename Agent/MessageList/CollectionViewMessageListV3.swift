@@ -612,17 +612,25 @@ private struct BridgedAssistantFooterV3: View {
         let selection: AssistantResponseFeedback?
 
         var body: some View {
-            ZStack {
-                // Keep the two glyphs visually fused, matching the compact
-                // combined thumbs control used by the reference UI.
-                Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    .foregroundStyle(selection == .positive ? Color.green : ChatColors.secondaryText)
-                    .offset(x: -4, y: -1)
-                Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .foregroundStyle(selection == .negative ? Color.red : ChatColors.secondaryText)
-                    .offset(x: 4, y: 1)
+            Group {
+                // On systems that expose the combined SF Symbol, use it as a
+                // single glyph. This matches the reference shape much more
+                // closely than two independent icons laid side by side.
+                if selection == nil, UIImage(systemName: "hand.thumbsup.hand.thumbsdown") != nil {
+                    Image(systemName: "hand.thumbsup.hand.thumbsdown")
+                        .foregroundStyle(ChatColors.secondaryText)
+                } else {
+                    ZStack {
+                        Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .foregroundStyle(selection == .positive ? Color.green : ChatColors.secondaryText)
+                            .offset(x: -3, y: -1)
+                        Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                            .foregroundStyle(selection == .negative ? Color.red : ChatColors.secondaryText)
+                            .offset(x: 3, y: 1)
+                    }
+                }
             }
-            .font(.system(size: 17, weight: .regular))
+            .font(.system(size: 18, weight: .regular))
             .frame(width: 32, height: 28)
             .contentShape(Rectangle())
         }
