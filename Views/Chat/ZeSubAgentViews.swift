@@ -176,10 +176,12 @@ private struct ZeSubAgentComposerView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text(String(localized: "任务"))) {
+                Section {
                     TextField(String(localized: "任务名称（可选）"), text: $nickname)
                     TextField(String(localized: "描述要并发执行的独立任务"), text: $prompt, axis: .vertical)
                         .lineLimit(3...8)
+                } header: {
+                    Text(String(localized: "任务"))
                 }
                 Section {
                     Toggle(String(localized: "复制当前对话上下文"), isOn: $forkContext)
@@ -538,7 +540,7 @@ struct SubAgentSettingsView: View {
                 Text(String(localized: "关闭后，模型不会再看到 spawn_agent、send_input、wait_agent 等子代理工具；已经运行的任务仍可在此页查看和停止。"))
             }
 
-            Section(header: Text(String(localized: "子代理模型"))) {
+            Section {
                 NavigationLink {
                     ZeSubAgentModelPickerView(selection: $modelEntryReference)
                 } label: {
@@ -550,11 +552,13 @@ struct SubAgentSettingsView: View {
                             .lineLimit(1)
                     }
                 }
+            } header: {
+                Text(String(localized: "子代理模型"))
             } footer: {
                 Text(String(localized: "选择已配置服务商中的具体模型。留空时，聊天内创建的子代理跟随当前用户对话模型；本页直接提交的任务使用当前默认模型组。"))
             }
 
-            Section(header: Text(String(localized: "添加任务"))) {
+            Section {
                 TextEditor(text: $taskText)
                     .frame(minHeight: 120)
                     .overlay(alignment: .topLeading) {
@@ -576,11 +580,13 @@ struct SubAgentSettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(ZeSubAgentTheme.purple)
                 .disabled(!enabled || taskText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } header: {
+                Text(String(localized: "添加任务"))
             } footer: {
                 Text(String(localized: "子代理可在 /var/ze/shared 中读取、创建、修改和执行文件；请在任务中写清楚输入、输出和验收条件。"))
             }
 
-            Section(header: Text(String(localized: "任务列表"))) {
+            Section {
                 if records.isEmpty {
                     Text(String(localized: "暂无设置页任务"))
                         .foregroundStyle(.secondary)
@@ -594,6 +600,8 @@ struct SubAgentSettingsView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            } header: {
+                Text(String(localized: "任务列表"))
             }
         }
         .listStyle(.insetGrouped)
@@ -659,7 +667,7 @@ private struct ZeSubAgentModelPickerView: View {
                 .foregroundStyle(.primary)
             }
 
-            Section(header: Text(String(localized: "已配置服务商模型"))) {
+            Section {
                 if entries.isEmpty {
                     Text(String(localized: "暂无可用的已配置模型"))
                         .foregroundStyle(.secondary)
@@ -688,6 +696,8 @@ private struct ZeSubAgentModelPickerView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            } header: {
+                Text(String(localized: "已配置服务商模型"))
             }
         }
         .navigationTitle(String(localized: "子代理模型"))
