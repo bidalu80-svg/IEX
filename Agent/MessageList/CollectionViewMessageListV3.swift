@@ -566,7 +566,7 @@ private struct BridgedAssistantFooterV3: View {
                     }
                 } label: {
                     FeedbackCombinedIcon(selection: bridge.replyFeedback)
-                        .frame(width: 32, height: 28)
+                        .frame(width: 48, height: 44)
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
@@ -611,27 +611,25 @@ private struct BridgedAssistantFooterV3: View {
     private struct FeedbackCombinedIcon: View {
         let selection: AssistantResponseFeedback?
 
+        private let neutralColor = Color(UIColor.label).opacity(0.62)
+
         var body: some View {
-            Group {
-                // On systems that expose the combined SF Symbol, use it as a
-                // single glyph. This matches the reference shape much more
-                // closely than two independent icons laid side by side.
-                if selection == nil, UIImage(systemName: "hand.thumbsup.hand.thumbsdown") != nil {
-                    Image(systemName: "hand.thumbsup.hand.thumbsdown")
-                        .foregroundStyle(ChatColors.secondaryText)
-                } else {
-                    ZStack {
-                        Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            .foregroundStyle(selection == .positive ? Color.green : ChatColors.secondaryText)
-                            .offset(x: -3, y: -1)
-                        Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                            .foregroundStyle(selection == .negative ? Color.red : ChatColors.secondaryText)
-                            .offset(x: 3, y: 1)
-                    }
-                }
+            // The reference is two separate outlined hands: thumbs-up sits
+            // slightly higher/left, while thumbs-down sits lower/right.
+            // Avoid the combined SF Symbol because its contours collide into
+            // the tangled shape shown in the old implementation.
+            HStack(spacing: -7) {
+                Image(systemName: selection == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    .foregroundStyle(selection == .positive ? Color.green : neutralColor)
+                    .offset(x: 2, y: -5)
+
+                Image(systemName: selection == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                    .foregroundStyle(selection == .negative ? Color.red : neutralColor)
+                    .offset(x: -2, y: 5)
             }
-            .font(.system(size: 18, weight: .regular))
-            .frame(width: 32, height: 28)
+            .font(.system(size: 27, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .frame(width: 48, height: 44)
             .contentShape(Rectangle())
         }
     }
