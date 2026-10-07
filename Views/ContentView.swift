@@ -5421,6 +5421,15 @@ private struct SettingsSheet: View {
                                 .background(.blue, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     }
+                    NavigationLink {
+                        GitHubConnectorView()
+                    } label: {
+                        Label {
+                            Text("GitHub")
+                        } icon: {
+                            GitHubMark(size: 21)
+                        }
+                    }
                 }
 
                 Section("Storage") {

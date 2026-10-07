@@ -221,6 +221,7 @@ extension AIChatViewModel {
         // never exposes credentials or Keychain material to the model.
         tools.append(contentsOf: scheduledTaskAgentToolDefinitions())
         tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
+        tools.append(contentsOf: GitHubAIToolGateway.definitions())
 
         return tools
     }

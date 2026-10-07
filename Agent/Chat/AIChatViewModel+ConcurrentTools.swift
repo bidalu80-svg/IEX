@@ -738,6 +738,14 @@ extension AIChatViewModel {
             toolOutput = remoteResult.output
             toolSuccess = remoteResult.success
 
+        case "github_account_list", "github_repository_list", "github_file_read", "github_file_write", "github_file_delete":
+            let githubResult = await GitHubAIToolGateway.execute(name: tu.name, arguments: toolArgs)
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = githubResult.output
+            }
+            toolOutput = githubResult.output
+            toolSuccess = githubResult.success
+
         default:
             toolOutput = "Error: Unknown tool '\(tu.name)'"
             toolSuccess = false

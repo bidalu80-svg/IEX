@@ -15,3 +15,8 @@
 // talking to the same endpoint declare the same identifier, e.g.
 // https://github.com/Wei-Shaw/claude-relay-service
 ANTHROPIC_OAUTH_IDENTIFIER_PROMPT =
+
+// Optional GitHub OAuth Device Flow client ID. Leave empty to reuse the
+// app's public GitHub device-flow client; an access-token login fallback
+// remains available in Settings → 服务器与连接 → GitHub.
+GITHUB_OAUTH_CLIENT_ID =

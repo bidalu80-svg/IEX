@@ -1975,6 +1975,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         RemoteServerAIToolGateway.statusFragment
     }
 
+    private var githubStatusFragment: String {
+        GitHubAIToolGateway.statusFragment
+    }
+
     #if DEBUG
     /// [T-ios-log-noise-reduction] High-water mark of how many agentHistory
     /// entries the Debug `📋 agentHistory[i]` dump has already printed. The
@@ -4429,6 +4433,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // baseSystemPrompt mentions when memory is disabled).
         userSystemPrompt += memoryStatusFragment
         userSystemPrompt += remoteServerStatusFragment
+        userSystemPrompt += githubStatusFragment
 
         let promptBuildMs = (CFAbsoluteTimeGetCurrent() - loopSetupStart) * 1000
         logger.info("⏱️ [runAgentLoop] prompt build elapsed=\(String(format: "%.1f", promptBuildMs))ms history=\(self.agentHistory.count)")
@@ -4792,6 +4797,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
                 userSystemPrompt += memoryStatusFragment
                 userSystemPrompt += remoteServerStatusFragment
+                userSystemPrompt += githubStatusFragment
                 fallbackTrigger += 1
                 if !fallbackReasons.isEmpty {
                     // Resync the assistant message index by its stable id before

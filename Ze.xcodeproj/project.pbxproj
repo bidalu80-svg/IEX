@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F9GH00000000000000000001 /* GitHubModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000011 /* GitHubModels.swift */; };
+		F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000012 /* GitHubAccountStore.swift */; };
+		F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000013 /* GitHubAIToolGateway.swift */; };
+		F9GH00000000000000000004 /* GitHubConnectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000014 /* GitHubConnectorView.swift */; };
 		A1C0A0000000000000000001 /* GitHubCopilotOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */; };
 		A1C0A0000000000000000003 /* GitHubCopilotDeviceLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */; };
 
@@ -1130,6 +1134,10 @@
 		B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/ConsecutiveToolCallsHeader.swift"; sourceTree = SOURCE_ROOT; };
 		B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskActivityPolicy.swift"; sourceTree = SOURCE_ROOT; };
 		B10950000000000000000011 /* AIChatViewModel+ScheduledTaskTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000011 /* GitHubModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubModels.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000012 /* GitHubAccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubAccountStore.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000013 /* GitHubAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubAIToolGateway.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000014 /* GitHubConnectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Connectors/GitHubConnectorView.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -2887,6 +2895,10 @@
 				D7A90000000000000000000B /* RemoteCommandConsoleView.swift in Sources */,
 				D7A90000000000000000000C /* RemoteServerAIToolGateway.swift in Sources */,
 				D7A90000000000000000000F /* RemoteStorageClients.swift in Sources */,
+				F9GH00000000000000000001 /* GitHubModels.swift in Sources */,
+				F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */,
+				F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */,
+				F9GH00000000000000000004 /* GitHubConnectorView.swift in Sources */,
 				E5LOCK001 /* SessionLockStore.swift in Sources */,
 				E5SOUL001 /* SoulStore.swift in Sources */,
 				E5SOUL002 /* SoulSettingsView.swift in Sources */,
