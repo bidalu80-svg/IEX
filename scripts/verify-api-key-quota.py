@@ -28,5 +28,7 @@ for field in ("balance", "remaining", "total_available", "total_used"):
 check("Bearer \\(apiKey)" in quota and "print(" not in quota, "密钥仅用于请求且未写入日志")
 check("E5DQ0001 /* ProviderAPIQuota.swift in Sources */" in project, "额度文件加入 Xcode Sources")
 check("E5DQ0011 /* ProviderAPIQuota.swift */" in project, "额度文件加入 Providers 分组")
+providers_group = project[project.find("E52000030 /* Providers */ = {"):project.find("A1C0A0000000000000000005 /* GitHubCopilot */ = {")]
+check("E5DQ0011 /* ProviderAPIQuota.swift */" in providers_group, "额度文件挂到 Providers 源码目录而非 Views/Providers")
 check("xcrun swiftc -frontend -parse Providers/ProviderAPIQuota.swift" in workflow, "CI 对额度文件执行 Swift 语法解析")
 print("API key quota structure checks passed")

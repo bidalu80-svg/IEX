@@ -1408,6 +1408,7 @@
 				E59000011 /* AgentProvider.swift */,
 				E5D00011 /* ProviderTypes.swift */,
 				E5D00012 /* ProviderInstance.swift */,
+				E5DQ0011 /* ProviderAPIQuota.swift */,
 				E5D00013 /* ModelEntry.swift */,
 				E5D00014 /* ModelGroup.swift */,
 				E5TLC0002 /* ThinkingLevelCatalog.swift */,
@@ -2167,7 +2168,6 @@
 			isa = PBXGroup;
 			children = (
 				E5D00032 /* AddProviderView.swift */,
-				E5DQ0011 /* ProviderAPIQuota.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
 				A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
