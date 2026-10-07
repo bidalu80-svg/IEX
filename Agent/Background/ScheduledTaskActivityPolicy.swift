@@ -42,3 +42,13 @@ enum ScheduledTaskActivityPolicy {
         chatIDs.union(descriptors.map(\.activityID))
     }
 }
+
+/// Generation/ownership checks used after ActivityKit suspension points. Keep
+/// this pure so enable/disable and superseded-renewal races are regression tested.
+enum LiveActivityOwnershipPolicy {
+    static func canResume(capturedGeneration: UUID, currentGeneration: UUID,
+                          hasCurrentActivity: Bool, userEnabled: Bool,
+                          hasOwners: Bool, audioLoaded: Bool) -> Bool {
+        capturedGeneration == currentGeneration && !hasCurrentActivity && userEnabled && (hasOwners || audioLoaded)
+    }
+}

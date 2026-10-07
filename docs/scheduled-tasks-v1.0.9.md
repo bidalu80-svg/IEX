@@ -71,3 +71,4 @@ xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Se
 新增验证：`scripts/ScheduledTaskActivityTests.swift`（等待/执行/关闭/单次完成/重复任务/多任务共存/不重复展示），`scripts/verify-scheduled-activity.py`（UI、持久化和完整生命周期接线）。
 
 设备验收追加：清理后重启检查；开/关待执行任务观察灵动岛；关闭正在执行的任务；两个任务中关闭一个；手动对话与定时任务共存；后台锁屏执行；全局实况关闭及系统权限关闭；单次结束与重复任务再次等待。此清单需真机执行，不以源码或编译检查代替。
+- 复核补充：实况续期在异步返回后检查生命周期代次与当前所有者；关闭后清除待恢复状态，避免旧实况复活。当前运行状态优先于迟到的上一轮完成通知。关闭最后一个定时任务后，仍在执行的手动对话继续刷新实况，与增强后台权限分离。

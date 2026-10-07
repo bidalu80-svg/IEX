@@ -62,6 +62,36 @@ struct ScheduledTaskActivityTests {
         check(descriptors([disabled], [], suppressed: [task.id]).isEmpty, "clearing history does not enable tasks")
         check(descriptors([task], []).count == 1, "clearing history does not disable waiting tasks")
         check(descriptors([task]).map(\.activityID) == waiting.map(\.activityID), "stable identity")
+        let generation = UUID()
+        let superseded = UUID()
+        func resumes(_ captured: UUID? = nil, current: UUID? = nil,
+                     existing: Bool = false, enabled: Bool = true,
+                     owners: Bool = true, audio: Bool = false) -> Bool {
+            LiveActivityOwnershipPolicy.canResume(capturedGeneration: captured ?? generation,
+                currentGeneration: current ?? generation, hasCurrentActivity: existing,
+                userEnabled: enabled, hasOwners: owners, audioLoaded: audio)
+        }
+        check(resumes(), "current renewal may resume")
+        check(!resumes(current: superseded), "disable/end generation prevents late resurrection")
+        check(!resumes(existing: true), "renewal cannot overwrite a new activity")
+        check(!resumes(enabled: false), "global live toggle blocks pending restart")
+        check(!resumes(owners: false), "last-owner removal blocks pending restart")
+        check(resumes(owners: false, audio: true), "audio-only owner may recover")
+        check(!resumes(current: superseded, owners: false, audio: true), "audio does not bypass invalidated generation")
+        for hasCurrent in [false, true] {
+            for enabled in [false, true] {
+                for owners in [false, true] {
+                    for audio in [false, true] {
+                        for sameGeneration in [false, true] {
+                            let actual = resumes(current: sameGeneration ? generation : superseded,
+                                existing: hasCurrent, enabled: enabled, owners: owners, audio: audio)
+                            check(actual == (sameGeneration && !hasCurrent && enabled && (owners || audio)),
+                                  "exhaustive renewal ownership matrix")
+                        }
+                    }
+                }
+            }
+        }
         print("PASS: \(count) scheduled activity ownership checks")
     }
 }

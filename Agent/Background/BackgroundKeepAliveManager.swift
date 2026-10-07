@@ -766,7 +766,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         // Presentation and background-runtime permission are separate. A
         // schedule can appear on the island even if enhanced background is off;
         // it does not silently opt the user into location/audio permissions.
-        if !sessions.isEmpty && (enabled || !scheduledTaskActivities.isEmpty) {
+        if !sessions.isEmpty {
             if updateTimer == nil { startUpdateTimer() }
             AgentLiveActivityManager.shared.updateActivity(sessions: buildSessionSnapshots())
         } else {
@@ -1388,7 +1388,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     }
 
     func updateLiveActivityIfNeeded(source: String = "?") {
-        guard isActive || !scheduledTaskActivities.isEmpty else {
+        guard !liveActivitySessionIDs.isEmpty else {
             let cnt = liveActivitySessionIDs.count
             if cnt > 0 {
                 logger.info("[LiveActivity][update] SKIP src=\(source) isActive=false tracker=\(cnt) session(s)")

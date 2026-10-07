@@ -36,6 +36,8 @@ final class AgentLiveActivityManager {
     /// ("Target is not foreground"), we stash the state here and re-`start` it on
     /// the next foreground return so the Live Activity isn't left missing.
     private var pendingStartState: Any?
+    private var lifecycleGeneration = UUID()
+    private var pendingStartGeneration: UUID?
 
     /// [T-ios-live-activity-soft-finish] True after `finishActivity()` flips the
     /// Live Activity to its completed resting state but leaves it on screen. The
@@ -451,6 +453,9 @@ final class AgentLiveActivityManager {
             logger.info("[LiveActivity][start] skipped: Activities not enabled in Settings")
             return
         }
+        lifecycleGeneration = UUID()
+        pendingStartState = nil
+        pendingStartGeneration = nil
         // A fresh task supersedes any lingering completed activity.
         awaitingDismissal = false
         isFinishing = false
@@ -616,6 +621,12 @@ final class AgentLiveActivityManager {
 
     @available(iOS 16.2, *)
     private func _markSessionCompleted(sessionId: String, lastMessage: String) {
+        // A delayed completion from a prior turn must never mark a new turn in
+        // this same conversation completed. Current running data wins.
+        guard !BackgroundKeepAliveManager.shared.liveActivitySessionIDs.contains(sessionId) else {
+            completedSessionSnapshots.removeValue(forKey: sessionId)
+            return
+        }
         guard !deletedSessionIds.contains(sessionId) else {
             logger.info("[LiveActivity][markCompleted] sid=\(sessionId.prefix(8)) — session was deleted, skipping")
             return
@@ -665,10 +676,8 @@ final class AgentLiveActivityManager {
         let liveIds = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
         let filteredInput = sessions.filter { liveIds.contains($0.sessionId) }
         let activeSids = Set(filteredInput.map { $0.sessionId })
-        var mergedSessions: [LiveSessionSnapshot] = filteredInput.map { s in
-            guard let snap = completedSessionSnapshots[s.sessionId] else { return s }
-            return snap
-        }
+        for sid in activeSids { completedSessionSnapshots.removeValue(forKey: sid) }
+        var mergedSessions = filteredInput
         for (sid, snap) in completedSessionSnapshots where !activeSids.contains(sid) {
             mergedSessions.append(snap)
         }
@@ -817,6 +826,8 @@ final class AgentLiveActivityManager {
 
     @available(iOS 16.2, *)
     private func pushState(_ rawState: AgentActivityAttributes.ContentState, activity: Activity<AgentActivityAttributes>) {
+        guard Self.isUserEnabled,
+              (currentActivity as? Activity<AgentActivityAttributes>)?.id == activity.id else { return }
         let state = withAudioState(rawState)
         lastPushedState = state
         lastPushDate = Date()
@@ -833,15 +844,17 @@ final class AgentLiveActivityManager {
     @available(iOS 16.2, *)
     private func renewActivity(with state: AgentActivityAttributes.ContentState, isRetry: Bool = false) {
         guard let oldActivity = currentActivity as? Activity<AgentActivityAttributes> else { return }
+        let generation = lifecycleGeneration
 
         guard UIApplication.shared.applicationState == .active else {
             pendingStartState = state
+            pendingStartGeneration = generation
             if !isRetry {
                 logger.info("[LiveActivity][renew] skip: app not foreground (state=\(UIApplication.shared.applicationState.rawValue)) — keeping old id=\(oldActivity.id), scheduling retry")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self else { return }
                     guard UIApplication.shared.applicationState == .active else { return }
-                    guard self.currentActivity != nil else { return }
+                    guard self.lifecycleGeneration == generation, self.currentActivity != nil else { return }
                     guard !self.awaitingDismissal else { return }
                     guard self.pendingStartState != nil else { return }
                     self.renewActivity(with: state, isRetry: true)
@@ -863,27 +876,37 @@ final class AgentLiveActivityManager {
             await oldActivity.end(finalContent, dismissalPolicy: .immediate)
             logger.info("[LiveActivity][renew] old id=\(oldId) ended")
 
+            guard self.canResumeActivity(generation: generation) else { return }
+            let freshState = self.currentOwnershipState()
+            guard UIApplication.shared.applicationState == .active else {
+                self.pendingStartState = freshState
+                self.pendingStartGeneration = generation
+                return
+            }
             let attributes = AgentActivityAttributes(startDate: self.startTime ?? Date())
-            let content = ActivityContent(state: state, staleDate: nil)
+            let content = ActivityContent(state: freshState, staleDate: nil)
             do {
                 let newActivity = try Activity.request(
                     attributes: attributes,
                     content: content,
                     pushType: nil
                 )
+                self.lifecycleGeneration = UUID()
                 self.currentActivity = newActivity
                 self.lastRenewDate = Date()
-                self.lastPushedState = state
+                self.lastPushedState = freshState
                 self.lastPushDate = Date()
                 self.updateCount += 1
                 self.pendingStartState = nil
+                self.pendingStartGeneration = nil
                 logger.info("[LiveActivity][renew] new id=\(newActivity.id) budget reset OK")
             } catch {
                 // [T-ios-liveactivity-renew-bg-race] Plan B fallback: the foreground
                 // guard above races with the async end (the app can background in the
                 // ~27ms gap). If the restart still fails, stash the state and re-start
                 // on the next foreground return so we recover instead of going dark.
-                self.pendingStartState = state
+                self.pendingStartState = freshState
+                self.pendingStartGeneration = generation
                 logger.error("[LiveActivity][renew] Failed to restart: \(error.localizedDescription) — pendingStart set for foreground recovery")
             }
         }
@@ -893,28 +916,49 @@ final class AgentLiveActivityManager {
     /// ended but couldn't restart (background race). Called on foreground return.
     @available(iOS 16.2, *)
     private func resumePendingStartIfNeeded() {
-        guard let state = pendingStartState as? AgentActivityAttributes.ContentState else { return }
-        guard UIApplication.shared.applicationState == .active else { return }
-        guard Self.isActivityKitAvailable, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        // If something else already re-created an activity, just clear the flag.
-        guard currentActivity == nil, !state.sessions.isEmpty else {
+        guard pendingStartState != nil, let generation = pendingStartGeneration else { return }
+        guard canResumeActivity(generation: generation) else {
             pendingStartState = nil
+            pendingStartGeneration = nil
             return
         }
+        guard UIApplication.shared.applicationState == .active else { return }
+        guard Self.isActivityKitAvailable, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        // Rebuild from CURRENT owners, not the pre-await/pre-disable snapshot.
+        let state = currentOwnershipState()
         let attributes = AgentActivityAttributes(startDate: startTime ?? Date())
         let content = ActivityContent(state: state, staleDate: nil)
         do {
             let activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
+            lifecycleGeneration = UUID()
             currentActivity = activity
             lastRenewDate = Date()
             lastPushedState = state
             lastPushDate = Date()
             updateCount += 1
             pendingStartState = nil
+            pendingStartGeneration = nil
             logger.info("[LiveActivity][renew] pendingStart recovered on foreground — new id=\(activity.id)")
         } catch {
             logger.error("[LiveActivity][renew] pendingStart recovery still failed: \(error.localizedDescription)")
         }
+    }
+
+    private func canResumeActivity(generation: UUID) -> Bool {
+        LiveActivityOwnershipPolicy.canResume(capturedGeneration: generation,
+            currentGeneration: lifecycleGeneration, hasCurrentActivity: currentActivity != nil,
+            userEnabled: Self.isUserEnabled,
+            hasOwners: !BackgroundKeepAliveManager.shared.liveActivitySessionIDs.isEmpty,
+            audioLoaded: Self.isAudioActive())
+    }
+
+    @available(iOS 16.2, *)
+    private func currentOwnershipState() -> AgentActivityAttributes.ContentState {
+        let sessions = BackgroundKeepAliveManager.shared.buildLiveSessionSnapshots()
+        return withAudioState(AgentActivityAttributes.ContentState(
+            activeSessionCount: sessions.count, sessions: sessions,
+            carouselIndex: 0, soulName: Self.currentSoulName(),
+            latestToolIcon: Self.latestToolIcon(), minimalShowsTool: false))
     }
 
     @available(iOS 16.2, *)
@@ -1010,6 +1054,10 @@ final class AgentLiveActivityManager {
     @available(iOS 16.2, *)
     @discardableResult
     private func _endActivity() -> [Task<Void, Never>] {
+        // Invalidate any renewal suspended in ActivityKit before clearing state.
+        lifecycleGeneration = UUID()
+        pendingStartState = nil
+        pendingStartGeneration = nil
         awaitingDismissal = false
         isFinishing = false
         lastPushedState = nil

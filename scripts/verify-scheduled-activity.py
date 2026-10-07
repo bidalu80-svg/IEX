@@ -35,7 +35,7 @@ check('ScheduledTaskActivityPolicy.activeIDs' in keep, 'real chat and scheduler 
 check('SessionActivityTracker.shared.' not in policy, 'scheduler policy never mutates real chat locks')
 check('self.reevaluate(sessions: self.liveActivitySessionIDs, enabled: self.enhancedBackgroundEnabled)' in keep, 'delayed reevaluation reads current ownership, not stale toggle snapshot')
 check('AgentLiveActivityManager.shared.updateActivity(sessions: buildSessionSnapshots(), immediately: true)' in keep, 'enable/disable membership updates bypass presentation throttle')
-check('guard isActive || !scheduledTaskActivities.isEmpty' in keep, 'waiting schedules can update live presentation without silently changing enhanced-background setting')
+check('guard !liveActivitySessionIDs.isEmpty' in keep, 'waiting schedules can update live presentation without silently changing enhanced-background setting')
 check('let shouldBeActive = !sessions.isEmpty && enabled' in keep, 'runtime still respects enhanced-background opt-in')
 check('if sessions.isEmpty && (hadRuntime || hadUpdateTimer)' in keep and 'AgentLiveActivityManager.shared.endActivity()' in keep, 'last owner removal ends activity; unrelated owners remain')
 finish = live[live.index('func finishActivity('):live.index('func handleSessionDeleted(')]
@@ -51,4 +51,9 @@ for key in ['定时任务执行中', '下次执行：%@', '等待定时执行', 
     check(unit.get('state') == 'translated' and bool(unit.get('value')), 'Chinese live key: ' + key)
 workflow = source('.github/workflows/build.yml')
 check('scripts/ScheduledTaskActivityTests.swift' in workflow and 'scheduled-activity-structure.log' in workflow, 'actual Swift ownership tests and evidence wired to CI')
+check('lifecycleGeneration = UUID()\n        pendingStartState = nil\n        pendingStartGeneration = nil' in live, 'end/start invalidates asynchronous renewals and pending restart')
+check('guard self.canResumeActivity(generation: generation) else { return }' in live and 'let freshState = self.currentOwnershipState()' in live, 'renewal rechecks generation/owners and rebuilds state after await')
+check('guard !BackgroundKeepAliveManager.shared.liveActivitySessionIDs.contains(sessionId)' in live, 'late completion cannot mark a new active turn completed')
+check('for sid in activeSids { completedSessionSnapshots.removeValue(forKey: sid) }' in live, 'current active snapshot wins over stale completion cache')
+check('if !sessions.isEmpty {' in keep, 'remaining chat keeps live timer even when enhanced background is off')
 print(f'Structural checks passed: {checks}')
