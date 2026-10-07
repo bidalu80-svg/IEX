@@ -37,11 +37,19 @@ struct GitHubConnectorView: View {
 
             Section("已登录账号") {
                 if store.accounts.isEmpty {
-                    ContentUnavailableView {
-                        Label("还没有 GitHub 账号", systemImage: "person.crop.circle")
-                    } description: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.secondary)
+                        Text("还没有 GitHub 账号")
+                            .font(.headline)
                         Text("点击上方按钮添加一个或多个账号。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
                 } else {
                     ForEach(store.accounts) { account in
                         HStack(spacing: 12) {
