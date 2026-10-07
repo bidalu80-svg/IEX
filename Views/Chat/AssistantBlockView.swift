@@ -1080,6 +1080,70 @@ private struct ThinkingDurationLabel: View {
 
 /// A single composited sweep replaces the former 30 FPS, three-dot Canvas.
 /// Semantic label colors retain contrast in both light and dark appearances.
+/// A deliberately 12pt footprint: the 60Hz timeline invalidates only this
+/// tiny composited glyph, never the surrounding message row.
+private struct JellyThinkingGlyph: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var startedAt = Date()
+
+    private let size: CGFloat = 12
+    private let period: TimeInterval = 1.35
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
+            let phase = reduceMotion ? CGFloat(0.35) : phase(at: timeline.date)
+            let wave = 0.5 - 0.5 * cos(phase * 2 * .pi)
+            let width = 8.5 + 3.5 * wave
+            let corner = 2.0 + 4.0 * wave
+            let lift = 1.0 + 0.035 * sin(phase * 2 * .pi)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.34 : 0.74),
+                                Color.cyan.opacity(colorScheme == .dark ? 0.30 : 0.43),
+                                Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.26)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: corner, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(colorScheme == .dark ? 0.84 : 0.96),
+                                        .cyan.opacity(colorScheme == .dark ? 0.48 : 0.70),
+                                        .white.opacity(colorScheme == .dark ? 0.34 : 0.62)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.9
+                            )
+                    }
+                    .frame(width: width, height: size)
+                    .shadow(color: .cyan.opacity(colorScheme == .dark ? 0.28 : 0.18), radius: 3, y: 1)
+                    .scaleEffect(lift)
+            }
+            .frame(width: size + 3, height: size, alignment: .center)
+            .compositingGroup()
+        }
+        .frame(width: size + 3, height: size)
+        .accessibilityHidden(true)
+        .onAppear { startedAt = Date() }
+    }
+
+    private func phase(at date: Date) -> CGFloat {
+        let elapsed = date.timeIntervalSince(startedAt)
+        return CGFloat((elapsed / period).truncatingRemainder(dividingBy: 1))
+    }
+}
+
 struct TypingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -1099,11 +1163,13 @@ struct TypingIndicator: View {
     }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            labelText
-                .foregroundStyle(ChatColors.secondaryText)
+        HStack(spacing: 4) {
+            JellyThinkingGlyph()
+            ZStack(alignment: .leading) {
+                labelText
+                    .foregroundStyle(ChatColors.secondaryText)
 
-            if !reduceMotion {
+                if !reduceMotion {
                 TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startedAt)
                     let phase = CGFloat((elapsed / ChatShimmerStyle.sweepDuration).truncatingRemainder(dividingBy: 1.0))
@@ -1115,6 +1181,7 @@ struct TypingIndicator: View {
                         .mask(sweepMask(phase: phase))
                         .accessibilityHidden(true)
                 }
+            }
             }
         }
         .fixedSize(horizontal: true, vertical: false)

@@ -337,3 +337,10 @@ git status --short
 - `ScheduledTaskStore`：终态记录单删/批清、关闭即取消执行、持久化后同步调度所有权。
 - `BackgroundKeepAliveManager` / `AgentLiveActivityManager`：合并聊天和调度所有权，复用既有后台及实况功能，不伪造会话锁。
 - `scripts/ScheduledTaskActivityTests.swift` / `scripts/verify-scheduled-activity.py`：纯 Swift 状态测试及整链结构检查。
+
+## v1.0.9 (5) 思考动画与模型定时任务工具
+
+- `Views/Chat/AssistantBlockView.swift`：12pt 60fps 果冻等待图标，浅蓝泛白半透明外圈。
+- `Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift`：模型创建/查看/启停/删除定时任务。
+- `scripts/verify-agent-scheduled-tools.py`：工具接线与动画性能结构检查。
+- 构建号由 4 升级为 5。

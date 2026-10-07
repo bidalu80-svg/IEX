@@ -722,6 +722,14 @@ extension AIChatViewModel {
             }
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }
 
+        case "scheduled_task_create", "scheduled_task_list", "scheduled_task_set_enabled", "scheduled_task_delete":
+            let result = executeScheduledTaskAgentTool(name: tu.name, arguments: toolArgs)
+            toolOutput = result.output
+            toolSuccess = result.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

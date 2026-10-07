@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "创建失败：没有可用的当前模型。请先在设置中配置并启用一个支持文本输出的模型。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "创建失败：没有可用的当前模型。请先在设置中配置并启用一个支持文本输出的模型。"}}}} ,
+    "当前没有定时任务。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "当前没有定时任务。"}}}} ,
+    "操作失败：找不到这个定时任务ID。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "操作失败：找不到这个定时任务ID。"}}}} ,
+    "已删除定时任务：%@。运行记录和关联对话仍保留。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已删除定时任务：%@。运行记录和关联对话仍保留。"}}}} ,
+
     "%lld个任务" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "%lld个任务"}}}} ,
     "下次执行：%@" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "下次执行：%@"}}}} ,
     "仅删除这条运行记录，定时任务和关联对话都会保留。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "仅删除这条运行记录，定时任务和关联对话都会保留。"}}}} ,

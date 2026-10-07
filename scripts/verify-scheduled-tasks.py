@@ -38,7 +38,7 @@ check("processing" in plist["UIBackgroundModes"], "processing background mode de
 project = source("Ze.xcodeproj/project.pbxproj")
 versions = re.findall(r"MARKETING_VERSION = ([^;]+);", project)
 check(len(versions) == 12 and set(versions) == {"1.0.9"}, "all 12 app/extension/test configurations use v1.0.9")
-check(set(re.findall(r"CURRENT_PROJECT_VERSION = ([^;]+);", project)) == {"4"}, "all build numbers are 4")
+check(set(re.findall(r"CURRENT_PROJECT_VERSION = ([^;]+);", project)) == {"5"}, "all build numbers are 5")
 for path in paths:
     name = Path(path).name
     check(project.count(f"/* {name} in Sources */") == 2 and f'path = "{path}";' in project, f"Xcode source membership: {name}")

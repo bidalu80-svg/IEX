@@ -42,6 +42,12 @@ jobs:
           "$RUNNER_TEMP/consecutive-tool-tests" | tee consecutive-tool-tests.log
           xcrun swiftc -frontend -parse Agent/MessageList/CollectionViewMessageListV3.swift Views/Chat/ConsecutiveToolCallsHeader.swift Views/Chat/ChatMessageViews.swift Views/Chat/AssistantBlockView.swift
 
+      - name: Test model-created scheduled tasks and thinking glyph
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-agent-scheduled-tools.py | tee agent-scheduled-tools-structure.log
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift
+
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
@@ -496,3 +502,4 @@ jobs:
             consecutive-tool-tests.log
             tool-collapse-structure.log
             scheduled-activity-structure.log
+            agent-scheduled-tools-structure.log
