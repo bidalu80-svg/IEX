@@ -34,11 +34,13 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.ze.app.liveactivity-refresh</string>
+		<string>com.ze.app.scheduled-tasks</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>fetch</string>
+		<string>processing</string>
 		<string>location</string>
 		<string>remote-notification</string>
 	</array>

@@ -134,7 +134,7 @@ extension AIChatViewModel {
 
     /// For UI, we merge consecutive assistant + tool-result turns into a single ChatMessage,
     /// matching how they appeared during the live session.
-    func loadSession() async {
+    func loadSession(activate: Bool = true) async {
         guard let sessionId else { return }
 
         let sinceAppear = (CFAbsoluteTimeGetCurrent() - Self.onAppearTimestamp) * 1000
@@ -169,12 +169,12 @@ extension AIChatViewModel {
         let stack = Thread.callStackSymbols.prefix(10).joined(separator: " | ")
         logger.info("[ReloadTrace] loadSession() → spinner ON sid=\(sessionId.prefix(8)) callerStack=\(stack)")
 
-        Self.activeSessionId = sessionId
+        if activate { Self.activeSessionId = sessionId }
         // [T-ios-session-unread-badge] Opening the session reads its new message,
         // so clear the transient red "unread" dot. Only `.unread` is removed; the
         // `.paused` entry (a different concern) is left to its canResume-driven
         // lifecycle below.
-        SessionBadgeStore.shared.remove(.unread, for: sessionId)
+        if activate { SessionBadgeStore.shared.remove(.unread, for: sessionId) }
         // [T-session-paused-badge-active-false-positive] No clear-on-open here:
         // merely opening an interrupted session doesn't resolve it. The PAUSED
         // badge is driven by `canResume` (AIChatViewModel's canResume didSet) —
@@ -954,7 +954,7 @@ extension AIChatViewModel {
 
     /// Creates a session if needed and returns its ID.
     @discardableResult
-    func ensureSessionReturningId() async -> String {
+    func ensureSessionReturningId(activate: Bool = true) async -> String {
         if let sid = sessionId {
             logger.info("🔑DRAFT [vm=\(self.vmInstanceId)] ensureSession already has sessionId=\(sid)")
             return sid
@@ -962,7 +962,7 @@ extension AIChatViewModel {
         let model = selectedModel
         let session = await ChatStore.shared.createSession(modelId: model.id, source: sessionSource)
         sessionId = session.id
-        Self.activeSessionId = session.id
+        if activate { Self.activeSessionId = session.id }
         // [T-memory-enabled-new-session-bug] Sync the @Published memoryEnabled
         // to the value createSession just persisted from the global default.
         // A draft VM initializes memoryEnabled = true and never runs

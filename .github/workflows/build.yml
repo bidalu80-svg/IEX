@@ -21,6 +21,13 @@ jobs:
           xcode-select -p
           xcodebuild -version
 
+      - name: Test scheduled-task calendar and persistence
+        run: |
+          set -euo pipefail
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Agent/Background/ScheduledTaskModels.swift scripts/ScheduledTaskTests.swift -o "$RUNNER_TEMP/scheduled-task-tests"
+          "$RUNNER_TEMP/scheduled-task-tests" | tee scheduled-task-tests.log
+          xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Settings/ScheduledTasksView.swift
+
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
@@ -433,7 +440,7 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.8"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.9"
           test -f "$APP_AUDIT/Assets.car"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
@@ -468,4 +475,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            scheduled-task-tests.log

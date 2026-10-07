@@ -548,7 +548,7 @@ struct ContentView: View {
         .sheet(item: $activeToolSheet) { sheet in
             switch sheet {
             case .settings:
-                SettingsSheet(showTerminal: $showTerminal)
+                SettingsSheet(showTerminal: $showTerminal, currentSessionId: selectedSessionId.flatMap { Self.isNewSessionId($0) ? newSessionRealId : $0 })
             case .rootfsManagement:
                 NavigationStack {
                     RootfsManagementView()
@@ -5245,6 +5245,7 @@ private enum SettingsDestination: Hashable {
 
 private struct SettingsSheet: View {
     @Binding var showTerminal: Bool
+    var currentSessionId: String?
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
@@ -5298,6 +5299,11 @@ private struct SettingsSheet: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        ScheduledTasksView(currentSessionId: currentSessionId)
+                    } label: {
+                        Label("定时任务", systemImage: "clock")
+                    }
                     NavigationLink {
                         SubAgentSettingsView()
                     } label: {

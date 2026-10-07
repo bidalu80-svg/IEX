@@ -312,3 +312,12 @@ git status --short
 - 敏感数据不得写日志；网络错误可以保留服务端错误码，但前缀必须本地化。
 - 涉及持久化、同步、备份或协议格式的修改必须考虑旧数据和回滚路径。
 - 完成后记录提交、CI Run、验证命令和产物位置，方便后续追踪。
+
+## v1.0.9 定时任务
+
+- `Agent/Background/ScheduledTaskModels.swift`：日历重复算法、截止日、原子持久化、领取/中断恢复状态转换。
+- `Agent/Background/ScheduledTaskStore.swift`：前台/系统后台调度、串行执行、会话/模型校验、运行记录与取消。
+- `Views/Settings/ScheduledTasksView.swift`：中文任务列表、运行详情、新建/编辑、模型选择。
+- `scripts/ScheduledTaskTests.swift`：独立 Swift 日历边界/持久化测试，在 CI 编译前执行。
+- `scripts/verify-scheduled-tasks.py`：本地结构、本地化和构建版本校验。
+- 详细策略及真机验收见 `docs/scheduled-tasks-v1.0.9.md`。

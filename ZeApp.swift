@@ -279,6 +279,7 @@ struct ZeApp: App {
                     shareCoordinator.checkForPendingShare()
                     // Set up background keep-alive manager
                     BackgroundKeepAliveManager.shared.setup()
+                    ScheduledTaskStore.shared.start()
                     // Monitor network changes to keep iSH DNS up to date
                     NetworkMonitor.shared.start()
                     // Register FileProvider domain for shared files

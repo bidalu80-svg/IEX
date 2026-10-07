@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // the wrong (new) session. The .onAppear registration in ZeApp
         // remains as an idempotent backstop.
         ShortcutNotificationDelegate.shared.register()
+        ScheduledTaskStore.shared.registerBackgroundTask()
 
         // Refresh the dynamic shortcut list every cold launch. The
         // items themselves are stable, but their localized titles
