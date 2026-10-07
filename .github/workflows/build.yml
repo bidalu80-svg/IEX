@@ -461,7 +461,7 @@ jobs:
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.0.9"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "4"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "5"
           test -f "$APP_AUDIT/Assets.car"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
