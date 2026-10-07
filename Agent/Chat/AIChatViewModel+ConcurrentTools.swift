@@ -730,6 +730,14 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
+        case "session_list", "session_delete":
+            let result = await executeSessionAgentTool(name: tu.name, arguments: toolArgs)
+            toolOutput = result.output
+            toolSuccess = result.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

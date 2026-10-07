@@ -54,6 +54,9 @@ extension Notification.Name {
     static let sessionDidCreate = Notification.Name("sessionDidCreate")
     /// Posted when a session's title or messages are updated.
     static let sessionDidUpdate = Notification.Name("sessionDidUpdate")
+    /// Posted after a local session and all of its database rows are deleted.
+    /// `object` is the session ID (`String`).
+    static let sessionDidDelete = Notification.Name("sessionDidDelete")
     /// Posted when an agent loop ends on a VM that is not the currently-displayed one.
     /// `object` is the session ID (`String`). Allows the active VM to reload from DB.
     static let sessionAgentLoopDidEnd = Notification.Name("sessionAgentLoopDidEnd")

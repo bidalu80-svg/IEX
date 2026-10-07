@@ -2152,6 +2152,7 @@ actor ChatStore {
         // 30-day TTL on launch (ids are UUIDs, so it never blocks a real
         // future session).
         recordDeletedSessionTombstone(id)
+        NotificationCenter.default.post(name: .sessionDidDelete, object: id)
     }
 
     /// Hard-delete a session and its children locally without queuing any

@@ -496,6 +496,20 @@ struct ContentView: View {
                 refreshSessionList()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .sessionDidDelete)) { note in
+            guard let deletedId = note.object as? String else { return }
+            Task { @MainActor in
+                if isSessionHighlighted(deletedId) {
+                    selectedSessionId = nil
+                }
+                ViewModelCache.shared.remove(sessionId: deletedId)
+                BrowserUseOffloadBridge.releasePool(forSession: deletedId)
+                withAnimation {
+                    sessions.removeAll { $0.id == deletedId }
+                }
+                refreshSessionList()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .moveInputToSession)) { note in
             guard let targetId = (note.userInfo as? [String: String])?["targetId"] else { return }
             // Skip navigation if the target session is already visible

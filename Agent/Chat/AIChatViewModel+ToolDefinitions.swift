@@ -219,11 +219,139 @@ extension AIChatViewModel {
         // Remote SSH/SFTP is deliberately a distinct, opt-in tool family.
         // The gateway publishes only per-server AI-authorized metadata and
         // never exposes credentials or Keychain material to the model.
+        tools.append(contentsOf: sessionAgentToolDefinitions())
         tools.append(contentsOf: scheduledTaskAgentToolDefinitions())
         tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
         tools.append(contentsOf: GitHubAIToolGateway.definitions())
 
         return tools
+    }
+
+    // MARK: - Local Session Tools
+
+    func sessionAgentToolDefinitions() -> [AgentToolDefinition] {
+        [
+            AgentToolDefinition(
+                name: "session_list",
+                description: "列出 Ze 本机保存的会话，返回会话 ID、标题、更新时间、归档状态和是否允许删除。需要操作其他会话时先调用此工具确认目标，不要猜测 session_id。",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "显示给用户的简短操作标题"),
+                    "keyword": AgentToolParam(type: .string, description: "可选的标题或会话 ID 过滤关键词"),
+                    "limit": AgentToolParam(type: .integer, description: "可选的最大返回数量，默认 50，最大 100"),
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "keyword", "limit"]
+            ),
+            AgentToolDefinition(
+                name: "session_delete",
+                description: "永久删除一个本机会话及其消息、媒体、会话文件和浏览器持久化数据。此操作不可撤销，执行前一定会弹出确认并等待用户明确允许；只能删除 session_list 返回的本地会话，不能删除远程只读会话或当前正在进行工具调用的会话。",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "显示给用户的简短操作标题"),
+                    "session_id": AgentToolParam(type: .string, description: "session_list 返回的本地会话 UUID"),
+                ],
+                required: ["tool_title", "session_id"],
+                propertyOrdering: ["tool_title", "session_id"]
+            ),
+        ]
+    }
+
+    struct SessionAgentToolResult {
+        let output: String
+        let success: Bool
+    }
+
+    func executeSessionAgentTool(name: String, arguments: [String: Any]) async -> SessionAgentToolResult {
+        switch name {
+        case "session_list":
+            let keyword = (arguments["keyword"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let requestedLimit: Int = {
+                if let value = arguments["limit"] as? Int { return value }
+                if let value = arguments["limit"] as? NSNumber { return value.intValue }
+                return 50
+            }()
+            let limit = min(max(requestedLimit, 1), 100)
+            let sessions = await ChatStore.shared.listSessions()
+                .filter { session in
+                    guard !keyword.isEmpty else { return true }
+                    return session.id.lowercased().contains(keyword)
+                        || (session.title?.lowercased().contains(keyword) ?? false)
+                }
+                .prefix(limit)
+
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let rows: [[String: Any]] = sessions.map { session in
+                [
+                    "session_id": session.id,
+                    "title": session.title ?? "未命名会话",
+                    "updated_at": formatter.string(from: session.updatedAt),
+                    "created_at": formatter.string(from: session.createdAt),
+                    "archived": session.isArchived,
+                    "remote_read_only": session.isRemote,
+                    "deletable": !session.isRemote && session.id != self.sessionId,
+                    "preview": String((session.lastMessage ?? "").prefix(200)),
+                ]
+            }
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: [
+                    "sessions": rows,
+                    "count": rows.count,
+                    "total_matching_limit": sessions.count == limit ? "可能还有更多，请增加 limit 或使用 keyword" : "已返回全部匹配会话",
+                ],
+                options: [.sortedKeys]
+            ), let output = String(data: data, encoding: .utf8) else {
+                return .init(output: "会话列表序列化失败。", success: false)
+            }
+            return .init(output: output, success: true)
+
+        case "session_delete":
+            let id = (arguments["session_id"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
+                return .init(output: "删除失败：session_id 不能为空。请先调用 session_list。", success: false)
+            }
+            guard let session = (await ChatStore.shared.listSessions()).first(where: { $0.id == id }) else {
+                return .init(output: "删除失败：找不到本地会话 \(id)。请先调用 session_list 获取最新会话 ID。", success: false)
+            }
+            guard !session.isRemote else {
+                return .init(output: "删除失败：这是其他设备同步来的远程只读会话，不能从当前设备删除。", success: false)
+            }
+            guard id != self.sessionId else {
+                return .init(output: "删除失败：当前正在进行的会话不能由其中的模型删除，请从其他会话或设置中的会话列表操作。", success: false)
+            }
+
+            let title = session.title ?? "未命名会话"
+            let detail = "会话：\(title)\n会话 ID：\(id)\n将永久删除聊天消息、媒体文件、会话目录和浏览器持久化数据。此操作不可撤销。"
+            guard await RemoteServerAIConfirmationGate.shared.request(
+                serverName: "本机 Ze 会话",
+                operation: "删除会话",
+                detail: detail,
+                isDestructive: true
+            ) else {
+                return .init(output: "用户拒绝了删除会话操作。除非用户再次明确要求，不要重试。", success: false)
+            }
+
+            await ChatStore.shared.deleteSession(id)
+            ViewModelCache.shared.remove(sessionId: id)
+            BrowserUseOffloadBridge.releasePool(forSession: id)
+            Self.deletePersistentSessionFiles(id)
+            return .init(output: "已永久删除会话“\(title)”（\(id)），其消息、媒体、会话文件和浏览器数据已清理。", success: true)
+
+        default:
+            return .init(output: "未知会话操作。", success: false)
+        }
+    }
+
+    private static func deletePersistentSessionFiles(_ sessionId: String) {
+        let fm = FileManager.default
+        guard let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let sessionDirectory = library
+            .appendingPathComponent("ZeChat/ze", isDirectory: true)
+            .appendingPathComponent(sessionId, isDirectory: true)
+        try? fm.removeItem(at: sessionDirectory)
+        BrowserTabPool.deletePersistedData(for: sessionId)
     }
 
 }

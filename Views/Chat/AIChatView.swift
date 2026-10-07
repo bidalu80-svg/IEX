@@ -770,7 +770,7 @@ struct AIChatView: View {
             Text(String(localized: "This will delete all local messages for this chat and re-download them from iCloud. Local changes that haven't synced yet will be lost. Continue?"))
         }
         .confirmationDialog(
-            "允许 AI 操作远程服务器？",
+            "允许 AI 执行此操作？",
             isPresented: Binding(
                 get: { remoteServerAIGate.pending != nil },
                 set: { if !$0 { remoteServerAIGate.resolve(allowed: false) } }
@@ -787,7 +787,7 @@ struct AIChatView: View {
             }
         } message: {
             if let request = remoteServerAIGate.pending {
-                Text("服务器：\(request.serverName)\n操作：\(request.operation)\n\n\(request.detail)")
+                Text("对象：\(request.serverName)\n操作：\(request.operation)\n\n\(request.detail)")
             }
         }
         .modifier(RemoteServerAIDraftPresentationModifier())

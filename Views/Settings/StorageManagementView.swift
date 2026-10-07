@@ -14,6 +14,7 @@ class StorageManagementViewModel: ObservableObject {
     @Published var chatDatabaseSize: Int64 = 0
     @Published var sessions: [SessionStorage] = []
     @Published var isLoading = true
+    @Published private(set) var deletingSessionIDs = Set<String>()
 
     private let fm = FileManager.default
     private let formatter: ByteCountFormatter = {
@@ -111,6 +112,7 @@ class StorageManagementViewModel: ObservableObject {
 
 struct StorageManagementView: View {
     @StateObject private var vm = StorageManagementViewModel()
+    @State private var sessionToDelete: StorageManagementViewModel.SessionStorage?
 
     var body: some View {
         List {
@@ -143,6 +145,13 @@ struct StorageManagementView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                sessionToDelete = session
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -150,6 +159,16 @@ struct StorageManagementView: View {
         .navigationTitle("存储")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { vm.load() }
+        .alert(item: $sessionToDelete) { session in
+            Alert(
+                title: Text("删除会话？"),
+                message: Text("将删除“\(session.title ?? "未命名")”的聊天内容和会话文件，此操作无法撤销。"),
+                primaryButton: .destructive(Text("删除")) {
+                    vm.deleteSession(session)
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        }
     }
 
     private func storageRow(icon: String, color: Color, label: String, value: String) -> some View {
@@ -164,6 +183,35 @@ struct StorageManagementView: View {
             Text(value)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private extension StorageManagementViewModel {
+    @MainActor
+    func deleteSession(_ session: SessionStorage) {
+        guard !deletingSessionIDs.contains(session.id) else { return }
+
+        let sessionId = session.id
+        deletingSessionIDs.insert(sessionId)
+        sessions.removeAll { $0.id == sessionId }
+
+        Task { @MainActor [weak self] in
+            await ChatStore.shared.deleteSession(sessionId)
+            Self.deletePersistentSessionFiles(sessionId)
+            self?.deletingSessionIDs.remove(sessionId)
+            self?.load()
+        }
+    }
+
+    @MainActor
+    private static func deletePersistentSessionFiles(_ sessionId: String) {
+        let fm = FileManager.default
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        let sessionDirectory = library
+            .appendingPathComponent("ZeChat/ze", isDirectory: true)
+            .appendingPathComponent(sessionId, isDirectory: true)
+        try? fm.removeItem(at: sessionDirectory)
+        BrowserTabPool.deletePersistedData(for: sessionId)
     }
 }
 
