@@ -50,4 +50,5 @@ struct AssistantMenuKey: Equatable {
 struct ToolMenuKey: Equatable {
     let blockId: UUID
     let isProcessing: Bool
+    var hasCopyScreenshot: Bool = false
 }

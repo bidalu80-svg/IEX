@@ -19,6 +19,26 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     /// Used by `waitIfBackgroundSuspended()` to skip suspension.
     @Published private(set) var isActive = false
 
+    /// Enabled schedules lease the same background engine as chat, without
+    /// pretending a future scheduled run is an actively locked conversation.
+    private var scheduledTaskActivities: [ScheduledTaskActivityDescriptor] = []
+
+    var liveActivitySessionIDs: Set<String> {
+        ScheduledTaskActivityPolicy.activeIDs(chatIDs: SessionActivityTracker.shared.activeSessions,
+                                             descriptors: scheduledTaskActivities)
+    }
+
+    func setScheduledTaskActivities(_ descriptors: [ScheduledTaskActivityDescriptor]) {
+        setup()
+        guard descriptors != scheduledTaskActivities else { return }
+        scheduledTaskActivities = descriptors
+        reevaluate(sessions: liveActivitySessionIDs, enabled: enhancedBackgroundEnabled)
+        if !liveActivitySessionIDs.isEmpty {
+            AgentLiveActivityManager.shared.updateActivity(sessions: buildSessionSnapshots(), immediately: true)
+        }
+    }
+
+
     /// [T-keepalive-survival-tier] Background-survival capability shown in
     /// Settings → Background → Status. Independent of whether a task is
     /// running right now — it answers "if the app backgrounds at this moment,
@@ -274,7 +294,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     private func logLifecycleSnapshot(_ transition: String) {
         lastLifecycle = transition
         lastLifecycleAt = Date()
-        let sessions = SessionActivityTracker.shared.activeSessions.count
+        let sessions = liveActivitySessionIDs.count
         let shellRunning = ShellCommandRingBuffer.hasRunningCommand
         let bgTask = isActive
         let remaining = UIApplication.shared.backgroundTimeRemaining
@@ -432,7 +452,8 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         .receive(on: DispatchQueue.main)
         .sink { [weak self] sessions, enabled in
             guard let self else { return }
-            self.reevaluate(sessions: sessions, enabled: enabled)
+            // Read the current union rather than a queued pre-toggle value.
+            self.reevaluate(sessions: self.liveActivitySessionIDs, enabled: self.enhancedBackgroundEnabled)
         }
         .store(in: &cancellables)
 
@@ -513,7 +534,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                     let shouldResume = opts?.contains(.shouldResume) ?? false
                     self.lastAudioInterruption = "ended"
                     self.lastAudioInterruptionAt = Date()
-                    logger.info("[BKA][Interrupt] ended — shouldResume=\(shouldResume) sessions=\(SessionActivityTracker.shared.activeSessions.count) bg=\(self.appIsInBackground)")
+                    logger.info("[BKA][Interrupt] ended — shouldResume=\(shouldResume) sessions=\(self.liveActivitySessionIDs.count) bg=\(self.appIsInBackground)")
                     // 0.5s grace so the foreign session fully releases before we
                     // re-acquire .playback.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -563,10 +584,10 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
            let reason = AVAudioSession.RouteChangeReason(rawValue: raw) {
             let outs = AVAudioSession.sharedInstance().currentRoute.outputs
                 .map { $0.portType.rawValue }.joined(separator: "+")
-            logger.info("[BKA][RouteChange] reason=\(reason) newRoute=\(outs.isEmpty ? "none" : outs) sessions=\(SessionActivityTracker.shared.activeSessions.count) bg=\(self.appIsInBackground)")
+            logger.info("[BKA][RouteChange] reason=\(reason) newRoute=\(outs.isEmpty ? "none" : outs) sessions=\(self.liveActivitySessionIDs.count) bg=\(self.appIsInBackground)")
         }
 
-        let sessionCount = SessionActivityTracker.shared.activeSessions.count
+        let sessionCount = liveActivitySessionIDs.count
         let wantsKeepAlive = isActive && backgroundSpeakEnabled
             && appIsInBackground && silentAudioSuspendCount == 0 && sessionCount > 0
         guard wantsKeepAlive else { return }
@@ -598,7 +619,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     /// believe `silentAudioActive == true`, which prevents `evaluateSilentAudio`
     /// from restarting it.
     private func handleAudioInterruptionEnded() {
-        let sessionCount = SessionActivityTracker.shared.activeSessions.count
+        let sessionCount = liveActivitySessionIDs.count
         logger.info("[BackgroundKeepAlive] Audio session interruption ended — bg=\(self.appIsInBackground) sessions=\(sessionCount) playing=\(self.silentAudioActive)")
         // The engine may have been stopped silently by iOS while we still
         // believe `silentAudioActive == true`, which would block
@@ -704,11 +725,13 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         if pendingForegroundTransition {
             Task { @MainActor in
                 await Task.yield()
-                self.reevaluate(sessions: sessions, enabled: enabled)
+                self.reevaluate(sessions: self.liveActivitySessionIDs, enabled: self.enhancedBackgroundEnabled)
             }
             return
         }
 
+        let hadRuntime = isActive
+        let hadUpdateTimer = updateTimer != nil
         let shouldBeActive = !sessions.isEmpty && enabled
         let sessionList = sessions.prefix(5).joined(separator: ",")
         // [T-ios-log-noise-reduction] INFO→DEBUG: reevaluate runs on every
@@ -721,14 +744,11 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         if shouldBeActive && !isActive {
             logger.info("[BackgroundKeepAlive] Activating keep-alive (sessions=\(sessions.count))")
             isActive = true
-            AgentLiveActivityManager.shared.startActivity(sessions: buildSessionSnapshots())
-            startUpdateTimer()
             evaluateLocationUpdates()
             evaluateBackgroundActivitySession()
             evaluateSilentAudio(caller: "reevaluate-activate")
         } else if !shouldBeActive && isActive {
             logger.info("[BackgroundKeepAlive] Deactivating keep-alive")
-            stopUpdateTimer()
             isActive = false
             // [T-ios-live-activity-finish-immediately] STOP LOCATION FIRST, fully, before
             // touching the Live Activity. The old order (end Live Activity, then
@@ -741,9 +761,19 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             evaluateBackgroundActivitySession()
             retractOrphanedLocationSession(caller: "deactivate")
             evaluateSilentAudio(caller: "reevaluate-deactivate")
-            // The final task is complete, so remove the Live Activity from the
-            // Lock Screen / Dynamic Island immediately.
-            Task { await AgentLiveActivityManager.shared.finishActivity() }
+        }
+
+        // Presentation and background-runtime permission are separate. A
+        // schedule can appear on the island even if enhanced background is off;
+        // it does not silently opt the user into location/audio permissions.
+        if !sessions.isEmpty && (enabled || !scheduledTaskActivities.isEmpty) {
+            if updateTimer == nil { startUpdateTimer() }
+            AgentLiveActivityManager.shared.updateActivity(sessions: buildSessionSnapshots())
+        } else {
+            stopUpdateTimer()
+            if sessions.isEmpty && (hadRuntime || hadUpdateTimer) {
+                AgentLiveActivityManager.shared.endActivity()
+            }
         }
     }
 
@@ -1088,7 +1118,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         }
 
         let shouldPlay = isActive && backgroundSpeakEnabled && appIsInBackground && silentAudioSuspendCount == 0
-        let sessions = SessionActivityTracker.shared.activeSessions.count
+        let sessions = liveActivitySessionIDs.count
         let reason: String = {
             if !isActive { return "isActive=false" }
             if !backgroundSpeakEnabled { return "bgSpeak=false" }
@@ -1131,7 +1161,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     /// suspend, Background Speak turned off) is a genuine intent to stop, so we
     /// stop immediately.
     private func requestStopSilentAudio(transientForeground: Bool) {
-        let sessionCount = SessionActivityTracker.shared.activeSessions.count
+        let sessionCount = liveActivitySessionIDs.count
         let shouldDebounce = transientForeground && sessionCount > 0
         guard shouldDebounce else {
             cancelPendingSilentAudioStop(reason: "immediate stop")
@@ -1153,7 +1183,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             guard let self else { return }
             self.pendingSilentAudioStop = nil
             self.pendingStopScheduledAt = nil
-            let nowSessions = SessionActivityTracker.shared.activeSessions.count
+            let nowSessions = self.liveActivitySessionIDs.count
             // Re-check the world at fire time: if we went back to background (or
             // any other reason now keeps it playing), do NOT stop.
             let stillForeground = !self.appIsInBackground
@@ -1188,7 +1218,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         // Starting up means we definitely don't want any queued stop to fire.
         cancelPendingSilentAudioStop(reason: "startSilentAudio")
         let attempt = silentAudioActivationRetries + 1
-        let sessions = SessionActivityTracker.shared.activeSessions.count
+        let sessions = liveActivitySessionIDs.count
         logger.info("[BKA][Start] reason=\(reason) sessions=\(sessions) attempt=\(attempt)/\(Self.maxActivationRetries)")
         recordBKAEvent("Start(reason=\(reason),attempt=\(attempt))")
 
@@ -1321,7 +1351,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         cancelPendingSilentAudioStop(reason: "stopSilentAudio called")
         silentAudioActivationRetries = 0
         guard silentAudioActive else { return }
-        let sessions = SessionActivityTracker.shared.activeSessions.count
+        let sessions = liveActivitySessionIDs.count
         logger.info("[BKA][Stop] reason=\(reason) sessions=\(sessions)")
         recordBKAEvent("Stop(reason=\(reason))")
         stopAudioUpdateTimer()
@@ -1358,14 +1388,14 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     }
 
     func updateLiveActivityIfNeeded(source: String = "?") {
-        guard isActive else {
-            let cnt = SessionActivityTracker.shared.activeSessions.count
+        guard isActive || !scheduledTaskActivities.isEmpty else {
+            let cnt = liveActivitySessionIDs.count
             if cnt > 0 {
                 logger.info("[LiveActivity][update] SKIP src=\(source) isActive=false tracker=\(cnt) session(s)")
             }
             return
         }
-        let sessions = SessionActivityTracker.shared.activeSessions
+        let sessions = liveActivitySessionIDs
         let count = sessions.count
         let idList = sessions.map { $0.prefix(8) }.joined(separator: ",")
         let appState: String = {
@@ -1393,7 +1423,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     private func buildSessionSnapshots() -> [LiveSessionSnapshot] {
         guard #available(iOS 16.2, *) else { return [] }
         let tracker = SessionActivityTracker.shared
-        return tracker.activeSessions.sorted().map { sid in
+        let chats = tracker.activeSessions.sorted().map { sid in
             let info = tracker.sessionToolInfo[sid]
             let title = info?.title ?? ""
             let toolName = info?.toolName ?? ""
@@ -1417,6 +1447,21 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 loopIteration: info?.loopIteration ?? 0
             )
         }
+        let scheduled = ScheduledTaskActivityPolicy.visibleDescriptors(scheduledTaskActivities,
+            activeChatIDs: tracker.activeSessions).map { descriptor in
+            let status: String
+            if descriptor.isRunning {
+                status = String(localized: "定时任务执行中")
+            } else if let next = descriptor.nextRunAt {
+                let date = next.formatted(date: .abbreviated, time: .shortened)
+                status = String(localized: "下次执行：\(date)")
+            } else {
+                status = String(localized: "等待定时执行")
+            }
+            return LiveSessionSnapshot(sessionId: descriptor.activityID, title: descriptor.title,
+                toolIcon: "clock", toolStatus: status, loopIteration: 0)
+        }
+        return chats + scheduled
     }
 
     private var updateInterval: TimeInterval {

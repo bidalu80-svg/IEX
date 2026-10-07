@@ -11,6 +11,7 @@ struct ScheduledTasksView: View {
     @State private var editor: ScheduledTaskEditorRequest?
     @State private var selectedRun: ScheduledTaskRunSelection?
     @State private var pendingDelete: ScheduledTaskDefinition?
+    @State private var clearFinishedRunsPresented = false
     @State private var operationError: ScheduledTasksOperationError?
 
     var body: some View {
@@ -35,6 +36,18 @@ struct ScheduledTasksView: View {
         // Intentionally no NavigationStack or custom back button here.
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
+                if page == .runs {
+                    Button {
+                        clearFinishedRunsPresented = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(!store.runs.contains { $0.status != .running })
+                    .accessibilityLabel(Text("清除已结束记录"))
+                    .accessibilityHint(Text("仅清除已结束的运行记录，保留正在执行的记录、定时任务和对话"))
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: createTask) {
                     Image(systemName: "plus")
                 }
@@ -58,6 +71,13 @@ struct ScheduledTasksView: View {
             Button("取消", role: .cancel) { pendingDelete = nil }
         } message: { task in
             Text("删除“\(task.displayName)”后将停止后续调度，并同时取消此任务正在进行的执行。已有运行记录会保留。")
+        }
+        .confirmationDialog("清除已结束的运行记录？", isPresented: $clearFinishedRunsPresented,
+                            titleVisibility: .visible) {
+            Button("清除已结束记录", role: .destructive) { clearFinishedRuns() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("仅清除已结束的运行记录。正在执行的记录、定时任务和关联对话都会保留。")
         }
         .alert(item: $operationError) { error in
             Alert(
@@ -94,6 +114,11 @@ struct ScheduledTasksView: View {
                                 }
                             }
                             .padding(.vertical, 4)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if run.status != .running {
+                                    Button("删除记录", role: .destructive) { deleteRun(id: run.id) }
+                                }
+                            }
                         }
                     } footer: {
                         ScheduledTasksSchedulingNotice()
@@ -151,7 +176,7 @@ struct ScheduledTasksView: View {
                 }
             }
             .accessibilityLabel(Text("启用任务：\(task.displayName)"))
-            .accessibilityHint(Text("关闭后暂停后续调度，不会取消正在执行的任务"))
+            .accessibilityHint(Text("关闭后暂停后续调度、取消当前执行并结束对应实况，不影响其他任务或对话"))
 
             if !task.isEnabled {
                 Label("已暂停", systemImage: "pause.circle")
@@ -222,6 +247,30 @@ struct ScheduledTasksView: View {
         editor = ScheduledTaskEditorRequest(task: task, isEditing: true)
     }
 
+    private func deleteRun(id: UUID) {
+        // Recheck the current store value rather than a stale row snapshot.
+        guard store.runs.contains(where: { $0.id == id && $0.status != .running }) else { return }
+        do {
+            try store.deleteRun(id: id)
+        } catch {
+            operationError = ScheduledTasksOperationError(
+                message: String(localized: "删除运行记录失败，记录仍保留。请稍后重试。")
+            )
+        }
+    }
+
+    private func clearFinishedRuns() {
+        do {
+            // The store/model rechecks statuses at confirmation time. A run
+            // still executing is protected even if the dialog remained open.
+            try store.clearFinishedRuns()
+        } catch {
+            operationError = ScheduledTasksOperationError(
+                message: String(localized: "清除运行记录失败，记录仍保留。请稍后重试。")
+            )
+        }
+    }
+
     private func delete(_ task: ScheduledTaskDefinition) {
         do {
             try store.delete(id: task.id)
@@ -251,10 +300,14 @@ private struct ScheduledTasksOperationError: Identifiable {
 
 private struct ScheduledTasksSchedulingNotice: View {
     var body: some View {
-        Text("iOS 后台调度由系统决定，执行可能延后，不保证准点。恢复后，每个任务最多补执行一次，不会逐次补跑所有错过的计划。")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("iOS 后台调度由系统决定，执行可能延后，不保证准点。恢复后，每个任务最多补执行一次，不会逐次补跑所有错过的计划。")
+            Text("启用任务可显示灵动岛实况；后台持续执行沿用“增强后台运行”设置与系统权限，实况本身不保证准点或永久后台运行。")
+            Text("关闭任务会取消当前执行并结束对应实况，不影响其他任务或对话。")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -746,6 +799,7 @@ private struct ScheduledTaskRunDetailView: View {
     let runId: UUID
     @ObservedObject private var store = ScheduledTaskStore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var operationError: ScheduledTasksOperationError?
 
     private var run: ScheduledTaskRun? { store.runs.first { $0.id == runId } }
 
@@ -781,6 +835,12 @@ private struct ScheduledTaskRunDetailView: View {
                         } footer: {
                             Text("取消请求提交后，状态将在执行结束时更新。")
                         }
+                    } else {
+                        Section {
+                            Button("删除记录", role: .destructive) { deleteRun() }
+                        } footer: {
+                            Text("仅删除这条运行记录，定时任务和关联对话都会保留。")
+                        }
                     }
                     if let error = store.lastError {
                         Section {
@@ -801,6 +861,26 @@ private struct ScheduledTaskRunDetailView: View {
                     Button("关闭") { dismiss() }
                 }
             }
+            .alert(item: $operationError) { error in
+                Alert(
+                    title: Text("操作未完成"),
+                    message: Text(error.message),
+                    dismissButton: .default(Text("好"))
+                )
+            }
+        }
+    }
+
+    private func deleteRun() {
+        guard let current = run, current.status != .running else { return }
+        do {
+            try store.deleteRun(id: current.id)
+            dismiss()
+        } catch {
+            // Preserve the detail sheet on persistence failure.
+            operationError = ScheduledTasksOperationError(
+                message: String(localized: "删除运行记录失败，记录仍保留。请稍后重试。")
+            )
         }
     }
 }

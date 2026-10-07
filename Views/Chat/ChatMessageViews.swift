@@ -96,6 +96,7 @@ private struct PreviewContentSizeKey: PreferenceKey {
 // MARK: - Chat Message Row
 
 struct ChatMessageRow: View {
+    @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @ObservedObject var message: ChatMessage
     /// Only the actively streaming message needs vm access (for typing indicator & stop button).
     let isActiveMessage: Bool
@@ -502,6 +503,40 @@ struct ChatMessageRow: View {
 
     // MARK: Assistant Row
 
+    private func assistantBlock(_ block: AssistantBlock) -> some View {
+        AssistantBlockView(
+            block: block,
+            message: message,
+            isActiveMessage: isActiveMessage,
+            commandStartTime: commandStartTime,
+            onStop: onStop,
+            onTapBlank: message.usage != nil ? { windowPoint in
+                // Only respond to taps in the bottom 100pt of the message row
+                let bottomZoneTop = rowFrameInWindow.maxY - 100
+                let inZone = windowPoint.y >= bottomZoneTop
+                usageTapLogger.debug("[usageTap] windowPt=\(String(format: "%.0f,%.0f", windowPoint.x, windowPoint.y)) rowBottom=\(String(format: "%.0f", rowFrameInWindow.maxY)) zoneTop=\(String(format: "%.0f", bottomZoneTop)) inZone=\(inZone) showUsage=\(showUsage)")
+                guard inZone else { return }
+
+                if showUsage {
+                    withAnimation(.easeInOut(duration: 0.15)) { usageContentVisible = false }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        showUsage = false
+                    }
+                } else {
+                    showUsage = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        withAnimation(.easeInOut(duration: 0.2)) { usageContentVisible = true }
+                    }
+                }
+            } : nil,
+            onCopyScreenshot: onCopyScreenshot,
+            browserPool: browserPool,
+            toolSnapshots: toolSnapshots,
+            highlightedBlockId: $highlightedBlockId,
+            detailBlock: $detailBlock
+        )
+    }
+
     private var assistantRow: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Assistant label
@@ -517,38 +552,16 @@ struct ChatMessageRow: View {
                 AssistantTaskDurationView(duration: duration)
             }
 
-            ForEach(message.blocks) { block in
-                AssistantBlockView(
-                    block: block,
-                    message: message,
-                    isActiveMessage: isActiveMessage,
-                    commandStartTime: commandStartTime,
-                    onStop: onStop,
-                    onTapBlank: message.usage != nil ? { windowPoint in
-                        // Only respond to taps in the bottom 100pt of the message row
-                        let bottomZoneTop = rowFrameInWindow.maxY - 100
-                        let inZone = windowPoint.y >= bottomZoneTop
-                        usageTapLogger.debug("[usageTap] windowPt=\(String(format: "%.0f,%.0f", windowPoint.x, windowPoint.y)) rowBottom=\(String(format: "%.0f", rowFrameInWindow.maxY)) zoneTop=\(String(format: "%.0f", bottomZoneTop)) inZone=\(inZone) showUsage=\(showUsage)")
-                        guard inZone else { return }
-
-                        if showUsage {
-                            withAnimation(.easeInOut(duration: 0.15)) { usageContentVisible = false }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                showUsage = false
-                            }
-                        } else {
-                            showUsage = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                withAnimation(.easeInOut(duration: 0.2)) { usageContentVisible = true }
-                            }
-                        }
-                    } : nil,
-                    onCopyScreenshot: onCopyScreenshot,
-                    browserPool: browserPool,
-                    toolSnapshots: toolSnapshots,
-                    highlightedBlockId: $highlightedBlockId,
-                    detailBlock: $detailBlock
-                )
+            ForEach(AssistantBlockPresentationSegment.make(message.blocks, enabled: collapseConsecutiveToolCalls)) { segment in
+                if segment.isToolGroup, let first = segment.blocks.first {
+                    InlineConsecutiveToolCalls(firstBlock: first, blocks: segment.blocks, onCopyScreenshot: onCopyScreenshot, onCopyText: {
+                        UIPasteboard.general.string = message.blocks.filter { $0.kind == .text }.map(\.content).joined(separator: "\n\n")
+                    }) {
+                        ForEach(segment.blocks) { block in assistantBlock(block) }
+                    }
+                } else {
+                    ForEach(segment.blocks) { block in assistantBlock(block) }
+                }
             }
 
             // Typing indicator: show when waiting for first content, or when
@@ -860,3 +873,21 @@ struct AssistantTaskDurationView: View {
 }
 
 
+
+/// Keep disclosure observation local; ChatMessage does not republish block state.
+private struct InlineConsecutiveToolCalls<Content: View>: View {
+    @ObservedObject var firstBlock: AssistantBlock
+    let blocks: [AssistantBlock]
+    let onCopyScreenshot: (() -> Void)?
+    let onCopyText: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ConsecutiveToolCallsHeader(blocks: blocks, isExpanded: firstBlock.isToolGroupExpanded,
+                onToggle: { firstBlock.isToolGroupExpanded.toggle() },
+                onCopyScreenshot: onCopyScreenshot, onCopyText: onCopyText)
+            if firstBlock.isToolGroupExpanded { content() }
+        }
+    }
+}

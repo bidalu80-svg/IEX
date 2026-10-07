@@ -49,34 +49,34 @@ struct AssistantBlockView: View {
         case .shellTool:
             ToolCapsuleView(block: block, icon: "terminal", accentColor: .green,
                             commandStartTime: commandStartTime, onStop: onStop, browserPool: browserPool,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .fileReadTool:
             ToolCapsuleView(block: block, icon: "doc.text", accentColor: .cyan,
                             commandStartTime: commandStartTime, onStop: onStop,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .fileWriteTool:
             ToolCapsuleView(block: block, icon: "doc.text.fill", accentColor: .blue,
                             commandStartTime: commandStartTime, onStop: onStop,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .fileEditTool:
             ToolCapsuleView(block: block, icon: "square.and.pencil", accentColor: .orange,
                             commandStartTime: commandStartTime, onStop: onStop,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .browserTool:
             ToolCapsuleView(block: block, icon: "globe", accentColor: .blue,
                             commandStartTime: commandStartTime, onStop: onStop, browserPool: browserPool,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .readImageTool:
             ToolCapsuleView(block: block, icon: "photo", accentColor: .purple,
                             commandStartTime: commandStartTime, onStop: onStop,
-                            toolSnapshots: toolSnapshots, detailBlock: $detailBlock)
+                            toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .memoryTool:
             ToolCapsuleView(
                 block: block,
                 icon: block.kind.toolIconName,
                 accentColor: block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink,
                 commandStartTime: commandStartTime, onStop: onStop,
-                toolSnapshots: toolSnapshots, detailBlock: $detailBlock
+                toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock
             )
         case .info:
             let allLines = block.content.components(separatedBy: "\n").filter { !$0.isEmpty }
@@ -315,6 +315,7 @@ struct ToolCapsuleView: View {
     var onStop: (() -> Void)?
     var browserPool: BrowserTabPool?
     var toolSnapshots: [ToolSnapshotItem] = []
+    var onCopyScreenshot: (() -> Void)? = nil
     @Binding var detailBlock: AssistantBlock?
     @State private var dotsActive = false
     /// [T-tool-bg-suspended-hint] Drives the background-suspension info alert.
@@ -504,13 +505,19 @@ struct ToolCapsuleView: View {
                 // (blockId) and whether the Re-run branch is shown (isProcessing).
                 EquatableMenuGate(key: ToolMenuKey(
                     blockId: block.id,
-                    isProcessing: vm.isProcessing
+                    isProcessing: vm.isProcessing,
+                    hasCopyScreenshot: onCopyScreenshot != nil
                 )) {
                     // [T-ios-tool-bubble-longpress-menu]
                     Button {
                         UIPasteboard.general.string = toolDetailsClipboard
                     } label: {
                         Label(String(localized: "Copy Tool Details"), systemImage: "doc.on.doc")
+                    }
+                    if let onCopyScreenshot {
+                        Button(action: onCopyScreenshot) {
+                            Label(String(localized: "Copy Screenshot"), systemImage: "photo.on.rectangle")
+                        }
                     }
                     // [T-ios-retry-hide-when-processing] Only expose the
                     // destructive Re-run action when the agent loop is idle.

@@ -491,6 +491,9 @@
 		B10900000000000000000001 /* ScheduledTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000011 /* ScheduledTaskModels.swift */; };
 		B10900000000000000000002 /* ScheduledTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000012 /* ScheduledTaskStore.swift */; };
 		B10900000000000000000003 /* ScheduledTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000013 /* ScheduledTasksView.swift */; };
+		B10940000000000000000001 /* ConsecutiveToolCallsPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */; };
+		B10940000000000000000002 /* ConsecutiveToolCallsHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */; };
+		B10940000000000000000003 /* ScheduledTaskActivityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1122,6 +1125,9 @@
 		B10900000000000000000011 /* ScheduledTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskModels.swift"; sourceTree = SOURCE_ROOT; };
 		B10900000000000000000012 /* ScheduledTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskStore.swift"; sourceTree = SOURCE_ROOT; };
 		B10900000000000000000013 /* ScheduledTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/ScheduledTasksView.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/ConsecutiveToolCallsPolicy.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/ConsecutiveToolCallsHeader.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskActivityPolicy.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1925,6 +1931,9 @@
 				E5VMB0016 /* ChatLifecycleSupport.swift */,
 				E5VMB0017 /* ChatURLBrokerage.swift */,
 				ZESA0011 /* ZeSubAgentCoordinator.swift */,
+				B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */,
+				B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */,
+				B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */,
 				B10900000000000000000013 /* ScheduledTasksView.swift */,
 				B10900000000000000000012 /* ScheduledTaskStore.swift */,
 				B10900000000000000000011 /* ScheduledTaskModels.swift */,
@@ -2638,6 +2647,9 @@
 				E5VMB0006 /* ChatLifecycleSupport.swift in Sources */,
 				E5VMB0007 /* ChatURLBrokerage.swift in Sources */,
 				ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */,
+				B10940000000000000000001 /* ConsecutiveToolCallsPolicy.swift in Sources */,
+				B10940000000000000000002 /* ConsecutiveToolCallsHeader.swift in Sources */,
+				B10940000000000000000003 /* ScheduledTaskActivityPolicy.swift in Sources */,
 				B10900000000000000000003 /* ScheduledTasksView.swift in Sources */,
 				B10900000000000000000002 /* ScheduledTaskStore.swift in Sources */,
 				B10900000000000000000001 /* ScheduledTaskModels.swift in Sources */,
@@ -3045,7 +3057,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -3069,7 +3081,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3090,7 +3102,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -3123,7 +3135,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3288,7 +3300,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ze.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"Preview Content\"";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -3346,7 +3358,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ze.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"Preview Content\"";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -3396,7 +3408,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
@@ -3423,7 +3435,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
@@ -3450,7 +3462,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProvider/Info.plist;
@@ -3477,7 +3489,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProvider/Info.plist;
@@ -3504,7 +3516,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AgentWidget/AgentWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentWidget/Info.plist;
@@ -3531,7 +3543,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AgentWidget/AgentWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentWidget/Info.plist;

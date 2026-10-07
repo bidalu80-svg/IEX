@@ -124,10 +124,10 @@ final class AgentLiveActivityManager {
         }
     }
 
-    func updateActivity(sessions: [LiveSessionSnapshot]) {
+    func updateActivity(sessions: [LiveSessionSnapshot], immediately: Bool = false) {
         guard Self.isActivityKitAvailable, Self.isUserEnabled else { return }
         if #available(iOS 16.2, *) {
-            _updateActivity(sessions: sessions)
+            _updateActivity(sessions: sessions, bypassRateLimit: immediately)
         }
     }
 
@@ -155,6 +155,12 @@ final class AgentLiveActivityManager {
     /// this method is called only when no other session remains active.
     func finishActivity(lastMessages: [String: String] = [:]) async {
         guard Self.isActivityKitAvailable else { return }
+        // An ordinary chat finishing must not dismiss enabled schedules (or a
+        // different running conversation). Re-read ownership before ending.
+        if !BackgroundKeepAliveManager.shared.liveActivitySessionIDs.isEmpty {
+            updateActivity(sessions: BackgroundKeepAliveManager.shared.buildLiveSessionSnapshots(), immediately: true)
+            return
+        }
         if #available(iOS 16.2, *) {
             // Keep the labelled parameter for source compatibility with callers
             // that already provide a final response summary. A completed resting
@@ -193,7 +199,7 @@ final class AgentLiveActivityManager {
             guard awaitingDismissal || completedState else { return }
             logger.info("[LiveActivity][finish] foreground return — dismissing completed activity (awaitingDismissal=\(awaitingDismissal) completedState=\(completedState))")
             _endActivity()
-            let remaining = SessionActivityTracker.shared.activeSessions
+            let remaining = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
             if !remaining.isEmpty {
                 logger.info("[LiveActivity][finish] \(remaining.count) session(s) still active after dismiss — restarting activity")
                 BackgroundKeepAliveManager.shared.updateLiveActivityIfNeeded(source: "postDismissRecovery")
@@ -257,7 +263,7 @@ final class AgentLiveActivityManager {
         // changes keep the original damping.
         let bypassRateLimit = (source == Self.userAudioToggleSource)
         let audio = Self.currentAudioState()
-        let sessions = SessionActivityTracker.shared.activeSessions
+        let sessions = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
         logger.info("[LiveActivity][audio] src=\(source) isPlaying=\(audio.isPlaying) isLoaded=\(audio.isLoaded) sessions=\(sessions.count) hasActivity=\(self.currentActivity != nil)")
 
         // Audio gone AND no sessions → let the standard end path run (unless a
@@ -389,7 +395,7 @@ final class AgentLiveActivityManager {
                 // (task finished while backgrounded, VM torn down, session
                 // deleted) and would otherwise inflate the count — e.g. showing
                 // "8" when only 2 are really running.
-                let liveIds = SessionActivityTracker.shared.activeSessions
+                let liveIds = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
                 for sid in completedSessionSnapshots.keys where !liveIds.contains(sid) {
                     completedSessionSnapshots.removeValue(forKey: sid)
                 }
@@ -488,7 +494,7 @@ final class AgentLiveActivityManager {
         // considers active — the caller's `sessions` list can lag when tasks
         // finished between snapshot and start. Completed carryover snapshots
         // stay for their UI card but must NOT be counted as running.
-        let liveIds = SessionActivityTracker.shared.activeSessions
+        let liveIds = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
         let filteredInput = sessions.filter { liveIds.contains($0.sessionId) }
         let activeSids = Set(filteredInput.map { $0.sessionId })
         var merged = filteredInput
@@ -564,7 +570,7 @@ final class AgentLiveActivityManager {
         // sessions only live in lastPushedState).
         let shown = (lastPushedState as? AgentActivityAttributes.ContentState)?.sessions ?? []
         let remainingShown = shown.filter { $0.sessionId != sessionId }
-        let remainingActive = SessionActivityTracker.shared.activeSessions.subtracting([sessionId])
+        let remainingActive = BackgroundKeepAliveManager.shared.liveActivitySessionIDs.subtracting([sessionId])
 
         if !remainingActive.isEmpty {
             // Other sessions still running — the normal update path rebuilds
@@ -656,7 +662,7 @@ final class AgentLiveActivityManager {
         // and can carry entries whose tasks finished before this update landed;
         // if we forward them verbatim the Dynamic Island keeps showing a stale
         // running count (repro: 8 shown while only 2 isRunning).
-        let liveIds = SessionActivityTracker.shared.activeSessions
+        let liveIds = BackgroundKeepAliveManager.shared.liveActivitySessionIDs
         let filteredInput = sessions.filter { liveIds.contains($0.sessionId) }
         let activeSids = Set(filteredInput.map { $0.sessionId })
         var mergedSessions: [LiveSessionSnapshot] = filteredInput.map { s in

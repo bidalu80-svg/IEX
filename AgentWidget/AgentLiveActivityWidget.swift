@@ -40,7 +40,9 @@ struct AgentLiveActivityWidget: Widget {
                         .background(.green.opacity(0.18), in: Capsule())
                         .padding(.trailing, 8)
                     } else {
-                        Text("\(context.state.activeSessionCount)个会话")
+                        Text(context.state.sessions.contains { $0.sessionId.hasPrefix("scheduled-task:") }
+                            ? String(localized: "\(context.state.activeSessionCount)个任务")
+                            : String(localized: "\(context.state.activeSessionCount)个会话"))
                             .font(.caption.bold())
                             .foregroundStyle(.green)
                             .contentTransition(.numericText())
@@ -54,7 +56,7 @@ struct AgentLiveActivityWidget: Widget {
                     if let session = context.state.currentSession {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 0) {
-                                Image(systemName: "bubble.left.fill")
+                                Image(systemName: session.sessionId.hasPrefix("scheduled-task:") ? "clock" : "bubble.left.fill")
                                     .font(.caption)
                                     .foregroundStyle(.blue)
                                     .padding(.trailing, 5)
@@ -237,7 +239,9 @@ struct AgentLockScreenView: View {
                     .padding(.vertical, 2)
                     .background(.green.opacity(0.18), in: Capsule())
                 } else {
-                    Text("\(state.activeSessionCount)个会话")
+                    Text(state.sessions.contains { $0.sessionId.hasPrefix("scheduled-task:") }
+                            ? String(localized: "\(state.activeSessionCount)个任务")
+                            : String(localized: "\(state.activeSessionCount)个会话"))
                         .font(.caption.bold())
                         .contentTransition(.numericText())
                     .padding(.horizontal, 6)
@@ -249,7 +253,7 @@ struct AgentLockScreenView: View {
             if let session = state.currentSession {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
-                        Image(systemName: "bubble.left.fill")
+                        Image(systemName: session.sessionId.hasPrefix("scheduled-task:") ? "clock" : "bubble.left.fill")
                             .font(.caption)
                             .foregroundStyle(.blue)
                         Text(session.title)

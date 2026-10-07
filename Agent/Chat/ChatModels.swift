@@ -333,6 +333,8 @@ final class AssistantBlock: Identifiable, ObservableObject {
     @Published var streamingFileContent: String?
     /// Whether a thinking block is expanded (persisted across cell reuse).
     @Published var isThinkingExpanded: Bool = false
+    /// Transient disclosure state stored on the first tool; survives cell reuse.
+    @Published var isToolGroupExpanded: Bool = false
     /// Wall-clock timing for the visible thinking summary. These values are
     /// transient UI state; persisted history has no block-level timestamps.
     @Published var thinkingDuration: TimeInterval? = nil
@@ -415,6 +417,14 @@ enum AssistantBlockKind: Equatable {
 }
 
 extension AssistantBlockKind {
+    var isToolCall: Bool {
+        switch self {
+        case .shellTool, .fileReadTool, .fileWriteTool, .fileEditTool,
+             .browserTool, .readImageTool, .memoryTool: return true
+        case .text, .thinking, .info: return false
+        }
+    }
+
     /// Tool calls that belong to the child-agent scheduler. They are stored in
     /// the legacy memoryTool payload for persistence compatibility, but must
     /// keep their own visual identity in the UI.
@@ -496,3 +506,20 @@ struct InputAttachment: Identifiable {
     }
 }
 
+
+/// Presentation-only segments. Message blocks and their persisted order never change.
+struct AssistantBlockPresentationSegment: Identifiable {
+    let blocks: [AssistantBlock]
+    var id: UUID { blocks[0].id }
+    var isToolGroup: Bool { blocks.count > 1 }
+
+    static func make(_ blocks: [AssistantBlock], enabled: Bool) -> [Self] {
+        ConsecutiveToolCallsPolicy.ranges(isTool: blocks.map { $0.kind.isToolCall }, enabled: enabled)
+            .map { Self(blocks: Array(blocks[$0])) }
+    }
+
+    static func tools(startingAt id: UUID, in blocks: [AssistantBlock]) -> [AssistantBlock] {
+        guard let index = blocks.firstIndex(where: { $0.id == id }), blocks[index].kind.isToolCall else { return [] }
+        return Array(blocks[index...].prefix { $0.kind.isToolCall })
+    }
+}

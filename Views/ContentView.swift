@@ -4875,6 +4875,7 @@ private struct SteppedSlider: View {
 }
 
 private struct AppearanceSettingsView: View {
+    @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
@@ -4994,6 +4995,26 @@ private struct AppearanceSettingsView: View {
                 Text("思考过程")
             } footer: {
                 Text("When on, a new thinking block expands automatically while the model is reasoning and collapses when it finishes. When off, thinking blocks stay collapsed — tap one to read it.")
+            }
+
+            Section {
+                Toggle(isOn: $collapseConsecutiveToolCalls) {
+                    Label {
+                        Text("折叠连续的工具调用")
+                    } icon: {
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(Color.cyan, in: RoundedRectangle(cornerRadius: 7))
+                    }
+                }
+                .tint(.blue)
+                .accessibilityIdentifier("collapseConsecutiveToolCallsToggle")
+            } header: {
+                Text("工具调用")
+            } footer: {
+                Text("连续的工具调用会合并为一行显示。轻点即可查看每次调用。")
             }
 
             Section {

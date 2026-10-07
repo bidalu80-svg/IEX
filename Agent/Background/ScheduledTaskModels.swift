@@ -83,6 +83,19 @@ struct ScheduledTaskSnapshot: Codable {
     var tasks: [ScheduledTaskDefinition] = []
     var runs: [ScheduledTaskRun] = []
 
+    /// History-only deletion. Status, not finishedAt, is authoritative: a
+    /// running receipt must remain available for completion and crash recovery.
+    /// Definitions (including their nextRunAt/session binding) stay untouched.
+    mutating func deleteFinishedRun(id: UUID) {
+        runs.removeAll { $0.id == id && $0.status != .running }
+    }
+
+    /// Keep active receipts in their original order; never cancel execution,
+    /// remove a task definition, or delete the associated conversation.
+    mutating func clearFinishedRuns() {
+        runs.removeAll { $0.status != .running }
+    }
+
     mutating func recoverInterruptedRuns(at date: Date) {
         for index in runs.indices where runs[index].status == .running {
             runs[index].status = .interrupted

@@ -19,6 +19,7 @@ extension Notification.Name {
 /// - **2-state scroll model**: autoScrolling / userBrowsing (replaces V2's 6+ mechanisms)
 /// - **O(1) message lookup**: UUID index rebuilt on each snapshot
 struct CollectionViewMessageListV3: UIViewControllerRepresentable {
+    @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @ObservedObject var vm: AIChatViewModel
     var inputFocused: Bool
     var onRetryMessage: ((UUID) -> Void)?
@@ -73,6 +74,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.onForceSync = onForceSync
         coord.onScreenshotImage = onScreenshotImage
         coord.maxContentWidth = maxContentWidth
+        coord.updateToolGroupingPreference(collapseConsecutiveToolCalls)
 
         // Bottom inset base = input bar + tool bar overlay height + breathing room.
         // applySubViewportCompensation is the only writer of cv.contentInset.bottom;
@@ -222,8 +224,34 @@ private struct FirstTokenLatencyPill: View {
     }
 }
 
-/// Single block within an assistant turn — text, tool capsule, or info.
-/// V3: No GeometryReader — UIKit self-sizing is the sole height source.
+/// Disclosure header observing live membership as calls append to a group.
+private struct BridgedAssistantToolGroupV3: View {
+    @ObservedObject var message: ChatMessage
+    @ObservedObject var firstBlock: AssistantBlock
+    @ObservedObject var bridge: CellStateBridgeV2
+    var maxWidth: CGFloat
+    var onToggle: () -> Void
+
+    var body: some View {
+        ConsecutiveToolCallsHeader(
+            blocks: AssistantBlockPresentationSegment.tools(startingAt: firstBlock.id, in: message.blocks),
+            isExpanded: firstBlock.isToolGroupExpanded,
+            onToggle: onToggle,
+            onCopyScreenshot: bridge.onCopyScreenshot,
+            onCopyText: {
+                UIPasteboard.general.string = message.blocks
+                    .filter { $0.kind == .text }.map(\.content).joined(separator: "\n\n")
+            }
+        )
+        .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .opacity(message.isCompactedHistory ? 0.5 : 1)
+        .accessibilityIdentifier("assistantToolGroup")
+    }
+}
+
+/// Single original block; existing text selection and context menu are retained.
 private struct BridgedAssistantBlockV3: View {
     @ObservedObject var block: AssistantBlock
     @ObservedObject var message: ChatMessage
@@ -778,6 +806,37 @@ extension CollectionViewMessageListV3 {
         var onScreenshotImage: ((UIImage) -> Void)?
         var maxContentWidth: CGFloat = 0
         var lastInputFocused: Bool = false
+        private var collapseConsecutiveToolCalls = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool) ?? ConsecutiveToolCallsPolicy.defaultEnabled
+        private var forceUncollapsedToolsForScreenshot = false
+
+        func updateToolGroupingPreference(_ enabled: Bool) {
+            guard collapseConsecutiveToolCalls != enabled else { return }
+            collapseConsecutiveToolCalls = enabled
+            guard let vm else { return }
+            applySnapshot(messages: vm.messages, caller: "tool-group-preference")
+        }
+
+        private func toggleToolGroup(messageId: UUID, firstBlockId: UUID) {
+            guard !forceUncollapsedToolsForScreenshot, let vm,
+                  let message = vm.messages.first(where: { $0.id == messageId }),
+                  let first = message.blocks.first(where: { $0.id == firstBlockId }),
+                  let cv = viewController?.collectionView else { return }
+            let item = MessageListItem.assistantToolGroup(messageId, firstBlockId)
+            let oldY = dataSource?.indexPath(for: item).flatMap {
+                cv.layoutAttributesForItem(at: $0)?.frame.minY
+            }
+            let offset = cv.contentOffset
+            scrollMode = .userBrowsing
+            first.isToolGroupExpanded.toggle()
+            applySnapshot(messages: vm.messages, caller: "tool-group-toggle")
+            cv.layoutIfNeeded()
+            if let oldY, let index = dataSource?.indexPath(for: item),
+               let newY = cv.layoutAttributesForItem(at: index)?.frame.minY {
+                let minimum = -cv.adjustedContentInset.top
+                let maximum = max(minimum, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
+                cv.setContentOffset(CGPoint(x: offset.x, y: min(maximum, max(minimum, offset.y + newY - oldY))), animated: false)
+            }
+        }
 
         #if DEBUG
         deinit {
@@ -943,7 +1002,7 @@ extension CollectionViewMessageListV3 {
                     return cv.dequeueConfiguredReusableCell(using: wholeReg, for: indexPath, item: item)
                 case .assistantHeader:
                     return cv.dequeueConfiguredReusableCell(using: headerReg, for: indexPath, item: item)
-                case .assistantBlock:
+                case .assistantBlock, .assistantToolGroup:
                     return cv.dequeueConfiguredReusableCell(using: blockReg, for: indexPath, item: item)
                 case .assistantFooter:
                     return cv.dequeueConfiguredReusableCell(using: footerReg, for: indexPath, item: item)
@@ -1166,6 +1225,21 @@ extension CollectionViewMessageListV3 {
                         bridge: bridge,
                         maxWidth: width
                     )
+                    .transaction { $0.disablesAnimations = true }
+                    .environmentObject(vm)
+                }.minSize(width: 0, height: 0).margins(.all, 0)
+                cell.applyContentConfiguration(config)
+
+            case .assistantToolGroup(let msgId, let firstBlockId):
+                guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { return }
+                let message = messages[msgIdx]
+                guard let first = message.blocks.first(where: { $0.id == firstBlockId }) else { return }
+                let bridge = getOrCreateBridge(for: message, in: messages)
+                cell.backgroundColor = .clear
+                let config = UIHostingConfiguration {
+                    BridgedAssistantToolGroupV3(message: message, firstBlock: first, bridge: bridge, maxWidth: width) { [weak self] in
+                        self?.toggleToolGroup(messageId: msgId, firstBlockId: firstBlockId)
+                    }
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
@@ -2390,8 +2464,18 @@ extension CollectionViewMessageListV3 {
                     newItems.append(.wholeMessage(message.id))
                 case .assistant:
                     newItems.append(.assistantHeader(message.id))
-                    for block in message.blocks {
-                        newItems.append(.assistantBlock(message.id, block.id))
+                    for segment in AssistantBlockPresentationSegment.make(
+                        message.blocks,
+                        enabled: collapseConsecutiveToolCalls && !forceUncollapsedToolsForScreenshot
+                    ) {
+                        if segment.isToolGroup, let first = segment.blocks.first {
+                            newItems.append(.assistantToolGroup(message.id, first.id))
+                            if first.isToolGroupExpanded {
+                                newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
+                            }
+                        } else {
+                            newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
+                        }
                     }
                     // Only emit a footer cell when it will actually render
                     // content. A footer with zero visible content (no typing
@@ -2472,6 +2556,9 @@ extension CollectionViewMessageListV3 {
                     }
 
                     switch item {
+                    case .assistantToolGroup:
+                        layout.setEstimatedHeight(48, at: i)
+
                     case .assistantHeader:
                         // Header is always a fixed "sparkles Ze" label row (measured: 28pt)
                         layout.setEstimatedHeight(28, at: i)
@@ -3005,7 +3092,7 @@ extension CollectionViewMessageListV3 {
             case .wholeMessage(let id): return id
             case .assistantHeader(let id): return id
             case .assistantFooter(let id): return id
-            case .assistantBlock(let mid, _): return mid
+            case .assistantBlock(let mid, _), .assistantToolGroup(let mid, _): return mid
             }
         }
 
@@ -3046,6 +3133,8 @@ extension CollectionViewMessageListV3 {
             case .assistantFooter(let id):
                 let c = msg(id)?.blocks.first?.content ?? ""
                 return "f#\(digest(c))"
+            case .assistantToolGroup(let mid, let bid):
+                return "g#\(mid.uuidString)#\(bid.uuidString)"
             case .assistantBlock(let mid, let bid):
                 guard let b = msg(mid)?.blocks.first(where: { $0.id == bid }) else { return "b#?" }
                 let c = b.content
@@ -3069,6 +3158,9 @@ extension CollectionViewMessageListV3 {
                 return "h:\(id.uuidString)"
             case .assistantFooter(let id):
                 return "f:\(id.uuidString)"
+            case .assistantToolGroup(let mid, let bid):
+                let blocks = AssistantBlockPresentationSegment.tools(startingAt: bid, in: msg(mid)?.blocks ?? [])
+                return "g:\(mid.uuidString):\(bid.uuidString):\(blocks.count):\(blocks.first?.isToolGroupExpanded == true)"
             case .assistantBlock(let mid, let bid):
                 let block = msg(mid)?.blocks.first(where: { $0.id == bid })
                 let n = block?.content.count ?? 0
@@ -3082,6 +3174,7 @@ extension CollectionViewMessageListV3 {
             let hPad: CGFloat = 80
 
             switch item {
+            case .assistantToolGroup: return 48
             case .wholeMessage(let msgId):
                 guard let msg = messages.first(where: { $0.id == msgId }) else { return 44 }
                 switch msg.role {
@@ -3320,7 +3413,7 @@ extension CollectionViewMessageListV3 {
         /// separately). [T-stream-hover-earlier-streaming]
         static func item(_ item: MessageListItem, belongsTo messageId: UUID) -> Bool {
             switch item {
-            case .assistantBlock(let mid, _): return mid == messageId
+            case .assistantBlock(let mid, _), .assistantToolGroup(let mid, _): return mid == messageId
             case .assistantFooter(let mid): return mid == messageId
             case .wholeMessage, .assistantHeader: return false
             }
@@ -3721,6 +3814,33 @@ extension CollectionViewMessageListV3 {
         /// Original `contentOffset` is restored before returning.
         @MainActor
         func captureScrollingTurnScreenshot(userMessageId: UUID, assistantMessageId: UUID?) -> UIImage? {
+            guard !forceUncollapsedToolsForScreenshot, let vm, !vm.isLoadingSession,
+                  let cv = viewController?.collectionView else { return nil }
+            let savedOffset = cv.contentOffset
+            let savedMode = scrollMode
+            let savedClamp = clampAfterSessionLoad
+            // Capture the original block cells, never just a folded header. Do
+            // not mutate preferences or per-group disclosure state.
+            forceUncollapsedToolsForScreenshot = true
+            scrollMode = .userBrowsing
+            clampAfterSessionLoad = false
+            defer {
+                forceUncollapsedToolsForScreenshot = false
+                applySnapshot(messages: vm.messages, caller: "screenshot-restore-tool-groups")
+                cv.layoutIfNeeded()
+                let minimum = -cv.adjustedContentInset.top
+                let maximum = max(minimum, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
+                cv.setContentOffset(CGPoint(x: savedOffset.x, y: min(maximum, max(minimum, savedOffset.y))), animated: false)
+                scrollMode = savedMode
+                clampAfterSessionLoad = savedClamp
+            }
+            applySnapshot(messages: vm.messages, caller: "screenshot-unfold-tools")
+            cv.layoutIfNeeded()
+            return captureUncollapsedScrollingTurnScreenshot(userMessageId: userMessageId, assistantMessageId: assistantMessageId)
+        }
+
+        @MainActor
+        private func captureUncollapsedScrollingTurnScreenshot(userMessageId: UUID, assistantMessageId: UUID?) -> UIImage? {
             // [T-ios-copy-screenshot-diag-logs] All ChatScreenshot logs share
             // this monotonic anchor so users can read elapsed-ms deltas
             // between stages without reasoning about wall-clock timestamps.

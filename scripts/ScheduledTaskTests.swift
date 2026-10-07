@@ -127,6 +127,127 @@ struct ScheduledTaskTests {
         try repository.write(terminal)
         let flushed = try repository.load()
         check(flushed.runs[0].status == .succeeded && flushed.tasks[0].nextRunAt == snapshot.tasks[0].nextRunAt, "terminal retry preserves claimed next occurrence")
+        try testRunHistoryDeletion(repository: repository, now: now)
         print("Scheduled task tests passed: \(count)")
+    }
+
+    /// Only Foundation + the production model/repository: no store or UI stubs.
+    static func testRunHistoryDeletion(repository: ScheduledTaskRepository, now: Date) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        func encoded<T: Encodable>(_ value: T) throws -> Data { try encoder.encode(value) }
+
+        var firstTask = ScheduledTaskDefinition()
+        firstTask.name = "保留的任务"
+        firstTask.prompt = "保留提示词"
+        firstTask.runMode = .currentConversation
+        firstTask.sessionId = "existing-conversation"
+        firstTask.modelEntryId = "provider/model"
+        firstTask.nextRunAt = now.addingTimeInterval(3600)
+        var secondTask = firstTask
+        secondTask.id = UUID()
+        secondTask.isEnabled = false
+        secondTask.sessionId = "second-conversation"
+        let definitions = [firstTask, secondTask]
+        let definitionData = try encoded(definitions)
+
+        func run(_ status: ScheduledTaskRunStatus, taskID: UUID) -> ScheduledTaskRun {
+            var record = ScheduledTaskRun(taskId: taskID, taskName: "运行记录",
+                                          scheduledAt: now, startedAt: now)
+            record.status = status
+            record.sessionId = "associated-conversation"
+            record.summary = "原始结果"
+            record.error = status == .failed ? "原始错误" : nil
+            return record
+        }
+        // finishedAt is deliberately present on a running record and absent on
+        // terminal records: deletion must use status, not timestamp presence.
+        var running = run(.running, taskID: firstTask.id)
+        running.finishedAt = now
+        let succeeded = run(.succeeded, taskID: firstTask.id)
+        let failed = run(.failed, taskID: firstTask.id)
+        let interrupted = run(.interrupted, taskID: secondTask.id)
+        let otherRunning = run(.running, taskID: secondTask.id)
+        let original = ScheduledTaskSnapshot(tasks: definitions,
+            runs: [running, succeeded, otherRunning, failed, interrupted])
+        let originalData = try encoded(original)
+
+        var snapshot = original
+        snapshot.deleteFinishedRun(id: running.id)
+        let afterRunningDelete = try encoded(snapshot)
+        check(afterRunningDelete == originalData, "single delete ignores running even with finishedAt")
+        snapshot.deleteFinishedRun(id: UUID())
+        let afterMissingDelete = try encoded(snapshot)
+        check(afterMissingDelete == originalData, "single delete of unknown ID is a no-op")
+
+        for record in [succeeded, failed, interrupted] {
+            var single = original
+            single.deleteFinishedRun(id: record.id)
+            let expected = original.runs.filter { $0.id != record.id }
+            let actualRuns = try encoded(single.runs)
+            let expectedRuns = try encoded(expected)
+            check(actualRuns == expectedRuns, "terminal single delete preserves every other record and order: \(record.status)")
+            check(single.tasks == definitions, "single delete preserves task definitions: \(record.status)")
+            check(single.version == original.version, "single delete preserves schema version")
+            single.deleteFinishedRun(id: record.id)
+            let afterRepeatedDelete = try encoded(single.runs)
+            check(afterRepeatedDelete == actualRuns, "single delete is idempotent")
+        }
+
+        snapshot.clearFinishedRuns()
+        check(snapshot.runs.map(\.id) == [running.id, otherRunning.id], "bulk clear retains all running records in order")
+        let activeBefore = try encoded([running, otherRunning])
+        let activeAfter = try encoded(snapshot.runs)
+        check(activeAfter == activeBefore, "bulk clear preserves full active receipts and conversation references")
+        let definitionsAfter = try encoded(snapshot.tasks)
+        check(definitionsAfter == definitionData, "bulk clear preserves definitions, schedules, enabled flags and session bindings")
+        check(snapshot.version == original.version, "bulk clear preserves schema version")
+        snapshot.clearFinishedRuns()
+        let afterSecondClear = try encoded(snapshot.runs)
+        check(afterSecondClear == activeBefore, "all-running bulk clear is idempotent")
+
+        var empty = ScheduledTaskSnapshot(tasks: definitions)
+        empty.clearFinishedRuns()
+        empty.deleteFinishedRun(id: running.id)
+        check(empty.runs.isEmpty && empty.tasks == definitions, "empty history deletion leaves definitions untouched")
+        var allFinished = ScheduledTaskSnapshot(tasks: definitions, runs: [succeeded, failed, interrupted])
+        allFinished.clearFinishedRuns()
+        check(allFinished.runs.isEmpty && allFinished.tasks == definitions, "all terminal states can be cleared")
+
+        // Confirm the operation against data loaded from disk, not just an
+        // in-memory copy, and then reload the committed deletion twice.
+        try repository.write(original)
+        var durableSingle = try repository.load()
+        durableSingle.deleteFinishedRun(id: succeeded.id)
+        try repository.write(durableSingle)
+        let reloadedSingle = try repository.load()
+        check(!reloadedSingle.runs.contains { $0.id == succeeded.id }, "single deletion survives persistence reload")
+        check(reloadedSingle.runs.map(\.id) == [running.id, otherRunning.id, failed.id, interrupted.id],
+              "single reload preserves unrelated records and order")
+        check(reloadedSingle.tasks == definitions, "single reload preserves task definitions")
+
+        var durableBulk = reloadedSingle
+        durableBulk.clearFinishedRuns()
+        try repository.write(durableBulk)
+        let reloadedBulk = try repository.load()
+        check(reloadedBulk.runs.map(\.id) == [running.id, otherRunning.id], "bulk deletion survives persistence reload")
+        check(reloadedBulk.tasks == definitions, "bulk reload preserves task definitions")
+        let reloadedActive = try encoded(reloadedBulk.runs)
+        check(reloadedActive == activeBefore, "running receipts survive deletion and persistence unchanged")
+
+        // Application restart may mark retained active receipts interrupted,
+        // but must never recreate a deleted terminal record or replay a claim.
+        var restarted = try repository.load()
+        restarted.recoverInterruptedRuns(at: now.addingTimeInterval(30))
+        try repository.write(restarted)
+        let afterRestart = try repository.load()
+        check(afterRestart.runs.map(\.id) == [running.id, otherRunning.id], "crash recovery never restores deleted history")
+        check(afterRestart.runs.allSatisfy { $0.status == .interrupted }, "retained active receipts still support crash recovery")
+        check(afterRestart.tasks == definitions, "recovery after deletion leaves task definitions unchanged")
+        var clearedAfterRestart = afterRestart
+        clearedAfterRestart.clearFinishedRuns()
+        try repository.write(clearedAfterRestart)
+        let finalReload = try repository.load()
+        check(finalReload.runs.isEmpty && finalReload.tasks == definitions, "cleared interrupted history stays empty across reload")
     }
 }

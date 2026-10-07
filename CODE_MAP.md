@@ -321,3 +321,19 @@ git status --short
 - `scripts/ScheduledTaskTests.swift`：独立 Swift 日历边界/持久化测试，在 CI 编译前执行。
 - `scripts/verify-scheduled-tasks.py`：本地结构、本地化和构建版本校验。
 - 详细策略及真机验收见 `docs/scheduled-tasks-v1.0.9.md`。
+
+## v1.0.9 (4) 连续工具折叠
+
+- `Shared/ConsecutiveToolCallsPolicy.swift`：不变更源数组的连续分组、错误统计、累计时长算法。
+- `Views/Chat/ConsecutiveToolCallsHeader.swift`：中文折叠行、实时统计/秒数、原生轻点和长按菜单。
+- `Agent/MessageList/CollectionViewMessageListV3.swift`：真实 UIKit 分组快照、展开锚点和截图临时展开/恢复。
+- `Views/Chat/ChatMessageViews.swift`：SwiftUI 回退渲染入口保持同一规则。
+- `scripts/ConsecutiveToolCallsTests.swift`、`scripts/verify-tool-collapse.py`：纯 Swift 穷举测试与结构回归检查。
+- 设备验收及回滚见 `docs/tool-call-collapse-v1.0.9.md`。
+
+## 定时任务修正（同 build 4）
+
+- `Agent/Background/ScheduledTaskActivityPolicy.swift`：等待/执行/终态的调度所有权与聊天行去重。
+- `ScheduledTaskStore`：终态记录单删/批清、关闭即取消执行、持久化后同步调度所有权。
+- `BackgroundKeepAliveManager` / `AgentLiveActivityManager`：合并聊天和调度所有权，复用既有后台及实况功能，不伪造会话锁。
+- `scripts/ScheduledTaskActivityTests.swift` / `scripts/verify-scheduled-activity.py`：纯 Swift 状态测试及整链结构检查。

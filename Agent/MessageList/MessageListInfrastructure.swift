@@ -25,6 +25,8 @@ enum MessageListItem: Hashable {
     case assistantHeader(UUID)
     /// A single AssistantBlock within an assistant turn.
     case assistantBlock(UUID, UUID)  // (messageId, blockId)
+    /// Disclosure header for a strict contiguous run of two or more tool blocks.
+    case assistantToolGroup(UUID, UUID) // (messageId, firstToolBlockId)
     /// Footer area: typing indicator, error, resume, usage.
     case assistantFooter(UUID)
 
@@ -33,7 +35,7 @@ enum MessageListItem: Hashable {
         switch self {
         case .wholeMessage(let id), .assistantHeader(let id),
              .assistantFooter(let id): return id
-        case .assistantBlock(let msgId, _): return msgId
+        case .assistantBlock(let msgId, _), .assistantToolGroup(let msgId, _): return msgId
         }
     }
 }

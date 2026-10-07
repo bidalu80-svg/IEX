@@ -22,6 +22,7 @@ final class ScheduledTaskStore: ObservableObject {
     private var needsFinalizationRetry = false
     private var activeRunID: UUID?
     private var cancelledRuns: Set<UUID> = []
+    private var suppressedActivityTaskIDs: Set<UUID> = []
 
     private init() {
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -58,7 +59,9 @@ final class ScheduledTaskStore: ObservableObject {
     }
 
     func start() {
-        guard timer == nil, storageReady else { return }
+        guard storageReady else { return }
+        syncScheduledActivity()
+        guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
             Task { @MainActor in ScheduledTaskStore.shared.tick() }
         }
@@ -91,7 +94,12 @@ final class ScheduledTaskStore: ObservableObject {
         var updated = tasks
         if let index = updated.firstIndex(where: { $0.id == task.id }) { updated[index] = task }
         else { updated.append(task) }
-        try commit(tasks: updated, runs: runs)
+        var suppressed = suppressedActivityTaskIDs
+        if task.isEnabled { suppressed.remove(task.id) } else { suppressed.insert(task.id) }
+        try commit(tasks: updated, runs: runs, suppressedTaskIDs: suppressed)
+        if !task.isEnabled, let run = runs.first(where: { $0.taskId == task.id && $0.status == .running }) {
+            cancelRun(id: run.id)
+        }
         start()
         scheduleBackgroundWake()
     }
@@ -110,23 +118,56 @@ final class ScheduledTaskStore: ObservableObject {
             updated[index].nextRunAt = updated[index].nextOccurrence(after: Date())
             guard updated[index].nextRunAt != nil else { throw ScheduledTaskError.invalidSchedule }
         }
-        try commit(tasks: updated, runs: runs)
+        var suppressed = suppressedActivityTaskIDs
+        if enabled { suppressed.remove(id) } else { suppressed.insert(id) }
+        try commit(tasks: updated, runs: runs, suppressedTaskIDs: suppressed)
+        if !enabled, let run = runs.first(where: { $0.taskId == id && $0.status == .running }) {
+            cancelRun(id: run.id)
+        }
         scheduleBackgroundWake()
+        if enabled { start(); tick() }
+    }
+
+    /// Deleting history never deletes its task definition or conversation.
+    func deleteRun(id: UUID) throws {
+        var snapshot = ScheduledTaskSnapshot(tasks: tasks, runs: runs)
+        snapshot.deleteFinishedRun(id: id)
+        try commit(tasks: snapshot.tasks, runs: snapshot.runs)
+    }
+
+    func clearFinishedRuns() throws {
+        var snapshot = ScheduledTaskSnapshot(tasks: tasks, runs: runs)
+        snapshot.clearFinishedRuns()
+        try commit(tasks: snapshot.tasks, runs: snapshot.runs)
+    }
+
+    private func syncScheduledActivity() {
+        let descriptors = ScheduledTaskActivityPolicy.descriptors(tasks: tasks, runs: runs,
+            suppressedTaskIDs: suppressedActivityTaskIDs, now: Date())
+        BackgroundKeepAliveManager.shared.setScheduledTaskActivities(descriptors)
     }
 
     func cancelRun(id: UUID) {
         guard activeRunID == id else { return }
         cancelledRuns.insert(id)
         activeReceipt?.cancel()
+        if let result = activeReceipt?.result {
+            finish(id: id, status: result.status, error: result.error, summary: result.summary)
+        }
     }
 
-    private func commit(tasks: [ScheduledTaskDefinition], runs: [ScheduledTaskRun]) throws {
+    private func commit(tasks: [ScheduledTaskDefinition], runs: [ScheduledTaskRun], suppressedTaskIDs: Set<UUID>? = nil) throws {
         guard storageReady else { throw ScheduledTaskError.storageUnavailable }
         // Preserve active runs and a bounded history of 200 completed runs.
-        let retained = Array(runs.sorted { $0.startedAt > $1.startedAt }.prefix(200))
+        let active = runs.filter { $0.status == .running }
+        let finished = runs.filter { $0.status != .running }.sorted { $0.startedAt > $1.startedAt }
+        let retained = active + Array(finished.prefix(200))
         try repository.write(ScheduledTaskSnapshot(tasks: tasks, runs: retained))
         self.tasks = tasks
         self.runs = retained
+        if let suppressedTaskIDs { suppressedActivityTaskIDs = suppressedTaskIDs }
+        suppressedActivityTaskIDs.formIntersection(Set(tasks.map(\.id)))
+        syncScheduledActivity()
         if needsFinalizationRetry { lastError = nil }
         needsFinalizationRetry = false
     }
@@ -141,7 +182,9 @@ final class ScheduledTaskStore: ObservableObject {
     }
 
     private func tick() {
-        guard storageReady, worker == nil else { return }
+        guard storageReady else { return }
+        syncScheduledActivity()
+        guard worker == nil else { return }
         if needsFinalizationRetry {
             do { try commit(tasks: tasks, runs: runs) }
             catch { reportStorageError(); return }
@@ -287,6 +330,7 @@ final class ScheduledTaskStore: ObservableObject {
         catch {
             // The original claim stays durable; retry only its terminal state, never its prompt.
             runs = updated
+            syncScheduledActivity()
             needsFinalizationRetry = true
             lastError = String(localized: "运行结果暂未写入存储，将自动重试保存；不会重新发送任务。")
         }
