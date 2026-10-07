@@ -165,6 +165,7 @@
 		E5CR00003 /* CrashSignalHandler.m in Sources */ = {isa = PBXBuildFile; fileRef = E5CR00013 /* CrashSignalHandler.m */; };
 		E5D00001 /* ProviderTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00011 /* ProviderTypes.swift */; };
 		E5D00002 /* ProviderInstance.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00012 /* ProviderInstance.swift */; };
+		E5DQ0001 /* ProviderAPIQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DQ0011 /* ProviderAPIQuota.swift */; };
 		E5D00003 /* ModelEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00013 /* ModelEntry.swift */; };
 		E5D00004 /* ModelGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00014 /* ModelGroup.swift */; };
 		E5D00005 /* ProviderConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00015 /* ProviderConfigStore.swift */; };
@@ -783,6 +784,7 @@
 		E5CR00014 /* CrashSignalHandler.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CrashSignalHandler.h; sourceTree = "<group>"; };
 		E5D00011 /* ProviderTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderTypes.swift; sourceTree = "<group>"; };
 		E5D00012 /* ProviderInstance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderInstance.swift; sourceTree = "<group>"; };
+		E5DQ0011 /* ProviderAPIQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAPIQuota.swift; sourceTree = "<group>"; };
 		E5D00013 /* ModelEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelEntry.swift; sourceTree = "<group>"; };
 		E5D00014 /* ModelGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelGroup.swift; sourceTree = "<group>"; };
 		E5D00015 /* ProviderConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigStore.swift; sourceTree = "<group>"; };
@@ -2165,6 +2167,7 @@
 			isa = PBXGroup;
 			children = (
 				E5D00032 /* AddProviderView.swift */,
+				E5DQ0011 /* ProviderAPIQuota.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
 				A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
@@ -2830,6 +2833,7 @@
 				E5D00004 /* ModelGroup.swift in Sources */,
 				E5TLC0001 /* ThinkingLevelCatalog.swift in Sources */,
 				E5D00005 /* ProviderConfigStore.swift in Sources */,
+				E5DQ0001 /* ProviderAPIQuota.swift in Sources */,
 				E5D00099 /* ProviderConfigDB.swift in Sources */,
 				E5D0A101 /* ModelReleaseIndex.swift in Sources */,
 				E5VGR001 /* VisionGroupResolver.swift in Sources */,

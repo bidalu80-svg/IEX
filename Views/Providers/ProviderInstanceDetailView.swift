@@ -5,6 +5,7 @@ import SwiftUI
 struct ProviderInstanceDetailView: View {
     let instanceId: String
     @ObservedObject private var store = ProviderConfigStore.shared
+    @StateObject private var quotaStore = ProviderAPIQuotaStore.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var editingLabel = ""
@@ -52,6 +53,11 @@ struct ProviderInstanceDetailView: View {
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
+            }
+        }
+        .task(id: instance?.id) {
+            if let instance {
+                await quotaStore.refreshIfNeeded(instance)
             }
         }
         .sheet(isPresented: $showAddCustomModel) {
@@ -240,6 +246,9 @@ struct ProviderInstanceDetailView: View {
             // /v1/images/generations and /v1/chat/completions for image output.
             if instance.supportsImageEndpointSetting {
                 imageEndpointSection(instance)
+                if instance.credentialType == .apiKey {
+                    apiKeyQuotaSection(instance)
+                }
             }
 
             // Custom rules are honored by the OpenAI-compatible Chat
@@ -661,6 +670,125 @@ struct ProviderInstanceDetailView: View {
         case .chatCompletions:
             Text(String(localized: "Always use /v1/chat/completions (multimodal output)."))
         }
+    }
+
+    // MARK: - API Key Quota
+
+    @ViewBuilder
+    private func apiKeyQuotaSection(_ instance: ProviderInstance) -> some View {
+        let quotaState = quotaStore.state(for: instance.id)
+
+        Section {
+            switch quotaState {
+            case .idle:
+                Text("点击右侧刷新以查询 API Key 额度。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+            case .loading:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在查询额度…")
+                        .foregroundStyle(.secondary)
+                }
+
+            case .loaded(let quota):
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("API Key 可用额度")
+                                .font(.body.weight(.medium))
+                            Text("余额 · \(quota.currency)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Text(quota.displayAmount.map { formatQuotaAmount($0, currency: quota.currency) } ?? "—")
+                            .font(.title3.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.primary)
+                    }
+
+                    if quota.total != nil || quota.used != nil {
+                        VStack(alignment: .leading, spacing: 5) {
+                            if let used = quota.used {
+                                quotaDetailRow("已使用", amount: used, currency: quota.currency)
+                            }
+                            if let total = quota.total {
+                                quotaDetailRow("总额度", amount: total, currency: quota.currency)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("来源：服务商自报 · \(quota.sourcePath)")
+                        Text("更新时间：\(quotaUpdateDescription(quota.updatedAt))")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+            case .unavailable(let message):
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("尚未查询到额度", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            HStack {
+                Text("额度")
+                Spacer()
+                Button {
+                    Task { await quotaStore.refresh(instance) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(quotaState == .loading)
+                .accessibilityLabel("刷新 API Key 额度")
+            }
+        } footer: {
+            Text("额度接口由服务商提供，Ze 仅使用当前实例的 API Key 查询，不会显示或记录密钥。")
+        }
+    }
+
+    private func quotaDetailRow(_ title: String, amount: Decimal, currency: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(formatQuotaAmount(amount, currency: currency))
+                .monospacedDigit()
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private func formatQuotaAmount(_ amount: Decimal, currency: String) -> String {
+        let currencyCode = currency.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currencyCode.isEmpty ? "USD" : currencyCode
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 6
+        let formatted = formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "\(currencyCode) \(amount)"
+        if currencyCode == "USD", formatted.hasPrefix("$") {
+            return "US" + formatted
+        }
+        return formatted
+    }
+
+    private func quotaUpdateDescription(_ date: Date) -> String {
+        let seconds = max(0, Date().timeIntervalSince(date))
+        if seconds < 60 { return "刚刚" }
+        if seconds < 3_600 { return "\(Int(seconds / 60)) 分钟前" }
+        if seconds < 86_400 { return "\(Int(seconds / 3_600)) 小时前" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
     }
 
     // MARK: - Manual OAuth Token
