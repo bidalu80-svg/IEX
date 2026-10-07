@@ -291,10 +291,13 @@ struct GitHubMark: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(Color.black)
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .font(.system(size: size * 0.34, weight: .bold))
-                .foregroundStyle(.white)
+            // Match the supplied GitHub connector artwork: a soft rounded
+            // square tile with the GitHub/Octocat silhouette in black.
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(Color(red: 1.0, green: 0.88, blue: 0.91))
+            Image(systemName: "cat.fill")
+                .font(.system(size: size * 0.56, weight: .bold))
+                .foregroundStyle(.black)
         }
         .frame(width: size, height: size)
         .accessibilityLabel("GitHub")
