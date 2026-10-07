@@ -144,3 +144,21 @@ enum ScheduledTaskError: LocalizedError {
         }
     }
 }
+
+/// Immutable per-turn result; a later user turn must never rewrite this outcome.
+struct ScheduledTaskTurnResult {
+    var status: ScheduledTaskRunStatus
+    var summary: String
+    var error: String?
+}
+
+struct ScheduledTaskCompletionLatch {
+    private(set) var result: ScheduledTaskTurnResult?
+
+    @discardableResult
+    mutating func finish(_ value: ScheduledTaskTurnResult) -> Bool {
+        guard result == nil else { return false }
+        result = value
+        return true
+    }
+}

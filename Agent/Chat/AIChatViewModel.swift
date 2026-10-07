@@ -2090,9 +2090,18 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     // MARK: - Send Message
 
+    /// One-shot receipt for the next send's model turn, excluding queued turns.
+    /// Completion may be repeated by cleanup; callers must finish idempotently.
+    internal var scheduledTurnCompletion: (() -> Void)?
+
     func send() {
         // Read-only mode — cannot send messages
-        guard remoteDeviceId == nil else { return }
+        guard remoteDeviceId == nil else {
+            let rejectedCompletion = scheduledTurnCompletion
+            scheduledTurnCompletion = nil
+            rejectedCompletion?()
+            return
+        }
 
         // [T-ios-photo-pick-placeholder] Drop any non-ready attachments (failed
         // photo loads, or a stray still-loading placeholder) so only fully-loaded
@@ -2109,7 +2118,19 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         #endif
         guard !text.isEmpty || !pendingAttachments.isEmpty, !isProcessing else {
             logger.warning("🔑DRAFT [vm=\(self.vmInstanceId)] send() GUARD FAILED — text.isEmpty=\(text.isEmpty) attachments.isEmpty=\(pendingAttachments.isEmpty) isProcessing=\(self.isProcessing)")
+            let rejectedCompletion = scheduledTurnCompletion
+            scheduledTurnCompletion = nil
+            rejectedCompletion?()
             return
+        }
+
+        let scheduledCompletion = scheduledTurnCompletion
+        scheduledTurnCompletion = nil
+        // Context prompts/auto-compaction can return before a model task exists.
+        // Consume this hook now; it must never attach to a later user send.
+        var scheduledCompletionTransferred = false
+        defer {
+            if !scheduledCompletionTransferred { scheduledCompletion?() }
         }
 
         // Don't stop TTS here — let the previous reply finish playing. The stream
@@ -2283,8 +2304,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         ensureKernelBooted()
         beginBackgroundProcessing()
 
+        scheduledCompletionTransferred = true
         currentTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self else {
+                scheduledCompletion?()
+                return
+            }
+            defer { scheduledCompletion?() }
 
             // Lazily create session before persisting anything
             await self.ensureSession()
@@ -2552,6 +2578,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 return
             }
 
+            // Freeze this turn's receipt before unrelated queued user turns run.
+            // The task defer also calls this hook; receipt completion is idempotent.
+            scheduledCompletion?()
             await self.drainQueuedPrompts()
 
             // Refresh lastKnownDbSortOrder from the actual DB so iCloud sync

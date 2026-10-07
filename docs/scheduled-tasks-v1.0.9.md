@@ -48,3 +48,11 @@ xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Se
 主 App 及扩展统一 marketing version **1.0.9**，build **3**；CI IPA audit 同步。
 
 变更前源代码 ZIP 与 SHA256 在工作区外 `C:\Users\Administrator\Desktop\ios-v1.0.9-audit`。源代码回滚用 `git revert <本次功能提交>`，不覆盖用户其他改动。运行数据回滚前先导出上述 JSON；旧版本忽略该独立文件，保留它可重新升级恢复。
+
+
+### 运行边界保护
+
+- 后台加载前及异步读取返回后复核用户草稿、编辑、待确认发送和队列；冲突时退出并保留 stale 标记，稍后重载。
+- 每次定时发送有独立执行回执，在当前模型轮次结束、用户队列续跑之前冻结结果；聊天页停止也记录为中断；重复取消不触及后续用户请求。
+- 终态落盘失败时保留内存终态并自动重试保存。不会回退已领取的调度时间，也不会重发提示词。
+- `scripts/ScheduledTaskReceiptTests.swift` 在 macOS 用真实 Combine 回执配合确定性 VM 事件测试停止、同步队列续跑、重复取消、结果隔离。该测试不调用真实服务商。

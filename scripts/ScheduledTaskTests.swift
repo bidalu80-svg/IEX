@@ -104,6 +104,29 @@ struct ScheduledTaskTests {
         check(kept == corrupt, "corrupt original preserved for recovery")
         snapshot.version = 2; try repository.write(snapshot)
         do { _ = try repository.load(); fatalError("future version accepted") } catch { count += 1; print("PASS: unknown data version rejected") }
+        var latch = ScheduledTaskCompletionLatch()
+        check(latch.result == nil, "new turn receipt has no result")
+        check(latch.finish(ScheduledTaskTurnResult(status: .interrupted, summary: "original", error: "stopped")), "first turn completion wins")
+        check(!latch.finish(ScheduledTaskTurnResult(status: .succeeded, summary: "later user turn", error: nil)), "later completion cannot overwrite cancellation")
+        check(latch.result?.status == .interrupted && latch.result?.summary == "original", "result remains bound to original turn")
+        var successLatch = ScheduledTaskCompletionLatch()
+        successLatch.finish(ScheduledTaskTurnResult(status: .succeeded, summary: "scheduled answer", error: nil))
+        check(!successLatch.finish(ScheduledTaskTurnResult(status: .interrupted, summary: "", error: "late cancel")), "late cancellation cannot change completed run")
+        snapshot.version = 1
+        task.isEnabled = true; task.repeatRule = .daily; task.nextRunAt = now.addingTimeInterval(-60)
+        snapshot = ScheduledTaskSnapshot(tasks: [task])
+        _ = snapshot.claim(taskID: task.id, at: now)
+        try repository.write(snapshot)
+        var terminal = snapshot
+        terminal.runs[0].status = .succeeded
+        terminal.runs[0].finishedAt = now
+        // Simulate failed terminal persistence: durable claim remains running,
+        // but retry writes only the terminal record, never resets nextRunAt.
+        let durableClaim = try repository.load()
+        check(durableClaim.runs[0].status == .running, "pending terminal write retains original durable claim")
+        try repository.write(terminal)
+        let flushed = try repository.load()
+        check(flushed.runs[0].status == .succeeded && flushed.tasks[0].nextRunAt == snapshot.tasks[0].nextRunAt, "terminal retry preserves claimed next occurrence")
         print("Scheduled task tests passed: \(count)")
     }
 }

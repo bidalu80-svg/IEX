@@ -136,6 +136,20 @@ extension AIChatViewModel {
     /// matching how they appeared during the live session.
     func loadSession(activate: Bool = true) async {
         guard let sessionId else { return }
+        var backgroundLoadAborted = false
+        func backgroundLoadStillIdle() -> Bool {
+            guard !activate else { return true }
+            let idle = !isProcessing && !isCompacting && editingMessageIndex == nil &&
+                pendingSendText == nil && pendingSendAttachments.isEmpty && promptQueue.isEmpty &&
+                !showCompactBeforeSendPrompt && !showContextExhaustedPrompt &&
+                inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+            if !idle {
+                backgroundLoadAborted = true
+                ViewModelCache.shared.markStale(sessionId: sessionId)
+            }
+            return idle
+        }
+        guard backgroundLoadStillIdle() else { return }
 
         let sinceAppear = (CFAbsoluteTimeGetCurrent() - Self.onAppearTimestamp) * 1000
         logger.info("[SessionLoad] loadSession START T+\(String(format: "%.0f", sinceAppear))ms session=\(sessionId) msgs=\(self.messages.count)")
@@ -183,14 +197,16 @@ extension AIChatViewModel {
         isLoadingSession = true
         defer {
             isLoadingSession = false
-            hasCompletedInitialLoad = true
+            if !backgroundLoadAborted { hasCompletedInitialLoad = true }
         }
 
         // Loop detector state is per-runtime; reload of a session clears it.
         toolLoopDetector.reset()
 
         // Load persisted memory-write toggle
-        memoryEnabled = await ChatStore.shared.getMemoryEnabled(sessionId: sessionId)
+        let loadedMemoryEnabled = await ChatStore.shared.getMemoryEnabled(sessionId: sessionId)
+        guard backgroundLoadStillIdle() else { return }
+        memoryEnabled = loadedMemoryEnabled
         // [T-memory-enabled-new-session-bug DIAG] confirm loadSession set
         // vm.memoryEnabled from the DB/global default, and which session.
         AppLogger(category: "MemDiag").info("[MemDiag] loadSession sid=\(sessionId.prefix(8)) → vm.memoryEnabled=\(self.memoryEnabled)")
@@ -218,6 +234,7 @@ extension AIChatViewModel {
         } else {
             rawMessages = await ChatStore.shared.loadMessages(sessionId: sessionId)
         }
+        guard backgroundLoadStillIdle() else { return }
         let dbElapsed = (CFAbsoluteTimeGetCurrent() - dbStart) * 1000
         // Track the highest sortOrder and count so iCloud sync reload triggers for new or removed messages.
         lastKnownDbSortOrder = rawMessages.last?.sortOrder ?? 0
@@ -242,6 +259,7 @@ extension AIChatViewModel {
         }
 
         let resolver = await ChatStore.shared.mediaFileURLResolver()
+        guard backgroundLoadStillIdle() else { return }
         logger.info("[SessionLoad] \(sessionId) — Phase 1 DB load: \(String(format: "%.1f", dbElapsed))ms (\(rawMessages.count) messages)")
 
         // Phase 2: Build UI messages and agent history
@@ -394,6 +412,7 @@ extension AIChatViewModel {
         // Fallback chain for legacy markers (no firstKeptMessageId):
         //   firstKeptMessageId → boundaryMessageId → firstKeptSortOrder
         let compactMarker = remoteDeviceId == nil ? await ChatStore.shared.latestCompactMarker(sessionId: sessionId) : nil
+        guard backgroundLoadStillIdle() else { return }
         self.cachedLatestMarker = compactMarker
         if let marker = compactMarker {
             logger.info("[Compact] ━━━ Phase 2.5: restore (Phase B id-first) ━━━")
@@ -491,6 +510,7 @@ extension AIChatViewModel {
                         logger.warning("[Compact] Phase2.5 v2 self-heal: orphaned lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil") → newAnchor=\(healAnchor.id.prefix(8)) (sortOrder=\(healAnchor.sortOrder)) → UIIdx=\(healUIIdx) insertIdx=\(insertIdx)")
                         let healed = Self.rewriteMarkerForHeal(marker, newAnchor: healAnchor, lastRaw: rawMessages.last)
                         await ChatStore.shared.updateCompactMarker(healed)
+                        guard backgroundLoadStillIdle() else { return }
                         self.cachedLatestMarker = healed
                         logger.info("[Compact] Phase2.5 v2 self-heal: marker rewritten id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")→\(healAnchor.id.prefix(8)) version=\(marker.version)→2")
                     } else {
@@ -563,6 +583,7 @@ extension AIChatViewModel {
                         logger.warning("[Compact] Phase2.5 compactAll self-heal: orphaned lcmId → newAnchor=\(healAnchor.id.prefix(8)) (sortOrder=\(healAnchor.sortOrder)) → UIIdx=\(healUIIdx) insertIdx=\(insertIdx)")
                         let healed = Self.rewriteMarkerForHeal(marker, newAnchor: healAnchor, lastRaw: rawMessages.last)
                         await ChatStore.shared.updateCompactMarker(healed)
+                        guard backgroundLoadStillIdle() else { return }
                         self.cachedLatestMarker = healed
                         logger.info("[Compact] Phase2.5 compactAll self-heal: marker rewritten id=\(marker.id.prefix(8)) lcmId=\(marker.lastCompactedMessageId?.prefix(8) ?? "nil")→\(healAnchor.id.prefix(8)) version=\(marker.version)→2")
                     } else {
@@ -615,6 +636,7 @@ extension AIChatViewModel {
 
         // Defer assigning messages until after Phase 3 (tool snapshots) so the
         // UI never sees messages without their corresponding snapshot data.
+        guard backgroundLoadStillIdle() else { return }
         agentHistory = loadedHistory
 
         // [T-ios-unread-dot-reappears] Opening the session means the user has
@@ -760,6 +782,7 @@ extension AIChatViewModel {
         // to the global default group, running on a different model than the
         // one the chat header is showing.
         if let session = await ChatStore.shared.getSession(sessionId) {
+            guard backgroundLoadStillIdle() else { return }
             if session.title != nil {
                 titleGenAttempts = 3 // max out so no more attempts
             }
