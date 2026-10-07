@@ -7,6 +7,12 @@ on:
     branches: [ "**" ]
   workflow_dispatch:
 
+concurrency:
+  # Keep only the newest build for a branch. Rapid feature pushes should not
+  # consume three macOS runners for superseded commits.
+  group: ze-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Ze.app
