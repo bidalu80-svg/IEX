@@ -51,7 +51,7 @@ struct MediaFavoritesView: View {
         .navigationTitle("收藏夹")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarLeading) {
                 if isEditing {
                     Button("取消") {
                         selectedIDs.removeAll()
@@ -59,20 +59,24 @@ struct MediaFavoritesView: View {
                     }
                 }
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if !selectedIDs.isEmpty {
+            if !selectedIDs.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         prepareShare()
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .disabled(isPreparingArchive)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
                     } label: {
                         Image(systemName: "trash")
                     }
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(isEditing ? "完成" : "选择") {
                     isEditing.toggle()
                     if !isEditing { selectedIDs.removeAll() }
