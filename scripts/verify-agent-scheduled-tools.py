@@ -24,7 +24,7 @@ check('try store.setEnabled' in tool and 'try store.delete(id: id)' in tool,'mod
 check('Settings > Scheduled Tasks' in tool and '当前没有定时任务' in tool,'tool responses guide Chinese UI')
 check(project.count('/* AIChatViewModel+ScheduledTaskTools.swift in Sources */')==2 and 'path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"' in project,'new tool file is in app source membership')
 check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in anim,'glyph uses a 60fps timeline')
-check('private let size: CGFloat = 12' in anim and 'private let holdDuration: TimeInterval = 0.25' in anim and 'rotationDegrees' in anim,'glyph stays small, pauses 0.25s, and rotates only during morphs')
+check('private let size: CGFloat = 12' in anim and 'private let holdDuration: TimeInterval = 0.25' in anim and 'easedRotationProgress' in anim and 'rotationDegrees' in anim,'glyph stays small, pauses 0.25s, and uses eased rotation only during morphs')
 check('Color.cyan' in anim and 'purpleGradient' in anim and 'corner = size * (0.5 - 0.25 * morph)' in anim and 'if elapsed < holdDuration' in anim and '.strokeBorder' in anim,'pale-blue circle and paused light-purple rounded-square jelly transition')
 check('private struct JellyThinkingGlyph' in anim and 'HStack(spacing: 4)' in anim,'glyph is placed before Chinese thinking label')
 check('scripts/verify-agent-scheduled-tools.py' in source('.github/workflows/build.yml'),'CI runs integration gate')

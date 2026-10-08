@@ -1204,7 +1204,8 @@ private struct JellyThinkingGlyph: View {
         // Circle → rounded square: exactly one full turn.
         if elapsed < forwardEnd {
             let progress = (elapsed - holdDuration) / transitionDuration
-            return (CGFloat(progress * 0.5), progress * 360.0)
+            let eased = easedRotationProgress(progress)
+            return (CGFloat(progress * 0.5), eased * 360.0)
         }
         // Hold the light-purple rounded square before returning.
         if elapsed < squareHoldEnd {
@@ -1212,7 +1213,16 @@ private struct JellyThinkingGlyph: View {
         }
         // Rounded square → circle: another full turn.
         let progress = (elapsed - squareHoldEnd) / transitionDuration
-        return (CGFloat(0.5 + progress * 0.5), 360.0 + progress * 360.0)
+        let eased = easedRotationProgress(progress)
+        return (CGFloat(0.5 + progress * 0.5), 360.0 + eased * 360.0)
+    }
+
+    /// Cosine easing gives the rotation zero velocity at both ends of each
+    /// morph, so it settles into the 0.25s hold instead of snapping or turning
+    /// at a constant, mechanical speed.
+    private func easedRotationProgress(_ progress: TimeInterval) -> Double {
+        let clamped = min(1.0, max(0.0, progress))
+        return 0.5 - 0.5 * cos(clamped * .pi)
     }
 }
 
