@@ -756,7 +756,6 @@ private struct BridgedWholeMessageV3: View {
             onEdit: bridge.onEdit,
             onDelete: bridge.onDelete,
             onWithdraw: bridge.onWithdraw,
-            onToggleUserMessageExpansion: bridge.onToggleUserMessageExpansion,
             autoRetryAttempt: 0,
             autoRetryCountdown: 0,
             canResume: false,
@@ -764,6 +763,7 @@ private struct BridgedWholeMessageV3: View {
             onCompact: bridge.onCompact,
             onCopyScreenshot: bridge.onCopyScreenshot,
             onShowCompactSummary: bridge.onShowCompactSummary,
+            onToggleUserMessageExpansion: bridge.onToggleUserMessageExpansion,
             browserPool: nil,
             toolSnapshots: []
         )
