@@ -1078,10 +1078,10 @@ private struct ThinkingDurationLabel: View {
 
 // MARK: - Typing Indicator
 
-/// A single composited sweep replaces the former 30 FPS, three-dot Canvas.
-/// Semantic label colors retain contrast in both light and dark appearances.
-/// A deliberately 12pt footprint: the 60Hz timeline invalidates only this
-/// tiny composited glyph, never the surrounding message row.
+/// A compact 60 FPS jelly glyph. The footprint stays square so the shape
+/// morphs from a circle into a rounded square instead of stretching into a
+/// pill. Each half-cycle makes one complete turn, keeping both directions of
+/// the morph visually connected while invalidating only this tiny view.
 private struct JellyThinkingGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -1092,50 +1092,95 @@ private struct JellyThinkingGlyph: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
-            let phase = reduceMotion ? CGFloat(0.35) : phase(at: timeline.date)
-            let wave = 0.5 - 0.5 * cos(phase * 2 * .pi)
-            let width = 8.5 + 3.5 * wave
-            let corner = 2.0 + 4.0 * wave
+            let phase = reduceMotion ? CGFloat(0.0) : phase(at: timeline.date)
+            // 0 and 1 are circles; 0.5 is a rounded square. The same wave
+            // drives shape, colour, and the midpoint of each rotation.
+            let morph = 0.5 - 0.5 * cos(phase * 2 * .pi)
+            let corner = size * (0.5 - 0.25 * morph)
+            let rotation = Angle(degrees: Double(phase) * 720.0)
             let lift = 1.0 + 0.035 * sin(phase * 2 * .pi)
 
             ZStack {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(colorScheme == .dark ? 0.34 : 0.74),
-                                Color.cyan.opacity(colorScheme == .dark ? 0.30 : 0.43),
-                                Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.26)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(currentGradient)
                     .overlay {
                         RoundedRectangle(cornerRadius: corner, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        .white.opacity(colorScheme == .dark ? 0.84 : 0.96),
-                                        .cyan.opacity(colorScheme == .dark ? 0.48 : 0.70),
-                                        .white.opacity(colorScheme == .dark ? 0.34 : 0.62)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.9
-                            )
+                            .fill(purpleGradient)
+                            .opacity(morph)
                     }
-                    .frame(width: width, height: size)
-                    .shadow(color: .cyan.opacity(colorScheme == .dark ? 0.28 : 0.18), radius: 3, y: 1)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: corner, style: .continuous)
+                            .strokeBorder(currentRimGradient, lineWidth: 0.9)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                                    .strokeBorder(purpleRimGradient, lineWidth: 0.9)
+                                    .opacity(morph)
+                            }
+                    }
+                    .frame(width: size, height: size)
+                    .shadow(color: shadowColor.opacity(0.22), radius: 3, y: 1)
                     .scaleEffect(lift)
+                    .rotationEffect(rotation)
             }
-            .frame(width: size + 3, height: size, alignment: .center)
+            .frame(width: size, height: size)
             .compositingGroup()
         }
-        .frame(width: size + 3, height: size)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
         .onAppear { startedAt = Date() }
+    }
+
+    private var currentGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(colorScheme == .dark ? 0.34 : 0.74),
+                Color.cyan.opacity(colorScheme == .dark ? 0.30 : 0.43),
+                Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.26)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var purpleGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(colorScheme == .dark ? 0.36 : 0.78),
+                Color(red: 0.78, green: 0.70, blue: 1.0).opacity(colorScheme == .dark ? 0.34 : 0.58),
+                Color(red: 0.62, green: 0.48, blue: 0.94).opacity(colorScheme == .dark ? 0.22 : 0.38)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var currentRimGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                .white.opacity(colorScheme == .dark ? 0.84 : 0.96),
+                .cyan.opacity(colorScheme == .dark ? 0.48 : 0.70),
+                .white.opacity(colorScheme == .dark ? 0.34 : 0.62)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var purpleRimGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                .white.opacity(colorScheme == .dark ? 0.88 : 0.98),
+                Color(red: 0.76, green: 0.67, blue: 1.0).opacity(colorScheme == .dark ? 0.62 : 0.82),
+                Color.white.opacity(colorScheme == .dark ? 0.40 : 0.70)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var shadowColor: Color {
+        let purple = Color(red: 0.62, green: 0.48, blue: 0.94)
+        return purple
     }
 
     private func phase(at date: Date) -> CGFloat {
