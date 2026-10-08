@@ -51,7 +51,7 @@ struct MediaFavoritesView: View {
         .navigationTitle("收藏夹")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .topBarLeading) {
                 if isEditing {
                     Button("取消") {
                         selectedIDs.removeAll()

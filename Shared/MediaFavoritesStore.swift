@@ -112,7 +112,7 @@ final class MediaFavoritesStore: ObservableObject {
             let item = FavoriteMediaItem(id: id, fileName: name, kind: kind, createdAt: Date(), sourceKey: sourceKey)
             let destinationDirectory = rootURL.appendingPathComponent(id.uuidString, isDirectory: true)
             try fm.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-            try fm.copyItem(at: fileURL, to: fileURL(for: item))
+            try fm.copyItem(at: fileURL, to: self.fileURL(for: item))
             items.insert(item, at: 0)
             save()
             return item
