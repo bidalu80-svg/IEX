@@ -1089,7 +1089,7 @@ private struct JellyThinkingGlyph: View {
 
     private let size: CGFloat = 12
     private let transitionDuration: TimeInterval = 0.675
-    private let holdDuration: TimeInterval = 0.5
+    private let holdDuration: TimeInterval = 0.25
 
     private var cycleDuration: TimeInterval {
         transitionDuration * 2 + holdDuration * 2
@@ -1102,7 +1102,7 @@ private struct JellyThinkingGlyph: View {
                 : animationState(at: timeline.date)
             let phase = state.morphPhase
             // 0 and 1 are circles; 0.5 is a rounded square. The icon holds
-            // each endpoint for 0.5s, so rotation only happens during a morph.
+            // each endpoint for 0.25s, so rotation only happens during a morph.
             let morph = 0.5 - 0.5 * cos(phase * 2 * .pi)
             let corner = size * (0.5 - 0.25 * morph)
             let rotation = Angle(degrees: state.rotationDegrees)
@@ -1153,9 +1153,9 @@ private struct JellyThinkingGlyph: View {
     private var purpleGradient: LinearGradient {
         LinearGradient(
             colors: [
-                Color.white.opacity(colorScheme == .dark ? 0.36 : 0.78),
-                Color(red: 0.78, green: 0.70, blue: 1.0).opacity(colorScheme == .dark ? 0.34 : 0.58),
-                Color(red: 0.62, green: 0.48, blue: 0.94).opacity(colorScheme == .dark ? 0.22 : 0.38)
+                Color.white.opacity(colorScheme == .dark ? 0.36 : 0.68),
+                Color(red: 0.78, green: 0.70, blue: 1.0).opacity(colorScheme == .dark ? 0.34 : 0.68),
+                Color(red: 0.62, green: 0.48, blue: 0.94).opacity(colorScheme == .dark ? 0.22 : 0.50)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -1165,9 +1165,9 @@ private struct JellyThinkingGlyph: View {
     private var currentRimGradient: LinearGradient {
         LinearGradient(
             colors: [
-                .white.opacity(colorScheme == .dark ? 0.84 : 0.96),
-                .cyan.opacity(colorScheme == .dark ? 0.48 : 0.70),
-                .white.opacity(colorScheme == .dark ? 0.34 : 0.62)
+                .white.opacity(colorScheme == .dark ? 0.84 : 0.92),
+                .cyan.opacity(colorScheme == .dark ? 0.48 : 0.66),
+                Color(red: 0.42, green: 0.67, blue: 0.93).opacity(colorScheme == .dark ? 0.34 : 0.54)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -1177,9 +1177,9 @@ private struct JellyThinkingGlyph: View {
     private var purpleRimGradient: LinearGradient {
         LinearGradient(
             colors: [
-                .white.opacity(colorScheme == .dark ? 0.88 : 0.98),
-                Color(red: 0.76, green: 0.67, blue: 1.0).opacity(colorScheme == .dark ? 0.62 : 0.82),
-                Color.white.opacity(colorScheme == .dark ? 0.40 : 0.70)
+                .white.opacity(colorScheme == .dark ? 0.88 : 0.94),
+                Color(red: 0.68, green: 0.56, blue: 0.98).opacity(colorScheme == .dark ? 0.62 : 0.88),
+                Color(red: 0.46, green: 0.34, blue: 0.82).opacity(colorScheme == .dark ? 0.40 : 0.72)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
