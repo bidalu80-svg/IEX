@@ -1002,6 +1002,8 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var canResume: Bool = false
     @Published var onResume: (() -> Void)?
     @Published var onCompact: (() -> Void)?
+    /// Coordinator-owned user-message disclosure mutation for V3 cells.
+    @Published var onToggleUserMessageExpansion: (() -> Void)?
     @Published var onForceSync: (() -> Void)?
     @Published var onCopyScreenshot: (() -> Void)?
     /// Read this whole reply aloud from the start (clears in-progress TTS).

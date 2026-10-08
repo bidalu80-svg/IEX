@@ -122,6 +122,9 @@ struct ChatMessageRow: View {
     /// Triggers AIChatViewModel.revertCompact(). Wired from AIChatView so the
     /// row + sheet stay free of view-model imports.
     var onRevertCompact: (() -> Void)?
+    /// V3 supplies a coordinator-owned mutation so the collection cell does not
+    /// toggle an observed model while UIHostingConfiguration is remeasuring it.
+    var onToggleUserMessageExpansion: (() -> Void)?
     var browserPool: BrowserTabPool?
     var toolSnapshots: [ToolSnapshotItem] = []
     @State private var showUsage = false
@@ -328,6 +331,28 @@ struct ChatMessageRow: View {
         }
     }
 
+    private func toggleUserMessageExpansion() {
+        if let onToggleUserMessageExpansion {
+            onToggleUserMessageExpansion()
+            return
+        }
+
+        // Standalone rows keep the old local fallback. The V3 collection path
+        // injects the coordinator-owned callback above so mutation and height
+        // invalidation happen in one transaction against the canonical message.
+        NotificationCenter.default.post(
+            name: .userMessageExpansionWillToggle,
+            object: message.id,
+            userInfo: ["expanded": message.isUserTextExpanded]
+        )
+        message.isUserTextExpanded.toggle()
+        NotificationCenter.default.post(
+            name: .userMessageExpansionToggled,
+            object: message.id,
+            userInfo: ["expanded": message.isUserTextExpanded]
+        )
+    }
+
     /// Bubble content is separated from `userRow` so the collapse control stays
     /// inside the same rounded card and participates in one intrinsic-height
     /// measurement.
@@ -366,20 +391,7 @@ struct ChatMessageRow: View {
                 // collection-view screenshot path can observe an incomplete
                 // hierarchy and capture only the source user bubble.
                 .onTapGesture {
-                    // The collection view must switch out of bottom-pinning and
-                    // capture this cell's viewport coordinate BEFORE @Published
-                    // schedules the expanded SwiftUI body for remeasurement.
-                    NotificationCenter.default.post(
-                        name: .userMessageExpansionWillToggle,
-                        object: message.id,
-                        userInfo: ["expanded": message.isUserTextExpanded]
-                    )
-                    message.isUserTextExpanded.toggle()
-                    NotificationCenter.default.post(
-                        name: .userMessageExpansionToggled,
-                        object: message.id,
-                        userInfo: ["expanded": message.isUserTextExpanded]
-                    )
+                    toggleUserMessageExpansion()
                 }
             }
         }

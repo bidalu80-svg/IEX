@@ -756,6 +756,7 @@ private struct BridgedWholeMessageV3: View {
             onEdit: bridge.onEdit,
             onDelete: bridge.onDelete,
             onWithdraw: bridge.onWithdraw,
+            onToggleUserMessageExpansion: bridge.onToggleUserMessageExpansion,
             autoRetryAttempt: 0,
             autoRetryCountdown: 0,
             canResume: false,
@@ -814,6 +815,29 @@ extension CollectionViewMessageListV3 {
             collapseConsecutiveToolCalls = enabled
             guard let vm else { return }
             applySnapshot(messages: vm.messages, caller: "tool-group-preference")
+        }
+
+        private func toggleUserMessageExpansion(messageId: UUID) {
+            guard let vm,
+                  let message = vm.messages.first(where: { $0.id == messageId }),
+                  message.role == .user,
+                  !message.isQueued else { return }
+
+            // Keep the viewport transaction synchronous and mutate the canonical
+            // VM message, rather than the UIHostingConfiguration's captured
+            // reference. This prevents the first tap from being consumed by a
+            // stale host and prevents the following tap from appearing inverted.
+            NotificationCenter.default.post(
+                name: .userMessageExpansionWillToggle,
+                object: messageId,
+                userInfo: ["expanded": message.isUserTextExpanded]
+            )
+            message.isUserTextExpanded.toggle()
+            NotificationCenter.default.post(
+                name: .userMessageExpansionToggled,
+                object: messageId,
+                userInfo: ["expanded": message.isUserTextExpanded]
+            )
         }
 
         private func toggleToolGroup(messageId: UUID, firstBlockId: UUID) {
@@ -1419,6 +1443,9 @@ extension CollectionViewMessageListV3 {
             bridge.canResume = isLast ? (vm.canResume && !vm.isProcessing && !trackerActive) : false
             bridge.onResume = isLast ? { [weak self] in self?.onResume?() } : nil
             bridge.onWithdraw = message.isQueued ? { [weak self] in self?.onWithdraw?(message.id) } : nil
+            bridge.onToggleUserMessageExpansion = message.role == .user && !message.isQueued
+                ? { [weak self] in self?.toggleUserMessageExpansion(messageId: message.id) }
+                : nil
             bridge.onDelete = (message.role == .user && !message.isQueued && !vm.isProcessing)
                 ? { [weak self, weak message] in
                     guard let id = message?.id else { return }

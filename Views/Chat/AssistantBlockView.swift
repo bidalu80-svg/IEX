@@ -1080,7 +1080,7 @@ private struct ThinkingDurationLabel: View {
 
 /// A compact 60 FPS jelly glyph. The footprint stays square so the shape
 /// morphs from a circle into a rounded square instead of stretching into a
-/// pill. Each half-cycle makes one complete turn, keeping both directions of
+/// pill. Each morph transition makes one complete turn, keeping both directions of
 /// the morph visually connected while invalidating only this tiny view.
 private struct JellyThinkingGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1088,16 +1088,24 @@ private struct JellyThinkingGlyph: View {
     @State private var startedAt = Date()
 
     private let size: CGFloat = 12
-    private let period: TimeInterval = 1.35
+    private let transitionDuration: TimeInterval = 0.675
+    private let holdDuration: TimeInterval = 0.5
+
+    private var cycleDuration: TimeInterval {
+        transitionDuration * 2 + holdDuration * 2
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
-            let phase = reduceMotion ? CGFloat(0.0) : phase(at: timeline.date)
-            // 0 and 1 are circles; 0.5 is a rounded square. The same wave
-            // drives shape, colour, and the midpoint of each rotation.
+            let state = reduceMotion
+                ? (morphPhase: CGFloat(0), rotationDegrees: 0.0)
+                : animationState(at: timeline.date)
+            let phase = state.morphPhase
+            // 0 and 1 are circles; 0.5 is a rounded square. The icon holds
+            // each endpoint for 0.5s, so rotation only happens during a morph.
             let morph = 0.5 - 0.5 * cos(phase * 2 * .pi)
             let corner = size * (0.5 - 0.25 * morph)
-            let rotation = Angle(degrees: Double(phase) * 720.0)
+            let rotation = Angle(degrees: state.rotationDegrees)
             let lift = 1.0 + 0.035 * sin(phase * 2 * .pi)
 
             ZStack {
@@ -1183,9 +1191,28 @@ private struct JellyThinkingGlyph: View {
         return purple
     }
 
-    private func phase(at date: Date) -> CGFloat {
+    private func animationState(at date: Date) -> (morphPhase: CGFloat, rotationDegrees: Double) {
         let elapsed = date.timeIntervalSince(startedAt)
-        return CGFloat((elapsed / period).truncatingRemainder(dividingBy: 1))
+            .truncatingRemainder(dividingBy: cycleDuration)
+        let forwardEnd = holdDuration + transitionDuration
+        let squareHoldEnd = forwardEnd + holdDuration
+
+        // Hold the blue circle before the forward morph.
+        if elapsed < holdDuration {
+            return (0, 0)
+        }
+        // Circle → rounded square: exactly one full turn.
+        if elapsed < forwardEnd {
+            let progress = (elapsed - holdDuration) / transitionDuration
+            return (CGFloat(progress * 0.5), progress * 360.0)
+        }
+        // Hold the light-purple rounded square before returning.
+        if elapsed < squareHoldEnd {
+            return (0.5, 360.0)
+        }
+        // Rounded square → circle: another full turn.
+        let progress = (elapsed - squareHoldEnd) / transitionDuration
+        return (CGFloat(0.5 + progress * 0.5), 360.0 + progress * 360.0)
     }
 }
 
