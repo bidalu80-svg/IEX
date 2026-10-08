@@ -51,37 +51,21 @@ struct MediaFavoritesView: View {
         .navigationTitle("收藏夹")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                if isEditing {
-                    Button("取消") {
-                        selectedIDs.removeAll()
-                        isEditing = false
-                    }
-                }
-            }
-            if !selectedIDs.isEmpty {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        prepareShare()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    .disabled(isPreparingArchive)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .destructive) {
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(isEditing ? "完成" : "选择") {
+            MediaFavoritesToolbar(
+                isEditing: isEditing,
+                hasSelection: !selectedIDs.isEmpty,
+                isPreparingArchive: isPreparingArchive,
+                onCancel: {
+                    selectedIDs.removeAll()
+                    isEditing = false
+                },
+                onShare: prepareShare,
+                onDelete: { showDeleteConfirmation = true },
+                onToggleEditing: {
                     isEditing.toggle()
                     if !isEditing { selectedIDs.removeAll() }
                 }
-            }
+            )
         }
         .sheet(item: $previewItem) { item in
             FavoriteMediaPreviewView(item: item, fileURL: store.fileURL(for: item))
@@ -180,6 +164,40 @@ struct MediaFavoritesView: View {
             let url = await store.makeZip(for: selected)
             isPreparingArchive = false
             shareURL = url
+        }
+    }
+}
+
+private struct MediaFavoritesToolbar: ToolbarContent {
+    let isEditing: Bool
+    let hasSelection: Bool
+    let isPreparingArchive: Bool
+    let onCancel: () -> Void
+    let onShare: () -> Void
+    let onDelete: () -> Void
+    let onToggleEditing: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if isEditing {
+                Button("取消", action: onCancel)
+            }
+        }
+        if hasSelection {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: onShare) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(isPreparingArchive)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                }
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(isEditing ? "完成" : "选择", action: onToggleEditing)
         }
     }
 }
