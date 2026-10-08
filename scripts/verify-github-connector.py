@@ -15,7 +15,7 @@ ui=text(Path('Views/Connectors/GitHubConnectorView.swift'))
 defs=text(Path('Agent/Chat/AIChatViewModel+ToolDefinitions.swift'))
 dispatch=text(Path('Agent/Chat/AIChatViewModel+ConcurrentTools.swift'))
 chat=text(Path('Agent/Chat/AIChatViewModel.swift'))
-check('GitHubConnectorView()' in content and 'GitHubMark(size: 21)' in content,'设置页包含 GitHub 连接器和图标入口')
+check('GitHubConnectorView()' in content and 'GitHubMark(size: 13)' in content and '.background(Color(.systemGray5), in: Circle())' in content,'设置页包含 GitHub 连接器和圆形图标入口')
 github_mark = ui[ui.find('struct GitHubMark'):]
 check('cat.fill' in github_mark and '.foregroundStyle(.black)' in github_mark and 'RoundedRectangle(cornerRadius:' not in github_mark,'GitHub 图标使用无背景的黑色标识')
 check('GitHubAccountLoginSheet' in ui and 'GitHubTokenLoginSheet' in ui,'GitHub 支持设备登录和访问令牌登录')
