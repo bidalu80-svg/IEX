@@ -2789,6 +2789,11 @@ struct AIChatView: View {
             return GalleryItem(
                 id: "\(index)|\(ref.messageId)|\(fpKey)",
                 title: ref.title,
+                onFavorite: {
+                    guard let url = URL(string: canonical),
+                          let fileURL = resolveZeFileURLCached(url: url) else { return }
+                    MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: ref.title, sourceKey: canonical)
+                },
                 load: { await Self.loadMarkdownImage(source: canonical, fingerprintKey: fpKey) }
             )
         }

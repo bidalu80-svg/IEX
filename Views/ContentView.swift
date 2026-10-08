@@ -5265,6 +5265,7 @@ private enum SettingsDestination: Hashable {
     case skills
     case memory
     case storage
+    case favorites
     case mountedFolders
     case sharedFolders
     case logs
@@ -5463,6 +5464,19 @@ private struct SettingsSheet: View {
                         }
                     }
                     NavigationLink {
+                        MediaFavoritesView()
+                    } label: {
+                        Label {
+                            Text("收藏夹")
+                        } icon: {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.orange, in: Circle())
+                        }
+                    }
+                    NavigationLink {
                         SharedFoldersSettingsView()
                     } label: {
                         Label {
@@ -5611,6 +5625,8 @@ private struct SettingsSheet: View {
                     MemoryManagementView()
                 case .storage:
                     StorageManagementView()
+                case .favorites:
+                    MediaFavoritesView()
                 case .mountedFolders:
                     MountedFoldersSettingsView()
                 case .sharedFolders:

@@ -133,7 +133,7 @@ let mediaPlaceholderHeight: CGFloat = 200
 
 let zeAudioExtensions: Set<String> = ["mp3", "m4a", "wav", "aac", "ogg", "flac"]
 let zeVideoExtensions: Set<String> = ["mp4", "mov", "m4v", "avi", "mkv", "webm"]
-let zeImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"]
+let zeImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tiff"]
 let zeTextExtensions: Set<String> = [
     "txt", "log", "json", "yaml", "yml", "toml", "xml", "plist",
     "csv", "tsv", "py", "swift", "js", "ts", "jsx", "tsx", "c", "cpp",
@@ -336,6 +336,17 @@ struct AsyncImageTile: View {
             }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let kind = meta.favoriteMediaKind,
+               let sourceURL = URL(string: meta.zeURL),
+               let fileURL = resolveZeFileURLCached(url: sourceURL) {
+                Button {
+                    MediaFavoritesStore.shared.add(fileURL: fileURL, kind: kind, fileName: meta.fileName, sourceKey: meta.zeURL)
+                } label: {
+                    Label("收藏到收藏夹", systemImage: "star")
+                }
+            }
+        }
         // Fingerprint id (path + size + mtime) so an in-place rewrite of
         // the underlying ze:// file invalidates the displayed
         // thumbnail (T-image-cache-mtime-35133). URL string alone would
@@ -399,6 +410,17 @@ struct AsyncVideoTile: View {
             }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let kind = meta.favoriteMediaKind,
+               let sourceURL = URL(string: meta.zeURL),
+               let fileURL = resolveZeFileURLCached(url: sourceURL) {
+                Button {
+                    MediaFavoritesStore.shared.add(fileURL: fileURL, kind: kind, fileName: meta.fileName, sourceKey: meta.zeURL)
+                } label: {
+                    Label("收藏到收藏夹", systemImage: "star")
+                }
+            }
+        }
         // Fingerprint id (path + size + mtime) so an in-place rewrite of
         // the underlying ze:// file invalidates the displayed
         // thumbnail (T-image-cache-mtime-35133). URL string alone would
@@ -517,6 +539,36 @@ extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }
 
+private struct ZeMediaFavoriteModifier: ViewModifier {
+    let url: URL
+    let fileURL: URL
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            if let kind = Self.kind(for: url) {
+                Button {
+                    MediaFavoritesStore.shared.add(
+                        fileURL: fileURL,
+                        kind: kind,
+                        fileName: url.lastPathComponent,
+                        sourceKey: url.absoluteString
+                    )
+                } label: {
+                    Label("收藏到收藏夹", systemImage: "star")
+                }
+            }
+        }
+    }
+
+    private static func kind(for url: URL) -> FavoriteMediaKind? {
+        let ext = url.pathExtension.lowercased()
+        if zeImageExtensions.contains(ext) { return .image }
+        if zeVideoExtensions.contains(ext) { return .video }
+        if zeAudioExtensions.contains(ext) { return .audio }
+        return nil
+    }
+}
+
 private struct ZeImageView: View {
     let url: URL?
     @State private var showFullscreen = false
@@ -534,10 +586,12 @@ private struct ZeImageView: View {
             if zeAudioExtensions.contains(ext) {
                 if let fileURL = resolveZeFileURLCached(url: url) {
                     ZeAudioPlayerView(url: url, fileURL: fileURL)
+                        .modifier(ZeMediaFavoriteModifier(url: url, fileURL: fileURL))
                 }
             } else if zeVideoExtensions.contains(ext) {
                 if let fileURL = resolveZeFileURLCached(url: url) {
                     ZeVideoPlayerView(url: url, fileURL: fileURL)
+                        .modifier(ZeMediaFavoriteModifier(url: url, fileURL: fileURL))
                 }
             } else {
                 zeImageContent(url: url)
@@ -553,6 +607,7 @@ private struct ZeImageView: View {
                     .task(id: zeMediaCacheKey(for: url)) {
                         await loadWithRetry(url: url)
                     }
+                    .modifier(ZeMediaFavoriteModifier(url: url, fileURL: resolveZeFileURLCached(url: url) ?? url))
             }
         } else if let url {
             // Fall through to default async loading for non-ze URLs
@@ -598,7 +653,11 @@ private struct ZeImageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .onTapGesture { showFullscreen = true }
                 .fullScreenCover(isPresented: $showFullscreen) {
-                    ImagePreviewView(image: image)
+                    ImagePreviewView(image: image, onFavorite: {
+                        if let fileURL = resolveZeFileURLCached(url: url) {
+                            MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: url.lastPathComponent, sourceKey: url.absoluteString)
+                        }
+                    })
                 }
         } else {
             // Fixed-height placeholder prevents layout jumps when LazyVStack recycles
@@ -696,7 +755,9 @@ struct ZeImageFilePreviewView: View {
 
     var body: some View {
         if let image = loadedImage {
-            ImagePreviewView(image: image)
+            ImagePreviewView(image: image, onFavorite: {
+                MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: fileURL.lastPathComponent, sourceKey: fileURL.absoluteString)
+            })
         } else {
             ZStack {
                 Color.black.ignoresSafeArea()

@@ -36,6 +36,8 @@
 		AA0838C02F3B941A00049557 /* RootfsResetButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */; };
 		AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */; };
 		AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838CD2F3B941A00049557 /* StorageManagementView.swift */; };
+		C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000002 /* MediaFavoritesStore.swift */; };
+		C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000004 /* MediaFavoritesView.swift */; };
 		AA0838D02F3B941A00049557 /* CurrentRoot.m in Sources */ = {isa = PBXBuildFile; fileRef = AA0838D12F3B941A00049557 /* CurrentRoot.m */; };
 		AA0838D22F3B941A00049557 /* RootfsPatch.bundle in Resources */ = {isa = PBXBuildFile; fileRef = AA0838D32F3B941A00049557 /* RootfsPatch.bundle */; };
 		AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838FE2F3B941A00049557 /* MirrorSpeedTestView.swift */; };
@@ -598,6 +600,8 @@
 		AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsManagementView.swift; sourceTree = "<group>"; };
 		AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsResetButton.swift; sourceTree = "<group>"; };
 		AA0838CD2F3B941A00049557 /* StorageManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManagementView.swift; sourceTree = "<group>"; };
+		C0DEFA000000000000000002 /* MediaFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/MediaFavoritesStore.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEFA000000000000000004 /* MediaFavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MediaFavoritesView.swift"; sourceTree = SOURCE_ROOT; };
 		AA0838D12F3B941A00049557 /* CurrentRoot.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CurrentRoot.m; sourceTree = "<group>"; };
 		AA0838D32F3B941A00049557 /* RootfsPatch.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; name = RootfsPatch.bundle; path = ../../deps/resources/RootfsPatch.bundle; sourceTree = SOURCE_ROOT; };
 		AA0838D42F3B941A00049557 /* CurrentRoot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CurrentRoot.h; sourceTree = "<group>"; };
@@ -2621,6 +2625,8 @@
 				AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
+				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,
+				C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */,
 				E5MNT0001 /* MountedFoldersManager.swift in Sources */,
 				E5MNT0002 /* MountedFolderCoordinator.swift in Sources */,
 				E5MNT0003 /* MountedFoldersSettingsView.swift in Sources */,

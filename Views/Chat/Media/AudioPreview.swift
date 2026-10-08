@@ -117,6 +117,18 @@ struct ZeAudioPreviewView: View {
             .buttonStyle(.plain)
 
             Button {
+                MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .audio, fileName: fileURL.lastPathComponent, sourceKey: fileURL.absoluteString)
+            } label: {
+                Image(systemName: "star")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(ChatColors.primaryText)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
                 showShareSheet = true
             } label: {
                 Image(systemName: "square.and.arrow.up")

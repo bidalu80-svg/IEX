@@ -274,6 +274,17 @@ struct ZeVideoFullscreenPlayer: View {
                         .disabled(saveStatus == .saving || saveStatus == .saved)
 
                         Button {
+                            MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .video, fileName: fileURL.lastPathComponent, sourceKey: fileURL.absoluteString)
+                        } label: {
+                            Image(systemName: "star")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(ChatColors.primaryText)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+
+                        Button {
                             showShareSheet = true
                         } label: {
                             Image(systemName: "square.and.arrow.up")

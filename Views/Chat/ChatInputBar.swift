@@ -285,6 +285,16 @@ private struct AttachmentChip: View {
                     }
             }
         }
+        .contextMenu {
+            if let kind = attachment.favoriteMediaKind,
+               FileManager.default.fileExists(atPath: attachment.cacheURL.path) {
+                Button {
+                    MediaFavoritesStore.shared.add(fileURL: attachment.cacheURL, kind: kind, fileName: attachment.fileName, sourceKey: attachment.cacheURL.absoluteString)
+                } label: {
+                    Label("收藏到收藏夹", systemImage: "star")
+                }
+            }
+        }
     }
 
     /// [T-ios-photo-pick-placeholder] Loading placeholder shown while the picked
@@ -627,6 +637,12 @@ struct UserAttachmentList: View {
             return GalleryItem(
                 id: fpKey,
                 title: meta.fileName,
+                onFavorite: {
+                    if let url = URL(string: meta.zeURL),
+                       let fileURL = resolveZeFileURLCached(url: url) {
+                        MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: meta.fileName, sourceKey: meta.zeURL)
+                    }
+                },
                 load: {
                     // Route through the shared NSCache using the same
                     // fingerprint key so repeated paging doesn't re-decode
@@ -673,6 +689,17 @@ struct UserAttachmentList: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let kind = meta.favoriteMediaKind,
+               let sourceURL = URL(string: meta.zeURL),
+               let fileURL = resolveZeFileURLCached(url: sourceURL) {
+                Button {
+                    MediaFavoritesStore.shared.add(fileURL: fileURL, kind: kind, fileName: meta.fileName, sourceKey: meta.zeURL)
+                } label: {
+                    Label("收藏到收藏夹", systemImage: "star")
+                }
+            }
+        }
         // WebApp entry point — only for .html / .htm. Long-press → context
         // menu → "Add to Home Screen". The sheet resolves the ze://
         // URL to a host URL via resolveZeFileURLCached and hands off
