@@ -5432,7 +5432,7 @@ private struct SettingsSheet: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .frame(width: 21, height: 21)
-                                .background(.blue, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .background(.blue, in: Circle())
                         }
                     }
                     NavigationLink {
@@ -5441,7 +5441,9 @@ private struct SettingsSheet: View {
                         Label {
                             Text("GitHub")
                         } icon: {
-                            GitHubMark(size: 21)
+                            GitHubMark(size: 13)
+                                .frame(width: 21, height: 21)
+                                .background(Color(.systemGray5), in: Circle())
                         }
                     }
                 }

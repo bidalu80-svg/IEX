@@ -37,13 +37,13 @@ check("com.ze.app.scheduled-tasks" in plist["BGTaskSchedulerPermittedIdentifiers
 check("processing" in plist["UIBackgroundModes"], "processing background mode declared")
 project = source("Ze.xcodeproj/project.pbxproj")
 versions = re.findall(r"MARKETING_VERSION = ([^;]+);", project)
-check(len(versions) == 12 and set(versions) == {"1.0.9"}, "all 12 app/extension/test configurations use v1.0.9")
-check(set(re.findall(r"CURRENT_PROJECT_VERSION = ([^;]+);", project)) == {"5"}, "all build numbers are 5")
+check(len(versions) == 12 and set(versions) == {"1.1.0"}, "all 12 app/extension/test configurations use v1.1.0")
+check(set(re.findall(r"CURRENT_PROJECT_VERSION = ([^;]+);", project)) == {"6"}, "all build numbers are 6")
 for path in paths:
     name = Path(path).name
     check(project.count(f"/* {name} in Sources */") == 2 and f'path = "{path}";' in project, f"Xcode source membership: {name}")
 workflow = source(".github/workflows/build.yml")
-check('= "1.0.9"' in workflow and '= "1.0.8"' not in workflow, "IPA version audit upgraded")
+check('= "1.1.0"' in workflow and '= "1.0.8"' not in workflow, "IPA version audit upgraded")
 check("scripts/ScheduledTaskTests.swift" in workflow and "scheduled-task-tests.log" in workflow, "Swift tests and uploaded evidence wired into CI")
 check("ScheduledTaskStore.shared.registerBackgroundTask()" in source("AppDelegate.swift"), "register background task during launch")
 check("ScheduledTaskStore.shared.start()" in source("ZeApp.swift"), "scheduler starts with application")

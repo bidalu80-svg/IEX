@@ -1106,7 +1106,9 @@ private struct JellyThinkingGlyph: View {
             let morph = 0.5 - 0.5 * cos(phase * 2 * .pi)
             let corner = size * (0.5 - 0.25 * morph)
             let rotation = Angle(degrees: state.rotationDegrees)
-            let lift = 1.0 + 0.035 * sin(phase * 2 * .pi)
+            // The rounded square gently grows by 8% through the morph, then
+            // settles back to the circle's original footprint on the return.
+            let lift = 1.0 + 0.08 * morph
 
             ZStack {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
