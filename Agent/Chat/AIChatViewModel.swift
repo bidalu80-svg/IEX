@@ -1976,7 +1976,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     }
 
     private var githubStatusFragment: String {
-        GitHubAIToolGateway.statusFragment
+        GitHubAIToolGateway.statusFragment + MailAIToolGateway.statusFragment
     }
 
     #if DEBUG

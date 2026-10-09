@@ -38,4 +38,14 @@ check('ContentUnavailableView(' not in view and 'private var emptyLibraryView: s
 workflow = text('.github/workflows/build.yml')
 check('2>&1 | tee build.log' in workflow and 'Summarize compiler errors' in workflow,
       'CI captures stderr and exposes compiler errors in the run summary')
+tools = text('Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift')
+for name in ['media_favorite_list', 'media_favorite_add', 'media_favorite_delete']:
+    check(f'name: "{name}"' in tools and f'"{name}"' in text('Agent/Chat/AIChatViewModel+ConcurrentTools.swift'), 'model favorites tool registered and dispatched: ' + name)
+check('mediaFavoriteToolDefinitions()' in text('Agent/Chat/AIChatViewModel+ToolDefinitions.swift'), 'model sees favorites definitions')
+check('await resolveZePath(path)' in tools and 'CGImageSourceCreateWithURL' in tools and 'loadTracks(withMediaType:' in tools, 'favorites add resolves current session and validates media')
+check(tools.index('request(serverName: "收藏夹"') < tools.index('store.removeChecked(item)'), 'favorite deletion waits for user confirmation')
+check('try persist(updated)' in store and 'items = updated' in store and 'func addChecked' in store and 'func removeChecked' in store, 'favorites expose checked durable mutations for tools')
+check('sourceKey: canonicalKey' in store, 'favorite dedup uses canonical file identity, not ambiguous session-relative URLs')
+check('try? fm.moveItem(at: staged, to: directory)' in store, 'favorite deletion restores media if metadata persistence fails')
+check(project.count('/* AIChatViewModel+MediaFavoriteTools.swift in Sources */') == 2, 'favorites tool source belongs to app target')
 print(f'Structural checks passed: {checks}')

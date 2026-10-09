@@ -223,6 +223,8 @@ extension AIChatViewModel {
         tools.append(contentsOf: scheduledTaskAgentToolDefinitions())
         tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
         tools.append(contentsOf: GitHubAIToolGateway.definitions())
+        tools.append(contentsOf: MailAIToolGateway.definitions())
+        tools.append(contentsOf: mediaFavoriteToolDefinitions())
 
         return tools
     }

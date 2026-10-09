@@ -5418,6 +5418,19 @@ private struct SettingsSheet: View {
                                 .background(.green, in: Circle())
                         }
                     }
+                    NavigationLink {
+                        MailAccountsView()
+                    } label: {
+                        Label {
+                            Text("邮箱")
+                        } icon: {
+                            Image(systemName: "envelope.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.blue, in: Circle())
+                        }
+                    }
                 } header: {
                     Text(String(localized: "Agent Runtime"))
                 }

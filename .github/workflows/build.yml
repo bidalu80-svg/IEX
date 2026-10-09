@@ -77,6 +77,19 @@ jobs:
           python3 scripts/verify-media-favorites.py | tee media-favorites-structure.log
           xcrun swiftc -frontend -parse Shared/MediaFavoritesStore.swift
           xcrun swiftc -frontend -parse Views/Settings/MediaFavoritesView.swift
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift
+
+      - name: Test mail models and iOS 16 compatibility
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-mail.py | tee mail-structure.log
+          xcrun swiftc Shared/Mail/MailModels.swift scripts/MailModelsTests.swift -o "$RUNNER_TEMP/mail-model-tests"
+          "$RUNNER_TEMP/mail-model-tests" | tee mail-model-tests.log
+          xcrun swiftc -typecheck -target arm64-apple-ios16.0 \
+            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            Shared/Mail/MailModels.swift Shared/Mail/MailAccountStore.swift \
+            Shared/Mail/MailClient.swift Views/Settings/MailAccountsView.swift \
+            2>&1 | tee mail-ios16-typecheck.log
 
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
@@ -502,8 +515,8 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.0"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "6"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.1"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "7"
           test -f "$APP_AUDIT/Assets.car"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
@@ -547,3 +560,6 @@ jobs:
             scheduled-activity-structure.log
             agent-scheduled-tools-structure.log
             api-key-quota-structure.log
+            mail-structure.log
+            mail-model-tests.log
+            mail-ios16-typecheck.log

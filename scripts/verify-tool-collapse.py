@@ -57,7 +57,7 @@ check('guard !forceUncollapsedToolsForScreenshot' in wrapper, "nested screenshot
 for path in ['Shared/ConsecutiveToolCallsPolicy.swift', 'Views/Chat/ConsecutiveToolCallsHeader.swift']:
     name = Path(path).name
     check(project.count(f'/* {name} in Sources */') == 2 and f'path = "{path}";' in project, f'Xcode source membership: {name}')
-check(set(re.findall(r'CURRENT_PROJECT_VERSION = ([^;]+);', project)) == {'6'}, "all target build numbers are 6")
+check(set(re.findall(r'CURRENT_PROJECT_VERSION = ([^;]+);', project)) == {'7'}, "all target build numbers are 7")
 keys = ['工具调用', '折叠连续的工具调用', '连续的工具调用会合并为一行显示。轻点即可查看每次调用。']
 # Localized header strings use integer counts and formatted seconds strings.
 for literal in re.findall(r'String\(localized: "((?:[^"\\]|\\.)*)"\)', header):

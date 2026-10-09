@@ -746,6 +746,22 @@ extension AIChatViewModel {
             toolOutput = remoteResult.output
             toolSuccess = remoteResult.success
 
+        case "media_favorite_list", "media_favorite_add", "media_favorite_delete":
+            let favoriteResult = await executeMediaFavoriteTool(name: tu.name, arguments: toolArgs)
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = favoriteResult.output
+            }
+            toolOutput = favoriteResult.output
+            toolSuccess = favoriteResult.success
+
+        case "mail_account_list", "mail_list", "mail_read", "mail_send":
+            let mailResult = await MailAIToolGateway.execute(name: tu.name, arguments: toolArgs)
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = mailResult.output
+            }
+            toolOutput = mailResult.output
+            toolSuccess = mailResult.success
+
         case "github_account_list", "github_repository_list", "github_file_read", "github_file_write", "github_file_delete":
             let githubResult = await GitHubAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

@@ -100,40 +100,56 @@ final class MediaFavoritesStore: ObservableObject {
 
     @discardableResult
     func add(fileURL: URL, kind: FavoriteMediaKind, fileName: String? = nil, sourceKey: String? = nil) -> FavoriteMediaItem? {
-        guard fm.fileExists(atPath: fileURL.path) else { return nil }
-        if let sourceKey, let existing = items.first(where: { $0.sourceKey == sourceKey }) {
-            return existing
-        }
+        try? addChecked(fileURL: fileURL, kind: kind, fileName: fileName, sourceKey: sourceKey)
+    }
 
+    /// Publish only after the media copy and atomic index write both succeed.
+    func addChecked(fileURL: URL, kind: FavoriteMediaKind, fileName: String? = nil, sourceKey: String? = nil) throws -> FavoriteMediaItem {
+        guard indexIsReadable else { throw FavoritesStorageError.indexUnavailable }
+        let canonicalKey = fileURL.standardizedFileURL.resolvingSymlinksInPath().absoluteString
+        if let existing = items.first(where: { $0.sourceKey == canonicalKey || self.fileURL(for: $0).standardizedFileURL.resolvingSymlinksInPath().absoluteString == canonicalKey }), fm.fileExists(atPath: self.fileURL(for: existing).path) { return existing }
+        guard (try fileURL.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else { throw FavoritesStorageError.notAFile }
+        try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let id = UUID()
+        let name = Self.sanitizedFileName(fileName ?? fileURL.lastPathComponent, fallback: "媒体文件")
+        let item = FavoriteMediaItem(id: id, fileName: name, kind: kind, createdAt: Date(), sourceKey: canonicalKey)
+        let directory = rootURL.appendingPathComponent(id.uuidString, isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
-            try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            let id = UUID()
-            let name = Self.sanitizedFileName(fileName ?? fileURL.lastPathComponent, fallback: "媒体文件")
-            let item = FavoriteMediaItem(id: id, fileName: name, kind: kind, createdAt: Date(), sourceKey: sourceKey)
-            let destinationDirectory = rootURL.appendingPathComponent(id.uuidString, isDirectory: true)
-            try fm.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
             try fm.copyItem(at: fileURL, to: self.fileURL(for: item))
-            items.insert(item, at: 0)
-            save()
+            let updated = [item] + items
+            try persist(updated)
+            items = updated
             return item
         } catch {
-            return nil
+            try? fm.removeItem(at: directory)
+            throw error
         }
     }
 
-    func remove(_ item: FavoriteMediaItem) {
-        try? fm.removeItem(at: rootURL.appendingPathComponent(item.id.uuidString, isDirectory: true))
-        items.removeAll { $0.id == item.id }
-        save()
-    }
+    func remove(_ item: FavoriteMediaItem) { try? removeChecked(item) }
 
     func remove(ids: Set<UUID>) {
-        guard !ids.isEmpty else { return }
-        for item in items where ids.contains(item.id) {
-            try? fm.removeItem(at: rootURL.appendingPathComponent(item.id.uuidString, isDirectory: true))
+        for item in items.filter({ ids.contains($0.id) }) { try? removeChecked(item) }
+    }
+
+    /// Stage the favorite's own directory; original conversation media is untouched.
+    func removeChecked(_ item: FavoriteMediaItem) throws {
+        guard indexIsReadable else { throw FavoritesStorageError.indexUnavailable }
+        guard items.contains(where: { $0.id == item.id }) else { throw FavoritesStorageError.notFound }
+        let directory = rootURL.appendingPathComponent(item.id.uuidString, isDirectory: true)
+        let staged = rootURL.appendingPathComponent(".deleted-" + UUID().uuidString, isDirectory: true)
+        let hasFile = fm.fileExists(atPath: directory.path)
+        if hasFile { try fm.moveItem(at: directory, to: staged) }
+        do {
+            let updated = items.filter { $0.id != item.id }
+            try persist(updated)
+            items = updated
+        } catch {
+            if hasFile { try? fm.moveItem(at: staged, to: directory) }
+            throw error
         }
-        items.removeAll { ids.contains($0.id) }
-        save()
+        if hasFile { try? fm.removeItem(at: staged) }
     }
 
     func makeZip(for selected: [FavoriteMediaItem]) async -> URL? {
@@ -182,29 +198,29 @@ final class MediaFavoritesStore: ObservableObject {
         }
     }
 
+    private var indexIsReadable = true
+
     private func load() {
-        guard let data = try? Data(contentsOf: metadataURL),
-              let decoded = try? decoder.decode([FavoriteMediaItem].self, from: data) else {
+        guard fm.fileExists(atPath: metadataURL.path) else { items = []; return }
+        do {
+            let decoded = try decoder.decode([FavoriteMediaItem].self, from: Data(contentsOf: metadataURL))
+            items = decoded.filter { fm.fileExists(atPath: fileURL(for: $0).path) }
+        } catch {
+            indexIsReadable = false
             items = []
-            return
         }
-        items = decoded.filter { fm.fileExists(atPath: fileURL(for: $0).path) }
     }
 
-    private func save() {
-        do {
-            try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            try encoder.encode(items).write(to: metadataURL, options: .atomic)
-        } catch {
-            // The UI remains usable if a metadata write is temporarily interrupted.
-        }
+    private func persist(_ updated: [FavoriteMediaItem]) throws {
+        try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try encoder.encode(updated).write(to: metadataURL, options: .atomic)
     }
 
     private static func sanitizedFileName(_ raw: String, fallback: String) -> String {
         let name = raw.replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "\\", with: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? fallback : name
+        return name.isEmpty || name == "." || name == ".." ? fallback : name
     }
 
     // Standard ZIP container with UTF-8 names. Entries are stored verbatim;
@@ -267,3 +283,14 @@ private extension Data {
     }
 }
 
+
+private enum FavoritesStorageError: LocalizedError {
+    case indexUnavailable, notAFile, notFound
+    var errorDescription: String? {
+        switch self {
+        case .indexUnavailable: return "收藏索引读取失败，原文件已保留。请检查存储空间后重启应用。"
+        case .notAFile: return "请选择存在的媒体文件。"
+        case .notFound: return "这项收藏已经删除。"
+        }
+    }
+}
