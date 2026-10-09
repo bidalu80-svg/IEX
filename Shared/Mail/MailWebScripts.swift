@@ -29,8 +29,8 @@ enum MailWebScripts {
           const selectors = \(literal(provider == .gmail
             ? "a[href*='#inbox'],.aeN,[gh=tl],[role=main] [role=row],[role=main] .adn,input[name=q],input[placeholder*='Search mail'],input[placeholder*='搜索邮件']"
             : "#folder_1,#folder_1_td,a[href*='folderid=1'],a[href*='folderid%3D1'],a[href*='/inbox'],[data-folderid='1'],#mailMain,.mail-list,.mailList"));
-          const bodyText = documents.map(d => (d.body?.innerText || '')).join('\n').slice(0, 10000);
-          const loginText = /sign\s*in|to continue|email or phone|password|登录|密码|验证码|重新登录/i.test(bodyText);
+          const bodyText = documents.map(d => (d.body?.innerText || '')).join('\\n').slice(0, 10000);
+          const loginText = /sign\\s*in|to continue|email or phone|password|登录|密码|验证码|重新登录/i.test(bodyText);
           const knownMailboxUI = documents.some(d => Array.from(d.querySelectorAll(selectors)).some(visible));
           // Gmail may land on Settings, Mobile Signature, Vacation Responder,
           // account preferences, or a provider-specific mailbox page instead of
