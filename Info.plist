@@ -195,22 +195,12 @@
 	</array>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Ze uses AlarmKit so the AI agent can set alarms and timers on your behalf.</string>
-	<key>GmailOAuthClientID</key>
-	<string>$(GOOGLE_GMAIL_CLIENT_ID)</string>
-	<key>GmailOAuthCallbackScheme</key>
-	<string>$(GOOGLE_GMAIL_CALLBACK_SCHEME)</string>
 	<key>GitHubOAuthClientID</key>
 	<string>$(GITHUB_OAUTH_CLIENT_ID)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>Gmail OAuth Callback</string>
-			<key>CFBundleURLSchemes</key>
-			<array><string>$(GOOGLE_GMAIL_CALLBACK_SCHEME)</string></array>
-		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
 			<string>Claude OAuth Callback</string>
