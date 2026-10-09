@@ -148,9 +148,7 @@ enum MailClient {
         try await session.login(account: account, password: credentials.imapPassword)
         let validity = try await session.inbox()
         let response = try await session.command("UID SEARCH ALL")
-        let ids = response.lines.filter { $0.uppercased().hasPrefix("* SEARCH") }
-            .flatMap { $0.split(separator: " ").dropFirst(2).compactMap { UInt32($0) } }
-            .filter { $0 > 0 && (beforeUID == nil || $0 < beforeUID!) }.sorted(by: >).prefix(min(max(limit, 1), 20))
+        let ids = MailCodec.searchUIDs(response.lines, before: beforeUID, limit: limit)
         var result: [[String: String]] = []
         for uid in ids {
             try Task.checkCancellation()

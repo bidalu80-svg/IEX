@@ -40,6 +40,21 @@ enum MailError: LocalizedError {
 }
 
 enum MailCodec {
+    static func searchUIDs(_ lines: [String], before: UInt32?, limit: Int) -> [UInt32] {
+        var values = Set<UInt32>()
+        for line in lines {
+            let parts = line.split(separator: " ")
+            guard parts.count >= 2, parts[0] == "*", parts[1].uppercased() == "SEARCH" else { continue }
+            for token in parts.dropFirst(2) {
+                guard let uid = UInt32(String(token)), uid > 0 else { continue }
+                if let before, uid >= before { continue }
+                values.insert(uid)
+            }
+        }
+        let sorted: [UInt32] = values.sorted { $0 > $1 }
+        return Array(sorted.prefix(min(max(limit, 1), 20)))
+    }
+
     static func safeLine(_ value: String) -> Bool {
         !value.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
     }

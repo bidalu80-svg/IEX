@@ -37,6 +37,9 @@ struct MailModelsTests {
         let multipart = "Content-Type: multipart/mixed; boundary=\"demo\"\r\n\r\n--demo\r\nContent-Type: text/plain\r\n\r\nhello\r\n--demo\r\nContent-Disposition: attachment\r\nContent-Type: text/plain\r\n\r\nSECRET_ATTACHMENT\r\n--demo--"
         let readable = MailCodec.readableBody(multipart)
         precondition(readable.contains("hello") && !readable.contains("SECRET_ATTACHMENT"))
+        let uids = MailCodec.searchUIDs(["* SEARCH 1 3 2 4 3 0 bogus", "* OK irrelevant", "* SEARCH 4294967296"], before: 4, limit: 2)
+        precondition(uids == [3, 2])
+        precondition(MailCodec.searchUIDs(["* SEARCH"], before: nil, limit: 10).isEmpty)
         let roundTrip = try JSONDecoder().decode(MailAccount.self, from: JSONEncoder().encode(account))
         precondition(roundTrip == account)
         print("Mail model tests passed: validation, header injection, TLS ports, MIME UTF-8/base64/quoted-printable/multipart, credential-free account roundtrip")
