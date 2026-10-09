@@ -7,8 +7,9 @@ final class MailAccountStore: ObservableObject {
     static let shared = MailAccountStore()
     @Published private(set) var accounts: [MailAccount] = []
     @Published private(set) var loadError: String?
-    private struct Record: Codable { var account: MailAccount; var credentials: MailCredentials }
+    private struct Record: Codable, Equatable { var account: MailAccount; var credentials: MailCredentials }
     private var records: [Record] = []
+    private var access = MailAccessTracker()
     private let service = "com.ze.mail.accounts.v1"
     private init() { reload() }
 
@@ -17,6 +18,7 @@ final class MailAccountStore: ObservableObject {
          kSecAttrAccount as String: "accounts", kSecAttrSynchronizable as String: false]
     }
     func reload() {
+        access.reset(ids: [])
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &result)
@@ -28,8 +30,19 @@ final class MailAccountStore: ObservableObject {
                 }
                 records = try JSONDecoder().decode([Record].self, from: data)
             }
+            access.reset(ids: records.map { $0.account.id })
             accounts = records.map(\.account); loadError = nil
         } catch { loadError = "邮箱资料读取失败，请解锁设备后重新打开。" }
+    }
+    func accessTicket(for id: UUID) throws -> MailAccessTicket {
+        guard loadError == nil, accounts.contains(where: { $0.id == id && $0.agentEnabled }) else {
+            throw MailError.message("邮箱连接已删除、智能体访问已关闭或凭据尚未解锁。")
+        }
+        return try access.ticket(for: id)
+    }
+    func validateAccess(_ ticket: MailAccessTicket) throws {
+        _ = try accessTicket(for: ticket.accountID)
+        try access.validate(ticket)
     }
     func credentials(for id: UUID) throws -> MailCredentials {
         guard let value = records.first(where: { $0.account.id == id }) else { throw MailError.message("邮箱已删除，请重新选择账号。") }
@@ -66,6 +79,10 @@ final class MailAccountStore: ObservableObject {
             status = SecItemAdd(query.merging(attrs) { _, new in new } as CFDictionary, nil)
         }
         guard status == errSecSuccess else { throw MailError.message("保存邮箱失败（钥匙串状态 \(status)），原有资料已保留。") }
+        let changed = Set(values.filter { value in
+            records.first(where: { $0.account.id == value.account.id }) != value
+        }.map { $0.account.id })
+        access.synchronize(ids: values.map { $0.account.id }, changed: changed)
         records = values; accounts = values.map(\.account)
     }
 }

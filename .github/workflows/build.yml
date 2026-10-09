@@ -83,12 +83,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/verify-mail.py | tee mail-structure.log
-          xcrun swiftc Shared/Mail/MailModels.swift scripts/MailModelsTests.swift -o "$RUNNER_TEMP/mail-model-tests"
+          python3 scripts/verify-mail-connectors.py | tee mail-connectors-structure.log
+          python3 scripts/test-gmail-oauth-config.py | tee gmail-config-tests.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Shared/Mail/MailModels.swift Shared/Mail/MailVerification.swift Shared/Gmail/GmailModels.swift scripts/GmailConnectorTests.swift -o "$RUNNER_TEMP/mail-connector-tests"
+          "$RUNNER_TEMP/mail-connector-tests" | tee mail-connectors-tests.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Shared/Mail/MailModels.swift scripts/MailModelsTests.swift -o "$RUNNER_TEMP/mail-model-tests"
           "$RUNNER_TEMP/mail-model-tests" | tee mail-model-tests.log
           xcrun swiftc -typecheck -target arm64-apple-ios16.0 \
             -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
             Shared/Mail/MailModels.swift Shared/Mail/MailAccountStore.swift \
-            Shared/Mail/MailClient.swift Views/Settings/MailAccountsView.swift \
+            Shared/Mail/MailClient.swift Shared/Mail/MailVerification.swift \
+            Shared/Gmail/GmailModels.swift Shared/Gmail/GmailConnector.swift \
+            Views/Settings/MailConnectorViews.swift Views/Settings/MailAccountsView.swift \
             2>&1 | tee mail-ios16-typecheck.log
 
       - name: Test favorites success feedback and square layout on simulator
@@ -96,7 +102,12 @@ jobs:
         run: bash scripts/test-favorites-ui.sh
 
       - name: Create ProviderCustomization.xcconfig
-        run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
+        env:
+          GOOGLE_GMAIL_CLIENT_ID: ${{ vars.GOOGLE_GMAIL_CLIENT_ID || secrets.GOOGLE_GMAIL_CLIENT_ID }}
+          REQUIRE_GMAIL_OAUTH: ${{ vars.REQUIRE_GMAIL_OAUTH }}
+        run: |
+          cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
+          python3 scripts/configure-gmail-oauth.py
 
       - name: Create stub deps
         shell: bash
@@ -511,6 +522,9 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Ze-unsigned.ipa"
 
       - name: Audit unsigned IPA bundle
+        env:
+          GOOGLE_GMAIL_CLIENT_ID: ${{ vars.GOOGLE_GMAIL_CLIENT_ID || secrets.GOOGLE_GMAIL_CLIENT_ID }}
+          REQUIRE_GMAIL_OAUTH: ${{ vars.REQUIRE_GMAIL_OAUTH }}
         run: |
           test -f Ze-unsigned.ipa
           IPA_AUDIT="$RUNNER_TEMP/ze-ipa-audit"
@@ -519,6 +533,7 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
+          python3 scripts/configure-gmail-oauth.py --audit-plist "$APP_AUDIT/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.1"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "7"
           test -f "$APP_AUDIT/Assets.car"
@@ -565,6 +580,9 @@ jobs:
             agent-scheduled-tools-structure.log
             api-key-quota-structure.log
             mail-structure.log
+            mail-connectors-structure.log
+            mail-connectors-tests.log
+            gmail-config-tests.log
             mail-model-tests.log
             mail-ios16-typecheck.log
             favorites-ui-evidence/

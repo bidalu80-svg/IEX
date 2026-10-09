@@ -20,3 +20,7 @@ ANTHROPIC_OAUTH_IDENTIFIER_PROMPT =
 // app's public GitHub device-flow client; an access-token login fallback
 // remains available in Settings → 服务器与连接 → GitHub.
 GITHUB_OAUTH_CLIENT_ID =
+
+// Ze-owned iOS OAuth client for Gmail readonly access. Never reuse Gemini IDs.
+GOOGLE_GMAIL_CLIENT_ID =
+GOOGLE_GMAIL_CALLBACK_SCHEME = com.ze.gmail.unconfigured

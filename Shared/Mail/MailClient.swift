@@ -135,6 +135,36 @@ private actor MailIMAPSession {
 
 /// Plain-text email tools, no credential strings in outputs or logs.
 enum MailClient {
+    static func testIncoming(account: MailAccount, credentials: MailCredentials) async throws {
+        try account.validate()
+        let imap = try MailIMAPSession(account: account); defer { imap.close() }
+        try await imap.login(account: account, password: credentials.imapPassword)
+        _ = try await imap.inbox()
+    }
+    static func verificationMessages(account: MailAccount, credentials: MailCredentials, filter: MailVerificationFilter, limit: Int = 20) async throws -> [[String: String]] {
+        let session = try MailIMAPSession(account: account); defer { session.close() }
+        try await session.login(account: account, password: credentials.imapPassword)
+        let validity = try await session.inbox()
+        let date = DateFormatter(); date.locale = Locale(identifier: "en_US_POSIX")
+        date.timeZone = TimeZone(secondsFromGMT: 0); date.dateFormat = "d-MMM-yyyy"
+        // Coarse server-side date includes a full day of timezone margin; exact INTERNALDATE is checked below.
+        let since = date.string(from: filter.after.addingTimeInterval(-86_400))
+        let search = try await session.command("UID SEARCH FROM \(MailCodec.quoted(filter.sender)) SINCE \(since)")
+        return try await MailVerificationPager.collect(limit: min(max(limit, 1), 20), load: { cursor -> MailVerificationPage<UInt32> in
+            let before = cursor.flatMap { UInt32($0) }
+            let ids = MailCodec.searchUIDs(search.lines, before: before, limit: 20)
+            return MailVerificationPage(items: ids, nextCursor: ids.count == 20 ? ids.last.map { String($0) } : nil)
+        }, transform: { uid -> [String: String]? in
+            let response = try await session.command("UID FETCH \(uid) (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)]<0.32768>)")
+            guard let data = response.literals.first, let received = MailVerification.imapReceivedDate(response.lines) else { return nil }
+            let headers = MailCodec.headers(String(decoding: data, as: UTF8.self))
+            let subject = MailCodec.decodedHeader(headers["subject"] ?? "")
+            guard filter.matches(from: headers["from"] ?? "", subject: subject, received: received) else { return nil }
+            return ["uid": String(uid), "uid_validity": validity, "from": headers["from"] ?? "", "subject": subject,
+                    "received_at": ISO8601DateFormatter().string(from: received)]
+        })
+    }
+
     static func test(account: MailAccount, credentials: MailCredentials) async throws {
         try account.validate()
         let imap = try MailIMAPSession(account: account); defer { imap.close() }
@@ -171,6 +201,7 @@ enum MailClient {
         return ["uid": String(uid), "uid_validity": current, "from": MailCodec.decodedHeader(h["from"] ?? ""),
                 "to": MailCodec.decodedHeader(h["to"] ?? ""), "subject": MailCodec.decodedHeader(h["subject"] ?? ""),
                 "date": h["date"] ?? "", "body": MailCodec.readableBody(raw),
+                "verification_links": (MailVerification.candidates(text: "", linksIn: MailCodec.readableBody(raw, preserveHTML: true))["candidate_links"] as? [String] ?? []).joined(separator: "\n"),
                 "notice": data.count >= 262144 ? "原始邮件超过读取上限，内容可能截断；附件未提取。" : "仅返回文本；附件未提取。"]
     }
     private static func smtpReply(_ socket: MailSocket, expected: [Int]) async throws -> [String] {
@@ -204,7 +235,7 @@ enum MailClient {
             try await socket.send(Data(password.utf8).base64EncodedString() + "\r\n"); _ = try await smtpReply(socket, expected: [235])
         } else { throw MailError.message("服务器未提供密码或授权码认证；请选择启用此方式的邮箱。") }
     }
-    static func send(account: MailAccount, credentials: MailCredentials, recipients: [String], subject: String, body: String) async throws {
+    static func send(account: MailAccount, credentials: MailCredentials, recipients: [String], subject: String, body: String, authorize: () async throws -> Void) async throws {
         let data = try MailCodec.message(from: account.address, recipients: recipients, subject: subject, body: body)
         let socket = try MailSocket(host: account.smtpHost, port: account.smtpPort); defer { socket.close() }
         try await smtpLogin(socket, account: account, password: credentials.smtpPassword)
@@ -213,7 +244,9 @@ enum MailClient {
             try await socket.send("RCPT TO:<\(address)>\r\n"); _ = try await smtpReply(socket, expected: [250, 251])
         }
         try Task.checkCancellation()
+        try await authorize()
         try await socket.send("DATA\r\n"); _ = try await smtpReply(socket, expected: [354])
+        try await authorize()
         do {
             // Body is base64, so no payload line can start with a dot.
             try await socket.send(data + Data(".\r\n".utf8))

@@ -509,6 +509,11 @@
 		C0DEEB000000000000000004 /* MailAccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000004 /* MailAccountsView.swift */; };
 		C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */; };
 		C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000006 /* MediaFavoriteControls.swift */; };
+		C0DEEB000000000000000007 /* MailVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000007 /* MailVerification.swift */; };
+		C0DEEB000000000000000008 /* GmailModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000008 /* GmailModels.swift */; };
+		C0DEEB000000000000000009 /* GmailConnector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000009 /* GmailConnector.swift */; };
+		C0DEEB00000000000000000A /* MailConnectorTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC00000000000000000A /* MailConnectorTools.swift */; };
+		C0DEEB00000000000000000B /* MailConnectorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC00000000000000000B /* MailConnectorViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1158,6 +1163,11 @@
 		C0DEEC000000000000000004 /* MailAccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MailAccountsView.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC000000000000000006 /* MediaFavoriteControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Media/MediaFavoriteControls.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000007 /* MailVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Mail/MailVerification.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000008 /* GmailModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Gmail/GmailModels.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000009 /* GmailConnector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Gmail/GmailConnector.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC00000000000000000A /* MailConnectorTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Gmail/MailConnectorTools.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC00000000000000000B /* MailConnectorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MailConnectorViews.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -2647,6 +2657,11 @@
 				C0DEEB000000000000000002 /* MailClient.swift in Sources */,
 				C0DEEB000000000000000001 /* MailAccountStore.swift in Sources */,
 				C0DEEB000000000000000000 /* MailModels.swift in Sources */,
+				C0DEEB00000000000000000B /* MailConnectorViews.swift in Sources */,
+				C0DEEB00000000000000000A /* MailConnectorTools.swift in Sources */,
+				C0DEEB000000000000000009 /* GmailConnector.swift in Sources */,
+				C0DEEB000000000000000008 /* GmailModels.swift in Sources */,
+				C0DEEB000000000000000007 /* MailVerification.swift in Sources */,
 				C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */,
 				E5MNT0001 /* MountedFoldersManager.swift in Sources */,
 				E5MNT0002 /* MountedFolderCoordinator.swift in Sources */,

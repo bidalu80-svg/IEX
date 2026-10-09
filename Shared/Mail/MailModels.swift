@@ -29,7 +29,7 @@ struct MailAccount: Codable, Identifiable, Equatable {
     }
 }
 
-struct MailCredentials: Codable {
+struct MailCredentials: Codable, Equatable {
     var imapPassword: String
     var smtpPassword: String
 }
@@ -147,7 +147,7 @@ enum MailCodec {
         }
         return nil
     }
-    static func readableBody(_ raw: String, depth: Int = 0) -> String {
+    static func readableBody(_ raw: String, depth: Int = 0, preserveHTML: Bool = false) -> String {
         guard depth < 8 else { return "[邮件嵌套层数过多]" }
         let normalized = raw.replacingOccurrences(of: "\r\n", with: "\n")
         guard let separator = normalized.range(of: "\n\n") else { return "" }
@@ -158,7 +158,7 @@ enum MailCodec {
         if type.lowercased().hasPrefix("multipart/"), let boundary = parameter("boundary", in: type) {
             return body.components(separatedBy: "--" + boundary).dropFirst().prefix(40)
                 .filter { !$0.hasPrefix("--") }
-                .map { readableBody($0.trimmingCharacters(in: .newlines), depth: depth + 1) }
+                .map { readableBody($0.trimmingCharacters(in: .newlines), depth: depth + 1, preserveHTML: preserveHTML) }
                 .filter { !$0.isEmpty }.joined(separator: "\n")
         }
         guard type.lowercased().hasPrefix("text/") else { return "[非文本媒体，未下载附件]" }
@@ -168,10 +168,72 @@ enum MailCodec {
         else if transfer == "quoted-printable" { data = quotedPrintable(body) }
         else { data = Data(body.utf8) }
         var text = decodeText(data, charset: parameter("charset", in: type) ?? "utf-8")
-        if type.lowercased().hasPrefix("text/html") {
+        if !preserveHTML && type.lowercased().hasPrefix("text/html") {
             text = text.replacingOccurrences(of: "(?is)<(script|style)[^>]*>.*?</\\1>", with: "", options: .regularExpression)
                 .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         }
         return String(text.prefix(50_000))
+    }
+}
+
+/// An in-flight operation cannot regain access after an off/on toggle or reconnect.
+struct MailAccessTicket {
+    let accountID: UUID
+    let generation: UUID
+}
+struct MailAccessTracker {
+    private var generations: [UUID: UUID] = [:]
+    mutating func reset(ids: [UUID]) {
+        generations = Dictionary(uniqueKeysWithValues: ids.map { ($0, UUID()) })
+    }
+    mutating func synchronize(ids: [UUID], changed: Set<UUID>) {
+        let previous = generations
+        generations = Dictionary(uniqueKeysWithValues: ids.map { id in
+            (id, changed.contains(id) ? UUID() : (previous[id] ?? UUID()))
+        })
+    }
+    mutating func invalidate(_ id: UUID) { if generations[id] != nil { generations[id] = UUID() } }
+    func ticket(for id: UUID) throws -> MailAccessTicket {
+        guard let generation = generations[id] else { throw MailError.message("邮箱连接已删除，请重新选择账号。") }
+        return MailAccessTicket(accountID: id, generation: generation)
+    }
+    func validate(_ ticket: MailAccessTicket) throws {
+        try Task.checkCancellation()
+        guard generations[ticket.accountID] == ticket.generation else {
+            throw MailError.message("操作期间邮箱授权或配置已变更，结果已丢弃，请重新发起操作。")
+        }
+    }
+}
+
+/// Cancellation of one waiter must not wait for, or cancel, a shared OAuth refresh.
+/// The observer lives only until the URLSession's bounded refresh request finishes.
+private final class MailPendingResult<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var result: Result<Value, Error>?
+    func attach(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let result { lock.unlock(); continuation.resume(with: result) }
+        else { self.continuation = continuation; lock.unlock() }
+    }
+    func resolve(_ value: Result<Value, Error>) {
+        lock.lock()
+        guard result == nil else { lock.unlock(); return }
+        result = value
+        let pending = continuation; continuation = nil
+        lock.unlock()
+        pending?.resume(with: value)
+    }
+}
+enum MailAsyncWait {
+    static func value<Value: Sendable>(_ task: Task<Value, Error>) async throws -> Value {
+        let pending = MailPendingResult<Value>()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                pending.attach(continuation)
+                Task { pending.resolve(await task.result) }
+            }
+        }, onCancel: { pending.resolve(.failure(CancellationError())) })
     }
 }

@@ -12,6 +12,12 @@ struct MailAccountsView: View {
 
     var body: some View {
         List {
+            GmailConnectionSection()
+            Section {
+                NavigationLink { QQMailLoginView() } label: {
+                    Label("QQ 邮箱", systemImage: "envelope.fill")
+                }
+            } header: { Text("连接邮箱") } footer: { Text("Gmail 使用 Google 登录授权；QQ 邮箱使用邮箱授权码登录，自动配置收信服务器。") }
             if let error = store.loadError {
                 Section {
                     Text(error).foregroundColor(.red)
@@ -23,13 +29,13 @@ struct MailAccountsView: View {
                 if store.accounts.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("还没有添加邮箱", systemImage: "envelope")
-                        Text("添加邮箱后，智能体可以查看收件箱、读取邮件，并在你确认后发送邮件。")
+                        Text("连接邮箱后，智能体可以查看邮件、查找注册验证码和验证链接。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }.padding(.vertical, 8)
                 }
-                Button { editing = MailAccount() } label: { Label("添加邮箱", systemImage: "plus") }
+                Button { editing = MailAccount() } label: { Label("添加邮箱（高级 IMAP/SMTP）", systemImage: "plus") }
                     .disabled(store.loadError != nil)
-            } header: { Text("已保存邮箱") } footer: {
+            } header: { Text("QQ 与其他已保存邮箱") } footer: {
                 Text("邮箱密码和授权码保存在本机钥匙串，不会交给模型。收信不会改变邮件已读状态；每次发信都需要确认。当前提供收件箱文本读取与纯文本发信，附件不在本次收发范围内。")
             }
         }
