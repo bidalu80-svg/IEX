@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import CryptoKit
+import CoreFoundation
 
 struct ProviderAPIQuota: Equatable, Sendable {
     let remaining: Decimal?
@@ -11,7 +13,7 @@ struct ProviderAPIQuota: Equatable, Sendable {
 
     var displayAmount: Decimal? {
         remaining ?? total.flatMap { totalValue in
-            used.map { max(0, totalValue - $0) }
+            used.map { totalValue - $0 }
         }
     }
 }
@@ -32,7 +34,14 @@ final class ProviderAPIQuotaStore: ObservableObject {
     static let shared = ProviderAPIQuotaStore()
 
     @Published private(set) var states: [String: ProviderAPIQuotaState] = [:]
-    private var activeRequests: Set<String> = []
+    private var activeRequests: [String: UUID] = [:]
+    private var signatures: [String: String] = [:]
+    private var lastAttempts: [String: Date] = [:]
+    private func signature(_ instance: ProviderInstance) -> String {
+        let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+        let settings = "\(instance.providerType)|\(instance.customBaseURL ?? "")|\(instance.appendV1Suffix)|\(instance.azureMode)|\(instance.customUserAgent ?? "")|" + key
+        return SHA256.hash(data: Data(settings.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     private init() {}
 
@@ -41,12 +50,27 @@ final class ProviderAPIQuotaStore: ObservableObject {
     }
 
     func refreshIfNeeded(_ instance: ProviderInstance) async {
-        guard case .idle = state(for: instance.id) else { return }
+        let current = signature(instance)
+        if signatures[instance.id] == current {
+            switch state(for: instance.id) {
+            case .loading: return
+            case .loaded(let quota) where Date().timeIntervalSince(quota.updatedAt) < 300: return
+            case .unavailable where Date().timeIntervalSince(lastAttempts[instance.id] ?? .distantPast) < 60: return
+            default: break
+            }
+        }
         await refresh(instance)
     }
 
     func refresh(_ instance: ProviderInstance) async {
-        guard !activeRequests.contains(instance.id) else { return }
+        while activeRequests.count >= 3 && activeRequests[instance.id] == nil {
+            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+        }
+        guard !Task.isCancelled else { return }
+        let current = signature(instance)
+        guard activeRequests[instance.id] == nil || signatures[instance.id] != current else { return }
+        signatures[instance.id] = current
+        lastAttempts[instance.id] = Date()
         guard instance.credentialType == .apiKey else {
             states[instance.id] = .unavailable("此服务商使用 OAuth 登录，不支持 API Key 额度查询。")
             return
@@ -56,15 +80,19 @@ final class ProviderAPIQuotaStore: ObservableObject {
             return
         }
 
-        activeRequests.insert(instance.id)
+        let requestID = UUID()
+        activeRequests[instance.id] = requestID
         states[instance.id] = .loading
-        defer { activeRequests.remove(instance.id) }
+        defer { if activeRequests[instance.id] == requestID { activeRequests[instance.id] = nil } }
 
         do {
             let quota = try await ProviderAPIQuotaClient.fetch(instance: instance, apiKey: apiKey)
+            try Task.checkCancellation()
+            guard activeRequests[instance.id] == requestID, signature(instance) == current else { return }
             states[instance.id] = .loaded(quota)
         } catch {
-            states[instance.id] = .unavailable(error.localizedDescription)
+            guard activeRequests[instance.id] == requestID else { return }
+            states[instance.id] = Task.isCancelled ? .idle : .unavailable(error.localizedDescription)
         }
     }
 }
@@ -105,9 +133,11 @@ enum ProviderAPIQuotaClient {
         var lastError: Error = QuotaError.unsupported
 
         for candidate in candidates {
+            try Task.checkCancellation()
             guard let url = endpointURL(base: base, candidate: candidate, instance: instance) else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
+            request.timeoutInterval = 8
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.setValue(instance.customUserAgent ?? "Ze-iOS", forHTTPHeaderField: "User-Agent")
             if instance.azureMode {
@@ -128,8 +158,10 @@ enum ProviderAPIQuotaClient {
                     lastError = QuotaError.unrecognizedShape
                     continue
                 }
+                guard parsed.displayAmount != nil else { lastError = QuotaError.unrecognizedShape; continue }
                 return parsed
             } catch {
+                if Task.isCancelled { throw CancellationError() }
                 lastError = error
             }
         }
@@ -171,27 +203,26 @@ enum ProviderAPIQuotaClient {
         return result
     }
 
-    private static func parse(object: Any, sourcePath: String) -> ProviderAPIQuota? {
+    static func parse(object: Any, sourcePath: String) -> ProviderAPIQuota? {
         let dictionaries = dictionaryCandidates(object)
-        let remainingKeys = ["total_available", "remaining_balance", "remaining", "available", "balance", "credits_remaining", "credit_remaining"]
-        let totalKeys = ["total_granted", "total", "limit", "quota", "credit_limit", "credits"]
+        let remainingKeys = ["total_available", "remaining_balance", "remaining", "available", "balance", "credits_remaining", "credit_remaining", "total_balance"]
+        let totalKeys = ["total_granted", "total_credits", "total", "limit", "quota", "credit_limit", "credits"]
         let usedKeys = ["total_used", "total_usage", "used", "spent", "usage", "consumed"]
-        let remaining = firstNumber(in: dictionaries, keys: remainingKeys)
-        let total = firstNumber(in: dictionaries, keys: totalKeys)
-        let used = firstNumber(in: dictionaries, keys: usedKeys)
-        guard remaining != nil || total != nil || used != nil else { return nil }
-        let resolvedRemaining = remaining ?? total.flatMap { totalValue in
-            used.map { max(0, totalValue - $0) }
+        // Never subtract unrelated objects' totals and usages, nor mistake an
+        // error payload's numeric code/boolean for a monetary balance.
+        if let root = object as? [String: Any], root["error"] != nil || (root["success"] as? Bool) == false { return nil }
+        for dictionary in dictionaries {
+            let remaining = firstNumber(in: [dictionary], keys: remainingKeys)
+            let total = firstNumber(in: [dictionary], keys: totalKeys)
+            let used = firstNumber(in: [dictionary], keys: usedKeys)
+            let resolvedRemaining = remaining ?? total.flatMap { totalValue in used.map { totalValue - $0 } }
+            guard let resolvedRemaining, !resolvedRemaining.isNaN else { continue }
+            let currency = firstString(in: [dictionary], keys: ["currency", "unit"])
+                ?? firstString(in: dictionaries, keys: ["currency", "unit"]) ?? "USD"
+            return ProviderAPIQuota(remaining: resolvedRemaining, total: total, used: used,
+                                    currency: currency.uppercased(), sourcePath: sourcePath, updatedAt: Date())
         }
-        let currency = firstString(in: dictionaries, keys: ["currency", "unit"])?.uppercased() ?? "USD"
-        return ProviderAPIQuota(
-            remaining: resolvedRemaining,
-            total: total,
-            used: used,
-            currency: currency,
-            sourcePath: sourcePath,
-            updatedAt: Date()
-        )
+        return nil
     }
 
     private static func dictionaryCandidates(_ object: Any) -> [[String: Any]] {
@@ -210,10 +241,11 @@ enum ProviderAPIQuotaClient {
     }
 
     private static func firstNumber(in dictionaries: [[String: Any]], keys: [String]) -> Decimal? {
-        let normalizedKeys = Set(keys.map(normalize))
-        for dictionary in dictionaries {
-            for (key, value) in dictionary where normalizedKeys.contains(normalize(key)) {
-                if let number = decimal(value) { return number }
+        for key in keys {
+            for dictionary in dictionaries {
+                for (candidate, value) in dictionary where normalize(candidate) == normalize(key) {
+                    if let number = decimal(value), !number.isNaN { return number }
+                }
             }
         }
         return nil
@@ -236,12 +268,16 @@ enum ProviderAPIQuotaClient {
     }
 
     private static func decimal(_ value: Any) -> Decimal? {
-        if let value = value as? NSNumber { return value.decimalValue }
+        if let value = value as? NSNumber {
+            guard CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }
+            return value.decimalValue
+        }
         guard let value = value as? String else { return nil }
         let cleaned = value
             .replacingOccurrences(of: "$", with: "")
             .replacingOccurrences(of: ",", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.range(of: "^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)$", options: .regularExpression) != nil else { return nil }
         return Decimal(string: cleaned, locale: Locale(identifier: "en_US_POSIX"))
     }
 }

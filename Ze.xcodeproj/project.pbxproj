@@ -518,6 +518,7 @@
 		C0DEEB00000000000000000D /* MailWebScripts.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC00000000000000000D /* MailWebScripts.swift */; };
 		C0DEEB00000000000000000E /* MailWebTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC00000000000000000E /* MailWebTools.swift */; };
 		C0DEEB00000000000000000F /* MailWebViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC00000000000000000F /* MailWebViews.swift */; };
+		C0DEEB000000000000000010 /* ModelPickerProviderHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000010 /* ModelPickerProviderHeader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1176,6 +1177,7 @@
 		C0DEEC00000000000000000D /* MailWebScripts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Mail/MailWebScripts.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC00000000000000000E /* MailWebTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Mail/MailWebTools.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC00000000000000000F /* MailWebViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MailWebViews.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000010 /* ModelPickerProviderHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Providers/ModelPickerProviderHeader.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -2669,6 +2671,7 @@
 				C0DEEB00000000000000000D /* MailWebScripts.swift in Sources */,
 				C0DEEB00000000000000000E /* MailWebTools.swift in Sources */,
 				C0DEEB00000000000000000F /* MailWebViews.swift in Sources */,
+				C0DEEB000000000000000010 /* ModelPickerProviderHeader.swift in Sources */,
 				C0DEEB00000000000000000B /* MailConnectorViews.swift in Sources */,
 				C0DEEB00000000000000000A /* MailConnectorTools.swift in Sources */,
 				C0DEEB000000000000000009 /* GmailConnector.swift in Sources */,

@@ -2,7 +2,7 @@
 set -euo pipefail
 APP="$RUNNER_TEMP/ZeMailWebHarness.app"
 mkdir -p "$APP"
-xcrun swiftc -target "$(uname -m)-apple-ios16.0-simulator" \
+SDKROOT="$(xcrun --sdk iphonesimulator --show-sdk-path)" xcrun --sdk iphonesimulator swiftc -target "$(uname -m)-apple-ios16.0-simulator" \
   -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
   Shared/Mail/MailModels.swift Shared/Mail/MailWebSession.swift Shared/Mail/MailWebScripts.swift \
   Views/Settings/MailWebViews.swift scripts/MailWebHarness.swift -o "$APP/ZeMailWebHarness"
@@ -27,7 +27,14 @@ xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 trap 'xcrun simctl terminate "$DEVICE" com.ze.mail-web-harness >/dev/null 2>&1 || true' EXIT
 xcrun simctl install "$DEVICE" "$APP"
-xcrun simctl launch "$DEVICE" com.ze.mail-web-harness
+for attempt in 1 2 3; do
+  if xcrun simctl launch --terminate-running-process "$DEVICE" com.ze.mail-web-harness; then break; fi
+  sleep 3
+  if [ "$attempt" = 3 ]; then
+    xcrun simctl spawn "$DEVICE" log show --last 2m --predicate 'eventMessage CONTAINS "mail-web-harness"' || true
+    exit 1
+  fi
+done
 CONTAINER=$(xcrun simctl get_app_container "$DEVICE" com.ze.mail-web-harness data)
 for attempt in $(seq 1 90); do
   if [ -f "$CONTAINER/Documents/mail-web-result.json" ]; then break; fi

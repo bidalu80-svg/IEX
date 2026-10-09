@@ -128,7 +128,11 @@ final class MailWebSession: NSObject, ObservableObject, WKNavigationDelegate, WK
         try Task.checkCancellation()
         let webView = self.webView
         let task = Task<String, Error> { @MainActor in
-            let value = try await webView.evaluateJavaScript(script, in: nil, in: .defaultClient)
+            let value: Any = try await withCheckedThrowingContinuation { continuation in
+                webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { result in
+                    continuation.resume(with: result)
+                }
+            }
             guard let dictionary = value as? [String: Any] else { throw MailError.message("邮箱网页未返回有效结果。") }
             let data = try JSONSerialization.data(withJSONObject: dictionary)
             return String(decoding: data, as: UTF8.self)

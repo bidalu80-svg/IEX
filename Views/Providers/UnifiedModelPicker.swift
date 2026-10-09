@@ -246,6 +246,8 @@ struct ModelPickerConfig {
 struct UnifiedModelPicker: View {
     let config: ModelPickerConfig
     @ObservedObject private var store = ProviderConfigStore.shared
+    @ObservedObject private var quotaStore = ProviderAPIQuotaStore.shared
+    @State private var editingProvider: ProviderInstance?
     /// Observed so the System voice rows rebuild when the available-voices roster
     /// changes (Enhanced/Premium pack download, Personal Voice creation).
     @ObservedObject private var systemVoiceRoster = SystemVoiceRoster.shared
@@ -400,25 +402,18 @@ struct UnifiedModelPicker: View {
 
             if config.showGroups && !visibleGroups.isEmpty {
                 Section {
+                    HStack {
+                        Text("Model Groups").font(.headline.weight(.bold))
+                        Spacer()
+                        Button("Edit") { showGroupsManager = true }
+                            .font(.subheadline.weight(.semibold)).buttonStyle(.plain)
+                            .foregroundStyle(.tint).frame(minHeight: 44)
+                    }.textCase(nil)
                     ForEach(visibleGroups) { group in
                         groupRow(group)
                         if expandedGroupIds.contains(group.id) {
                             groupMemberRows(group)
                         }
-                    }
-                } header: {
-                    HStack {
-                        Text("Model Groups")
-                        Spacer()
-                        Button {
-                            showGroupsManager = true
-                        } label: {
-                            Text("Edit")
-                                .font(.caption)
-                                .textCase(nil)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tint)
                     }
                 } footer: {
                     if searchText.isEmpty {
@@ -432,6 +427,7 @@ struct UnifiedModelPicker: View {
                         }
                     }
                 }
+                .listRowBackground(Color(uiColor: .secondarySystemBackground))
             }
 
             ForEach(filteredEntriesByInstance, id: \.instance.id) { item in
@@ -453,6 +449,9 @@ struct UnifiedModelPicker: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color(uiColor: .systemBackground))
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search models")
         .navigationTitle(config.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -475,6 +474,19 @@ struct UnifiedModelPicker: View {
                         }
                     }
             }
+        }
+        .sheet(item: $editingProvider, onDismiss: {
+            // The picker observes the same store, so edits immediately update
+            // labels, endpoints and model rows without losing this selection.
+        }) { provider in
+            NavigationStack {
+                ProviderInstanceDetailView(instanceId: provider.id)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { editingProvider = nil }
+                        }
+                    }
+            }.id(provider.id)
         }
         .sheet(item: $quickTestEntry) { entry in
             // [T-quicktest-stale-session] .id(entry.id) forces a FRESH view
@@ -967,6 +979,22 @@ struct UnifiedModelPicker: View {
         }()
         let visibleEntries = isCollapsed ? collapsedEntry : item.entries
         Section {
+            ModelPickerProviderHeader(
+                title: item.instance.label, providerID: item.instance.id,
+                quota: pickerQuota(for: item.instance.id),
+                canEdit: !VoiceProviderResolver.isSystemEntry(item.instance.id),
+                collapsed: searchText.isEmpty && item.entries.count > 1 ? isCollapsed : nil,
+                onEdit: { editingProvider = store.instance(for: item.instance.id) },
+                onToggle: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if isCollapsed { _ = collapsedInstanceIds.remove(item.instance.id) }
+                        else { _ = collapsedInstanceIds.insert(item.instance.id) }
+                    }
+                })
+                .task(id: item.instance) {
+                    guard !VoiceProviderResolver.isSystemEntry(item.instance.id) else { return }
+                    await quotaStore.refreshIfNeeded(item.instance)
+                }
             ForEach(visibleEntries) { entry in
                 entryRow(entry)
             }
@@ -985,33 +1013,14 @@ struct UnifiedModelPicker: View {
                     .foregroundStyle(.tint)
                 }
             }
-        } header: {
-            HStack {
-                Text(item.instance.label)
-                Spacer()
-                if searchText.isEmpty && item.entries.count > 1 {
-                    let collapsed = collapsedInstanceIds.contains(item.instance.id)
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            if collapsed {
-                                _ = collapsedInstanceIds.remove(item.instance.id)
-                            } else {
-                                collapsedInstanceIds.insert(item.instance.id)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28, height: 28)
-                            .background(Color(UIColor.tertiarySystemFill))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .textCase(nil)
-                }
-            }
         }
+        .listRowBackground(Color(uiColor: .secondarySystemBackground))
+    }
+
+    private func pickerQuota(for id: String) -> ProviderAPIQuota? {
+        guard case .loaded(let quota) = quotaStore.state(for: id),
+              let amount = quota.displayAmount, !amount.isNaN else { return nil }
+        return quota
     }
 
     // MARK: - Entry Row
