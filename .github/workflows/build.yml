@@ -84,6 +84,7 @@ jobs:
           set -euo pipefail
           python3 scripts/verify-mail.py | tee mail-structure.log
           python3 scripts/verify-mail-connectors.py | tee mail-connectors-structure.log
+          python3 scripts/verify-mail-web.py | tee mail-web-structure.log
           python3 scripts/test-gmail-oauth-config.py | tee gmail-config-tests.log
           xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Shared/Mail/MailModels.swift Shared/Mail/MailVerification.swift Shared/Gmail/GmailModels.swift scripts/GmailConnectorTests.swift -o "$RUNNER_TEMP/mail-connector-tests"
           "$RUNNER_TEMP/mail-connector-tests" | tee mail-connectors-tests.log
@@ -94,12 +95,18 @@ jobs:
             Shared/Mail/MailModels.swift Shared/Mail/MailAccountStore.swift \
             Shared/Mail/MailClient.swift Shared/Mail/MailVerification.swift \
             Shared/Gmail/GmailModels.swift Shared/Gmail/GmailConnector.swift \
+            Shared/Mail/MailWebSession.swift Shared/Mail/MailWebScripts.swift \
+            Views/Settings/MailWebViews.swift \
             Views/Settings/MailConnectorViews.swift Views/Settings/MailAccountsView.swift \
             2>&1 | tee mail-ios16-typecheck.log
 
       - name: Test favorites success feedback and square layout on simulator
         timeout-minutes: 8
         run: bash scripts/test-favorites-ui.sh
+
+      - name: Test real WebKit mailbox session and webpage UI
+        timeout-minutes: 6
+        run: bash scripts/test-mail-web.sh
 
       - name: Create ProviderCustomization.xcconfig
         env:
@@ -586,3 +593,5 @@ jobs:
             mail-model-tests.log
             mail-ios16-typecheck.log
             favorites-ui-evidence/
+            mail-web-evidence/
+            mail-web-structure.log

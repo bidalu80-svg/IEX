@@ -754,6 +754,14 @@ extension AIChatViewModel {
             toolOutput = favoriteResult.output
             toolSuccess = favoriteResult.success
 
+        case "mail_web":
+            let result = await MailWebTools.execute(arguments: toolArgs)
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = result.output
+            }
+            toolOutput = result.output
+            toolSuccess = result.success
+
         case "gmail_search", "gmail_read", "mail_search", "mail_wait_verification":
             let connectorResult = await MailConnectorTools.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

@@ -12,12 +12,20 @@ struct MailAccountsView: View {
 
     var body: some View {
         List {
-            GmailConnectionSection()
             Section {
-                NavigationLink { QQMailLoginView() } label: {
-                    Label("QQ 邮箱", systemImage: "envelope.fill")
+                MailWebEntry(provider: .gmail)
+                MailWebEntry(provider: .qq)
+            } header: { Text("网页登录邮箱") } footer: {
+                Text("直接打开邮箱网页，由你登录。允许后，智能体在同一会话中查看邮件和验证码，无需配置 Gmail API。")
+            }
+            Section {
+                NavigationLink("高级连接方式（API / IMAP）") {
+                    List {
+                        GmailConnectionSection()
+                        NavigationLink { QQMailLoginView() } label: { Text("QQ 邮箱授权码连接") }
+                    }.navigationTitle("高级连接方式")
                 }
-            } header: { Text("连接邮箱") } footer: { Text("Gmail 使用 Google 登录授权；QQ 邮箱使用邮箱授权码登录，自动配置收信服务器。") }
+            }
             if let error = store.loadError {
                 Section {
                     Text(error).foregroundColor(.red)

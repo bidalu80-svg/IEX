@@ -47,8 +47,8 @@ enum MailAIToolGateway {
                 let gmailRows: [[String: String]] = gmail.storageError == nil ? gmail.accounts.filter(\.agentEnabled).map {
                     ["account_id": $0.id.uuidString, "name": "Gmail", "address": $0.address, "provider": "gmail"]
                 } : []
-                return success(["accounts": gmailRows + imapRows,
-                    "notice": "Gmail 使用 gmail_search/gmail_read；QQ/IMAP 使用 mail_list/mail_read；验证邮件使用 mail_wait_verification。",
+                return success(["accounts": MailWebTools.accounts + gmailRows + imapRows,
+                    "notice": "gmail_web/qq_web 使用 mail_web；API Gmail 使用 gmail_search/gmail_read；QQ/IMAP 使用 mail_list/mail_read；验证邮件使用 mail_wait_verification。",
                     "storage_errors": [store.loadError, gmail.storageError].compactMap { $0 }])
             }
             if let error = store.loadError { throw MailError.message(error) }
