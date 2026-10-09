@@ -248,6 +248,7 @@ struct UnifiedModelPicker: View {
     @ObservedObject private var store = ProviderConfigStore.shared
     @ObservedObject private var quotaStore = ProviderAPIQuotaStore.shared
     @State private var editingProvider: ProviderInstance?
+    @State private var lastEditedProviderID: String?
     /// Observed so the System voice rows rebuild when the available-voices roster
     /// changes (Enhanced/Premium pack download, Personal Voice creation).
     @ObservedObject private var systemVoiceRoster = SystemVoiceRoster.shared
@@ -476,8 +477,12 @@ struct UnifiedModelPicker: View {
             }
         }
         .sheet(item: $editingProvider, onDismiss: {
-            // The picker observes the same store, so edits immediately update
-            // labels, endpoints and model rows without losing this selection.
+            // Keychain-only edits do not change ProviderInstance identity.
+            // Revalidate the credential fingerprint when returning from editing.
+            if let id = lastEditedProviderID, let provider = store.instance(for: id) {
+                Task { await quotaStore.refreshIfNeeded(provider) }
+            }
+            lastEditedProviderID = nil
         }) { provider in
             NavigationStack {
                 ProviderInstanceDetailView(instanceId: provider.id)
@@ -984,7 +989,10 @@ struct UnifiedModelPicker: View {
                 quota: pickerQuota(for: item.instance.id),
                 canEdit: !VoiceProviderResolver.isSystemEntry(item.instance.id),
                 collapsed: searchText.isEmpty && item.entries.count > 1 ? isCollapsed : nil,
-                onEdit: { editingProvider = store.instance(for: item.instance.id) },
+                onEdit: {
+                    lastEditedProviderID = item.instance.id
+                    editingProvider = store.instance(for: item.instance.id)
+                },
                 onToggle: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         if isCollapsed { _ = collapsedInstanceIds.remove(item.instance.id) }

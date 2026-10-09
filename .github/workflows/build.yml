@@ -111,6 +111,7 @@ jobs:
         run: bash scripts/test-mail-web.sh
 
       - name: Test model picker balances and rendered provider cards
+        if: ${{ !cancelled() }}
         timeout-minutes: 5
         run: bash scripts/test-model-picker-header.sh
 

@@ -88,7 +88,8 @@ final class ProviderAPIQuotaStore: ObservableObject {
         do {
             let quota = try await ProviderAPIQuotaClient.fetch(instance: instance, apiKey: apiKey)
             try Task.checkCancellation()
-            guard activeRequests[instance.id] == requestID, signature(instance) == current else { return }
+            guard activeRequests[instance.id] == requestID else { return }
+            guard signature(instance) == current else { states[instance.id] = .idle; return }
             states[instance.id] = .loaded(quota)
         } catch {
             guard activeRequests[instance.id] == requestID else { return }
