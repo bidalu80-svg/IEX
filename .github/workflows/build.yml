@@ -95,7 +95,6 @@ jobs:
         run: bash scripts/test-model-picker-header.sh
 
       - name: Create ProviderCustomization.xcconfig
-        env:
         run: |
           cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
@@ -512,7 +511,6 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Ze-unsigned.ipa"
 
       - name: Audit unsigned IPA bundle
-        env:
         run: |
           test -f Ze-unsigned.ipa
           IPA_AUDIT="$RUNNER_TEMP/ze-ipa-audit"
