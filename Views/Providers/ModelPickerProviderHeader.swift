@@ -17,16 +17,25 @@ struct ModelPickerProviderHeader: View {
     static func amountText(_ amount: Decimal, currency: String) -> String {
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency
-        if currency == "USD" { formatter.currencySymbol = "US$" }
-        else if currency == "CNY" { formatter.currencySymbol = "¥" }
+        formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = amount != 0 && abs(NSDecimalNumber(decimal: amount).doubleValue) < 0.01 ? 4 : 2
         let magnitude = amount < 0 ? -amount : amount
-        let text = formatter.string(from: NSDecimalNumber(decimal: magnitude)) ?? "\(currency) \(magnitude)"
-        return (amount < 0 ? "-" : "") + text
+        let digits = formatter.string(from: NSDecimalNumber(decimal: magnitude)) ?? "\(magnitude)"
+        // Do not let ICU insert a currency-spacing NBSP between US$ and digits;
+        // the compact picker badge must match the reference across iOS versions.
+        let prefix: String
+        switch currency.uppercased() {
+        case "USD": prefix = "US$"
+        case "CNY": prefix = "¥"
+        case "EUR": prefix = "€"
+        case "GBP": prefix = "£"
+        case "JPY": prefix = "JP¥"
+        default: prefix = currency.uppercased() + " "
+        }
+        return (amount < 0 ? "-" : "") + prefix + digits
     }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             ViewThatFits(in: .horizontal) {
