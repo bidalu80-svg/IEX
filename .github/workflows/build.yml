@@ -85,10 +85,6 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/test-favorites-ui.sh
 
-      - name: Test real WebKit mailbox session and webpage UI
-        timeout-minutes: 6
-        run: bash scripts/test-mail-web.sh
-
       - name: Test model picker balances and rendered provider cards
         if: ${{ !cancelled() }}
         timeout-minutes: 5
@@ -564,14 +560,6 @@ jobs:
             scheduled-activity-structure.log
             agent-scheduled-tools-structure.log
             api-key-quota-structure.log
-            mail-structure.log
-            mail-connectors-structure.log
-            mail-connectors-tests.log
-            gmail-config-tests.log
-            mail-model-tests.log
-            mail-ios16-typecheck.log
             favorites-ui-evidence/
-            mail-web-evidence/
-            mail-web-structure.log
             model-picker-structure.log
             model-picker-evidence/
