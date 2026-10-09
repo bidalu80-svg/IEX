@@ -273,12 +273,12 @@ struct ZeVideoFullscreenPlayer: View {
                         }
                         .disabled(saveStatus == .saving || saveStatus == .saved)
 
-                        Button {
-                            MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .video, fileName: fileURL.lastPathComponent, sourceKey: fileURL.absoluteString)
-                        } label: {
-                            Image(systemName: "star")
+                        MediaFavoriteActionButton {
+                            _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .video, fileName: fileURL.lastPathComponent)
+                        } label: { done in
+                            Image(systemName: done ? "checkmark" : "star")
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(ChatColors.primaryText)
+                                .foregroundStyle(done ? .green : ChatColors.primaryText)
                                 .frame(width: 44, height: 44)
                                 .contentShape(Circle())
                                 .background(.ultraThinMaterial, in: Circle())

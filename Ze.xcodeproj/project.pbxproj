@@ -508,6 +508,7 @@
 		C0DEEB000000000000000003 /* MailAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000003 /* MailAIToolGateway.swift */; };
 		C0DEEB000000000000000004 /* MailAccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000004 /* MailAccountsView.swift */; };
 		C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */; };
+		C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000006 /* MediaFavoriteControls.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1156,6 +1157,7 @@
 		C0DEEC000000000000000003 /* MailAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Mail/MailAIToolGateway.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC000000000000000004 /* MailAccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MailAccountsView.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000006 /* MediaFavoriteControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Media/MediaFavoriteControls.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -2638,6 +2640,7 @@
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
 				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,
+				C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */,
 				C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */,
 				C0DEEB000000000000000004 /* MailAccountsView.swift in Sources */,
 				C0DEEB000000000000000003 /* MailAIToolGateway.swift in Sources */,

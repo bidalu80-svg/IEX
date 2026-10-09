@@ -2791,8 +2791,8 @@ struct AIChatView: View {
                 title: ref.title,
                 onFavorite: {
                     guard let url = URL(string: canonical),
-                          let fileURL = resolveZeFileURLCached(url: url) else { return }
-                    MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: ref.title, sourceKey: canonical)
+                          let fileURL = resolveZeFileURLCached(url: url) else { throw MediaFavoriteActionError.missingFile }
+                    _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName: ref.title)
                 },
                 load: { await Self.loadMarkdownImage(source: canonical, fingerprintKey: fpKey) }
             )

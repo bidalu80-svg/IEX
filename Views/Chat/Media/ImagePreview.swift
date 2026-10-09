@@ -386,7 +386,7 @@ final class ImagePreviewContentView: UIView, UIScrollViewDelegate, UIGestureReco
 
 struct ImagePreviewView: View {
     let image: UIImage
-    var onFavorite: (() -> Void)? = nil
+    var onFavorite: (() throws -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var saveStatus: SaveStatus = .idle
     @State private var copyDone = false
@@ -447,12 +447,10 @@ struct ImagePreviewView: View {
                     .disabled(copyDone)
 
                     if let onFavorite {
-                        Button {
-                            onFavorite()
-                        } label: {
-                            Image(systemName: "star")
+                        MediaFavoriteActionButton(action: onFavorite) { done in
+                            Image(systemName: done ? "checkmark" : "star")
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(ChatColors.primaryText)
+                                .foregroundStyle(done ? .green : ChatColors.primaryText)
                                 .frame(width: 44, height: 44)
                                 .contentShape(Circle())
                                 .background(.ultraThinMaterial, in: Circle())

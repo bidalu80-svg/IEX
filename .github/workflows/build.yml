@@ -91,6 +91,10 @@ jobs:
             Shared/Mail/MailClient.swift Views/Settings/MailAccountsView.swift \
             2>&1 | tee mail-ios16-typecheck.log
 
+      - name: Test favorites success feedback and square layout on simulator
+        timeout-minutes: 8
+        run: bash scripts/test-favorites-ui.sh
+
       - name: Create ProviderCustomization.xcconfig
         run: cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
 
@@ -563,3 +567,4 @@ jobs:
             mail-structure.log
             mail-model-tests.log
             mail-ios16-typecheck.log
+            favorites-ui-evidence/

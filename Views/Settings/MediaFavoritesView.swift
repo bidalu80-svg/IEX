@@ -133,7 +133,6 @@ struct MediaFavoritesView: View {
                 VStack(spacing: 6) {
                     FavoriteMediaThumbnailView(item: item, fileURL: store.fileURL(for: item))
                         .frame(maxWidth: .infinity)
-                        .aspectRatio(1, contentMode: .fit)
                     Text(item.fileName)
                         .font(.caption2)
                         .lineLimit(1)
@@ -201,27 +200,28 @@ private struct FavoriteMediaThumbnailView: View {
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(Color(.tertiarySystemFill))
-                Image(systemName: item.kind.icon)
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-            if item.kind == .video {
-                Image(systemName: "play.fill")
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(7)
-                    .background(.black.opacity(0.62), in: Circle())
+        MediaFavoriteSquare {
+            ZStack {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color(.tertiarySystemFill))
+                    Image(systemName: item.kind.icon)
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                if item.kind == .video {
+                    Image(systemName: "play.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(7)
+                        .background(.black.opacity(0.62), in: Circle())
+                }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .task(id: fileURL) { await load() }
     }
 

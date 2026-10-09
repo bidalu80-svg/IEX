@@ -638,10 +638,9 @@ struct UserAttachmentList: View {
                 id: fpKey,
                 title: meta.fileName,
                 onFavorite: {
-                    if let url = URL(string: meta.zeURL),
-                       let fileURL = resolveZeFileURLCached(url: url) {
-                        MediaFavoritesStore.shared.add(fileURL: fileURL, kind: .image, fileName: meta.fileName, sourceKey: meta.zeURL)
-                    }
+                    guard let url = URL(string: meta.zeURL),
+                          let fileURL = resolveZeFileURLCached(url: url) else { throw MediaFavoriteActionError.missingFile }
+                    _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName: meta.fileName)
                 },
                 load: {
                     // Route through the shared NSCache using the same

@@ -22,10 +22,10 @@ import UIKit
 struct GalleryItem: Identifiable, Equatable {
     let id: String              // unique per session — typically the source URL string
     let title: String           // human-readable caption (usually file name)
-    let onFavorite: (() -> Void)?
+    let onFavorite: (() throws -> Void)?
     let load: () async -> UIImage?
 
-    init(id: String, title: String, onFavorite: (() -> Void)? = nil, load: @escaping () async -> UIImage?) {
+    init(id: String, title: String, onFavorite: (() throws -> Void)? = nil, load: @escaping () async -> UIImage?) {
         self.id = id
         self.title = title
         self.onFavorite = onFavorite
@@ -175,11 +175,10 @@ struct MessageImageGallery: View {
             .disabled(copyDone || currentImage == nil)
 
             if let onFavorite = currentItem?.onFavorite {
-                Button {
-                    onFavorite()
-                } label: {
-                    chromeIcon("star")
+                MediaFavoriteActionButton(action: onFavorite) { done in
+                    chromeIcon(done ? "checkmark" : "star", tint: done ? .green : nil)
                 }
+                .id(currentItem?.id)
                 .disabled(currentImage == nil)
             }
 
