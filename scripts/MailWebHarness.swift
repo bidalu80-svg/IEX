@@ -62,6 +62,18 @@ struct MailWebHarness: App {
             try await pause(0.3)
             await session.verifyAndEnable()
             try check(session.enabled, "Mailbox DOM verification grants access")
+            let settingsHTML = """
+            <html><head><title>Gmail</title></head><body>
+            <div>Gmail is better on the app</div><div>FIXTURE</div><div>Mobile Signature</div>
+            <textarea name="signature">null</textarea><button>Apply</button>
+            <div>Vacation Responder</div>
+            </body></html>
+            """
+            try await load(settingsHTML)
+            await session.verifyAndEnable()
+            try check(session.enabled, "Authenticated Gmail settings page grants access without Inbox selectors")
+            try await load(html)
+            await session.verifyAndEnable()
             try snapshot("mail-web-inbox-fixture.png")
             let originalView = ObjectIdentifier(session.webView)
             // Simulate leaving settings: no replacement view or cookie copy.

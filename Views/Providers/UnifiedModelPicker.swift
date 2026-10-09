@@ -404,11 +404,11 @@ struct UnifiedModelPicker: View {
             if config.showGroups && !visibleGroups.isEmpty {
                 Section {
                     HStack {
-                        Text("Model Groups").font(.headline.weight(.bold))
+                        Text("模型分组").font(.subheadline.weight(.semibold))
                         Spacer()
-                        Button("Edit") { showGroupsManager = true }
-                            .font(.subheadline.weight(.semibold)).buttonStyle(.plain)
-                            .foregroundStyle(.tint).frame(minHeight: 44)
+                        Button("编辑") { showGroupsManager = true }
+                            .font(.caption.weight(.semibold)).buttonStyle(.plain)
+                            .foregroundStyle(.tint).frame(minHeight: 32)
                     }.textCase(nil)
                     ForEach(visibleGroups) { group in
                         groupRow(group)

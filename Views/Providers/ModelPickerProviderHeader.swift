@@ -37,7 +37,7 @@ struct ModelPickerProviderHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 6) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { providerName; balance }
                 VStack(alignment: .leading, spacing: 6) { providerName; balance }
@@ -55,22 +55,22 @@ struct ModelPickerProviderHeader: View {
             if let collapsed {
                 Button(action: onToggle) {
                     Image(systemName: collapsed ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 26, height: 26)
                         .background(Color(uiColor: .tertiarySystemFill), in: Circle())
-                        .frame(width: 44, height: 44)
+                        .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 .accessibilityLabel(collapsed ? "展开服务商模型" : "折叠服务商模型")
                 .accessibilityIdentifier("model-picker-provider-fold-" + providerID)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 0)
         .textCase(nil)
     }
     private var providerName: some View {
-        Text(title).font(.headline.weight(.bold)).foregroundStyle(.primary)
+        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
     }
     @ViewBuilder private var balance: some View {
@@ -78,11 +78,11 @@ struct ModelPickerProviderHeader: View {
             Button(action: onEdit) {
                 HStack(spacing: 4) {
                     Text("余额 \(Self.amountText(amount, currency: quota.currency))")
-                        .font(.caption.weight(.semibold)).monospacedDigit()
+                        .font(.caption2.weight(.semibold)).monospacedDigit()
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8).padding(.vertical, 5)
+                .padding(.horizontal, 7).padding(.vertical, 4)
                 .background(amount <= 0 ? Color.red : Color.green, in: Capsule())
                 .fixedSize()
             }
