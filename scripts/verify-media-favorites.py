@@ -33,4 +33,9 @@ check('onFavorite' in gallery and 'onFavorite' in image_preview, 'image preview/
 check('MediaFavoritesStore.shared.add' in video_preview and 'MediaFavoritesStore.shared.add' in audio_preview, 'video/audio previews expose favorite action')
 check('Shared/MediaFavoritesStore.swift' in project and 'Views/Settings/MediaFavoritesView.swift' in project, 'new files are in the Xcode project')
 check(project.count('C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */') == 2 and project.count('C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */') == 2, 'new files are in the app source phase')
+check('ContentUnavailableView(' not in view and 'private var emptyLibraryView: some View' in view,
+      'favorites empty state uses iOS 16-compatible views')
+workflow = text('.github/workflows/build.yml')
+check('2>&1 | tee build.log' in workflow and 'Summarize compiler errors' in workflow,
+      'CI captures stderr and exposes compiler errors in the run summary')
 print(f'Structural checks passed: {checks}')

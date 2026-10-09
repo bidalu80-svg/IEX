@@ -465,8 +465,20 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             ENABLE_DEBUG_DYLIB=NO \
-            | tee build.log
+            2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
+
+      - name: Summarize compiler errors
+        if: failure()
+        run: |
+          if [ -f build.log ]; then
+            {
+              echo '### Xcode compiler errors'
+              echo '```text'
+              grep -n -E 'error:|fatal error:|BUILD FAILED|Failed frontend command' build.log | head -80 || true
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Package unsigned IPA
         run: |

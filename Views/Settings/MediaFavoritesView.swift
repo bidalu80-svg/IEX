@@ -32,11 +32,7 @@ struct MediaFavoritesView: View {
             }
 
             if visibleItems.isEmpty {
-                ContentUnavailableView(
-                    "还没有收藏媒体",
-                    systemImage: "star",
-                    description: Text("在聊天中的图片、视频或音频上长按即可收藏。")
-                )
+                emptyLibraryView
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
@@ -102,6 +98,25 @@ struct MediaFavoritesView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
+    }
+
+    // Keep the empty state compatible with the app's iOS 16 deployment target.
+    private var emptyLibraryView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "star")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text("还没有收藏媒体")
+                .font(.title3.weight(.semibold))
+            Text("在聊天中的图片、视频或音频上长按即可收藏，也可以在媒体预览中点击收藏按钮。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
