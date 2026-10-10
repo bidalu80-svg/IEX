@@ -1277,27 +1277,29 @@ struct PastableTextView: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView tv: PastableUITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? UIScreen.main.bounds.width
-        // [T-share-url-input-height] UITextView.sizeThatFits returns the
-        // height typeset against the CURRENT textContainer width, not the
-        // requested one. When a large block of text lands via the shared-
-        // sheet path (`vm.inputText += sharedURL`), SwiftUI re-runs
-        // updateUIView with the new text but UITextView's typesetter is
-        // still keyed to the previous (single-line) frame width, so
-        // sizeThatFits reports the unwrapped one-line height and the
-        // composer doesn't grow. Forcing the textContainer width to the
-        // proposed value triggers an immediate re-layout against the real
-        // wrap point, so the returned height matches what the user will
-        // actually see once the cell renders.
-        if abs(tv.textContainer.size.width - width) > 0.5 {
-            tv.textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
-            tv.layoutManager.ensureLayout(for: tv.textContainer)
-        }
+        // Keep this measurement side-effect free. In particular, do not mutate
+        // `textContainer.size` or call `ensureLayout` here. SwiftUI may ask for
+        // the representable size while UIKit is already handling a selection
+        // tap. Mutating the live TextKit 1 container from that callback causes
+        // UIKit's `_resizeTextViewForTextContainer` → `_updateContentSize` →
+        // `_textContainerSizeDidChange` cycle to re-enter the typesetter. On
+        // iOS 18 that cycle can recurse until NSATSTypesetter crashes in
+        // `_defaultWritingDirection` (Ze-2026-10-10-133415.ips).
+        // `UITextView.sizeThatFits` accepts the proposed width and performs the
+        // measurement without changing the on-screen text container, so it is
+        // safe for both long prose and long unbroken URLs.
         let fitSize = tv.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         let lineH = tv.font?.lineHeight ?? 20
         let effective = tv.text.isEmpty ? lineH : fitSize.height
         let maxH = tv.maxHeight
         let clamped = min(effective, maxH)
-        tv.isScrollEnabled = fitSize.height > maxH
+        let shouldScroll = fitSize.height > maxH
+        if tv.isScrollEnabled != shouldScroll {
+            // This is the only UIKit state synchronization left here. Guarding
+            // the assignment prevents repeated layout invalidations during a
+            // SwiftUI measurement pass.
+            tv.isScrollEnabled = shouldScroll
+        }
         return CGSize(width: width, height: clamped)
     }
 
