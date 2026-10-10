@@ -159,6 +159,9 @@ private struct ChatShimmerText: View {
     let color: Color
     let isActive: Bool
     let lineLimit: Int?
+    /// When true, preserve intrinsic width for short status labels. Tool titles
+    /// opt out so long commands receive the row's remaining width and truncate.
+    let usesIntrinsicWidth: Bool
     @State private var startedAt = Date()
 
     init(
@@ -166,13 +169,15 @@ private struct ChatShimmerText: View {
         font: Font,
         color: Color,
         isActive: Bool,
-        lineLimit: Int? = 1
+        lineLimit: Int? = 1,
+        usesIntrinsicWidth: Bool = true
     ) {
         self.text = text
         self.font = font
         self.color = color
         self.isActive = isActive
         self.lineLimit = lineLimit
+        self.usesIntrinsicWidth = usesIntrinsicWidth
     }
 
     var body: some View {
@@ -190,7 +195,7 @@ private struct ChatShimmerText: View {
                 }
             }
         }
-        .fixedSize(horizontal: lineLimit != nil, vertical: lineLimit == nil)
+        .fixedSize(horizontal: usesIntrinsicWidth && lineLimit != nil, vertical: lineLimit == nil)
         .onAppear { startedAt = Date() }
         .onChange(of: isActive) { active in
             if active { startedAt = Date() }
@@ -438,7 +443,8 @@ struct ToolCapsuleView: View {
                         text: displayText,
                         font: .system(size: 13, weight: .medium),
                         color: ChatColors.secondaryText,
-                        isActive: isActive
+                        isActive: isActive,
+                        usesIntrinsicWidth: false
                     )
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
@@ -456,6 +462,9 @@ struct ToolCapsuleView: View {
                     }
                 }
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(-1)
 
                 // Execution duration (shown after completion). The HH:mm:ss
                 // start time is surfaced inside the detail view's bottom bar
