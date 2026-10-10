@@ -163,6 +163,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
 /// assistant avatar is fixed for a consistent Ze identity.
 private struct BridgedAssistantHeaderV3: View {
     @ObservedObject var message: ChatMessage
+    @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat = 0
     @State private var soulMeta: SoulMetadata = SoulStore.cachedMetadata
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -179,9 +180,11 @@ private struct BridgedAssistantHeaderV3: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .leading)))
                 }
             }
-            if !message.isAwaitingModelResponse,
-               message.error == nil,
-               let duration = message.taskDuration {
+            if bridge.isActiveMessage, let startTime = message.taskDurationStartTime {
+                AssistantTaskDurationView(liveStartTime: startTime)
+            } else if !message.isAwaitingModelResponse,
+                      message.error == nil,
+                      let duration = message.taskDuration {
                 AssistantTaskDurationView(duration: duration)
             }
         }
@@ -589,7 +592,22 @@ private struct BridgedAssistantFooterV3: View {
                 )
                 .disabled(bridge.onRetry == nil)
             }
+
+            Spacer(minLength: 6)
+
+            Text(String(localized: "AI-generated content may not always be accurate",
+                        comment: "Disclaimer shown beside assistant reply actions"))
+                .font(.system(size: 10, weight: .regular, design: .serif))
+                .italic()
+                .foregroundStyle(ChatColors.tertiaryText)
+                .lineLimit(1)
+                .allowsTightening(true)
+                .minimumScaleFactor(0.62)
+                .layoutPriority(-1)
+                .accessibilityLabel(String(localized: "AI-generated content may not always be accurate",
+                                            comment: "Disclaimer shown beside assistant reply actions"))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 1)
     }
 
@@ -1222,9 +1240,10 @@ extension CollectionViewMessageListV3 {
             case .assistantHeader(let msgId):
                 guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { return }
                 let message = messages[msgIdx]
+                let bridge = getOrCreateBridge(for: message, in: messages)
                 cell.backgroundColor = .clear
                 let config = UIHostingConfiguration {
-                    BridgedAssistantHeaderV3(message: message, maxWidth: width)
+                    BridgedAssistantHeaderV3(message: message, bridge: bridge, maxWidth: width)
                         .transaction { $0.disablesAnimations = true }
                         .environmentObject(vm)
                 }.minSize(width: 0, height: 0).margins(.all, 0)

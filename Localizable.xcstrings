@@ -50951,6 +50951,59 @@
         }
       }
     },
+    "AI-generated content may not always be accurate" : {
+      "comment" : "Disclaimer shown beside assistant reply actions",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von KI generierte Inhalte sind möglicherweise nicht immer korrekt"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI-generated content may not always be accurate"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le contenu généré par l’IA n’est pas toujours exact"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI生成コンテンツ（必ずしも正確とは限りません）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI가 생성한 콘텐츠이며 항상 정확하지 않을 수 있습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Контент создан ИИ и может быть неточным"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容由AI生成，未必一定准确"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "內容由 AI 生成，未必一定準確"
+          }
+        }
+      }
+    },
     "Read from Start" : {
       "localizations" : {
         "de" : {

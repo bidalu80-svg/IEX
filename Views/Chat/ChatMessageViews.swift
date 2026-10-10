@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 extension Notification.Name {
@@ -560,7 +561,9 @@ struct ChatMessageRow: View {
             }
             .padding(.top, 4)
 
-            if !isActiveMessage, let duration = message.taskDuration {
+            if isActiveMessage, let startTime = message.taskDurationStartTime {
+                AssistantTaskDurationView(liveStartTime: startTime)
+            } else if let duration = message.taskDuration {
                 AssistantTaskDurationView(duration: duration)
             }
 
@@ -852,38 +855,55 @@ struct ChatMessageRow: View {
 /// Lightweight Trae-style divider shown once a complete assistant turn has
 /// finished. It is shared by the SwiftUI row and the collection-view header.
 struct AssistantTaskDurationView: View {
-    let duration: TimeInterval
-    @Environment(\.colorScheme) private var colorScheme
+    private let frozenDuration: TimeInterval?
+    private let liveStartTime: TimeInterval?
 
-    private var durationColor: Color {
-        colorScheme == .dark ? .blue : ChatColors.secondaryText
+    init(duration: TimeInterval) {
+        self.frozenDuration = duration
+        self.liveStartTime = nil
     }
 
-    private var durationText: String {
-        let totalSeconds = max(1, Int(duration.rounded()))
-        if totalSeconds < 60 { return "\(totalSeconds)s" }
-        return "\(totalSeconds / 60)m \(String(format: "%02d", totalSeconds % 60))s"
+    init(liveStartTime: TimeInterval) {
+        self.frozenDuration = nil
+        self.liveStartTime = liveStartTime
     }
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 8) {
+        if let liveStartTime {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                durationContent(max(0, ProcessInfo.processInfo.systemUptime - liveStartTime))
+            }
+        } else if let frozenDuration {
+            durationContent(frozenDuration)
+        }
+    }
+
+    private func durationContent(_ duration: TimeInterval) -> some View {
+        let durationText = Self.format(duration)
+        return HStack(spacing: 8) {
             Rectangle()
-                .fill(durationColor.opacity(0.22))
+                .fill(ChatColors.secondaryText.opacity(0.22))
                 .frame(height: 0.5)
             Text("任务耗时 \(durationText)")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(durationColor)
+                .foregroundStyle(ChatColors.secondaryText)
                 .monospacedDigit()
                 .fixedSize(horizontal: true, vertical: false)
             Rectangle()
-                .fill(durationColor.opacity(0.22))
+                .fill(ChatColors.secondaryText.opacity(0.22))
                 .frame(height: 0.5)
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel("任务耗时 \(durationText)")
     }
-}
 
+    private static func format(_ duration: TimeInterval) -> String {
+        let totalSeconds = max(1, Int(duration.rounded()))
+        if totalSeconds < 60 { return "\(totalSeconds)s" }
+        return "\(totalSeconds / 60)m \(String(format: "%02d", totalSeconds % 60))s"
+    }
+}
 
 
 /// Keep disclosure observation local; ChatMessage does not republish block state.
