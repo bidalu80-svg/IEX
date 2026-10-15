@@ -4389,6 +4389,9 @@ extension RawMessage {
                 case "memory_write", "memory_get":
                     kind = .memoryTool(action: tu.name)
                     content = tu.name == "memory_write" ? "Writing memory..." : "Reading memory..."
+                case "ask_user":
+                    kind = .memoryTool(action: tu.name)
+                    content = String(localized: "Waiting for your answer…")
                 default:
                     kind = .shellTool(command: tu.name)
                     content = tu.name
@@ -4405,6 +4408,12 @@ extension RawMessage {
                 // Restore browserURL: use arg URL or inherit from last browser block
                 if case .browserTool = kind {
                     block.browserURL = lastBrowserURL
+                }
+                if tu.name == "ask_user",
+                   let data = tu.input.data(using: .utf8),
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let card = QuestionCardParser.state(requestId: tu.toolUseId, arguments: object, timeout: 900) {
+                    block.questionCard = card
                 }
                 blocks.append(block)
 

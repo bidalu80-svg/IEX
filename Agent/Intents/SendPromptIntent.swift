@@ -369,6 +369,15 @@ final class ShortcutNotificationDelegate: NSObject, UNUserNotificationCenterDele
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+        if response.notification.request.content.categoryIdentifier == QuestionCardCoordinator.categoryId {
+            Task { @MainActor in
+                QuestionCardCoordinator.shared.handleNotificationResponse(response)
+            }
+            if response.actionIdentifier != UNNotificationDefaultActionIdentifier {
+                completionHandler()
+                return
+            }
+        }
         if let sessionId = userInfo["sessionId"] as? String {
             DispatchQueue.main.async {
                 // Buffer first (cold-launch consumer), then post (warm-path

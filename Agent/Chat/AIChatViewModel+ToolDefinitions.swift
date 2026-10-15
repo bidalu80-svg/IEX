@@ -35,6 +35,17 @@ extension AIChatViewModel {
                 propertyOrdering: ["tool_title", "command", "timeout", "delay"]
             ),
             AgentToolDefinition(
+                name: "ask_user",
+                description: "Show an interactive question card and pause the agent until the user answers every question. Use this whenever the user must choose, clarify, or confirm something. There is no always-allow or remembered approval. If the user does not answer before timeout, the tool returns confirmed=false and status=unconfirmed; never infer or choose on the user's behalf. `questions` must be newline-separated; each line may use `Question || Option A | Option B | Option C`.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "A concise title shown on the question card."),
+                    "questions": AgentToolParam(type: .string, description: "One question per line. For choices, append `||` followed by options separated with `|`. Maximum 8 questions."),
+                    "timeout_seconds": AgentToolParam(type: .integer, description: "Optional timeout in seconds. Default 900. On timeout the result is unconfirmed."),
+                ],
+                required: ["tool_title", "questions"],
+                propertyOrdering: ["tool_title", "questions", "timeout_seconds"]
+            ),
+            AgentToolDefinition(
                 name: "file_read",
                 description: "Read a file from the Linux filesystem. Faster than shell_execute for reading files — no shell overhead. Returns file content with metadata. Rejects binary files.",
                 parameters: [

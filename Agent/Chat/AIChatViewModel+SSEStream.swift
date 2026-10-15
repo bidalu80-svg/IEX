@@ -375,7 +375,7 @@ extension AIChatViewModel {
                     case "file_edit": .fileEditTool(path: "")
                     case "browser_use": .browserTool(action: "")
                     case "read_image": .readImageTool(path: "")
-                    case "memory_write", "memory_get", "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent": .memoryTool(action: name)
+                    case "memory_write", "memory_get", "ask_user", "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent": .memoryTool(action: name)
                     default: .shellTool(command: name)
                     }
                     if name == "file_write" || name == "file_edit" {
@@ -733,6 +733,11 @@ extension AIChatViewModel {
                         if let path = args["path"] as? String {
                             messages[msgIdx].blocks[blockIdx].kind = .readImageTool(path: path)
                         }
+                    case "ask_user":
+                        if let card = QuestionCardParser.state(requestId: id, arguments: args, timeout: 900) {
+                            messages[msgIdx].blocks[blockIdx].questionCard = card
+                            messages[msgIdx].blocks[blockIdx].content = String(localized: "Waiting for your answer…")
+                        }
                     default: break
                     }
                     // Store serialized tool input args for introspection
@@ -1025,6 +1030,8 @@ extension AIChatViewModel {
             return "Browser: \((args["action"] as? String) ?? "?")..."
         case "read_image":
             return "Reading image \((args["path"] as? String) ?? "?")..."
+        case "ask_user":
+            return "Preparing a question card..."
         default:
             return "Tool: \(name)"
         }
