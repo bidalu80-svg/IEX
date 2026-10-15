@@ -756,104 +756,166 @@ private struct QuestionCardView: View {
     }
 
     var body: some View {
-        guard let card = block.questionCard else { return AnyView(EmptyView()) }
-        return AnyView(
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 8) {
-                    Image(systemName: card.status == .pending ? "questionmark.circle.fill" : (card.status == .confirmed ? "checkmark.circle.fill" : "minus.circle.fill"))
-                        .foregroundStyle(card.status == .pending ? .purple : (card.status == .confirmed ? .green : .orange))
-                    Text(card.title)
-                        .font(.headline)
-                    Spacer()
-                    if card.status == .pending {
-                        Text("\(min(card.currentIndex + 1, card.questions.count))/\(card.questions.count)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(card.status == .confirmed ? String(localized: "Answered") : String(localized: "Unconfirmed"))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(card.status == .confirmed ? .green : .orange)
-                    }
-                }
+        Group {
+            if let card = block.questionCard {
+                cardContainer(card)
+            } else {
+                EmptyView()
+            }
+        }
+    }
 
-                if card.status == .pending, card.questions.indices.contains(card.currentIndex) {
-                    let question = card.questions[card.currentIndex]
-                    Text(question.prompt)
-                        .font(.body.weight(.medium))
-                        .fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder
+    private func cardContainer(_ card: QuestionCardState) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            cardHeader(card)
+            cardQuestionContent(card)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.purple.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.purple.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .onChange(of: speech.recognizedText) { _, text in
+            if speech.state == .recording || !text.isEmpty {
+                draft = text
+            }
+        }
+    }
 
-                    if !question.options.isEmpty {
-                        VStack(spacing: 8) {
-                            ForEach(question.options, id: \.self) { option in
-                                Button {
-                                    draft = option
-                                } label: {
-                                    HStack {
-                                        Text(option)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                        if draft == option {
-                                            Image(systemName: "checkmark.circle.fill")
-                                        }
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(draft == option ? Color.purple.opacity(0.16) : Color.secondary.opacity(0.10))
-                                    )
-                                }
-                                .buttonStyle(.plain)
+    private func cardHeader(_ card: QuestionCardState) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: statusIconName(card.status))
+                .foregroundStyle(statusColor(card.status))
+            Text(card.title)
+                .font(.headline)
+            Spacer()
+            if card.status == .pending {
+                Text("\(min(card.currentIndex + 1, card.questions.count))/\(card.questions.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(card.status == .confirmed
+                     ? String(localized: "Answered")
+                     : String(localized: "Unconfirmed"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(statusColor(card.status))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cardQuestionContent(_ card: QuestionCardState) -> some View {
+        if card.status == .pending,
+           card.questions.indices.contains(card.currentIndex) {
+            let question = card.questions[card.currentIndex]
+            Text(question.prompt)
+                .font(.body.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            questionOptions(question)
+            answerControls(card)
+        } else if card.status == .unconfirmed {
+            Text(String(localized: "No answer was confirmed. The assistant will not choose for you."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func questionOptions(_ question: QuestionCardQuestion) -> some View {
+        if !question.options.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(question.options, id: \.self) { option in
+                    Button {
+                        draft = option
+                    } label: {
+                        HStack {
+                            Text(option)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if draft == option {
+                                Image(systemName: "checkmark.circle.fill")
                             }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(draft == option
+                                      ? Color.purple.opacity(0.16)
+                                      : Color.secondary.opacity(0.10))
+                        )
                     }
-
-                    HStack(spacing: 8) {
-                        TextField(String(localized: "Your answer"), text: $draft, axis: .vertical)
-                            .lineLimit(1...4)
-                            .textFieldStyle(.roundedBorder)
-                        Button {
-                            toggleRecording()
-                        } label: {
-                            Image(systemName: speech.state == .recording ? "stop.circle.fill" : "mic.fill")
-                                .font(.title3)
-                                .foregroundStyle(speech.state == .recording ? .red : .purple)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(speech.state == .recording ? String(localized: "Stop voice answer") : String(localized: "Answer by voice"))
-                    }
-
-                    HStack {
-                        Button(String(localized: "Leave unconfirmed")) {
-                            QuestionCardCoordinator.shared.submitUnconfirmed(requestId: card.requestId)
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        Spacer()
-                        Button(card.currentIndex + 1 == card.questions.count ? String(localized: "Submit") : String(localized: "Next")) {
-                            let answer = draft
-                            draft = ""
-                            QuestionCardCoordinator.shared.submitAnswer(requestId: card.requestId, answer: answer)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.purple)
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                } else if card.status == .unconfirmed {
-                    Text(String(localized: "No answer was confirmed. The assistant will not choose for you."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.purple.opacity(0.08))
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.purple.opacity(0.25), lineWidth: 1))
-            )
-            .onChange(of: speech.recognizedText) { _, text in
-                if speech.state == .recording || !text.isEmpty { draft = text }
+        }
+    }
+
+    private func answerControls(_ card: QuestionCardState) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TextField(String(localized: "Your answer"), text: $draft, axis: .vertical)
+                    .lineLimit(1...4)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    toggleRecording()
+                } label: {
+                    Image(systemName: speech.state == .recording ? "stop.circle.fill" : "mic.fill")
+                        .font(.title3)
+                        .foregroundStyle(speech.state == .recording ? .red : .purple)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    speech.state == .recording
+                        ? String(localized: "Stop voice answer")
+                        : String(localized: "Answer by voice")
+                )
             }
-        )
+
+            HStack {
+                Button(String(localized: "Leave unconfirmed")) {
+                    QuestionCardCoordinator.shared.submitUnconfirmed(requestId: card.requestId)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Button(
+                    card.currentIndex + 1 == card.questions.count
+                        ? String(localized: "Submit")
+                        : String(localized: "Next")
+                ) {
+                    let answer = draft
+                    draft = ""
+                    QuestionCardCoordinator.shared.submitAnswer(
+                        requestId: card.requestId,
+                        answer: answer
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func statusIconName(_ status: QuestionCardStatus) -> String {
+        switch status {
+        case .pending: return "questionmark.circle.fill"
+        case .confirmed: return "checkmark.circle.fill"
+        case .unconfirmed: return "minus.circle.fill"
+        }
+    }
+
+    private func statusColor(_ status: QuestionCardStatus) -> Color {
+        switch status {
+        case .pending: return .purple
+        case .confirmed: return .green
+        case .unconfirmed: return .orange
+        }
     }
 
     private func toggleRecording() {
