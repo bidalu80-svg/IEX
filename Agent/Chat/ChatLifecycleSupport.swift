@@ -632,11 +632,14 @@ struct QuestionCardResponse: Codable, Equatable {
             "confirmed": confirmed,
             "status": status,
             "source": source,
-            "answers": answers.map { [
-                "id": $0.id,
-                "question": $0.question,
-                "answer": $0.answer ?? NSNull()
-            ] }
+            "answers": answers.map { answer -> [String: Any] in
+                var item: [String: Any] = [
+                    "id": answer.id,
+                    "question": answer.question
+                ]
+                item["answer"] = answer.answer ?? NSNull()
+                return item
+            }
         ]
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
@@ -737,7 +740,7 @@ enum QuestionCardParser {
 @MainActor
 final class QuestionCardCoordinator {
     static let shared = QuestionCardCoordinator()
-    static let categoryId = "ZE_QUESTION_CARD"
+    nonisolated static let categoryId = "ZE_QUESTION_CARD"
     static let replyActionId = "ZE_QUESTION_REPLY"
     static let unconfirmedActionId = "ZE_QUESTION_UNCONFIRMED"
 
