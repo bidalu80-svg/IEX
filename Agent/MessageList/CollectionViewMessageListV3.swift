@@ -3332,9 +3332,9 @@ extension CollectionViewMessageListV3 {
             // layout pass never pins an expanded card to the old 36pt tool-pill
             // height. The exact SelfSizingCell measurement follows immediately.
             let outerAndHeader: CGFloat = 32 + 24 + 14
-            let answered = card.answers.compactMap { answer in
-                guard let answer, !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-                return answer
+            let answered = card.answers.filter { answer in
+                guard let answer else { return false }
+                return !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }.count
             let history = answered > 0 ? 30 + CGFloat(answered) * 60 : 0
             guard expanded else {
