@@ -737,6 +737,7 @@ extension AIChatViewModel {
                         if let card = QuestionCardParser.state(requestId: id, arguments: args, timeout: 900) {
                             messages[msgIdx].blocks[blockIdx].questionCard = card
                             messages[msgIdx].blocks[blockIdx].content = String(localized: "Waiting for your answer…")
+                            NotificationCenter.default.post(name: .questionCardToggled, object: messages[msgIdx].blocks[blockIdx].id)
                         }
                     default: break
                     }

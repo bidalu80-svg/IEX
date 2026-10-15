@@ -653,6 +653,10 @@ struct ToolCapsuleView: View {
 
 extension Notification.Name {
     static let thinkingBlockToggled = Notification.Name("thinkingBlockToggled")
+    /// Posted whenever a question card changes height (collapse, answer history,
+    /// current question, or terminal status). The collection list clears both
+    /// layout and cell measurement caches before remeasuring the block.
+    static let questionCardToggled = Notification.Name("questionCardToggled")
     /// Posted when a long-press selection menu's "Add to Chat Input" action
     /// fires. userInfo["text"] is the selected text to append. The active
     /// chat's AIChatView listens and forwards to `vm.appendToInputText`.
@@ -749,7 +753,7 @@ private struct QuestionCardView: View {
     @ObservedObject var block: AssistantBlock
     @ObservedObject private var speech: SpeechRecognitionManager
     @State private var draft = ""
-    @State private var isExpanded = true
+    @FocusState private var answerFieldFocused: Bool
 
     init(block: AssistantBlock) {
         self.block = block
@@ -770,7 +774,7 @@ private struct QuestionCardView: View {
     private func cardContainer(_ card: QuestionCardState) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             cardHeader(card)
-            if isExpanded {
+            if block.isQuestionCardExpanded {
                 cardQuestionContent(card)
             } else {
                 collapsedCardContent(card)
@@ -786,21 +790,30 @@ private struct QuestionCardView: View {
                 )
         )
         .onChange(of: speech.recognizedText) { text in
-            if speech.state == .recording || !text.isEmpty {
+            // Do not replay stale recognition text over manual typing.
+            if speech.state == .recording {
                 draft = text
             }
         }
-        .onChange(of: block.questionCard?.requestId) { _ in
-            isExpanded = true
+        .onChange(of: block.questionCard?.currentIndex) { _ in
             draft = ""
+            answerFieldFocused = false
+        }
+        .onChange(of: block.questionCard?.status) { status in
+            if status != .pending {
+                draft = ""
+                answerFieldFocused = false
+            }
         }
     }
 
     private func cardHeader(_ card: QuestionCardState) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
+                block.isQuestionCardExpanded.toggle()
             }
+            answerFieldFocused = false
+            NotificationCenter.default.post(name: .questionCardToggled, object: block.id)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: statusIconName(card.status))
@@ -819,14 +832,14 @@ private struct QuestionCardView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(statusColor(card.status))
                 }
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                Image(systemName: block.isQuestionCardExpanded ? "chevron.up" : "chevron.down")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
             }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            isExpanded
+            block.isQuestionCardExpanded
                 ? String(localized: "Collapse question card")
                 : String(localized: "Expand question card")
         )
@@ -953,6 +966,7 @@ private struct QuestionCardView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 TextField(String(localized: "Your answer"), text: $draft, axis: .vertical)
+                    .focused($answerFieldFocused)
                     .lineLimit(1...4)
                     .textFieldStyle(.roundedBorder)
                 Button {

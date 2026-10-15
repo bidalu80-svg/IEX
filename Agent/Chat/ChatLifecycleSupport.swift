@@ -763,6 +763,11 @@ final class QuestionCardCoordinator {
     private let logger = AppLogger(category: "QuestionCard")
     private var backgroundObserver: NSObjectProtocol?
 
+    private func notifyLayoutChange(for block: AssistantBlock?) {
+        guard let block else { return }
+        NotificationCenter.default.post(name: .questionCardToggled, object: block.id)
+    }
+
     private init() {
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
@@ -790,6 +795,7 @@ final class QuestionCardCoordinator {
                 pending[requestId] = request
                 block?.questionCard = state
                 block?.content = String(localized: "Waiting for your answer…")
+                notifyLayoutChange(for: block)
                 block?.toolStatus = .running
                 persist(request.state)
                 scheduleTimeout(for: requestId, at: state.timeoutAt)
@@ -817,6 +823,7 @@ final class QuestionCardCoordinator {
         if index + 1 < request.state.questions.count {
             request.state.currentIndex = index + 1
             request.block?.questionCard = request.state
+            notifyLayoutChange(for: request.block)
             persist(request.state)
             postNotification(for: request)
             return
@@ -864,6 +871,7 @@ final class QuestionCardCoordinator {
         request.block?.content = status == .confirmed
             ? String(localized: "Answered")
             : String(localized: "Unconfirmed")
+        notifyLayoutChange(for: request.block)
         removeNotification(requestId: requestId)
         let answers = request.state.questions.enumerated().map { index, question in
             QuestionCardResponse.Answer(id: question.id, question: question.prompt, answer: request.state.answers[index])

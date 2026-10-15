@@ -2420,9 +2420,10 @@ extension CollectionViewMessageListV3 {
 
             if thinkingToggleSub == nil {
                 thinkingToggleSub = NotificationCenter.default.publisher(for: .thinkingBlockToggled)
+                    .merge(with: NotificationCenter.default.publisher(for: .questionCardToggled))
                     .receive(on: DispatchQueue.main)
                     .sink { [weak self] notification in
-                        let tlog = AppLogger(category: "ThinkingCollapse")
+                        let tlog = AppLogger(category: "BlockHeightChange")
                         guard let self else {
                             tlog.warning("[ThinkingCollapse] sink fired but self gone")
                             return
@@ -3312,6 +3313,9 @@ extension CollectionViewMessageListV3 {
                 // 40→36 (-4) mid-decel; the +4 growths that motivated 40 were actually
                 // collapsed THINKING blocks (handled above with headerH = 40).
                 case .readImageTool: return 36
+                case .memoryTool:
+                    guard let card = block.questionCard else { return 36 }
+                    return Self.estimateQuestionCardHeight(card, expanded: block.isQuestionCardExpanded)
                 case .info:
                     let lineCount = max(1, block.content.components(separatedBy: "\n").count)
                     return CGFloat(20 + lineCount * 16)
@@ -3320,6 +3324,33 @@ extension CollectionViewMessageListV3 {
             case .assistantFooter:
                 return 4
             }
+        }
+
+        static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool) -> CGFloat {
+            // QuestionCardView uses 16pt outer padding, a 24pt header, and
+            // 14pt vertical gaps. Keep this estimate conservative so the first
+            // layout pass never pins an expanded card to the old 36pt tool-pill
+            // height. The exact SelfSizingCell measurement follows immediately.
+            let outerAndHeader: CGFloat = 32 + 24 + 14
+            let answered = card.answers.compactMap { answer in
+                guard let answer, !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                return answer
+            }.count
+            let history = answered > 0 ? 30 + CGFloat(answered) * 60 : 0
+            guard expanded else {
+                // Collapsed cards show the answer history plus at most the
+                // current question summary, not the option list/text field.
+                let summary: CGFloat = card.status == .pending ? 58 : 36
+                return outerAndHeader + history + summary
+            }
+            guard card.status == .pending, card.questions.indices.contains(card.currentIndex) else {
+                return outerAndHeader + history + 36
+            }
+            let question = card.questions[card.currentIndex]
+            let prompt = max(28, min(88, CGFloat(question.prompt.count) * 0.55))
+            let options = question.options.isEmpty ? 0 : 8 + CGFloat(question.options.count) * 42
+            let controls: CGFloat = 92
+            return min(760, outerAndHeader + history + prompt + options + controls)
         }
 
         static func estimateTextBlockHeight(_ content: String, width: CGFloat, scale: CGFloat, lineHeight: CGFloat) -> CGFloat {

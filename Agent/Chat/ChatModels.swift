@@ -332,6 +332,10 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// Interactive assistant question-card state. Derived from the ask_user tool
     /// arguments and result so the card survives session reloads.
     @Published var questionCard: QuestionCardState?
+    /// Expansion belongs to the block model, not the reusable collection-view cell.
+    /// Keeping it here prevents collapse state from jumping between cards during
+    /// cell reuse/reconfigure.
+    @Published var isQuestionCardExpanded: Bool = true
     /// Streaming file content for file_write tool (live content as it arrives).
     @Published var streamingFileContent: String?
     /// Whether a thinking block is expanded (persisted across cell reuse).
