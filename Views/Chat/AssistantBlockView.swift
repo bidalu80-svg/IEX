@@ -780,7 +780,7 @@ private struct QuestionCardView: View {
                         .stroke(Color.purple.opacity(0.25), lineWidth: 1)
                 )
         )
-        .onChange(of: speech.recognizedText) { _, text in
+        .onChange(of: speech.recognizedText) { text in
             if speech.state == .recording || !text.isEmpty {
                 draft = text
             }
