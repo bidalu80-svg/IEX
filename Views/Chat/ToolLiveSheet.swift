@@ -771,7 +771,9 @@ struct ToolLiveSheet: View {
                 fileDiffContent(isStreaming: true)
             case .fileReadTool: fileEditorContent(block.content)
             case .memoryTool:
-                if block.kind.isSubAgentTool {
+                if block.kind.isQuestionCardTool {
+                    textContent
+                } else if block.kind.isSubAgentTool {
                     textContent
                 } else {
                     let content = memoryWriteContentFromArgs() ?? block.content
@@ -809,7 +811,9 @@ struct ToolLiveSheet: View {
                     fileEditorContent(block.content)
                 }
             case .memoryTool:
-                if block.kind.isSubAgentTool {
+                if block.kind.isQuestionCardTool {
+                    textContent
+                } else if block.kind.isSubAgentTool {
                     textContent
                 } else {
                     let content = memoryWriteContentFromArgs() ?? block.content
@@ -844,7 +848,9 @@ struct ToolLiveSheet: View {
             } else if case .fileReadTool = block.kind, let text = item.snapshot.text, !text.isEmpty {
                 fileEditorContent(text)
             } else if case .memoryTool = block.kind {
-                if block.kind.isSubAgentTool {
+                if block.kind.isQuestionCardTool {
+                    textContent
+                } else if block.kind.isSubAgentTool {
                     textContent
                 } else {
                     let content = memoryWriteContentFromArgs() ?? item.snapshot.text ?? block.content
@@ -2030,7 +2036,8 @@ struct ToolLiveSheet: View {
         case .browserTool: return "Ze 正在使用浏览器"
         case .readImageTool: return "Ze 正在读取图片"
         case .memoryTool:
-            return block.kind.isSubAgentTool ? "Ze 正在调度子代理" : "Ze 正在使用记忆"
+            if block.kind.isQuestionCardTool { return String(localized: "Ze is asking a question") }
+            return block.kind.isSubAgentTool ? String(localized: "Ze is dispatching a sub-agent") : String(localized: "Ze is using memory")
         case .info: return "Ze"
         case .text: return "Ze"
         case .thinking: return "Ze"
@@ -2050,7 +2057,8 @@ struct ToolLiveSheet: View {
         case .fileEditTool(let p): return (p as NSString).lastPathComponent
         case .browserTool(let a): return a
         case .readImageTool(let p): return (p as NSString).lastPathComponent
-        case .memoryTool(let a): return a
+        case .memoryTool(let a):
+            return block.kind.isQuestionCardTool ? String(localized: "Question card") : a
         default: return ""
         }
     }
@@ -2063,7 +2071,9 @@ struct ToolLiveSheet: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
+        case .memoryTool:
+            if block.kind.isQuestionCardTool { return .purple }
+            return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple
@@ -2427,7 +2437,8 @@ private struct ToolPreviewThumbnail: View {
         case .readImageTool(let p):
             let name = (p as NSString).lastPathComponent
             return (!p.isEmpty && name != "/" && name.contains(".")) ? name : String(localized: "Read image")
-        case .memoryTool(let a): return a
+        case .memoryTool(let a):
+            return block.kind.isQuestionCardTool ? String(localized: "Question card") : a
         default: return ""
         }
     }
@@ -2445,7 +2456,9 @@ private struct ToolPreviewThumbnail: View {
         case .fileEditTool: return .orange
         case .browserTool: return .blue
         case .readImageTool: return .purple
-        case .memoryTool: return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
+        case .memoryTool:
+            if block.kind.isQuestionCardTool { return .purple }
+            return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
         case .thinking: return .purple

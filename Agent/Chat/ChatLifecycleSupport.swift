@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import UIKit
+import UserNotifications
 
 private let logger = AppLogger(category: "AIChatVM")
 
@@ -570,3 +571,377 @@ final class ViewModelCache {
     static var pendingTransfer: PendingTransfer?
 }
 
+
+// MARK: - Interactive question cards
+
+/// One question presented by the assistant through the `ask_user` tool.
+struct QuestionCardQuestion: Codable, Equatable, Identifiable {
+    let id: String
+    let prompt: String
+    let options: [String]
+
+    init(id: String, prompt: String, options: [String] = []) {
+        self.id = id
+        self.prompt = prompt
+        self.options = options
+    }
+}
+
+enum QuestionCardStatus: String, Codable, Equatable {
+    case pending
+    case confirmed
+    case unconfirmed
+}
+
+/// UI state attached to the assistant's ask_user block. The state is derived
+/// from the persisted tool_use/tool_result pair when a session is reloaded.
+struct QuestionCardState: Codable, Equatable {
+    let requestId: String
+    let title: String
+    let questions: [QuestionCardQuestion]
+    let timeoutAt: Date
+    var currentIndex: Int
+    var answers: [String?]
+    var status: QuestionCardStatus
+
+    init(requestId: String, title: String, questions: [QuestionCardQuestion], timeoutAt: Date, status: QuestionCardStatus = .pending) {
+        self.requestId = requestId
+        self.title = title
+        self.questions = questions
+        self.timeoutAt = timeoutAt
+        self.currentIndex = 0
+        self.answers = Array(repeating: nil, count: questions.count)
+        self.status = status
+    }
+}
+
+struct QuestionCardResponse: Codable, Equatable {
+    struct Answer: Codable, Equatable {
+        let id: String
+        let question: String
+        let answer: String?
+    }
+
+    let confirmed: Bool
+    let status: String
+    let answers: [Answer]
+    let source: String
+
+    var json: String {
+        let payload: [String: Any] = [
+            "confirmed": confirmed,
+            "status": status,
+            "source": source,
+            "answers": answers.map { answer -> [String: Any] in
+                var item: [String: Any] = [
+                    "id": answer.id,
+                    "question": answer.question
+                ]
+                item["answer"] = answer.answer ?? NSNull()
+                return item
+            }
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{\"confirmed\":false,\"status\":\"unconfirmed\",\"answers\":[],\"source\":\"system\"}"
+        }
+        return string
+    }
+}
+
+enum QuestionCardParser {
+    static func questions(from arguments: [String: Any]) -> [QuestionCardQuestion] {
+        if let raw = arguments["questions"] as? String {
+            return parse(raw)
+        }
+        if let raw = arguments["questions"] as? [[String: Any]] {
+            return raw.enumerated().compactMap { makeQuestion($0.element, index: $0.offset) }
+        }
+        if let question = arguments["question"] as? String {
+            return parse(question)
+        }
+        return []
+    }
+
+    static func state(requestId: String, arguments: [String: Any], timeout: TimeInterval) -> QuestionCardState? {
+        let questions = questions(from: arguments)
+        guard !questions.isEmpty else { return nil }
+        let title = (arguments["tool_title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return QuestionCardState(
+            requestId: requestId,
+            title: title?.isEmpty == false ? title! : String(localized: "Assistant question"),
+            questions: questions,
+            timeoutAt: Date().addingTimeInterval(timeout)
+        )
+    }
+
+    static func apply(resultJSON: String, to state: inout QuestionCardState) {
+        guard let data = resultJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let status = object["status"] as? String
+        state.status = status == QuestionCardStatus.confirmed.rawValue ? .confirmed : .unconfirmed
+        if let answers = object["answers"] as? [[String: Any]] {
+            for (index, question) in state.questions.enumerated() {
+                if let match = answers.first(where: { ($0["id"] as? String) == question.id }) {
+                    state.answers[index] = match["answer"] as? String
+                }
+            }
+            state.currentIndex = min(answers.count, max(0, state.questions.count - 1))
+        }
+    }
+
+    private static func parse(_ raw: String) -> [QuestionCardQuestion] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           let array = object as? [[String: Any]] {
+            let parsed = array.enumerated().compactMap { makeQuestion($0.element, index: $0.offset) }
+            if !parsed.isEmpty { return parsed }
+        }
+
+        return trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(8)
+            .enumerated()
+            .map { index, line in
+                let pieces = line.components(separatedBy: "||")
+                let prompt = pieces[0]
+                    .replacingOccurrences(of: #"^\s*\d+[.)、]\s*"#, with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let options = pieces.dropFirst()
+                    .joined(separator: "||")
+                    .split(whereSeparator: { $0 == "|" || $0 == "、" || $0 == "," || $0 == "，" })
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                return QuestionCardQuestion(id: "q\(index + 1)", prompt: prompt, options: Array(options.prefix(8)))
+            }
+            .filter { !$0.prompt.isEmpty }
+    }
+
+    private static func makeQuestion(_ dictionary: [String: Any], index: Int) -> QuestionCardQuestion? {
+        let prompt = (dictionary["prompt"] as? String ?? dictionary["question"] as? String ?? dictionary["text"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return nil }
+        let id = (dictionary["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = (dictionary["options"] as? [Any] ?? []).compactMap { $0 as? String }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return QuestionCardQuestion(id: id?.isEmpty == false ? id! : "q\(index + 1)", prompt: prompt, options: Array(options.prefix(8)))
+    }
+}
+
+/// Owns the single pending question-card continuation for a chat turn and
+/// bridges in-app answers, speech answers, notification replies, and timeout.
+@MainActor
+final class QuestionCardCoordinator {
+    static let shared = QuestionCardCoordinator()
+    nonisolated static let categoryId = "ZE_QUESTION_CARD"
+    static let replyActionId = "ZE_QUESTION_REPLY"
+    static let unconfirmedActionId = "ZE_QUESTION_UNCONFIRMED"
+
+    private final class PendingRequest {
+        let id: String
+        weak var block: AssistantBlock?
+        var state: QuestionCardState
+        var continuation: CheckedContinuation<QuestionCardResponse, Never>?
+        var timeoutTask: Task<Void, Never>?
+        var source = "in_app"
+
+        init(id: String, state: QuestionCardState, block: AssistantBlock?) {
+            self.id = id
+            self.state = state
+            self.block = block
+        }
+    }
+
+    private var pending: [String: PendingRequest] = [:]
+    private let logger = AppLogger(category: "QuestionCard")
+    private var backgroundObserver: NSObjectProtocol?
+
+    private init() {
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.postNotificationsForPendingCards()
+            }
+        }
+    }
+
+    func request(
+        state: QuestionCardState,
+        block: AssistantBlock?
+    ) async -> QuestionCardResponse {
+        let requestId = state.requestId
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<QuestionCardResponse, Never>) in
+                if pending[requestId] != nil {
+                    finish(requestId: requestId, status: .unconfirmed, source: "replaced")
+                }
+                let request = PendingRequest(id: requestId, state: state, block: block)
+                request.continuation = continuation
+                pending[requestId] = request
+                block?.questionCard = state
+                block?.content = String(localized: "Waiting for your answer…")
+                block?.toolStatus = .running
+                persist(request.state)
+                scheduleTimeout(for: requestId, at: state.timeoutAt)
+                postNotification(for: request)
+                logger.info("[QuestionCard] PRESENT id=\(requestId.prefix(20)) questions=\(state.questions.count) timeout=\(state.timeoutAt)")
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finish(requestId: requestId, status: .unconfirmed, source: "cancelled")
+            }
+        }
+    }
+
+    func submitAnswer(requestId: String, answer: String, source: String = "in_app") {
+        guard let request = pending[requestId], request.state.status == .pending else { return }
+        let cleaned = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let index = request.state.currentIndex
+        guard request.state.questions.indices.contains(index) else {
+            finish(requestId: requestId, status: .confirmed, source: source)
+            return
+        }
+        request.source = source
+        request.state.answers[index] = cleaned
+        if index + 1 < request.state.questions.count {
+            request.state.currentIndex = index + 1
+            request.block?.questionCard = request.state
+            persist(request.state)
+            postNotification(for: request)
+            return
+        }
+        finish(requestId: requestId, status: .confirmed, source: source)
+    }
+
+    func submitUnconfirmed(requestId: String, source: String = "in_app") {
+        guard pending[requestId] != nil else { return }
+        finish(requestId: requestId, status: .unconfirmed, source: source)
+    }
+
+    func handleNotificationResponse(_ response: UNNotificationResponse) {
+        let userInfo = response.notification.request.content.userInfo
+        guard let requestId = userInfo["requestId"] as? String else { return }
+        switch response.actionIdentifier {
+        case Self.replyActionId:
+            let text = (response as? UNTextInputNotificationResponse)?.userText ?? ""
+            submitAnswer(requestId: requestId, answer: text, source: "notification")
+        case Self.unconfirmedActionId:
+            submitUnconfirmed(requestId: requestId, source: "notification")
+        case UNNotificationDefaultActionIdentifier:
+            // The shared notification delegate routes a normal tap to the
+            // session. Reply actions are handled above without opening it.
+            break
+        default:
+            break
+        }
+    }
+
+    private func scheduleTimeout(for requestId: String, at deadline: Date) {
+        pending[requestId]?.timeoutTask?.cancel()
+        let delay = max(0, deadline.timeIntervalSinceNow)
+        pending[requestId]?.timeoutTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            self?.finish(requestId: requestId, status: .unconfirmed, source: "timeout")
+        }
+    }
+
+    private func finish(requestId: String, status: QuestionCardStatus, source: String) {
+        guard let request = pending.removeValue(forKey: requestId) else { return }
+        request.timeoutTask?.cancel()
+        request.state.status = status
+        request.block?.questionCard = request.state
+        request.block?.content = status == .confirmed
+            ? String(localized: "Answered")
+            : String(localized: "Unconfirmed")
+        removeNotification(requestId: requestId)
+        let answers = request.state.questions.enumerated().map { index, question in
+            QuestionCardResponse.Answer(id: question.id, question: question.prompt, answer: request.state.answers[index])
+        }
+        let response = QuestionCardResponse(
+            confirmed: status == .confirmed,
+            status: status.rawValue,
+            answers: answers,
+            source: source
+        )
+        request.continuation?.resume(returning: response)
+        request.continuation = nil
+        UserDefaults.standard.removeObject(forKey: stateKey(requestId))
+        logger.info("[QuestionCard] RESOLVED id=\(requestId.prefix(20)) status=\(status.rawValue) source=\(source)")
+    }
+
+    private func persist(_ state: QuestionCardState) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: stateKey(state.requestId))
+    }
+
+    private func stateKey(_ requestId: String) -> String {
+        "question-card.state.\(requestId)"
+    }
+
+    private func registerNotificationCategory() {
+        let reply = UNTextInputNotificationAction(
+            identifier: Self.replyActionId,
+            title: String(localized: "Answer"),
+            options: [],
+            textInputButtonTitle: String(localized: "Send"),
+            textInputPlaceholder: String(localized: "Type your answer")
+        )
+        let unconfirmed = UNNotificationAction(
+            identifier: Self.unconfirmedActionId,
+            title: String(localized: "Leave unconfirmed"),
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: Self.categoryId, actions: [reply, unconfirmed], intentIdentifiers: [])
+        ])
+    }
+
+    private func postNotificationsForPendingCards() {
+        for request in pending.values {
+            postNotification(for: request)
+        }
+    }
+
+    private func postNotification(for request: PendingRequest) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        guard UserDefaults.standard.object(forKey: "backgroundNotificationsEnabled") == nil
+                || UserDefaults.standard.bool(forKey: "backgroundNotificationsEnabled") else { return }
+        guard request.state.questions.indices.contains(request.state.currentIndex) else { return }
+        registerNotificationCategory()
+        let question = request.state.questions[request.state.currentIndex]
+        let content = UNMutableNotificationContent()
+        content.title = request.state.title
+        let options = question.options.isEmpty ? "" : "\n" + question.options.joined(separator: " · ")
+        content.body = "\(question.prompt)\(options)"
+        content.sound = .default
+        content.categoryIdentifier = Self.categoryId
+        content.userInfo = [
+            "requestId": request.id,
+            "sessionId": AIChatViewModel.activeSessionId ?? ""
+        ]
+        let notification = UNNotificationRequest(
+            identifier: "question-card-\(request.id)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(notification)
+    }
+
+    private func removeNotification(requestId: String) {
+        let center = UNUserNotificationCenter.current()
+        let id = "question-card-\(requestId)"
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+        center.removeDeliveredNotifications(withIdentifiers: [id])
+    }
+}

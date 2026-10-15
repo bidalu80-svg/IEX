@@ -71,13 +71,18 @@ struct AssistantBlockView: View {
                             commandStartTime: commandStartTime, onStop: onStop,
                             toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock)
         case .memoryTool:
-            ToolCapsuleView(
-                block: block,
-                icon: block.kind.toolIconName,
-                accentColor: block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink,
-                commandStartTime: commandStartTime, onStop: onStop,
-                toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock
-            )
+            if block.questionCard != nil {
+                QuestionCardView(block: block)
+                    .padding(.vertical, 4)
+            } else {
+                ToolCapsuleView(
+                    block: block,
+                    icon: block.kind.toolIconName,
+                    accentColor: block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink,
+                    commandStartTime: commandStartTime, onStop: onStop,
+                    toolSnapshots: toolSnapshots, onCopyScreenshot: onCopyScreenshot, detailBlock: $detailBlock
+                )
+            }
         case .info:
             let allLines = block.content.components(separatedBy: "\n").filter { !$0.isEmpty }
             // Separate reason lines (⚠️) from the final switched line (✅)
@@ -362,7 +367,7 @@ struct ToolCapsuleView: View {
         case .fileEditTool:  toolName = "file_edit"
         case .browserTool:   toolName = "browser_use"
         case .readImageTool: toolName = "read_image"
-        case .memoryTool:    toolName = "memory"
+        case .memoryTool:    toolName = block.kind.isQuestionCardTool ? "ask_user" : "memory"
         case .text, .thinking, .info: toolName = "unknown"
         }
 
@@ -733,6 +738,289 @@ struct ChatInputAppendListener: ViewModifier {
             DispatchQueue.main.async {
                 inputFocused = true
             }
+        }
+    }
+}
+
+
+// MARK: - Interactive question card
+
+private struct QuestionCardView: View {
+    @ObservedObject var block: AssistantBlock
+    @ObservedObject private var speech: SpeechRecognitionManager
+    @State private var draft = ""
+    @State private var isExpanded = true
+
+    init(block: AssistantBlock) {
+        self.block = block
+        _speech = ObservedObject(wrappedValue: SpeechRecognitionManager.shared)
+    }
+
+    var body: some View {
+        Group {
+            if let card = block.questionCard {
+                cardContainer(card)
+            } else {
+                EmptyView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cardContainer(_ card: QuestionCardState) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            cardHeader(card)
+            if isExpanded {
+                cardQuestionContent(card)
+            } else {
+                collapsedCardContent(card)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.purple.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.purple.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .onChange(of: speech.recognizedText) { text in
+            if speech.state == .recording || !text.isEmpty {
+                draft = text
+            }
+        }
+        .onChange(of: block.questionCard?.requestId) { _ in
+            isExpanded = true
+            draft = ""
+        }
+    }
+
+    private func cardHeader(_ card: QuestionCardState) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: statusIconName(card.status))
+                    .foregroundStyle(statusColor(card.status))
+                Text(card.title)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if card.status == .pending {
+                    Text("\(min(card.currentIndex + 1, card.questions.count))/\(card.questions.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(card.status == .confirmed
+                         ? String(localized: "Answered")
+                         : String(localized: "Unconfirmed"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(statusColor(card.status))
+                }
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            isExpanded
+                ? String(localized: "Collapse question card")
+                : String(localized: "Expand question card")
+        )
+    }
+
+    @ViewBuilder
+    private func collapsedCardContent(_ card: QuestionCardState) -> some View {
+        answerHistory(card)
+
+        if card.status == .pending,
+           card.questions.indices.contains(card.currentIndex) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(String(localized: "Current question"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(card.questions[card.currentIndex].prompt)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    answerSummary(
+                        label: String(localized: "Current answer"),
+                        answer: draft
+                    )
+                }
+            }
+        } else if card.status == .unconfirmed && card.answers.allSatisfy({ $0 == nil }) {
+            Text(String(localized: "No answer was confirmed. The assistant will not choose for you."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func answerHistory(_ card: QuestionCardState) -> some View {
+        let answeredIndices = card.questions.indices.filter { index in
+            guard index < card.answers.count else { return false }
+            return !(card.answers[index]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        }
+        if !answeredIndices.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(String(localized: "Answered questions"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(answeredIndices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(card.questions[index].prompt)
+                            .font(.subheadline.weight(.medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                        answerSummary(
+                            label: String(localized: "Your answer"),
+                            answer: card.answers[index] ?? String(localized: "No answer")
+                        )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        }
+    }
+
+    private func answerSummary(label: String, answer: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(answer)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func cardQuestionContent(_ card: QuestionCardState) -> some View {
+        answerHistory(card)
+
+        if card.status == .pending,
+           card.questions.indices.contains(card.currentIndex) {
+            let question = card.questions[card.currentIndex]
+            Text(question.prompt)
+                .font(.body.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            questionOptions(question)
+            answerControls(card)
+        } else if card.status == .unconfirmed {
+            Text(String(localized: "No answer was confirmed. The assistant will not choose for you."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func questionOptions(_ question: QuestionCardQuestion) -> some View {
+        if !question.options.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(question.options, id: \.self) { option in
+                    Button {
+                        draft = option
+                    } label: {
+                        HStack {
+                            Text(option)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if draft == option {
+                                Image(systemName: "checkmark.circle.fill")
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(draft == option
+                                      ? Color.purple.opacity(0.16)
+                                      : Color.secondary.opacity(0.10))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func answerControls(_ card: QuestionCardState) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TextField(String(localized: "Your answer"), text: $draft, axis: .vertical)
+                    .lineLimit(1...4)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    toggleRecording()
+                } label: {
+                    Image(systemName: speech.state == .recording ? "stop.circle.fill" : "mic.fill")
+                        .font(.title3)
+                        .foregroundStyle(speech.state == .recording ? .red : .purple)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    speech.state == .recording
+                        ? String(localized: "Stop voice answer")
+                        : String(localized: "Answer by voice")
+                )
+            }
+
+            HStack {
+                Button(String(localized: "Leave unconfirmed")) {
+                    QuestionCardCoordinator.shared.submitUnconfirmed(requestId: card.requestId)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Button(
+                    card.currentIndex + 1 == card.questions.count
+                        ? String(localized: "Submit")
+                        : String(localized: "Next")
+                ) {
+                    let answer = draft
+                    draft = ""
+                    QuestionCardCoordinator.shared.submitAnswer(
+                        requestId: card.requestId,
+                        answer: answer
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func statusIconName(_ status: QuestionCardStatus) -> String {
+        switch status {
+        case .pending: return "questionmark.circle.fill"
+        case .confirmed: return "checkmark.circle.fill"
+        case .unconfirmed: return "minus.circle.fill"
+        }
+    }
+
+    private func statusColor(_ status: QuestionCardStatus) -> Color {
+        switch status {
+        case .pending: return .purple
+        case .confirmed: return .green
+        case .unconfirmed: return .orange
+        }
+    }
+
+    private func toggleRecording() {
+        if speech.state == .recording {
+            speech.stopRecording()
+            draft = speech.recognizedText
+            return
+        }
+        Task { @MainActor in
+            if !speech.permissionsAlreadyGranted, !(await speech.requestPermissions()) { return }
+            try? speech.startRecording()
         }
     }
 }

@@ -78841,6 +78841,168 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "子代理" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "子代理" } }
       }
-    }  },
+    },
+    "Answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回答" } }
+      }
+    },
+    "Answer by voice" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Answer by voice" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用语音回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "使用語音回答" } }
+      }
+    },
+    "Answered" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Answered" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已回答" } }
+      }
+    },
+    "Answered questions" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Answered questions" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已回答的问题" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已回答的問題" } }
+      }
+    },
+    "Assistant question" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Assistant question" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "助手提问" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "助手提問" } }
+      }
+    },
+    "Collapse question card" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Collapse question card" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "折叠提问卡片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "摺疊提問卡片" } }
+      }
+    },
+    "Current answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前回答" } }
+      }
+    },
+    "Current question" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current question" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前问题" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前問題" } }
+      }
+    },
+    "Expand question card" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Expand question card" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "展开提问卡片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "展開提問卡片" } }
+      }
+    },
+    "Leave unconfirmed" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Leave unconfirmed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂不确认" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "暫不確認" } }
+      }
+    },
+    "No answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "未回答" } }
+      }
+    },
+    "No answer was confirmed. The assistant will not choose for you." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No answer was confirmed. The assistant will not choose for you." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未确认任何回答。助手不会替你做决定。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "未確認任何回答。助手不會替你做決定。" } }
+      }
+    },
+    "Preparing a question card..." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing a question card..." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在准备提问卡片…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在準備提問卡片…" } }
+      }
+    },
+    "Question card" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Question card" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "提问卡片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "提問卡片" } }
+      }
+    },
+    "Stop voice answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop voice answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "停止语音回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "停止語音回答" } }
+      }
+    },
+    "Submit" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Submit" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "提交" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "提交" } }
+      }
+    },
+    "Type your answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Type your answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "输入你的回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "輸入你的回答" } }
+      }
+    },
+    "Unconfirmed" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未确认" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "未確認" } }
+      }
+    },
+    "Waiting for your answer…" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for your answer…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待你的回答…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "等待你的回答…" } }
+      }
+    },
+    "Your answer" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your answer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的回答" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "你的回答" } }
+      }
+    },
+    "Ze is asking a question" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ze is asking a question" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在提问" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在提問" } }
+      }
+    },
+    "Ze is dispatching a sub-agent" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ze is dispatching a sub-agent" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在调度子代理" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在調度子代理" } }
+      }
+    },
+    "Ze is using memory" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ze is using memory" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在使用记忆" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在使用記憶" } }
+      }
+    }
+  },
   "version" : "1.0"
 }

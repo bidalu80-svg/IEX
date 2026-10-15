@@ -215,6 +215,33 @@ extension AIChatViewModel {
 
         do {
         switch tu.name {
+        case "ask_user":
+            let timeoutSeconds: TimeInterval = {
+                if let value = toolArgs["timeout_seconds"] as? Int { return min(max(TimeInterval(value), 30), 86_400) }
+                if let value = toolArgs["timeout_seconds"] as? NSNumber { return min(max(value.doubleValue, 30), 86_400) }
+                return 900
+            }()
+            guard let state = QuestionCardParser.state(requestId: tu.id, arguments: toolArgs, timeout: timeoutSeconds) else {
+                toolOutput = "Error: ask_user requires at least one non-empty question."
+                toolSuccess = false
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = toolOutput
+                }
+                break
+            }
+            let cardBlock: AssistantBlock? = (msgIdx < messages.count && blockIdx < messages[msgIdx].blocks.count)
+                ? messages[msgIdx].blocks[blockIdx]
+                : nil
+            let response = await QuestionCardCoordinator.shared.request(state: state, block: cardBlock)
+            toolOutput = response.json
+            toolSuccess = true
+            if let cardBlock {
+                cardBlock.questionCard = cardBlock.questionCard ?? state
+                cardBlock.content = response.confirmed
+                    ? String(localized: "Answered")
+                    : String(localized: "Unconfirmed")
+            }
+
         case "shell_execute":
             let (command, timeout, delay) = parseToolInput(from: argsJson)
 

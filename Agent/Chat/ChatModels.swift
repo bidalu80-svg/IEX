@@ -329,6 +329,9 @@ final class AssistantBlock: Identifiable, ObservableObject {
     var toolUseId: String?
     /// Serialized JSON of the tool input arguments (for introspection in SessionMemoryView, etc.).
     var toolInputArgs: String?
+    /// Interactive assistant question-card state. Derived from the ask_user tool
+    /// arguments and result so the card survives session reloads.
+    @Published var questionCard: QuestionCardState?
     /// Streaming file content for file_write tool (live content as it arrives).
     @Published var streamingFileContent: String?
     /// Whether a thinking block is expanded (persisted across cell reuse).
@@ -396,6 +399,7 @@ final class AssistantBlock: Identifiable, ObservableObject {
             let name = (path as NSString).lastPathComponent
             return (!path.isEmpty && name != "/" && name.contains(".")) ? name : "Read image"
         case .memoryTool(let action):
+            if kind.isQuestionCardTool { return String(localized: "Question card") }
             return action.isEmpty ? "Memory" : action
         case .info:
             return ""
@@ -432,12 +436,18 @@ extension AssistantBlockKind {
         "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent"
     ]
 
+    var isQuestionCardTool: Bool {
+        guard case .memoryTool(let action) = self else { return false }
+        return action == "ask_user"
+    }
+
     var isSubAgentTool: Bool {
         guard case .memoryTool(let action) = self else { return false }
         return Self.subAgentToolNames.contains(action)
     }
 
     var toolIconName: String {
+        if isQuestionCardTool { return "questionmark.bubble.fill" }
         if isSubAgentTool { return "person.3.fill" }
         if case .memoryTool = self { return "archivebox.fill" }
         return "ellipsis.circle"
@@ -514,12 +524,12 @@ struct AssistantBlockPresentationSegment: Identifiable {
     var isToolGroup: Bool { blocks.count > 1 }
 
     static func make(_ blocks: [AssistantBlock], enabled: Bool) -> [Self] {
-        ConsecutiveToolCallsPolicy.ranges(isTool: blocks.map { $0.kind.isToolCall }, enabled: enabled)
+        ConsecutiveToolCallsPolicy.ranges(isTool: blocks.map { $0.kind.isToolCall && $0.questionCard == nil }, enabled: enabled)
             .map { Self(blocks: Array(blocks[$0])) }
     }
 
     static func tools(startingAt id: UUID, in blocks: [AssistantBlock]) -> [AssistantBlock] {
-        guard let index = blocks.firstIndex(where: { $0.id == id }), blocks[index].kind.isToolCall else { return [] }
-        return Array(blocks[index...].prefix { $0.kind.isToolCall })
+        guard let index = blocks.firstIndex(where: { $0.id == id }), blocks[index].kind.isToolCall, blocks[index].questionCard == nil else { return [] }
+        return Array(blocks[index...].prefix { $0.kind.isToolCall && $0.questionCard == nil })
     }
 }

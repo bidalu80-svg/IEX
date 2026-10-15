@@ -942,6 +942,10 @@ extension AIChatViewModel {
             default:
                 block.content = tr.output
             }
+            if var card = block.questionCard {
+                QuestionCardParser.apply(resultJSON: tr.output, to: &card)
+                block.questionCard = card
+            }
             // Prefer the explicit persisted status (distinguishes cancelled from failed);
             // fall back to the success bool for rows written before the status field existed.
             switch tr.status {

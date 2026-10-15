@@ -1812,6 +1812,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "`python3 -m http.server 8765 > /dev/null 2>&1 &`. "
             + "Without redirection the server dies silently after the command finishes.\n"
             + "- File search: when looking for user files, do NOT scan the whole filesystem. Search under /var/ze/ first (workspace/attachments/shared for the current session, mounts/* for user-provided external folders). Only widen the scope if the file is clearly not under /var/ze/.\n\n"
+            + "- ask_user: Present an interactive question card when a decision, clarification, or confirmation is required from the user. Put one question per line in `questions`; for choices use `Question || Option A | Option B`. Wait for every answer before continuing. There is no always-allow option and no remembered approval. A timeout returns confirmed=false/status=unconfirmed; never decide for the user.\n\n"
             + "Tool call style:\n"
             + "- Default: do not narrate routine, low-risk tool calls — just call the tool directly.\n"
             + "- Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when the user explicitly asks.\n"
