@@ -3338,10 +3338,15 @@ extension CollectionViewMessageListV3 {
             }.count
             let history = answered > 0 ? 30 + CGFloat(answered) * 60 : 0
             guard expanded else {
-                // Collapsed cards show the answer history plus at most the
-                // current question summary, not the option list/text field.
-                let summary: CGFloat = card.status == .pending ? 58 : 36
-                return outerAndHeader + history + summary
+                // Collapsed cards render only one progress line and an
+                // optional two-line answer preview. The full answer history
+                // and all input controls exist only in the expanded branch.
+                let hasAnswerPreview = card.answers.contains { answer in
+                    guard let answer else { return false }
+                    return !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                let compactContent: CGFloat = hasAnswerPreview ? 56 : 22
+                return outerAndHeader + compactContent
             }
             guard card.status == .pending, card.questions.indices.contains(card.currentIndex) else {
                 return outerAndHeader + history + 36

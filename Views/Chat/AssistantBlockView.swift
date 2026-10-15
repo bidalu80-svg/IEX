@@ -847,43 +847,74 @@ private struct QuestionCardView: View {
 
     @ViewBuilder
     private func collapsedCardContent(_ card: QuestionCardState) -> some View {
-        answerHistory(card)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(collapsedStatusSummary(card))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(statusColor(card.status))
+                .lineLimit(1)
 
-        if card.status == .pending,
-           card.questions.indices.contains(card.currentIndex) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(String(localized: "Current question"))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(card.questions[card.currentIndex].prompt)
-                    .font(.subheadline.weight(.medium))
+            if let detail = collapsedAnswerDetail(card) {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    answerSummary(
-                        label: String(localized: "Current answer"),
-                        answer: draft
-                    )
-                }
             }
-        } else if card.status == .unconfirmed && card.answers.allSatisfy({ $0 == nil }) {
-            Text(String(localized: "No answer was confirmed. The assistant will not choose for you."))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
     }
 
-    @ViewBuilder
-    private func answerHistory(_ card: QuestionCardState) -> some View {
-        let answeredIndices = card.questions.indices.filter { index in
+    private func collapsedStatusSummary(_ card: QuestionCardState) -> String {
+        let answeredCount = answeredIndices(card).count
+        let totalCount = max(card.questions.count, 1)
+        let progress = String(
+            format: String(localized: "%lld / %lld"),
+            Int64(answeredCount),
+            Int64(totalCount)
+        )
+
+        switch card.status {
+        case .pending:
+            return "\(String(localized: "Waiting for your answer…")) · \(progress)"
+        case .confirmed:
+            return "\(String(localized: "Answered")) · \(progress)"
+        case .unconfirmed:
+            return "\(String(localized: "Unconfirmed")) · \(progress)"
+        }
+    }
+
+    private func collapsedAnswerDetail(_ card: QuestionCardState) -> String? {
+        let submittedAnswers = answeredIndices(card).compactMap { index in
+            card.answers[index]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var details: [String] = []
+        if !submittedAnswers.isEmpty {
+            details.append(
+                "\(String(localized: "Your answer")): \(submittedAnswers.joined(separator: " · "))"
+            )
+        }
+
+        let currentDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if card.status == .pending && !currentDraft.isEmpty {
+            details.append("\(String(localized: "Current answer")): \(currentDraft)")
+        }
+        return details.isEmpty ? nil : details.joined(separator: " · ")
+    }
+
+    private func answeredIndices(_ card: QuestionCardState) -> [Int] {
+        card.questions.indices.filter { index in
             guard index < card.answers.count else { return false }
             return !(card.answers[index]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         }
-        if !answeredIndices.isEmpty {
+    }
+    @ViewBuilder
+    private func answerHistory(_ card: QuestionCardState) -> some View {
+        let indices = answeredIndices(card)
+        if !indices.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text(String(localized: "Answered questions"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                ForEach(answeredIndices, id: \.self) { index in
+                ForEach(indices, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 3) {
                         Text(card.questions[index].prompt)
                             .font(.subheadline.weight(.medium))
