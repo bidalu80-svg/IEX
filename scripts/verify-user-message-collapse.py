@@ -25,5 +25,15 @@ check("vm.messages.first(where: { $0.id == messageId })" in v3, "mutation resolv
 check(v3.count("userMessageExpansionWillToggle") >= 1 and v3.count("userMessageExpansionToggled") >= 1, "viewport transaction remains synchronous")
 check("onToggleUserMessageExpansion: bridge.onToggleUserMessageExpansion" in v3, "whole-message cell wires the callback")
 check("bridge.onToggleUserMessageExpansion = message.role == .user && !message.isQueued" in v3, "callback is only enabled for sent user messages")
+
+# [T-ios-user-collapse-smooth] Animated disclosure pass + stable anchoring.
+finish_body = v3.split("private func finishUserMessageExpansionToggle", 1)[1].split("private func runUserMessageExpansionLayoutPass", 1)[0]
+check("setContentKey" in finish_body and "setPrecalcHeight" in finish_body, "toggle refreshes layout metadata for the post-toggle state")
+check("runUserMessageExpansionLayoutPass" in finish_body, "finish routes through the shared animated pass")
+check("disclosureAnimationInFlight" in infra and "else if disclosureAnimationInFlight" in infra, "collection view lets the scoped disclosure pass animate")
+check("disclosureAnimationInFlight = true" in v3 and "UIView.animate" in v3, "coordinator animates the disclosure pass")
+check("scheduleUserMessageExpansionSettles" in v3, "settle probes re-anchor until the disclosure stabilizes")
+check(v3.count("solveDisclosureAnchor") >= 3, "one anchoring equation shared by pass and probes")
+check("UIAccessibility.isReduceMotionEnabled" in v3, "disclosure animation respects Reduce Motion")
 check("scripts/verify-user-message-collapse.py" in workflow, "CI runs the disclosure regression gate")
 print(f"Structural checks passed: {checks}")

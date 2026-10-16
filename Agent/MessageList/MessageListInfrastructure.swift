@@ -558,6 +558,16 @@ final class NoAnimationCollectionView: UICollectionView {
     /// built to guarantee.
     var streamingGrowAnimationEnabled = true
 
+    /// [T-ios-user-collapse-smooth] True only for the synchronous layout pass
+    /// the message-list coordinator runs inside its UIView.animate block for a
+    /// long user-message expand/collapse. While set, `layoutSubviews` skips the
+    /// performWithoutAnimation strip (see the layoutSubviews chain) so the
+    /// tapped bubble and every item below it interpolate as one coordinated
+    /// move. The coordinator clears this immediately after the pass; every
+    /// other programmatic pass keeps the historical instant behavior, so the
+    /// NoAnimation guarantees are unchanged.
+    var disclosureAnimationInFlight = false
+
     /// [T-ios-stream-grow-anim] Reentrancy guard: the grow path calls
     /// `setContentOffset`, which can synchronously re-enter `layoutSubviews`.
     /// Without this guard that re-entry would recurse back into the animated
@@ -644,6 +654,15 @@ final class NoAnimationCollectionView: UICollectionView {
         // naturally — stripping animations mid-scroll kills the deceleration
         // curve and causes a visible jitter at the end.
         if isTracking || isDecelerating {
+            super.layoutSubviews()
+        } else if disclosureAnimationInFlight, !isApplyingSnapshot, !inStreamingGrowLayout {
+            // [T-ios-user-collapse-smooth] Scoped disclosure pass: the
+            // coordinator set `disclosureAnimationInFlight` for exactly the
+            // synchronous pass below — run it WITHOUT the
+            // performWithoutAnimation strip so the frame deltas (the tapped
+            // bubble's height and the positions of the items below it) land as
+            // implicit animations inside the coordinator's enclosing
+            // UIView.animate block. The flag is cleared right after that pass.
             super.layoutSubviews()
         } else if streamingGrowAnimationEnabled, isStreamingNow, contentOverflowsViewport,
                   !isApplyingSnapshot, !inStreamingGrowLayout {

@@ -828,6 +828,18 @@ extension CollectionViewMessageListV3 {
         private var collapseConsecutiveToolCalls = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool) ?? ConsecutiveToolCallsPolicy.defaultEnabled
         private var forceUncollapsedToolsForScreenshot = false
 
+        // [T-ios-user-collapse-smooth] Long-user-message disclosure transaction.
+        /// Master switch for the animated disclosure pass. Flip to false to
+        /// fall back to the historical instant pass (also used automatically
+        /// while the user is actively scrolling or Reduce Motion is on).
+        private var disclosureAnimationEnabled = true
+        private static let disclosureAnimationDuration: TimeInterval = 0.28
+        /// Cell momentarily clipped while the disclosure morphs, so the
+        /// already-final SwiftUI content wipes behind the animating bubble
+        /// edge instead of overflowing the still-growing box.
+        private weak var disclosureClippedCell: SelfSizingCell?
+        private var disclosureClippedCellRestore: (cell: Bool, content: Bool)?
+
         func updateToolGroupingPreference(_ enabled: Bool) {
             guard collapseConsecutiveToolCalls != enabled else { return }
             collapseConsecutiveToolCalls = enabled
@@ -1992,6 +2004,11 @@ extension CollectionViewMessageListV3 {
             let oldMode = scrollMode
             scrollMode = .userBrowsing
             clampAfterSessionLoad = false
+            // [T-ios-user-collapse-smooth] Silence the contentSize-KVO side
+            // effects (bottom pin / overscroll clamp) for the whole
+            // transaction — the settle probes own the offset until the
+            // finalize below releases this.
+            isFlushing = true
             pendingScrollWork?.cancel()
             pendingScrollWork = nil
             isAnimatingScrollToBottom = false
@@ -2005,6 +2022,11 @@ extension CollectionViewMessageListV3 {
             let indexPath = IndexPath(item: index, section: 0)
             guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else {
                 layout.suppressContentOffsetAdjustment = false
+                // [T-ios-user-collapse-smooth] This bail must release every
+                // piece of state the transaction set above it — including the
+                // KVO flush gate added for the disclosure — or a rare missing
+                // frame would leave the list permanently muted.
+                isFlushing = false
                 return
             }
 
@@ -2049,6 +2071,33 @@ extension CollectionViewMessageListV3 {
             let indexPath = IndexPath(item: index, section: 0)
             (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
             layout.invalidateHeight(at: index)
+
+            // [T-ios-user-collapse-smooth] Refresh the layout metadata for the
+            // NEW disclosure state before the invalidation below. Without this
+            // the next pass still consulted the pre-toggle precalc/estimate —
+            // `invalidateHeight` only drops the real-height cache — so the cell
+            // was laid out at the old height first and needed a second
+            // self-size correction; together with the deferred restores that
+            // was the visible multi-step "jelly" on every toggle.
+            let messages = snapshotMessages.isEmpty ? (vm?.messages ?? []) : snapshotMessages
+            if let msgIdx = messageIndex[messageId], msgIdx < messages.count {
+                let message = messages[msgIdx]
+                if message.role == .user, !message.isQueued {
+                    let key = Self.contentKey(for: item, messages: messages, messageIndex: messageIndex)
+                    layout.setContentKey(key, at: index)
+                    let cvW = cv.bounds.width
+                    let effWidth = maxContentWidth > 0 ? min(cvW, maxContentWidth) : cvW
+                    if let h = Self.measureUserBubbleHeight(
+                        for: message,
+                        cvWidth: effWidth,
+                        cache: &userBubbleHeightCache
+                    ) {
+                        layout.setPrecalcHeight(h, at: index)
+                        layout.setEstimatedHeight(h, at: index)
+                    }
+                }
+            }
+
             snapshot.reconfigureItems([item])
 
             let expanded = notification.userInfo?["expanded"] as? Bool
@@ -2058,55 +2107,106 @@ extension CollectionViewMessageListV3 {
 
             ds.apply(snapshot, animatingDifferences: false) { [weak self] in
                 guard let self else { return }
-                layout.invalidateLayout()
-                cv.setNeedsLayout()
-                cv.layoutIfNeeded()
-                self.restoreUserMessageExpansionAnchor(anchor.generation, phase: "apply", finalize: false)
-
-                // UIHostingConfiguration can publish its intrinsic size one or
-                // more runloop turns after reconfiguration. Re-anchor after the
-                // next layout turn and once more after the coalesced sizing window.
-                DispatchQueue.main.async { [weak self] in
-                    self?.restoreUserMessageExpansionAnchor(
-                        anchor.generation,
-                        phase: "nextRunloop",
-                        finalize: false
-                    )
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                    self?.restoreUserMessageExpansionAnchor(
-                        anchor.generation,
-                        phase: "settled",
-                        finalize: true
-                    )
-                }
+                // [T-ios-user-collapse-smooth] One coordinated pass replaces the
+                // old instant pass + apply/nextRunloop/+0.08s snap sequence: the
+                // pass either animates (normal case) or falls back to the
+                // historical instant behavior, then the settle probes below
+                // re-anchor silently until the disclosure is stable (or the
+                // window ends).
+                self.runUserMessageExpansionLayoutPass(anchor: anchor, index: index)
             }
         }
 
-        private func restoreUserMessageExpansionAnchor(
-            _ generation: UUID,
-            phase: String,
-            finalize: Bool
+        /// [T-ios-user-collapse-smooth] Runs the post-toggle layout pass for the
+        /// tapped bubble. In the normal case the pass animates inside
+        /// `UIView.animate` (the NoAnimation collection view skips its
+        /// performWithoutAnimation strip for exactly this pass via
+        /// `disclosureAnimationInFlight`), so the bubble's height and the
+        /// positions of the items below it interpolate as one coordinated move.
+        /// While the user is scrolling, while Reduce Motion is on, or when the
+        /// cell is off-screen, it falls back to the historical instant pass.
+        /// Either way the settle probes are scheduled afterwards, and the
+        /// offset compensation stays anchored to the tapped bubble's top edge
+        /// (captured in `beginUserMessageExpansionToggle`).
+        private func runUserMessageExpansionLayoutPass(
+            anchor: UserMessageViewportAnchor,
+            index: Int
         ) {
             dispatchPrecondition(condition: .onQueue(.main))
-            guard let anchor = userMessageViewportAnchor,
-                  anchor.generation == generation,
-                  let cv = viewController?.collectionView,
-                  let layout = viewController?.messageListLayout,
-                  let ds = dataSource else { return }
+            guard let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout else { return }
 
-            let item = MessageListItem.wholeMessage(anchor.messageId)
-            guard let index = ds.snapshot().itemIdentifiers.firstIndex(of: item) else {
-                cancelUserMessageExpansionAnchor(generation)
-                return
-            }
-
-            cv.layoutIfNeeded()
             let indexPath = IndexPath(item: index, section: 0)
-            guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else {
-                if finalize { cancelUserMessageExpansionAnchor(generation) }
+            let animatingCV = cv as? NoAnimationCollectionView
+            let canAnimate = disclosureAnimationEnabled
+                && animatingCV != nil
+                && !UIAccessibility.isReduceMotionEnabled
+                && !cv.isTracking
+                && !cv.isDecelerating
+                && cv.window != nil
+                && cv.cellForItem(at: indexPath) != nil
+
+            if canAnimate, let animatingCV {
+                beginDisclosureClip(cv.cellForItem(at: indexPath) as? SelfSizingCell)
+                AppLogger(category: "UserMessageCollapse").info(
+                    "[ToggleAnim] id=\(anchor.messageId.uuidString.prefix(8)) mode=animated dur=\(Self.disclosureAnimationDuration)"
+                )
+                UIView.animate(
+                    withDuration: Self.disclosureAnimationDuration,
+                    delay: 0,
+                    options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]
+                ) {
+                    layout.invalidateLayout()
+                    cv.setNeedsLayout()
+                    // [T-ios-user-collapse-smooth] The flag is confined to
+                    // exactly this synchronous pass: implicit animations are
+                    // created while it is true, then it is cleared immediately
+                    // so any later pass during the animation tail keeps the
+                    // historical instant path.
+                    animatingCV.disclosureAnimationInFlight = true
+                    cv.layoutIfNeeded()
+                    animatingCV.disclosureAnimationInFlight = false
+                    if let solution = self.solveDisclosureAnchor(anchor),
+                       abs(solution.target - cv.contentOffset.y) > 0.5 {
+                        cv.setContentOffset(
+                            CGPoint(x: cv.contentOffset.x, y: solution.target),
+                            animated: false
+                        )
+                    }
+                } completion: { [weak self] _ in
+                    guard let self else { return }
+                    animatingCV.disclosureAnimationInFlight = false
+                    self.endDisclosureClip()
+                    self.scheduleUserMessageExpansionSettles(anchor.generation)
+                }
                 return
             }
+
+            AppLogger(category: "UserMessageCollapse").info(
+                "[ToggleAnim] id=\(anchor.messageId.uuidString.prefix(8)) mode=instant animEnabled=\(disclosureAnimationEnabled) reduceMotion=\(UIAccessibility.isReduceMotionEnabled) tracking=\(cv.isTracking) decel=\(cv.isDecelerating) visibleCell=\(cv.cellForItem(at: indexPath) != nil)"
+            )
+            layout.invalidateLayout()
+            cv.setNeedsLayout()
+            cv.layoutIfNeeded()
+            restoreUserMessageExpansionAnchor(anchor.generation, phase: "apply", finalize: false)
+            scheduleUserMessageExpansionSettles(anchor.generation)
+        }
+
+        /// [T-ios-user-collapse-smooth] Shared anchoring equation: given the
+        /// pre-toggle anchor, where should the collection view's offset sit for
+        /// the CURRENT layout so the tapped bubble's top edge lands back at its
+        /// preserved screen Y? Used by the animated pass, every settle probe,
+        /// and the stability check — one equation, no drift between them.
+        private func solveDisclosureAnchor(
+            _ anchor: UserMessageViewportAnchor
+        ) -> DisclosureAnchorSolution? {
+            guard let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout,
+                  let ds = dataSource else { return nil }
+            let item = MessageListItem.wholeMessage(anchor.messageId)
+            guard let index = ds.snapshot().itemIdentifiers.firstIndex(of: item) else { return nil }
+            let indexPath = IndexPath(item: index, section: 0)
+            guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else { return nil }
 
             let minimumOffset = -cv.adjustedContentInset.top
             let maximumOffset = max(
@@ -2120,30 +2220,183 @@ extension CollectionViewMessageListV3 {
                 minimumOffset: Double(minimumOffset),
                 maximumOffset: Double(maximumOffset)
             ))
+            return DisclosureAnchorSolution(
+                index: index,
+                frameMinY: frame.minY,
+                frameHeight: frame.height,
+                target: targetOffset,
+                desired: desiredOffset,
+                minimum: minimumOffset,
+                maximum: maximumOffset
+            )
+        }
 
-            UIView.performWithoutAnimation {
-                cv.setContentOffset(
-                    CGPoint(x: cv.contentOffset.x, y: targetOffset),
-                    animated: false
-                )
-                cv.layoutIfNeeded()
+        private struct DisclosureAnchorSolution {
+            let index: Int
+            let frameMinY: CGFloat
+            let frameHeight: CGFloat
+            let target: CGFloat
+            let desired: CGFloat
+            let minimum: CGFloat
+            let maximum: CGFloat
+        }
+
+        private func restoreUserMessageExpansionAnchor(
+            _ generation: UUID,
+            phase: String,
+            finalize: Bool,
+            correct: Bool = true
+        ) {
+            dispatchPrecondition(condition: .onQueue(.main))
+            guard let anchor = userMessageViewportAnchor,
+                  anchor.generation == generation,
+                  let cv = viewController?.collectionView else { return }
+
+            cv.layoutIfNeeded()
+            guard let solution = solveDisclosureAnchor(anchor) else {
+                if finalize { cancelUserMessageExpansionAnchor(generation) }
+                return
+            }
+
+            let drift = solution.target - cv.contentOffset.y
+            if correct, abs(drift) > 0.5 {
+                // [T-ios-user-collapse-smooth] Only ever move the offset for a
+                // real (>0.5pt) drift; unconditional sub-pixel writes were one
+                // source of the visible settle "twitch".
+                UIView.performWithoutAnimation {
+                    cv.setContentOffset(
+                        CGPoint(x: cv.contentOffset.x, y: solution.target),
+                        animated: false
+                    )
+                    cv.layoutIfNeeded()
+                }
             }
 
             AppLogger(category: "UserMessageCollapse").info(
-                "[ToggleAnchor] id=\(anchor.messageId.uuidString.prefix(8)) phase=\(phase) frameY=\(String(format: "%.1f", frame.minY)) desired=\(String(format: "%.1f", desiredOffset)) target=\(String(format: "%.1f", targetOffset)) bounds=[\(String(format: "%.1f", minimumOffset)),\(String(format: "%.1f", maximumOffset))] contentH=\(String(format: "%.1f", cv.contentSize.height))"
+                "[ToggleAnchor] id=\(anchor.messageId.uuidString.prefix(8)) phase=\(phase) frameY=\(String(format: "%.1f", solution.frameMinY)) frameH=\(String(format: "%.1f", solution.frameHeight)) desired=\(String(format: "%.1f", solution.desired)) target=\(String(format: "%.1f", solution.target)) drift=\(String(format: "%+.1f", drift)) bounds=[\(String(format: "%.1f", solution.minimum)),\(String(format: "%.1f", solution.maximum))] contentH=\(String(format: "%.1f", cv.contentSize.height))"
             )
 
             if finalize {
-                layout.suppressContentOffsetAdjustment = false
+                viewController?.messageListLayout?.suppressContentOffsetAdjustment = false
+                endDisclosureClip()
                 userMessageViewportAnchor = nil
+                isFlushing = false
                 syncScrollFlags()
+                _ = applySubViewportCompensation(caller: "disclosureFinalize")
             }
+        }
+
+        /// [T-ios-user-collapse-smooth] Post-toggle stability sequence. The
+        /// hosting measure of the swapped SwiftUI content can publish its new
+        /// intrinsic size one or more runloop turns after the reconfiguration,
+        /// so each probe re-anchors the tapped bubble's top edge (silently,
+        /// >0.5pt drift only) and watches the item's frame. The transaction
+        /// closes as soon as two consecutive probes see a frozen frame AND the
+        /// real self-sized height is in the layout cache (from step 0.2 on), or
+        /// at the final probe (0.4s) at the latest. While the user drags or
+        /// decelerates, the probes stop correcting immediately and just
+        /// release. Known residual: a late self-size that lands between probes
+        /// is consumed by the next probe without animation (one small snap) —
+        /// same class of behavior as the previous implementation, but bounded
+        /// to a single step inside this window.
+        private func scheduleUserMessageExpansionSettles(_ generation: UUID) {
+            let probes: [Double] = [0, 0.08, 0.2, 0.4]
+            var previousHeight: CGFloat?
+            for (step, delay) in probes.enumerated() {
+                let isLast = step == probes.count - 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self,
+                          let anchor = self.userMessageViewportAnchor,
+                          anchor.generation == generation,
+                          let cv = self.viewController?.collectionView,
+                          let layout = self.viewController?.messageListLayout else { return }
+
+                    if cv.isTracking || cv.isDecelerating {
+                        // User took over the scroll — release without touching
+                        // the offset (a correction here would fight the gesture).
+                        self.restoreUserMessageExpansionAnchor(
+                            generation,
+                            phase: "userTakeover",
+                            finalize: true,
+                            correct: false
+                        )
+                        return
+                    }
+
+                    self.restoreUserMessageExpansionAnchor(
+                        generation,
+                        phase: "settle\(step)",
+                        finalize: false
+                    )
+
+                    guard let solution = self.solveDisclosureAnchor(anchor) else {
+                        if isLast {
+                            self.restoreUserMessageExpansionAnchor(
+                                generation,
+                                phase: "settleFinal",
+                                finalize: true
+                            )
+                        }
+                        return
+                    }
+
+                    let frozen = previousHeight.map { abs(solution.frameHeight - $0) < 0.5 } ?? false
+                    previousHeight = solution.frameHeight
+
+                    if isLast {
+                        self.restoreUserMessageExpansionAnchor(
+                            generation,
+                            phase: "settleFinal",
+                            finalize: true
+                        )
+                        return
+                    }
+
+                    let heightLanded = layout.cachedHeight(at: solution.index) != nil
+                    let drift = abs(solution.target - cv.contentOffset.y)
+                    if step >= 2, frozen, heightLanded, drift < 0.5 {
+                        AppLogger(category: "UserMessageCollapse").info(
+                            "[ToggleSettle] id=\(anchor.messageId.uuidString.prefix(8)) stable step=\(step) frameH=\(String(format: "%.1f", solution.frameHeight))"
+                        )
+                        self.restoreUserMessageExpansionAnchor(
+                            generation,
+                            phase: "settleStable",
+                            finalize: true
+                        )
+                    }
+                }
+            }
+        }
+
+        /// [T-ios-user-collapse-smooth] The toggled cell is clipped for the
+        /// duration of the animated pass so the already-final SwiftUI content
+        /// wipes behind the animating bubble edge instead of overflowing the
+        /// still-growing box; the original clip state is restored right after.
+        private func beginDisclosureClip(_ cell: SelfSizingCell?) {
+            guard disclosureClippedCell == nil, let cell else { return }
+            disclosureClippedCell = cell
+            disclosureClippedCellRestore = (cell.clipsToBounds, cell.contentView.clipsToBounds)
+            cell.clipsToBounds = true
+            cell.contentView.clipsToBounds = true
+        }
+
+        private func endDisclosureClip() {
+            defer {
+                disclosureClippedCell = nil
+                disclosureClippedCellRestore = nil
+            }
+            guard let cell = disclosureClippedCell,
+                  let restore = disclosureClippedCellRestore else { return }
+            cell.clipsToBounds = restore.cell
+            cell.contentView.clipsToBounds = restore.content
         }
 
         private func cancelUserMessageExpansionAnchor(_ generation: UUID) {
             guard userMessageViewportAnchor?.generation == generation else { return }
             viewController?.messageListLayout?.suppressContentOffsetAdjustment = false
+            endDisclosureClip()
             userMessageViewportAnchor = nil
+            isFlushing = false
         }
 
         // MARK: - Content Length Helper
