@@ -79002,7 +79002,9 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在使用记忆" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Ze 正在使用記憶" } }
       }
-    }
+    },
+    "This question has expired." : {"extractionState": "manual", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "This question has expired."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "此提问已失效。"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "此提問已失效。"}}}},
+    "It was restored from an earlier session and can no longer be answered." : {"extractionState": "manual", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "It was restored from an earlier session and can no longer be answered."}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "该提问来自已结束的会话，无法再作答。"}}, "zh-Hant": {"stringUnit": {"state": "translated", "value": "該提問來自已結束的會話，無法再作答。"}}}}
   },
   "version" : "1.0"
 }

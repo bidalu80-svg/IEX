@@ -3568,7 +3568,11 @@ extension CollectionViewMessageListV3 {
                 case .readImageTool: return 36
                 case .memoryTool:
                     guard let card = block.questionCard else { return 36 }
-                    return Self.estimateQuestionCardHeight(card, expanded: block.isQuestionCardExpanded)
+                    return Self.estimateQuestionCardHeight(
+                        card,
+                        expanded: block.isQuestionCardExpanded,
+                        width: width
+                    )
                 case .info:
                     let lineCount = max(1, block.content.components(separatedBy: "\n").count)
                     return CGFloat(20 + lineCount * 16)
@@ -3579,36 +3583,83 @@ extension CollectionViewMessageListV3 {
             }
         }
 
-        static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool) -> CGFloat {
-            // QuestionCardView uses 16pt outer padding, a 24pt header, and
-            // 14pt vertical gaps. Keep this estimate conservative so the first
-            // layout pass never pins an expanded card to the old 36pt tool-pill
-            // height. The exact SelfSizingCell measurement follows immediately.
-            let outerAndHeader: CGFloat = 32 + 24 + 14
-            let answered = card.answers.filter { answer in
-                guard let answer else { return false }
-                return !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }.count
-            let history = answered > 0 ? 30 + CGFloat(answered) * 60 : 0
-            guard expanded else {
-                // Collapsed cards render only one progress line and an
-                // optional two-line answer preview. The full answer history
-                // and all input controls exist only in the expanded branch.
-                let hasAnswerPreview = card.answers.contains { answer in
-                    guard let answer else { return false }
-                    return !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool, width: CGFloat) -> CGFloat {
+            // `width` is the full collection width. The host adds 16pt on
+            // each side and the card adds another 16pt, so the text column is
+            // narrower than the old char-count estimate assumed. Long options
+            // used to be counted as one 42pt row and then clipped/overlapped
+            // the next cell during a fast scroll; measure the wrapped height
+            // instead and err slightly tall.
+            let textWidth = max(width - 64, 140)
+            let titleFont = UIFont.preferredFont(forTextStyle: .headline)
+            let captionFont = UIFont.preferredFont(forTextStyle: .caption1)
+            let bodyFont = UIFont.preferredFont(forTextStyle: .callout)
+            let smallFont = UIFont.preferredFont(forTextStyle: .footnote)
+            let subFont = UIFont.preferredFont(forTextStyle: .subheadline)
+
+            let titleWidth = max(textWidth - 92, 80)
+            let titleLimit = expanded ? 12 : 2
+            let titleHeight = min(
+                questionTextHeight(card.displayQuestion, font: titleFont, width: titleWidth),
+                titleFont.lineHeight * CGFloat(titleLimit)
+            )
+            let eyebrowHeight: CGFloat = 0
+            let headerHeight = max(38, titleHeight + 3 + captionFont.lineHeight + eyebrowHeight)
+
+            // Card padding (16 top + 16 bottom) + host vertical padding (4+4).
+            var total: CGFloat = 32 + 8 + headerHeight
+
+            guard expanded else { return total }
+
+            total += 14
+            if card.questions.count > 1 { total += 3 + 14 }
+
+            if card.status == .pending, let question = card.currentQuestion {
+                if !question.options.isEmpty {
+                    for option in question.options {
+                        let optionHeight = questionTextHeight(option, font: bodyFont, width: max(textWidth - 56, 60))
+                        total += max(44, optionHeight + 24) + 8
+                    }
+                    total += 6
                 }
-                let compactContent: CGFloat = hasAnswerPreview ? 56 : 22
-                return outerAndHeader + compactContent
+                // Field (50) + gap + primary button (46) + gap + skip row (44).
+                total += 50 + 14 + 46 + 14 + 44
+            } else {
+                if card.status == .unconfirmed { total += 40 + 12 }
+                if card.status == .confirmed || card.answeredCount > 0 || card.questions.count > 1 {
+                    for (index, question) in card.questions.enumerated() {
+                        total += 12
+                        if card.questions.count > 1 {
+                            total += questionTextHeight(
+                                question.prompt,
+                                font: smallFont,
+                                width: max(textWidth - 48, 60)
+                            )
+                        }
+                        let answer = (index < card.answers.count ? card.answers[index] : nil)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let answerText = answer.isEmpty ? String(localized: "No answer") : answer
+                        total += 8 + questionTextHeight(
+                            answerText,
+                            font: subFont,
+                            width: max(textWidth - 48, 60)
+                        )
+                        total += 12
+                    }
+                }
             }
-            guard card.status == .pending, card.questions.indices.contains(card.currentIndex) else {
-                return outerAndHeader + history + 36
-            }
-            let question = card.questions[card.currentIndex]
-            let prompt = max(28, min(88, CGFloat(question.prompt.count) * 0.55))
-            let options = question.options.isEmpty ? 0 : 8 + CGFloat(question.options.count) * 42
-            let controls: CGFloat = 92
-            return min(760, outerAndHeader + history + prompt + options + controls)
+            return min(total * 1.10 + 4, 5_000)
+        }
+
+        private static func questionTextHeight(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
+            guard !text.isEmpty else { return 0 }
+            let rect = (text as NSString).boundingRect(
+                with: CGSize(width: max(width, 40), height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font],
+                context: nil
+            )
+            return ceil(rect.height)
         }
 
         static func estimateTextBlockHeight(_ content: String, width: CGFloat, scale: CGFloat, lineHeight: CGFloat) -> CGFloat {

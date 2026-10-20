@@ -613,6 +613,169 @@ struct QuestionCardState: Codable, Equatable {
         self.answers = Array(repeating: nil, count: questions.count)
         self.status = status
     }
+
+    /// The question currently on screen. Clamped so a stale `currentIndex`
+    /// from an older payload can never index out of bounds.
+    var currentQuestion: QuestionCardQuestion? {
+        guard !questions.isEmpty else { return nil }
+        let index = min(max(currentIndex, 0), questions.count - 1)
+        return questions[index]
+    }
+
+    /// Number of questions with a non-empty answer. Used by the collapsed
+    /// summary and the segmented progress bar.
+    var answeredCount: Int {
+        questions.indices.reduce(into: 0) { count, index in
+            guard index < answers.count else { return }
+            if let value = answers[index]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty {
+                count += 1
+            }
+        }
+    }
+
+    /// `1/4`-style progress. While pending this points at the question being
+    /// asked; once resolved it reports what was actually answered.
+    var progressText: String {
+        let total = max(questions.count, 1)
+        let done: Int
+        switch status {
+        case .pending:
+            done = min(max(currentIndex + 1, 1), total)
+        case .confirmed:
+            done = total
+        case .unconfirmed:
+            done = answeredCount
+        }
+        return "\(done)/\(total)"
+    }
+
+    var statusLabel: String {
+        switch status {
+        case .pending: return String(localized: "Waiting for your answer…")
+        case .confirmed: return String(localized: "Answered")
+        case .unconfirmed: return String(localized: "Unconfirmed")
+        }
+    }
+
+    /// Titles that carry no information — the model's default tool label.
+    /// Kept in one place so the card header, the host chrome and the
+    /// persisted block summary all agree on what counts as "no title".
+    private static let genericTitles: Set<String> = [
+        "",
+        String(localized: "Assistant question"),
+        String(localized: "Question card"),
+        "Assistant question",
+        "Question card",
+        "助手提问",
+        "提问卡片",
+        "助手提問",
+        "提問卡片",
+        "Ze is asking a question",
+        "Ze 正在提问",
+        "Ze 正在提問",
+    ]
+
+    var hasCustomTitle: Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !Self.genericTitles.contains(trimmed)
+    }
+
+    /// The question the card is about. Pending cards follow the current
+    /// step; resolved cards keep the first question so the collapsed card
+    /// still says what was asked instead of only "Answered".
+    var displayQuestion: String {
+        let prompt: String?
+        if status == .pending {
+            prompt = currentQuestion?.prompt
+        } else {
+            prompt = questions.first?.prompt
+        }
+        let trimmed = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty { return trimmed }
+        if hasCustomTitle { return title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return String(localized: "Question card")
+    }
+
+    /// Small label above the question when the model supplied a real topic.
+    var eyebrow: String? {
+        guard hasCustomTitle else { return nil }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == displayQuestion ? nil : trimmed
+    }
+
+    /// One-line title used by rails, the host bottom bar and the floating
+    /// toolbar. Always the question, never the generic "Question card".
+    var chromeTitle: String { displayQuestion }
+
+    /// The card header's primary line. Kept as `headline` because older
+    /// call sites (session rows, snapshots) already read this name.
+    var headline: String { displayQuestion }
+
+    /// Compact text for `block.content`, so every surface that only knows
+    /// about a tool's content string still shows the question or answer.
+    var summaryText: String {
+        switch status {
+        case .pending:
+            return displayQuestion
+        case .confirmed:
+            if let preview = answerPreview {
+                return "\(String(localized: "Answered")) · \(preview)"
+            }
+            return String(localized: "Answered")
+        case .unconfirmed:
+            if let preview = answerPreview {
+                return "\(String(localized: "Unconfirmed")) · \(preview)"
+            }
+            return String(localized: "Unconfirmed")
+        }
+    }
+
+    /// All submitted answers, joined for the collapsed one/two-line preview.
+    var answerPreview: String? {
+        let values = questions.indices.compactMap { index -> String? in
+            guard index < answers.count,
+                  let value = answers[index]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else { return nil }
+            return value
+        }
+        return values.isEmpty ? nil : values.joined(separator: " · ")
+    }
+}
+
+/// Remembers manual expand/collapse choices across app launches. The default
+/// is intentionally state-driven: a pending card is open, a resolved card is
+/// closed. Only deviations from that default are persisted, so the override
+/// map stays tiny and a solved card can never reopen itself after a restart.
+enum QuestionCardExpansionStore {
+    private static let storageKey = "ze.questionCard.expansion.v1"
+    private static let maxEntries = 120
+
+    static func isExpanded(for requestId: String, status: QuestionCardStatus) -> Bool {
+        if let stored = overrides()[requestId] { return stored }
+        return status == .pending
+    }
+
+    static func setExpanded(_ expanded: Bool, for requestId: String, status: QuestionCardStatus) {
+        var map = overrides()
+        if expanded == (status == .pending) {
+            map.removeValue(forKey: requestId)
+        } else {
+            map[requestId] = expanded
+        }
+        if map.count > maxEntries {
+            let overflow = Array(map.keys.prefix(map.count - maxEntries))
+            for key in overflow {
+                map.removeValue(forKey: key)
+            }
+        }
+        UserDefaults.standard.set(map, forKey: storageKey)
+    }
+
+    private static func overrides() -> [String: Bool] {
+        let raw = UserDefaults.standard.dictionary(forKey: storageKey) ?? [:]
+        return raw.compactMapValues { $0 as? Bool }
+    }
 }
 
 struct QuestionCardResponse: Codable, Equatable {
@@ -676,11 +839,32 @@ enum QuestionCardParser {
         )
     }
 
+    /// Resolve a title for chrome that only has the serialized tool input
+    /// (rails, floating toolbar, restored blocks whose card state has not
+    /// been rebuilt yet). Returns the question, never the generic label.
+    static func headline(fromToolInput raw: String?) -> String? {
+        guard let raw,
+              let data = raw.data(using: .utf8),
+              let arguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let state = state(requestId: "preview", arguments: arguments, timeout: 900) else {
+            return nil
+        }
+        return state.chromeTitle
+    }
+
     static func apply(resultJSON: String, to state: inout QuestionCardState) {
         guard let data = resultJSON.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-        let status = object["status"] as? String
-        state.status = status == QuestionCardStatus.confirmed.rawValue ? .confirmed : .unconfirmed
+        if state.answers.count < state.questions.count {
+            state.answers += Array(repeating: nil, count: state.questions.count - state.answers.count)
+        }
+        if let status = object["status"] as? String {
+            state.status = status == QuestionCardStatus.confirmed.rawValue ? .confirmed : .unconfirmed
+        } else if let confirmed = object["confirmed"] as? Bool {
+            state.status = confirmed ? .confirmed : .unconfirmed
+        } else {
+            state.status = .unconfirmed
+        }
         if let answers = object["answers"] as? [[String: Any]] {
             for (index, question) in state.questions.enumerated() {
                 if let match = answers.first(where: { ($0["id"] as? String) == question.id }) {
@@ -688,7 +872,12 @@ enum QuestionCardParser {
                 }
             }
             state.currentIndex = min(answers.count, max(0, state.questions.count - 1))
+        } else if let answers = object["answers"] as? [String: Any] {
+            for (index, question) in state.questions.enumerated() {
+                state.answers[index] = answers[question.id] as? String
+            }
         }
+        state.currentIndex = min(max(state.currentIndex, 0), max(state.questions.count - 1, 0))
     }
 
     private static func parse(_ raw: String) -> [QuestionCardQuestion] {
@@ -780,6 +969,10 @@ final class QuestionCardCoordinator {
         }
     }
 
+    func isPending(requestId: String) -> Bool {
+        pending[requestId] != nil
+    }
+
     func request(
         state: QuestionCardState,
         block: AssistantBlock?
@@ -794,7 +987,12 @@ final class QuestionCardCoordinator {
                 request.continuation = continuation
                 pending[requestId] = request
                 block?.questionCard = state
-                block?.content = String(localized: "Waiting for your answer…")
+                block?.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                    for: state.requestId,
+                    status: state.status
+                )
+                block?.content = state.summaryText
+                block?.toolSummary = state.chromeTitle
                 notifyLayoutChange(for: block)
                 block?.toolStatus = .running
                 persist(request.state)
@@ -813,6 +1011,12 @@ final class QuestionCardCoordinator {
         guard let request = pending[requestId], request.state.status == .pending else { return }
         let cleaned = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
+        if request.state.answers.count < request.state.questions.count {
+            request.state.answers += Array(
+                repeating: nil,
+                count: request.state.questions.count - request.state.answers.count
+            )
+        }
         let index = request.state.currentIndex
         guard request.state.questions.indices.contains(index) else {
             finish(requestId: requestId, status: .confirmed, source: source)
@@ -823,6 +1027,8 @@ final class QuestionCardCoordinator {
         if index + 1 < request.state.questions.count {
             request.state.currentIndex = index + 1
             request.block?.questionCard = request.state
+            request.block?.content = request.state.summaryText
+            request.block?.toolSummary = request.state.chromeTitle
             notifyLayoutChange(for: request.block)
             persist(request.state)
             postNotification(for: request)
@@ -868,13 +1074,18 @@ final class QuestionCardCoordinator {
         request.timeoutTask?.cancel()
         request.state.status = status
         request.block?.questionCard = request.state
-        request.block?.content = status == .confirmed
-            ? String(localized: "Answered")
-            : String(localized: "Unconfirmed")
+        request.block?.isQuestionCardExpanded = false
+        QuestionCardExpansionStore.setExpanded(false, for: requestId, status: status)
+        request.block?.content = request.state.summaryText
+        request.block?.toolSummary = request.state.chromeTitle
         notifyLayoutChange(for: request.block)
         removeNotification(requestId: requestId)
         let answers = request.state.questions.enumerated().map { index, question in
-            QuestionCardResponse.Answer(id: question.id, question: question.prompt, answer: request.state.answers[index])
+            QuestionCardResponse.Answer(
+                id: question.id,
+                question: question.prompt,
+                answer: index < request.state.answers.count ? request.state.answers[index] : nil
+            )
         }
         let response = QuestionCardResponse(
             confirmed: status == .confirmed,

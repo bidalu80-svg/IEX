@@ -403,7 +403,11 @@ final class AssistantBlock: Identifiable, ObservableObject {
             let name = (path as NSString).lastPathComponent
             return (!path.isEmpty && name != "/" && name.contains(".")) ? name : "Read image"
         case .memoryTool(let action):
-            if kind.isQuestionCardTool { return String(localized: "Question card") }
+            if kind.isQuestionCardTool {
+                if let card = questionCard { return card.chromeTitle }
+                if let parsed = QuestionCardParser.headline(fromToolInput: toolInputArgs) { return parsed }
+                return String(localized: "Question card")
+            }
             return action.isEmpty ? "Memory" : action
         case .info:
             return ""

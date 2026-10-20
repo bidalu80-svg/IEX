@@ -945,6 +945,12 @@ extension AIChatViewModel {
             if var card = block.questionCard {
                 QuestionCardParser.apply(resultJSON: tr.output, to: &card)
                 block.questionCard = card
+                block.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                    for: card.requestId,
+                    status: card.status
+                )
+                block.toolSummary = card.chromeTitle
+                block.content = card.summaryText
             }
             // Prefer the explicit persisted status (distinguishes cancelled from failed);
             // fall back to the success bool for rows written before the status field existed.

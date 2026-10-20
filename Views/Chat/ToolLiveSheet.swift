@@ -758,9 +758,12 @@ struct ToolLiveSheet: View {
 
     // MARK: - Live content area
 
+    @MainActor
     @ViewBuilder
     private var liveContent: some View {
-        if isLive {
+        if block.kind.isQuestionCardTool {
+            QuestionCardDetailView(block: block)
+        } else if isLive {
             // Currently executing — show live content
             switch block.kind {
             case .browserTool: browserContent
@@ -2036,7 +2039,11 @@ struct ToolLiveSheet: View {
         case .browserTool: return "Ze 正在使用浏览器"
         case .readImageTool: return "Ze 正在读取图片"
         case .memoryTool:
-            if block.kind.isQuestionCardTool { return String(localized: "Ze is asking a question") }
+            if block.kind.isQuestionCardTool {
+                if let card = block.questionCard { return card.chromeTitle }
+                if let parsed = QuestionCardParser.headline(fromToolInput: block.toolInputArgs) { return parsed }
+                return String(localized: "Ze is asking a question")
+            }
             return block.kind.isSubAgentTool ? String(localized: "Ze is dispatching a sub-agent") : String(localized: "Ze is using memory")
         case .info: return "Ze"
         case .text: return "Ze"
@@ -2045,6 +2052,9 @@ struct ToolLiveSheet: View {
     }
 
     private var toolSubtitle: String {
+        if block.kind.isQuestionCardTool, let card = block.questionCard {
+            return "\(card.statusLabel) · \(card.progressText)"
+        }
         let raw = if let s = block.toolSummary, !s.isEmpty { s } else { block.toolDescription }
         return raw.replacingOccurrences(of: "\n", with: " ")
     }
@@ -2058,7 +2068,12 @@ struct ToolLiveSheet: View {
         case .browserTool(let a): return a
         case .readImageTool(let p): return (p as NSString).lastPathComponent
         case .memoryTool(let a):
-            return block.kind.isQuestionCardTool ? String(localized: "Question card") : a
+            if block.kind.isQuestionCardTool {
+                return block.questionCard?.chromeTitle
+                    ?? QuestionCardParser.headline(fromToolInput: block.toolInputArgs)
+                    ?? String(localized: "Question card")
+            }
+            return a
         default: return ""
         }
     }
@@ -2072,7 +2087,7 @@ struct ToolLiveSheet: View {
         case .browserTool: return .blue
         case .readImageTool: return .purple
         case .memoryTool:
-            if block.kind.isQuestionCardTool { return .purple }
+            if block.kind.isQuestionCardTool { return QuestionCardTheme.accent }
             return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
@@ -2438,7 +2453,12 @@ private struct ToolPreviewThumbnail: View {
             let name = (p as NSString).lastPathComponent
             return (!p.isEmpty && name != "/" && name.contains(".")) ? name : String(localized: "Read image")
         case .memoryTool(let a):
-            return block.kind.isQuestionCardTool ? String(localized: "Question card") : a
+            if block.kind.isQuestionCardTool {
+                return block.questionCard?.chromeTitle
+                    ?? QuestionCardParser.headline(fromToolInput: block.toolInputArgs)
+                    ?? String(localized: "Question card")
+            }
+            return a
         default: return ""
         }
     }
@@ -2457,7 +2477,7 @@ private struct ToolPreviewThumbnail: View {
         case .browserTool: return .blue
         case .readImageTool: return .purple
         case .memoryTool:
-            if block.kind.isQuestionCardTool { return .purple }
+            if block.kind.isQuestionCardTool { return QuestionCardTheme.accent }
             return block.kind.isSubAgentTool ? ZeSubAgentTheme.purple : .pink
         case .info: return .secondary
         case .text: return .primary
@@ -2584,6 +2604,7 @@ private struct ToolStatusBar: View {
     }
 
     private var displayTitle: String {
+        if block.kind.isQuestionCardTool { return block.toolDescription }
         if let s = block.toolSummary, !s.isEmpty { return s }
         return block.toolDescription
     }

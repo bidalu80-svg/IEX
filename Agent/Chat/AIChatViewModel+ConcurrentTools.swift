@@ -236,10 +236,15 @@ extension AIChatViewModel {
             toolOutput = response.json
             toolSuccess = true
             if let cardBlock {
-                cardBlock.questionCard = cardBlock.questionCard ?? state
-                cardBlock.content = response.confirmed
-                    ? String(localized: "Answered")
-                    : String(localized: "Unconfirmed")
+                var resolved = cardBlock.questionCard ?? state
+                QuestionCardParser.apply(resultJSON: response.json, to: &resolved)
+                cardBlock.questionCard = resolved
+                cardBlock.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                    for: resolved.requestId,
+                    status: resolved.status
+                )
+                cardBlock.content = resolved.summaryText
+                cardBlock.toolSummary = resolved.chromeTitle
             }
 
         case "shell_execute":

@@ -4414,6 +4414,12 @@ extension RawMessage {
                    let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let card = QuestionCardParser.state(requestId: tu.toolUseId, arguments: object, timeout: 900) {
                     block.questionCard = card
+                    block.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                        for: card.requestId,
+                        status: card.status
+                    )
+                    block.toolSummary = card.chromeTitle
+                    block.content = card.summaryText
                 }
                 blocks.append(block)
 
@@ -4438,6 +4444,20 @@ extension RawMessage {
                     if let pageURL = tr.pageURL, !pageURL.isEmpty {
                         blocks[blockIdx].browserURL = pageURL
                         lastBrowserURL = pageURL
+                    }
+                    // The question card survives a relaunch by replaying the
+                    // persisted tool_result. Without this the card came back as
+                    // an expanded pending prompt even though it had already
+                    // been answered (or explicitly left unconfirmed).
+                    if var card = blocks[blockIdx].questionCard {
+                        QuestionCardParser.apply(resultJSON: tr.output, to: &card)
+                        blocks[blockIdx].questionCard = card
+                        blocks[blockIdx].isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                            for: card.requestId,
+                            status: card.status
+                        )
+                        blocks[blockIdx].toolSummary = card.chromeTitle
+                        blocks[blockIdx].content = card.summaryText
                     }
                 } else {
                     if !textContent.isEmpty { textContent += "\n" }

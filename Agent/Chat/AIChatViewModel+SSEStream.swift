@@ -736,6 +736,10 @@ extension AIChatViewModel {
                     case "ask_user":
                         if let card = QuestionCardParser.state(requestId: id, arguments: args, timeout: 900) {
                             messages[msgIdx].blocks[blockIdx].questionCard = card
+                            messages[msgIdx].blocks[blockIdx].isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
+                                for: card.requestId,
+                                status: card.status
+                            )
                             messages[msgIdx].blocks[blockIdx].content = String(localized: "Waiting for your answer…")
                             NotificationCenter.default.post(name: .questionCardToggled, object: messages[msgIdx].blocks[blockIdx].id)
                         }
@@ -746,7 +750,11 @@ extension AIChatViewModel {
                        let argsStr = String(data: argsData, encoding: .utf8) {
                         messages[msgIdx].blocks[blockIdx].toolInputArgs = argsStr
                     }
-                    if let desc = args["tool_title"] as? String {
+                    if let card = messages[msgIdx].blocks[blockIdx].questionCard {
+                        // `ask_user` cards are identified by the question they
+                        // ask, not by the model's generic tool_title ("提问卡片").
+                        messages[msgIdx].blocks[blockIdx].toolSummary = card.chromeTitle
+                    } else if let desc = args["tool_title"] as? String {
                         messages[msgIdx].blocks[blockIdx].toolSummary = desc
                     }
                     if let sid = self.sessionId {
