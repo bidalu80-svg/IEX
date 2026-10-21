@@ -156,10 +156,19 @@ struct SessionShareSheet: View {
                 }
                 .navigationTitle(String(localized: "Share Session"))
                 .navigationBarTitleDisplayMode(.inline)
+                // [T-share-toolbar-ambiguous] Three ToolbarItems in one
+                // `toolbar(content:)` closure made overload resolution
+                // ambiguous on the CI toolchain (Xcode 16.4) — the builder
+                // could not pick between the ToolbarContentBuilder overloads
+                // when the closure also sits on a Form this large. One
+                // modifier per item keeps each closure single-item, which
+                // resolves unambiguously and merges into the same bar.
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button(String(localized: "Cancel")) { dismiss() }
                     }
+                }
+                .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             preview()
@@ -168,14 +177,18 @@ struct SessionShareSheet: View {
                         }
                         .disabled(isRendering || selectedCount == 0)
                     }
+                }
+                .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {
                             export()
                         } label: {
-                            if isRendering {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "square.and.arrow.up")
+                            Group {
+                                if isRendering {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "square.and.arrow.up")
+                                }
                             }
                         }
                         .disabled(isRendering || selectedCount == 0)
