@@ -158,11 +158,15 @@ struct SessionShareSheet: View {
         .sheet(item: $route) { route in
             routeContent(route)
         }
-        .onChange(of: options) { _, newValue in
+        // [T-share-ios16-onchange] The two-parameter `onChange(of:) { old, new in }`
+        // closure is iOS 17+, and the app target is iOS 16.0. Use the
+        // single-parameter form so the share sheet compiles on the deployment
+        // floor instead of relying on the CI runner's SDK.
+        .onChange(of: options) { newValue in
             SessionExportOptionsStore.save(newValue)
             schedulePreview()
         }
-        .onChange(of: scope) { _, _ in
+        .onChange(of: scope) { _ in
             schedulePreview()
         }
         .onAppear {
