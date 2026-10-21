@@ -415,6 +415,8 @@ struct AIChatView: View {
     @State private var pendingProviderImport: PendingProviderImport?
     @State private var providerImportResult: String?
     @State private var screenshotPreview: ChatScreenshotPreview?
+    /// [T-session-share] Presents the session export / share configuration.
+    @State private var showSessionShare = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var attachmentGridHeight: CGFloat = 0
     @State private var transcriptHeight: CGFloat = 0
@@ -1063,6 +1065,13 @@ struct AIChatView: View {
         .sheet(item: $screenshotPreview) { preview in
             ChatScreenshotPreviewSheet(image: preview.image)
         }
+        .sheet(isPresented: $showSessionShare) {
+            SessionShareSheet(
+                messages: vm.messages,
+                header: sessionExportHeader,
+                adaptiveWidth: maxContentWidth ?? 393
+            )
+        }
         .sheet(isPresented: $showSessionSkills) {
             // Pass the real id (nil for a draft) plus an ensure-session closure
             // so a pre-first-message toggle binds its override to the session
@@ -1706,6 +1715,27 @@ struct AIChatView: View {
         }
     }
 
+    // MARK: - Session Export
+
+    /// Snapshot of the metadata the export header shows. Resolved here (not
+    /// in the sheet) so the sheet itself only handles value types.
+    @MainActor
+    private var sessionExportHeader: SessionExportHeader {
+        let display = SessionModelDisplay(store: configStore, draftGroupId: vm.initialGroupId)
+        let resolved = display.resolvedDetail(for: vm.sessionId)
+        let title = (titlePillSession?.title?.trimmingCharacters(in: .whitespacesAndNewlines))
+            .flatMap { $0.isEmpty ? nil : $0 } ?? soulName
+        let date = vm.messages.first(where: { $0.role == .user })?.timestamp ?? Date()
+        return SessionExportHeader(
+            title: title,
+            modelName: resolved?.modelName ?? display.displayName(for: vm.sessionId),
+            providerName: resolved?.providerLabel,
+            date: date,
+            avatar: SoulAvatarStore.load(),
+            avatarEmoji: SoulStore.cachedMetadata.emoji
+        )
+    }
+
     // MARK: - Toolbar Trailing Menu
 
     @ViewBuilder
@@ -1769,28 +1799,8 @@ struct AIChatView: View {
             // to the very next Codex request.
             setFastMode: { enabled in codexFastModeEnabled = enabled },
             onTokenUsage: { showTokenUsage = true },
-            // LastAPIRequestBody + copySessionDataToClipboard are DEBUG-only (the
-            // menu buttons that invoke these closures are #if DEBUG too); guard the
-            // bodies so Release/archive builds — where those symbols are compiled
-            // out — still link. Release keeps the closures as no-ops.
-            onCopyRequests: {
-                #if DEBUG
-                let requests = LastAPIRequestBody.shared.getAll()
-                if requests.isEmpty {
-                    UIPasteboard.general.string = "(no requests captured)"
-                } else {
-                    let all = requests.enumerated().map { idx, req in
-                        req.formatted(index: idx + 1)
-                    }.joined(separator: "\n\n")
-                    UIPasteboard.general.string = all
-                }
-                #endif
-            },
-            onCopySessionData: {
-                #if DEBUG
-                copySessionDataToClipboard()
-                #endif
-            }
+            // [T-session-share] Opens the export / share configuration sheet.
+            onShareSession: { showSessionShare = true }
         )
     }
 
@@ -2380,60 +2390,6 @@ struct AIChatView: View {
         .padding(.vertical, 8)
         .background(Color.red.opacity(0.12))
     }
-
-    #if DEBUG
-    /// Build a JSON representation of the full agent conversation history and copy it.
-    private func copySessionDataToClipboard() {
-        Task {
-            guard let sid = vm.sessionId else {
-                UIPasteboard.general.string = "(no session)"
-                return
-            }
-            let rawMessages = await ChatStore.shared.loadMessages(sessionId: sid)
-            var entries: [[String: Any]] = []
-            for msg in rawMessages {
-                var partsJson: [[String: Any]] = []
-                for part in msg.parts {
-                    switch part {
-                    case .text(let text):
-                        partsJson.append(["type": "text", "text": text])
-                    case .toolUse(let tu):
-                        // Parse input JSON string back to dict for clean output
-                        let inputObj = (try? JSONSerialization.jsonObject(
-                            with: Data(tu.input.utf8))) ?? tu.input
-                        partsJson.append(["type": "tool_use", "id": tu.toolUseId,
-                                          "name": tu.name, "input": inputObj])
-                    case .toolResult(let tr):
-                        partsJson.append(["type": "tool_result", "tool_use_id": tr.toolUseId,
-                                          "output": tr.output, "is_error": !tr.success])
-                    case .mediaRef(let ref):
-                        partsJson.append(["type": "media", "mime": ref.mimeType,
-                                          "file": ref.originalFileName ?? ref.relativePath])
-                    }
-                }
-                var entry: [String: Any] = [
-                    "role": msg.role.rawValue,
-                    "parts": partsJson,
-                    "created": ISO8601DateFormatter().string(from: msg.createdAt)
-                ]
-                if let usage = msg.tokenUsage {
-                    entry["usage"] = [
-                        "input_tokens": usage.inputTokens,
-                        "output_tokens": usage.outputTokens,
-                        "cache_creation_tokens": usage.cacheCreationTokens,
-                        "cache_read_tokens": usage.cacheReadTokens
-                    ]
-                }
-                entries.append(entry)
-            }
-            if let data = try? JSONSerialization.data(withJSONObject: entries,
-                                                      options: [.prettyPrinted, .sortedKeys]),
-               let str = String(data: data, encoding: .utf8) {
-                UIPasteboard.general.string = str
-            }
-        }
-    }
-    #endif
 
     // MARK: - Messages
 
@@ -5273,8 +5229,7 @@ private struct ChatTrailingMenu: View, Equatable {
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
     let onTokenUsage: () -> Void
-    let onCopyRequests: () -> Void
-    let onCopySessionData: () -> Void
+    let onShareSession: () -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.messagesEmpty == rhs.messagesEmpty
@@ -5397,18 +5352,12 @@ private struct ChatTrailingMenu: View, Equatable {
                 Label(String(localized: "Token Usage"), systemImage: "chart.bar.fill")
             }
 
-            #if DEBUG
-            Divider()
-
-            Button { onCopyRequests() } label: {
-                let n = LastAPIRequestBody.shared.getAll().count
-                Label("复制请求记录 (\(n))", systemImage: "arrow.up.doc")
+            // [T-session-share] Replaces the DEBUG-only "Copy Request Log" /
+            // "Copy Session Data" rows.
+            Button { onShareSession() } label: {
+                Label(String(localized: "Share Session"), systemImage: "square.and.arrow.up")
             }
-
-            Button { onCopySessionData() } label: {
-                Label("复制会话数据", systemImage: "tray.and.arrow.up")
-            }
-            #endif
+            .disabled(messagesEmpty)
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 14, weight: .medium))
@@ -5453,8 +5402,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
     let onTokenUsage: () -> Void
-    let onCopyRequests: () -> Void
-    let onCopySessionData: () -> Void
+    let onShareSession: () -> Void
 
     /// The displayed-state snapshot — the ONLY trigger for a menu rebuild.
     struct Key: Equatable {
@@ -5612,17 +5560,11 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
             UIAction(title: String(localized: "Token Usage"),
                      image: UIImage(systemName: "chart.bar.fill")) { _ in coordinator.parent.onTokenUsage() },
         ]
-        #if DEBUG
-        tailGroup.append(UIDeferredMenuElement.uncached { completion in
-            let n = LastAPIRequestBody.shared.getAll().count
-            completion([
-                UIAction(title: "复制请求记录 (\(n))",
-                         image: UIImage(systemName: "arrow.up.doc")) { _ in coordinator.parent.onCopyRequests() },
-                UIAction(title: "复制会话数据",
-                         image: UIImage(systemName: "tray.and.arrow.up")) { _ in coordinator.parent.onCopySessionData() },
-            ])
+        tailGroup.append(UIAction(title: String(localized: "Share Session"),
+                                  image: UIImage(systemName: "square.and.arrow.up"),
+                                  attributes: key.messagesEmpty ? [.disabled] : []) { _ in
+            coordinator.parent.onShareSession()
         })
-        #endif
         groups.append(UIMenu(options: .displayInline, children: tailGroup))
 
         return UIMenu(children: groups)

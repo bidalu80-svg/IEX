@@ -253,6 +253,10 @@
 		E5JB10004 /* hmm_model.utf8 in Resources */ = {isa = PBXBuildFile; fileRef = E5JB00015 /* hmm_model.utf8 */; };
 		E5K000001 /* SelectableMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5K000011 /* SelectableMarkdownView.swift */; };
 		E5K000002 /* ChatTurnScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5K000012 /* ChatTurnScreenshot.swift */; };
+		E5SEB001 /* SessionExportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER001 /* SessionExportModels.swift */; };
+		E5SEB002 /* SessionExportTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER002 /* SessionExportTypography.swift */; };
+		E5SEB003 /* SessionExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER003 /* SessionExportRenderer.swift */; };
+		E5SEB004 /* SessionShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER004 /* SessionShareSheet.swift */; };
 		E5KIMI0A1 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0A2 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0B1 /* KimiDeviceFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR02 /* KimiDeviceFlow.swift */; };
@@ -889,6 +893,10 @@
 		E5JB00015 /* hmm_model.utf8 */ = {isa = PBXFileReference; lastKnownFileType = text; name = hmm_model.utf8; path = Resources/hmm_model.utf8; sourceTree = "<group>"; };
 		E5K000011 /* SelectableMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableMarkdownView.swift; sourceTree = "<group>"; };
 		E5K000012 /* ChatTurnScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTurnScreenshot.swift; sourceTree = "<group>"; };
+		E5SER001 /* SessionExportModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportModels.swift; sourceTree = "<group>"; };
+		E5SER002 /* SessionExportTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportTypography.swift; sourceTree = "<group>"; };
+		E5SER003 /* SessionExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportRenderer.swift; sourceTree = "<group>"; };
+		E5SER004 /* SessionShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionShareSheet.swift; sourceTree = "<group>"; };
 		E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthRefreshCoordinator.swift; path = Providers/Kimi/OAuth/KimiOAuthRefreshCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR02 /* KimiDeviceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiDeviceFlow.swift; path = Providers/Kimi/OAuth/KimiDeviceFlow.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR03 /* KimiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthManager.swift; path = Providers/Kimi/OAuth/KimiOAuthManager.swift; sourceTree = SOURCE_ROOT; };
@@ -2108,6 +2116,17 @@
 			path = Environment;
 			sourceTree = "<group>";
 		};
+		E5SEG001 /* SessionExport */ = {
+			isa = PBXGroup;
+			children = (
+				E5SER001 /* SessionExportModels.swift */,
+				E5SER002 /* SessionExportTypography.swift */,
+				E5SER003 /* SessionExportRenderer.swift */,
+				E5SER004 /* SessionShareSheet.swift */,
+			);
+			path = SessionExport;
+			sourceTree = "<group>";
+		};
 		F1V00010 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
@@ -2129,6 +2148,7 @@
 				E8A000012 /* OffloadPermissionDialog.swift */,
 				E5K000011 /* SelectableMarkdownView.swift */,
 				E5K000012 /* ChatTurnScreenshot.swift */,
+				E5SEG001 /* SessionExport */,
 				E5N0000152F3B941A00049557 /* SessionMemoryView.swift */,
 				E5N0000122F3B941A00049557 /* SessionSkillsView.swift */,
 				F1T00010 /* ToolLiveSheet.swift */,
@@ -2891,6 +2911,10 @@
 				E5J000040 /* AttributeQueryRecorder.m in Sources */,
 				E5K000001 /* SelectableMarkdownView.swift in Sources */,
 				E5K000002 /* ChatTurnScreenshot.swift in Sources */,
+				E5SEB001 /* SessionExportModels.swift in Sources */,
+				E5SEB002 /* SessionExportTypography.swift in Sources */,
+				E5SEB003 /* SessionExportRenderer.swift in Sources */,
+				E5SEB004 /* SessionShareSheet.swift in Sources */,
 				E5M000007 /* MarkdownRenderView.swift in Sources */,
 				E5M000003 /* ZeMarkdownParser.swift in Sources */,
 				E5U000001 /* KaTeXRenderer.swift in Sources */,

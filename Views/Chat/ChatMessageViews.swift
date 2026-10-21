@@ -459,16 +459,20 @@ struct ChatMessageRow: View {
                         Label("Edit", systemImage: "square.and.pencil")
                     }
                 }
-                if let onDelete {
-                    Button(role: .destructive, action: onDelete) {
-                        Label(String(localized: "Delete from here"), systemImage: "trash")
-                    }
-                }
+                // [T-ios-usermsg-menu-order] Retry sits before Delete so the two
+                // destructive (red) entries — "Delete from here" and the
+                // divider-separated "Compact Above" — stay adjacent instead of
+                // being split by a neutral row.
                 if let onRetry {
                     Button {
                         onRetry()
                     } label: {
                         Label("Retry", systemImage: "arrow.counterclockwise")
+                    }
+                }
+                if let onDelete {
+                    Button(role: .destructive, action: onDelete) {
+                        Label(String(localized: "Delete from here"), systemImage: "trash")
                     }
                 }
                 if let onCompact {
