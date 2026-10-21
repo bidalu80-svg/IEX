@@ -108,7 +108,9 @@ final class SessionExportNativeRenderer {
             while offset < pixelHeight {
                 ctx.beginPage()
                 background.setFill()
-                ctx.fill(pageRect)
+                // `UIGraphicsPDFRendererContext` is not a CGContext; the fill
+                // has to go through the context it wraps.
+                ctx.cgContext.fill(pageRect)
 
                 let sliceHeight = min(pixelPage, pixelHeight - offset)
                 if let slice = long.cgImage?.cropping(to: CGRect(x: 0,
