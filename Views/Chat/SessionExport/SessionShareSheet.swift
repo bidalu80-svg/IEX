@@ -102,41 +102,6 @@ private enum SessionShareRoute: Identifiable {
     }
 }
 
-// [T-share-toolbar-ambiguous] Concrete `ToolbarContent` so `toolbar(content:)`
-// can only resolve to the `ToolbarContentBuilder` overload. See the note on
-// `SessionShareSheet.formContent`.
-private struct SessionShareToolbar: ToolbarContent {
-    let isRendering: Bool
-    let isDisabled: Bool
-    let onCancel: () -> Void
-    let onPreview: () -> Void
-    let onExport: () -> Void
-
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button(action: onCancel) {
-                Text(String(localized: "Cancel"))
-            }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button(action: onPreview) {
-                Image(systemName: "eye")
-            }
-            .disabled(isDisabled)
-        }
-        ToolbarItem(placement: .confirmationAction) {
-            Button(action: onExport) {
-                if isRendering {
-                    ProgressView()
-                } else {
-                    Image(systemName: "square.and.arrow.up")
-                }
-            }
-            .disabled(isDisabled)
-        }
-    }
-}
-
 @MainActor
 struct SessionShareSheet: View {
     let messages: [ChatMessage]
@@ -171,31 +136,27 @@ struct SessionShareSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                previewPanel
-
-                formContent
-                    .navigationTitle(String(localized: "Share Session"))
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        SessionShareToolbar(
-                            isRendering: isRendering,
-                            isDisabled: isRendering || selectedCount == 0,
-                            onCancel: { dismiss() },
-                            onPreview: { preview() },
-                            onExport: { export() }
-                        )
-                    }
-                    .overlay {
-                        if isRendering {
-                            Color.black.opacity(0.05).ignoresSafeArea()
-                        }
-                    }
-                    .sheet(item: $route) { route in
-                        routeContent(route)
-                    }
+        // [T-share-toolbar-ambiguous] No NavigationStack / toolbar modifier.
+        // `toolbar(content:)` exposes both a ViewBuilder and a
+        // ToolbarContentBuilder overload on iOS 16+, and on Xcode 16.4 the
+        // compiler kept reporting "ambiguous use of 'toolbar(content:)'" for
+        // inline items, an opaque `some ToolbarContent` property, and a
+        // concrete `ToolbarContent` struct alike. A hand-rolled header bar has
+        // no overload to resolve, and the sheet still hosts its own
+        // NavigationStacks for the picker and preview.
+        VStack(spacing: 0) {
+            headerBar
+            previewPanel
+            formContent
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+        .overlay {
+            if isRendering {
+                Color.black.opacity(0.05).ignoresSafeArea()
             }
+        }
+        .sheet(item: $route) { route in
+            routeContent(route)
         }
         .onChange(of: options) { _, newValue in
             SessionExportOptionsStore.save(newValue)
@@ -207,6 +168,45 @@ struct SessionShareSheet: View {
         .onAppear {
             schedulePreview()
         }
+    }
+
+    /// Hand-rolled replacement for the navigation bar (see the note on `body`).
+    private var headerBar: some View {
+        ZStack {
+            Text(String(localized: "Share Session"))
+                .font(.headline)
+
+            HStack(spacing: 18) {
+                Button {
+                    dismiss()
+                } label: {
+                    Text(String(localized: "Cancel"))
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    preview()
+                } label: {
+                    Image(systemName: "eye")
+                }
+                .disabled(isRendering || selectedCount == 0)
+
+                Button {
+                    export()
+                } label: {
+                    if isRendering {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .disabled(isRendering || selectedCount == 0)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(UIColor.systemGroupedBackground))
     }
 
     // MARK: Toolbar
