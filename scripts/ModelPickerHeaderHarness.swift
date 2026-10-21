@@ -4,7 +4,13 @@ import Foundation
 
 // Network/configuration fixtures only. The production parser, cache and header
 // are compiled unchanged; no real provider credentials or endpoints are used.
-enum ProviderType { case openAI, openAIResponses, openRouter, xAI, kimiCode, unknown }
+// Keep this enum in step with the production `ProviderType`: the quota client
+// switches over every case, so a missing one fails the type-check here long
+// before the app build runs.
+enum ProviderType {
+    case openAI, openAIResponses, openRouter, xAI, kimiCode
+    case anthropic, gemini, antigravity, githubCopilot, unsupported
+}
 enum ProviderCredential { case apiKey, oauth }
 struct ProviderInstance {
     var id: String
