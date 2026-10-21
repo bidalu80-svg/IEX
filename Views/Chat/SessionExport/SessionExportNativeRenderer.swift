@@ -1,0 +1,488 @@
+//
+//  SessionExportNativeRenderer.swift
+//  ZeApp
+//
+//  [T-session-share-native] Renders the export from the REAL chat views.
+//
+//  The first cut of this feature drew the transcript with CoreText, which
+//  produced a document-looking page: no bubbles, no avatar row, no
+//  "first token / task duration" pills, no collapsed tool steps. That is not
+//  what "copy screenshot" produces, and it is not what users expect from
+//  "share session".
+//
+//  This renderer instead hosts the same `ChatMessageRow` the message list
+//  uses, offscreen, at the requested width / colour scheme, and snapshots it
+//  with `drawHierarchy(afterScreenUpdates:)` — the same technique the
+//  scrolling turn-screenshot uses. Options are applied by filtering the
+//  message's blocks before handing it to the row, so the exported rows stay
+//  pixel-identical to the live UI.
+//
+
+import SwiftUI
+import UIKit
+
+@MainActor
+final class SessionExportNativeRenderer {
+
+    /// A single output image is capped so a long session cannot ask for a
+    /// 60 000 px bitmap. Longer transcripts become several images.
+    private static let maxSliceHeight: CGFloat = 8_000
+    /// Sanity cap for one offscreen row. A collapsed tool list keeps rows
+    /// short, so this only guards against pathological text dumps.
+    private static let maxRowHeight: CGFloat = 20_000
+    /// Longest tool output embedded in the optional input/result cards.
+    private static let maxToolOutput = 2_000
+
+    private let messages: [ChatMessage]
+    private let scope: SessionExportScope
+    private let options: SessionExportOptions
+    private let header: SessionExportHeader?
+    private let vm: AIChatViewModel
+    private let pageWidth: CGFloat
+
+    private let background: UIColor
+    private let scheme: ColorScheme
+
+    init(messages: [ChatMessage],
+         scope: SessionExportScope,
+         options: SessionExportOptions,
+         header: SessionExportHeader?,
+         vm: AIChatViewModel,
+         adaptiveWidth: CGFloat) {
+        self.messages = messages
+        self.scope = scope
+        self.options = options
+        self.header = header
+        self.vm = vm
+        self.pageWidth = options.width.pageWidth(adaptiveWidth: adaptiveWidth)
+        self.scheme = options.theme == .dark ? .dark : .light
+        self.background = options.theme == .dark
+            ? UIColor(white: 0.07, alpha: 1)
+            : UIColor.systemBackground
+    }
+
+    // MARK: - Public entry points
+
+    /// Long-image output. Returns one or more slices, top to bottom.
+    func makeImages() -> [UIImage] {
+        let rows = makeRowImages()
+        guard !rows.isEmpty else { return [] }
+        return Self.slice(Self.stitch(rows, background: background, width: pageWidth),
+                          maxHeight: Self.maxSliceHeight,
+                          scale: 2)
+    }
+
+    /// A short top-of-document image for the live preview strip.
+    func makePreviewImage(maxHeight: CGFloat = 900) -> UIImage? {
+        let rows = Array(makeRowImages(limit: 4).prefix(4))
+        guard !rows.isEmpty else { return nil }
+        let tall = Self.stitch(rows, background: background, width: pageWidth)
+        let height = min(tall.size.height, maxHeight)
+        guard height > 1 else { return nil }
+        let rect = CGRect(x: 0, y: 0,
+                          width: tall.size.width * tall.scale,
+                          height: height * tall.scale)
+        guard let cg = tall.cgImage?.cropping(to: rect) else { return tall }
+        return UIImage(cgImage: cg, scale: tall.scale, orientation: .up)
+    }
+
+    /// Vector PDF: the rendered rows are drawn page by page. Text stays
+    /// raster because the source is a snapshot of the live view hierarchy —
+    /// that is the price of matching the chat UI pixel for pixel.
+    func makePDFData() -> Data? {
+        let rows = makeRowImages()
+        guard !rows.isEmpty else { return nil }
+        let long = Self.stitch(rows, background: background, width: pageWidth)
+
+        let pageSize = CGSize(width: pageWidth, height: (pageWidth * 1.4142).rounded())
+        let data = NSMutableData()
+        guard let consumer = CGDataConsumer(data: data as CFMutableData) else { return nil }
+        var mediaBox = CGRect(origin: .zero, size: pageSize)
+        guard let ctx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { return nil }
+
+        let scale = long.scale
+        let pixelHeight = long.size.height * scale
+        let pixelPage = pageSize.height * scale
+        var offset: CGFloat = 0
+
+        while offset < pixelHeight {
+            ctx.beginPDFPage(nil)
+            background.setFill()
+            ctx.fill(mediaBox)
+
+            let sliceHeight = min(pixelPage, pixelHeight - offset)
+            if let slice = long.cgImage?.cropping(to: CGRect(x: 0,
+                                                            y: offset,
+                                                            width: long.size.width * scale,
+                                                            height: sliceHeight)) {
+                let image = UIImage(cgImage: slice, scale: scale, orientation: .up)
+                UIGraphicsPushContext(ctx)
+                image.draw(in: CGRect(x: 0, y: 0, width: pageWidth, height: sliceHeight / scale))
+                UIGraphicsPopContext()
+            }
+            ctx.endPDFPage()
+            offset += pixelPage
+        }
+        ctx.closePDF()
+        return data as Data
+    }
+
+    // MARK: - Row rendering
+
+    private func makeRowImages(limit: Int? = nil) -> [UIImage] {
+        var views: [AnyView] = []
+
+        if options.includeHeader, let header {
+            views.append(AnyView(SessionExportHeaderCard(header: header, scheme: scheme)))
+        }
+
+        let scoped = messages.filter { scope.contains($0.id) }
+        let picked = limit.map { Array(scoped.prefix($0)) } ?? scoped
+
+        for message in picked {
+            let copy = exportCopy(of: message)
+            guard !copy.blocks.isEmpty || !copy.content.isEmpty else { continue }
+
+            views.append(AnyView(
+                ChatMessageRow(
+                    message: copy,
+                    isActiveMessage: false,
+                    commandStartTime: nil,
+                    onStop: nil,
+                    onRetry: nil,
+                    onEdit: nil,
+                    onDelete: nil,
+                    onWithdraw: nil,
+                    autoRetryAttempt: 0,
+                    autoRetryCountdown: 0,
+                    canResume: false,
+                    onResume: nil,
+                    onCompact: nil,
+                    onCopyScreenshot: nil,
+                    onReadAloud: nil,
+                    onShowCompactSummary: nil,
+                    onRevertCompact: nil,
+                    onToggleUserMessageExpansion: nil,
+                    browserPool: nil,
+                    toolSnapshots: []
+                )
+                .environmentObject(vm)
+                .environment(\.colorScheme, scheme)
+                .frame(width: pageWidth)
+                .background(Color(background))
+            ))
+
+            if options.includeToolCalls, options.includeToolIO {
+                for block in copy.blocks where block.kind.isToolCall {
+                    views.append(AnyView(
+                        SessionExportToolDetailCard(block: block,
+                                                    scheme: scheme,
+                                                    maxOutput: Self.maxToolOutput)
+                            .environment(\.colorScheme, scheme)
+                            .frame(width: pageWidth)
+                            .background(Color(background))
+                    ))
+                }
+            }
+        }
+
+        guard let host = OffscreenHost(width: pageWidth,
+                                       background: background,
+                                       scheme: scheme) else { return [] }
+
+        var images: [UIImage] = []
+        for view in views {
+            if let image = host.snapshot(view, maxHeight: Self.maxRowHeight) {
+                images.append(image)
+            }
+        }
+        host.tearDown()
+        return images
+    }
+
+    /// Builds the copy that gets rendered. Filtering blocks here (instead of
+    /// inside the views) keeps the export path free of "screenshot mode"
+    /// branches in the live chat UI.
+    private func exportCopy(of message: ChatMessage) -> ChatMessage {
+        let filtered = message.blocks.filter { block in
+            switch block.kind {
+            case .thinking:
+                return options.includeThinking
+            case .text, .info:
+                return true
+            default:
+                return options.includeToolCalls
+            }
+        }
+
+        let copy = ChatMessage(role: message.role,
+                               content: message.content,
+                               blocks: filtered,
+                               isQueued: false,
+                               timestamp: message.timestamp)
+        copy.usage = message.usage
+        copy.firstTokenLatency = message.firstTokenLatency
+        copy.taskDuration = message.taskDuration
+        copy.streamInterruptCount = message.streamInterruptCount
+        copy.attachments = message.attachments
+        copy.inputAttachments = message.inputAttachments
+        copy.isCompactedHistory = message.isCompactedHistory
+        copy.systemIcon = message.systemIcon
+        // The live bubble clamps long prompts behind a "show more" control;
+        // an export must contain the whole prompt.
+        copy.isUserTextExpanded = true
+        return copy
+    }
+
+    // MARK: - Stitching
+
+    private static func stitch(_ images: [UIImage], background: UIColor, width: CGFloat) -> UIImage {
+        let scale: CGFloat = 2
+        let heights = images.map { $0.size.height }
+        let total = heights.reduce(0, +)
+        let size = CGSize(width: width, height: max(total, 1))
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = true
+        format.preferredRange = .standard
+
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            background.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            var y: CGFloat = 0
+            for image in images {
+                image.draw(in: CGRect(x: 0, y: y, width: width, height: image.size.height))
+                y += image.size.height
+            }
+        }
+    }
+
+    private static func slice(_ image: UIImage, maxHeight: CGFloat, scale: CGFloat) -> [UIImage] {
+        let pixelHeight = image.size.height * image.scale
+        let maxPixel = maxHeight * scale
+        guard pixelHeight > maxPixel, let cg = image.cgImage else { return [image] }
+
+        var slices: [UIImage] = []
+        var offset: CGFloat = 0
+        while offset < pixelHeight {
+            let height = min(maxPixel, pixelHeight - offset)
+            if let crop = cg.cropping(to: CGRect(x: 0, y: offset,
+                                                 width: image.size.width * image.scale,
+                                                 height: height)) {
+                slices.append(UIImage(cgImage: crop, scale: image.scale, orientation: .up))
+            }
+            offset += maxPixel
+        }
+        return slices.isEmpty ? [image] : slices
+    }
+}
+
+// MARK: - Offscreen host
+
+/// Hosts SwiftUI content in a window that sits *below* the app window, so it
+/// is never visible but is still attached to a real scene (which is what
+/// `drawHierarchy(afterScreenUpdates:)` needs in order to render UIKit-backed
+/// views such as the markdown `UITextView`).
+@MainActor
+private final class OffscreenHost {
+    private let window: UIWindow
+    private let host: UIHostingController<AnyView>
+    private let width: CGFloat
+    private let background: UIColor
+
+    init?(width: CGFloat, background: UIColor, scheme: ColorScheme) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        else { return nil }
+
+        self.width = width
+        self.background = background
+
+        let host = UIHostingController(rootView: AnyView(EmptyView()))
+        host.view.backgroundColor = background
+        self.host = host
+
+        let window = UIWindow(windowScene: scene)
+        // Below the app's own window: attached and renderable, never seen.
+        window.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.normal.rawValue - 1)
+        window.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
+        window.rootViewController = host
+        window.frame = CGRect(x: 0, y: 0, width: width, height: 10)
+        window.isHidden = false
+        self.window = window
+    }
+
+    func snapshot(_ view: AnyView, maxHeight: CGFloat) -> UIImage? {
+        host.rootView = view
+
+        let measured = host.sizeThatFits(in: CGSize(width: width, height: maxHeight))
+        let height = max(min(ceil(measured.height), maxHeight), 1)
+
+        // The window owns the root view's frame, so it has to be as tall as
+        // the content — a shorter window would clip the row during layout.
+        window.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        host.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        CATransaction.flush()
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = true
+        format.preferredRange = .standard
+
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        return UIGraphicsImageRenderer(size: bounds.size, format: format).image { ctx in
+            background.setFill()
+            ctx.fill(bounds)
+            host.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+    }
+
+    func tearDown() {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+}
+
+// MARK: - Header card
+
+/// Avatar + model name + date, drawn with the same palette as the chat so the
+/// export opens like a conversation rather than a printout.
+private struct SessionExportHeaderCard: View {
+    let header: SessionExportHeader
+    let scheme: ColorScheme
+
+    private var secondary: Color {
+        scheme == .dark ? Color(white: 0.66) : Color(white: 0.38)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                avatar
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(header.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .lineLimit(2)
+                    HStack(spacing: 6) {
+                        Text(header.modelName)
+                        if let provider = header.providerName, !provider.isEmpty {
+                            Text("·")
+                            Text(provider)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(dateText)
+                .font(.system(size: 11))
+                .foregroundStyle(secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
+        .padding(.bottom, 6)
+        .frame(width: nil, alignment: .leading)
+        .background(Color(UIColor.systemBackground))
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let image = header.avatar {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 34, height: 34)
+                .clipShape(Circle())
+        } else if let emoji = header.avatarEmoji, !emoji.isEmpty {
+            Text(emoji)
+                .font(.system(size: 24))
+                .frame(width: 34, height: 34)
+        } else {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color(UIColor.secondarySystemBackground)))
+        }
+    }
+
+    private var dateText: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: header.date)
+    }
+}
+
+// MARK: - Tool input / result card
+
+/// Optional inline detail for a tool step. The live chat shows these in a
+/// sheet; the export flattens the same information into a compact card.
+private struct SessionExportToolDetailCard: View {
+    let block: AssistantBlock
+    let scheme: ColorScheme
+    let maxOutput: Int
+
+    private var secondary: Color {
+        scheme == .dark ? Color(white: 0.66) : Color(white: 0.38)
+    }
+
+    private var cardFill: Color {
+        scheme == .dark ? Color(white: 0.13) : Color(UIColor.secondarySystemBackground)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(block.toolDescription)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(statusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(secondary)
+            }
+
+            if let input = block.toolInputArgs, !input.isEmpty {
+                section(String(localized: "Input"), text: String(input.prefix(maxOutput)))
+            }
+
+            if !block.content.isEmpty {
+                section(String(localized: "Result"), text: String(block.content.prefix(maxOutput)))
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(cardFill))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+    }
+
+    private func section(_ title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(secondary)
+            Text(text)
+                .font(.system(size: 11, design: .monospaced))
+                .lineLimit(40)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var statusText: String {
+        switch block.toolStatus {
+        case .success: return String(localized: "Succeeded")
+        case .failed:  return String(localized: "Failed")
+        case .cancelled: return String(localized: "Cancelled")
+        case .running, .streaming: return String(localized: "Running")
+        case .none: return String(localized: "Done")
+        }
+    }
+}

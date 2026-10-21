@@ -1069,7 +1069,8 @@ struct AIChatView: View {
             SessionShareSheet(
                 messages: vm.messages,
                 header: sessionExportHeader,
-                adaptiveWidth: maxContentWidth ?? 393
+                adaptiveWidth: maxContentWidth ?? 393,
+                vm: vm
             )
         }
         .sheet(isPresented: $showSessionSkills) {

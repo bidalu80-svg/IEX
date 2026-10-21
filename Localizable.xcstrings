@@ -79034,7 +79034,15 @@
     "Pick the whole conversation or just a few messages." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "可以导出整段对话，也可以只选几条消息。"}}}} ,
     "%lld selected" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已选 %lld 条"}}}} ,
     "Live Preview" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "实时预览"}}}} ,
-    "Tap to open full preview" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "点按查看完整预览"}}}}
+    "Tap to open full preview" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "点按查看完整预览"}}}} ,
+    "%ld selected" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已选择 %ld 项"}}}} ,
+    "Select Below" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "选择以下"}}}} ,
+    "Collapse Tools" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "收起工具"}}}} ,
+    "Expand Tools" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "展开工具"}}}} ,
+    "Hide Thinking" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "隐藏思考"}}}} ,
+    "Show Thinking" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "显示思考"}}}} ,
+    "Clear Selection" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "取消选择"}}}} ,
+    "Share (%ld)" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "分享 (%ld)"}}}}
   },
   "version" : "1.0"
 }

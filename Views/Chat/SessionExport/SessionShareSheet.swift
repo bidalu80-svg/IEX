@@ -107,6 +107,11 @@ struct SessionShareSheet: View {
     let messages: [ChatMessage]
     let header: SessionExportHeader
     let adaptiveWidth: CGFloat
+    /// [T-session-share-native] The export renders the real chat rows, and
+    /// those rows read the view model from the environment (tool capsule
+    /// menus). The sheet is always presented from the chat, so the live
+    /// instance is available — no dummy model needed.
+    let vm: AIChatViewModel
 
     @Environment(\.dismiss) private var dismiss
 
@@ -245,7 +250,10 @@ struct SessionShareSheet: View {
     private func routeContent(_ route: SessionShareRoute) -> some View {
         switch route {
         case .range:
-            SessionExportRangePicker(messages: selectableMessages, scope: $scope)
+            SessionExportRangePicker(messages: selectableMessages,
+                                     scope: $scope,
+                                     vm: vm,
+                                     options: options)
         case .share(let payload):
             SessionExportActivityView(items: payload.shareItems)
                 .ignoresSafeArea()
@@ -273,6 +281,13 @@ struct SessionShareSheet: View {
                         Image(uiImage: previewImage)
                             .resizable()
                             .frame(width: width, height: width * ratio, alignment: .top)
+                            // [T-share-preview-clip] The ZStack is bottom-aligned
+                            // for the gradient + label, so the oversized image has
+                            // to be pinned to the TOP of its own box explicitly —
+                            // otherwise the strip shows the bottom of the render
+                            // (a wall of tool-output JSON) instead of the header.
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                            .clipped()
                     }
                 } else {
                     VStack(spacing: 6) {
@@ -325,41 +340,22 @@ struct SessionShareSheet: View {
     }
 
     private func renderPreview() {
-        // Bound the work: only the first screenful matters, so build from at
-        // most 60 scoped messages instead of the whole conversation.
-        let scoped = messages.filter { scope.contains($0.id) }
-        let previewMessages = Array(scoped.prefix(60))
         let options = self.options
-        let document = SessionExportBuilder.build(
-            messages: previewMessages,
-            scope: .all,
-            options: options,
-            header: options.includeHeader ? header : nil
-        )
-        guard !document.isEmpty else {
-            previewImage = nil
-            return
-        }
-
-        let blocks = Array(document.blocks.prefix(40))
-        let pageWidth = options.width.pageWidth(adaptiveWidth: adaptiveWidth)
-        let metrics = SessionExportMetrics(pageWidth: pageWidth)
-        let palette = SessionExportPalette.palette(for: options.theme)
-        // PDF previews exactly one page; the image format previews the top
-        // strip of the single tall image.
-        let previewHeight = options.format == .pdf ? (pageWidth * 1.4142).rounded() : 900
+        let header = options.includeHeader ? self.header : nil
         let token = UUID()
         previewToken = token
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let layout = SessionExportLayout(blocks: blocks, palette: palette, metrics: metrics)
-            let renderer = SessionExportRenderer(layout: layout, palette: palette, metrics: metrics)
-            let image = renderer.makePreviewImage(maxHeight: previewHeight)
-
-            DispatchQueue.main.async {
-                guard previewToken == token else { return }
-                previewImage = image
-            }
+        Task { @MainActor in
+            await Task.yield()
+            let renderer = SessionExportNativeRenderer(messages: messages,
+                                                       scope: scope,
+                                                       options: options,
+                                                       header: header,
+                                                       vm: vm,
+                                                       adaptiveWidth: adaptiveWidth)
+            let image = renderer.makePreviewImage(maxHeight: 900)
+            guard previewToken == token else { return }
+            previewImage = image
         }
     }
 
@@ -451,15 +447,6 @@ struct SessionShareSheet: View {
 
     // MARK: Actions
 
-    private func makeDocument() -> SessionExportDocument {
-        SessionExportBuilder.build(
-            messages: messages,
-            scope: scope,
-            options: options,
-            header: options.includeHeader ? header : nil
-        )
-    }
-
     private func export() {
         render { result in
             switch result {
@@ -484,33 +471,36 @@ struct SessionShareSheet: View {
 
     private func render(completion: @escaping (Result<SessionExportPayload, Error>) -> Void) {
         guard !isRendering else { return }
-        let document = makeDocument()
-        guard !document.isEmpty else {
+        guard !messages.filter({ scope.contains($0.id) }).isEmpty else {
             completion(.failure(SessionExportError.empty))
             return
         }
 
         let options = self.options
-        let pageWidth = options.width.pageWidth(adaptiveWidth: adaptiveWidth)
-        let metrics = SessionExportMetrics(pageWidth: pageWidth)
-        let palette = SessionExportPalette.palette(for: options.theme)
-
+        let header = options.includeHeader ? self.header : nil
         isRendering = true
         errorText = nil
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let layout = SessionExportLayout(blocks: document.blocks, palette: palette, metrics: metrics)
-            let renderer = SessionExportRenderer(layout: layout, palette: palette, metrics: metrics)
+        // [T-session-share-native] Snapshotting the real chat rows has to run
+        // on the main actor (UIKit). Yield once so the progress overlay gets a
+        // chance to paint before the synchronous render pass begins.
+        Task { @MainActor in
+            await Task.yield()
+
+            let renderer = SessionExportNativeRenderer(messages: messages,
+                                                       scope: scope,
+                                                       options: options,
+                                                       header: header,
+                                                       vm: vm,
+                                                       adaptiveWidth: adaptiveWidth)
 
             let result: Result<SessionExportPayload, Error>
             switch options.format {
             case .image:
                 let images = renderer.makeImages()
-                if images.isEmpty {
-                    result = .failure(SessionExportError.empty)
-                } else {
-                    result = .success(SessionExportPayload(images: images, pdfURL: nil))
-                }
+                result = images.isEmpty
+                    ? .failure(SessionExportError.empty)
+                    : .success(SessionExportPayload(images: images, pdfURL: nil))
             case .pdf:
                 if let data = renderer.makePDFData(), let url = Self.writePDF(data) {
                     result = .success(SessionExportPayload(images: [], pdfURL: url))
@@ -519,10 +509,8 @@ struct SessionShareSheet: View {
                 }
             }
 
-            DispatchQueue.main.async {
-                self.isRendering = false
-                completion(result)
-            }
+            self.isRendering = false
+            completion(result)
         }
     }
 
@@ -558,123 +546,236 @@ enum SessionExportError: LocalizedError {
 
 // MARK: - Range picker
 
+/// [T-share-picker-native] Mirrors the OpenMinis picker: the transcript is
+/// rendered with the real chat rows and each turn is tapped to include or
+/// exclude it. A plain text list made it impossible to tell turns apart once
+/// tool calls and thinking blocks were involved.
 struct SessionExportRangePicker: View {
     let messages: [ChatMessage]
     @Binding var scope: SessionExportScope
+    let vm: AIChatViewModel
+    let options: SessionExportOptions
+
     @Environment(\.dismiss) private var dismiss
 
     @State private var selection: Set<UUID> = []
+    @State private var lastTapped: UUID?
+    @State private var showTools = true
+    @State private var showThinking = true
 
     private var allIDs: Set<UUID> { Set(messages.map(\.id)) }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Button {
-                        if selection.count == messages.count {
-                            selection.removeAll()
-                        } else {
-                            selection = allIDs
-                        }
-                    } label: {
-                        HStack {
-                            Text(String(localized: "Select All"))
-                            Spacer()
-                            Text("\(selection.count)/\(messages.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section {
-                    ForEach(messages, id: \.id) { message in
-                        Button {
-                            toggle(message.id)
-                        } label: {
-                            row(message)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .navigationTitle(String(localized: "Select Messages"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Cancel")) { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Done")) {
-                        scope = selection.count == messages.count ? .all : .selected(selection)
-                        dismiss()
-                    }
-                    .disabled(selection.isEmpty)
-                }
-            }
-            .onAppear {
-                if case .selected(let ids) = scope {
-                    selection = ids
-                } else {
-                    selection = allIDs
-                }
+        VStack(spacing: 0) {
+            headerBar
+            chipBar
+            Divider()
+            transcript
+            shareBar
+        }
+        .background(Color(UIColor.systemBackground))
+        .onAppear {
+            if case .selected(let ids) = scope {
+                selection = ids
+            } else {
+                selection = allIDs
             }
         }
     }
 
-    private func toggle(_ id: UUID) {
-        if selection.contains(id) {
-            selection.remove(id)
-        } else {
-            selection.insert(id)
-        }
-    }
+    // MARK: Header
 
-    private func row(_ message: ChatMessage) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: selection.contains(message.id) ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(selection.contains(message.id) ? Color.accentColor : Color.secondary)
-                .font(.system(size: 18))
-                .padding(.top, 1)
+    private var headerBar: some View {
+        ZStack {
+            Text(String(format: String(localized: "%ld selected"), selection.count))
+                .font(.headline)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(message.role == .user
-                         ? String(localized: "You")
-                         : String(localized: "Assistant"))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(message.timestamp, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+            HStack {
+                Button(String(localized: "Cancel")) { dismiss() }
+                Spacer()
+                Button(selection.count == messages.count
+                       ? String(localized: "Deselect All")
+                       : String(localized: "Select All")) {
+                    selection = selection.count == messages.count ? [] : allIDs
                 }
-                Text(snippet(message))
-                    .font(.footnote)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
             }
         }
-        .contentShape(Rectangle())
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
-    private func snippet(_ message: ChatMessage) -> String {
-        let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            return text.replacingOccurrences(of: "\n", with: " ")
+    // MARK: Chips
+
+    private var chipBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip(String(localized: "Select Below"),
+                     systemImage: "arrow.down.to.line") {
+                    selectBelow()
+                }
+                chip(showTools
+                     ? String(localized: "Collapse Tools")
+                     : String(localized: "Expand Tools"),
+                     systemImage: "arrow.up.and.down.text.horizontal") {
+                    showTools.toggle()
+                }
+                chip(showThinking
+                     ? String(localized: "Hide Thinking")
+                     : String(localized: "Show Thinking"),
+                     systemImage: "brain") {
+                    showThinking.toggle()
+                }
+                chip(String(localized: "Clear Selection"),
+                     systemImage: "xmark") {
+                    selection.removeAll()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
         }
-        if let first = message.blocks.first(where: { block in
-            if case .text = block.kind { return true }
-            return false
-        }) {
-            let blockText = first.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !blockText.isEmpty {
-                return blockText.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private func chip(_ title: String,
+                      systemImage: String,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(Color(UIColor.secondarySystemBackground))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Transcript
+
+    private var transcript: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(messages, id: \.id) { message in
+                    selectableRow(message)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func selectableRow(_ message: ChatMessage) -> some View {
+        let isSelected = selection.contains(message.id)
+
+        return ChatMessageRow(
+            message: pickerCopy(message),
+            isActiveMessage: false,
+            commandStartTime: nil,
+            onStop: nil,
+            onRetry: nil,
+            onEdit: nil,
+            onDelete: nil,
+            onWithdraw: nil,
+            autoRetryAttempt: 0,
+            autoRetryCountdown: 0,
+            canResume: false,
+            onResume: nil,
+            onCompact: nil,
+            onCopyScreenshot: nil,
+            onReadAloud: nil,
+            onShowCompactSummary: nil,
+            onRevertCompact: nil,
+            onToggleUserMessageExpansion: nil,
+            browserPool: nil,
+            toolSnapshots: []
+        )
+        .environmentObject(vm)
+        .padding(.vertical, 2)
+        .opacity(isSelected ? 1 : 0.42)
+        .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear)
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.55))
+                .padding(.top, 8)
+                .padding(.trailing, 10)
+        }
+        .overlay {
+            // The whole row is the checkbox here: swallow taps that would
+            // otherwise open a tool sheet or a context menu.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    lastTapped = message.id
+                    if isSelected {
+                        selection.remove(message.id)
+                    } else {
+                        selection.insert(message.id)
+                    }
+                }
+        }
+    }
+
+    private func pickerCopy(_ message: ChatMessage) -> ChatMessage {
+        let blocks = message.blocks.filter { block in
+            switch block.kind {
+            case .thinking:
+                return showThinking
+            case .text, .info:
+                return true
+            default:
+                return showTools
             }
         }
-        if let name = message.attachments.first?.fileName {
-            return "📎 \(name)"
+
+        let copy = ChatMessage(role: message.role,
+                               content: message.content,
+                               blocks: blocks,
+                               isQueued: false,
+                               timestamp: message.timestamp)
+        copy.attachments = message.attachments
+        copy.inputAttachments = message.inputAttachments
+        copy.firstTokenLatency = message.firstTokenLatency
+        copy.taskDuration = message.taskDuration
+        copy.usage = message.usage
+        copy.isUserTextExpanded = true
+        return copy
+    }
+
+    // MARK: Actions
+
+    private func selectBelow() {
+        guard let anchor = lastTapped ?? messages.last?.id,
+              let index = messages.firstIndex(where: { $0.id == anchor }) else { return }
+        selection.formUnion(messages[index...].map(\.id))
+    }
+
+    private var shareBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button {
+                scope = selection.count == messages.count ? .all : .selected(selection)
+                dismiss()
+            } label: {
+                Label(String(format: String(localized: "Share (%ld)"), selection.count),
+                      systemImage: "square.and.arrow.up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(selection.isEmpty ? Color.secondary.opacity(0.3) : Color.accentColor)
+                    )
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(selection.isEmpty)
+            .padding(16)
         }
-        return "—"
+        .background(Color(UIColor.systemBackground))
     }
 }
 
