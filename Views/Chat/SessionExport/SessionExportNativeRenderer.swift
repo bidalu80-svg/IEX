@@ -143,6 +143,33 @@ final class SessionExportNativeRenderer {
             let copy = exportCopy(of: message)
             guard !copy.blocks.isEmpty || !copy.content.isEmpty else { continue }
 
+            if message.role == .assistant {
+                // The list renders an assistant reply as three separate cells.
+                // Reusing that composition is what keeps the avatar/name row,
+                // the first-token pill, the task duration, the token capsule
+                // and the copy/play/retry bar in the export — exactly what the
+                // copy-screenshot path captures.
+                let bridge = CellStateBridgeV2()
+                bridge.isActiveMessage = false
+                bridge.showUsage = copy.usage != nil
+                bridge.usageContentVisible = true
+                bridge.showsCompletionActions = true
+                // The bar disables these two buttons when their closures are
+                // nil, which would export a greyed-out play/retry pair. The
+                // closures never fire — the turn is rendered offscreen.
+                bridge.onReadAloud = {}
+                bridge.onRetry = {}
+
+                views.append(AnyView(
+                    SessionExportAssistantTurn(message: copy, bridge: bridge, maxWidth: 0)
+                        .environmentObject(vm)
+                        .environment(\.colorScheme, scheme)
+                        .frame(width: pageWidth)
+                        .background(Color(background))
+                ))
+                continue
+            }
+
             views.append(AnyView(
                 ChatMessageRow(
                     message: copy,

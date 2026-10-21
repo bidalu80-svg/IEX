@@ -161,7 +161,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
 /// Header avatar and Ze label at the top of each assistant turn.
 /// Name comes from SOUL.md (user-editable in Soul Settings); the
 /// assistant avatar is fixed for a consistent Ze identity.
-private struct BridgedAssistantHeaderV3: View {
+fileprivate struct BridgedAssistantHeaderV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat = 0
@@ -228,7 +228,7 @@ private struct FirstTokenLatencyPill: View {
 }
 
 /// Disclosure header observing live membership as calls append to a group.
-private struct BridgedAssistantToolGroupV3: View {
+fileprivate struct BridgedAssistantToolGroupV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var firstBlock: AssistantBlock
     @ObservedObject var bridge: CellStateBridgeV2
@@ -255,7 +255,7 @@ private struct BridgedAssistantToolGroupV3: View {
 }
 
 /// Single original block; existing text selection and context menu are retained.
-private struct BridgedAssistantBlockV3: View {
+fileprivate struct BridgedAssistantBlockV3: View {
     @ObservedObject var block: AssistantBlock
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
@@ -396,7 +396,7 @@ private struct BridgedAssistantBlockV3: View {
 /// Footer: typing indicator, error, resume banner, token usage, reply actions.
 /// V3: No GeometryReader. Sheet moved to zero-size overlay to prevent
 /// inflated self-sizing from sheet-capable view modifiers.
-private struct BridgedAssistantFooterV3: View {
+fileprivate struct BridgedAssistantFooterV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat
@@ -788,6 +788,47 @@ private struct BridgedWholeMessageV3: View {
         .frame(maxWidth: maxWidth > 0 ? maxWidth : nil)
         .frame(maxWidth: .infinity)
         .accessibilityIdentifier(message.role == .user ? "userMessage" : "wholeMessage")
+    }
+}
+
+// MARK: - Session export turn
+
+/// [T-session-share-native] One assistant reply, composed from the SAME three
+/// views the message list uses. `ChatMessageRow` alone only covers the blocks,
+/// so exports built from it lost the avatar/name row, the first-token pill,
+/// the task duration, the token capsule and the copy/play/retry bar that the
+/// copy-screenshot path shows.
+struct SessionExportAssistantTurn: View {
+    @ObservedObject var message: ChatMessage
+    @ObservedObject var bridge: CellStateBridgeV2
+    var maxWidth: CGFloat = 0
+
+    private var segments: [AssistantBlockPresentationSegment] {
+        AssistantBlockPresentationSegment.make(message.blocks, enabled: true)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            BridgedAssistantHeaderV3(message: message, bridge: bridge, maxWidth: maxWidth)
+
+            ForEach(segments) { segment in
+                if segment.isToolGroup {
+                    BridgedAssistantToolGroupV3(message: message,
+                                                firstBlock: segment.blocks[0],
+                                                bridge: bridge,
+                                                maxWidth: maxWidth,
+                                                onToggle: {})
+                } else if let block = segment.blocks.first {
+                    BridgedAssistantBlockV3(block: block,
+                                            message: message,
+                                            bridge: bridge,
+                                            maxWidth: maxWidth)
+                }
+            }
+
+            BridgedAssistantFooterV3(message: message, bridge: bridge, maxWidth: maxWidth)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
