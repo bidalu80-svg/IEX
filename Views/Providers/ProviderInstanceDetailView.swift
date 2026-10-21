@@ -674,6 +674,12 @@ struct ProviderInstanceDetailView: View {
 
     // MARK: - API Key Quota
 
+    /// Pool relays report `credits`, not money; showing the raw token would
+    /// read as a currency the provider does not use.
+    private func quotaCurrencyLabel(_ currency: String) -> String {
+        currency.caseInsensitiveCompare("credits") == .orderedSame ? "积分" : currency
+    }
+
     @ViewBuilder
     private func apiKeyQuotaSection(_ instance: ProviderInstance) -> some View {
         let quotaState = quotaStore.state(for: instance.id)
@@ -698,7 +704,7 @@ struct ProviderInstanceDetailView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("API Key 可用额度")
                                 .font(.body.weight(.medium))
-                            Text("余额 · \(quota.currency.caseInsensitiveCompare("credits") == .orderedSame ? "积分" : quota.currency)")
+                            Text("余额 · \(quotaCurrencyLabel(quota.currency))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
