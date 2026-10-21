@@ -218,7 +218,7 @@ struct SessionShareSheet: View {
     }
 
     @ViewBuilder
-    private func routeContent(_ route: SessionExportRoute) -> some View {
+    private func routeContent(_ route: SessionShareRoute) -> some View {
         switch route {
         case .range:
             SessionExportRangePicker(messages: selectableMessages, scope: $scope)
