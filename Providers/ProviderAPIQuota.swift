@@ -426,7 +426,10 @@ enum ProviderAPIQuotaClient {
             .replacingOccurrences(of: "-", with: "")
     }
 
-    private static func decimal(_ value: Any) -> Decimal? {
+    /// Accepts `Any?` on purpose: dictionary lookups (`info["credits"]`) yield
+    /// an optional, and every caller means "nil is not a number".
+    private static func decimal(_ value: Any?) -> Decimal? {
+        guard let value else { return nil }
         if let value = value as? NSNumber {
             guard CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else { return nil }
             return value.decimalValue
