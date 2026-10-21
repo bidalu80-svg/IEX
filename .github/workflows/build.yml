@@ -73,6 +73,18 @@ jobs:
           xcrun swiftc -frontend -parse Providers/ProviderAPIQuota.swift
           xcrun swiftc -frontend -parse Views/Providers/ProviderInstanceDetailView.swift
 
+      - name: Parse session export sources
+        run: |
+          set -euo pipefail
+          for file in \
+            Views/Chat/SessionExport/SessionExportModels.swift \
+            Views/Chat/SessionExport/SessionExportTypography.swift \
+            Views/Chat/SessionExport/SessionExportRenderer.swift \
+            Views/Chat/SessionExport/SessionExportNativeRenderer.swift \
+            Views/Chat/SessionExport/SessionShareSheet.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+
       - name: Test media favorites and preview actions
         run: |
           set -euo pipefail

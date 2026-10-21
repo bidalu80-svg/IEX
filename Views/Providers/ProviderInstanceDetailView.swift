@@ -698,7 +698,7 @@ struct ProviderInstanceDetailView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("API Key 可用额度")
                                 .font(.body.weight(.medium))
-                            Text("余额 · \(quota.currency)")
+                            Text("余额 · \(quota.currency.caseInsensitiveCompare("credits") == .orderedSame ? "积分" : quota.currency)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

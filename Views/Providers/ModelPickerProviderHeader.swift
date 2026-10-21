@@ -22,18 +22,20 @@ struct ModelPickerProviderHeader: View {
         formatter.maximumFractionDigits = amount != 0 && abs(NSDecimalNumber(decimal: amount).doubleValue) < 0.01 ? 4 : 2
         let magnitude = amount < 0 ? -amount : amount
         let digits = formatter.string(from: NSDecimalNumber(decimal: magnitude)) ?? "\(magnitude)"
+        let sign = amount < 0 ? "-" : ""
         // Do not let ICU insert a currency-spacing NBSP between US$ and digits;
         // the compact picker badge must match the reference across iOS versions.
-        let prefix: String
+        // `credits` comes from pool relays (WorkBuddy and friends) whose unit is
+        // an account credit, not money, so it reads as a suffix.
         switch currency.uppercased() {
-        case "USD": prefix = "US$"
-        case "CNY": prefix = "¥"
-        case "EUR": prefix = "€"
-        case "GBP": prefix = "£"
-        case "JPY": prefix = "JP¥"
-        default: prefix = currency.uppercased() + " "
+        case "USD": return sign + "US$" + digits
+        case "CNY": return sign + "¥" + digits
+        case "EUR": return sign + "€" + digits
+        case "GBP": return sign + "£" + digits
+        case "JPY": return sign + "JP¥" + digits
+        case "CREDITS": return sign + digits + " 积分"
+        default: return sign + currency.uppercased() + " " + digits
         }
-        return (amount < 0 ? "-" : "") + prefix + digits
     }
 
     var body: some View {

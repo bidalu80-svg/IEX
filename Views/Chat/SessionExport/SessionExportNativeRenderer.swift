@@ -30,8 +30,6 @@ final class SessionExportNativeRenderer {
     /// Sanity cap for one offscreen row. A collapsed tool list keeps rows
     /// short, so this only guards against pathological text dumps.
     private static let maxRowHeight: CGFloat = 20_000
-    /// Longest tool output embedded in the optional input/result cards.
-    private static let maxToolOutput = 2_000
 
     private let messages: [ChatMessage]
     private let scope: SessionExportScope
@@ -89,42 +87,42 @@ final class SessionExportNativeRenderer {
     /// Vector PDF: the rendered rows are drawn page by page. Text stays
     /// raster because the source is a snapshot of the live view hierarchy —
     /// that is the price of matching the chat UI pixel for pixel.
+    /// Paginated PDF. The rows are already raster (they are snapshots of the
+    /// live view hierarchy), so pages are drawn with `UIGraphicsPDFRenderer`:
+    /// it owns the PDF y-up coordinate flip, which a raw `CGPDFContext` does
+    /// not — drawing straight into `CGContext` produced an upside-down page.
     func makePDFData() -> Data? {
         let rows = makeRowImages()
         guard !rows.isEmpty else { return nil }
         let long = Self.stitch(rows, background: background, width: pageWidth)
 
         let pageSize = CGSize(width: pageWidth, height: (pageWidth * 1.4142).rounded())
-        let data = NSMutableData()
-        guard let consumer = CGDataConsumer(data: data as CFMutableData) else { return nil }
-        var mediaBox = CGRect(origin: .zero, size: pageSize)
-        guard let ctx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { return nil }
-
+        let pageRect = CGRect(origin: .zero, size: pageSize)
         let scale = long.scale
         let pixelHeight = long.size.height * scale
         let pixelPage = pageSize.height * scale
         var offset: CGFloat = 0
 
-        while offset < pixelHeight {
-            ctx.beginPDFPage(nil)
-            background.setFill()
-            ctx.fill(mediaBox)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        return renderer.pdfData { ctx in
+            while offset < pixelHeight {
+                ctx.beginPage()
+                background.setFill()
+                ctx.fill(pageRect)
 
-            let sliceHeight = min(pixelPage, pixelHeight - offset)
-            if let slice = long.cgImage?.cropping(to: CGRect(x: 0,
-                                                            y: offset,
-                                                            width: long.size.width * scale,
-                                                            height: sliceHeight)) {
-                let image = UIImage(cgImage: slice, scale: scale, orientation: .up)
-                UIGraphicsPushContext(ctx)
-                image.draw(in: CGRect(x: 0, y: 0, width: pageWidth, height: sliceHeight / scale))
-                UIGraphicsPopContext()
+                let sliceHeight = min(pixelPage, pixelHeight - offset)
+                if let slice = long.cgImage?.cropping(to: CGRect(x: 0,
+                                                                y: offset,
+                                                                width: long.size.width * scale,
+                                                                height: sliceHeight)) {
+                    let image = UIImage(cgImage: slice, scale: scale, orientation: .up)
+                    image.draw(in: CGRect(x: 0, y: 0,
+                                          width: pageWidth,
+                                          height: sliceHeight / scale))
+                }
+                offset += pixelPage
             }
-            ctx.endPDFPage()
-            offset += pixelPage
         }
-        ctx.closePDF()
-        return data as Data
     }
 
     // MARK: - Row rendering
@@ -172,18 +170,6 @@ final class SessionExportNativeRenderer {
                 .background(Color(background))
             ))
 
-            if options.includeToolCalls, options.includeToolIO {
-                for block in copy.blocks where block.kind.isToolCall {
-                    views.append(AnyView(
-                        SessionExportToolDetailCard(block: block,
-                                                    scheme: scheme,
-                                                    maxOutput: Self.maxToolOutput)
-                            .environment(\.colorScheme, scheme)
-                            .frame(width: pageWidth)
-                            .background(Color(background))
-                    ))
-                }
-            }
         }
 
         guard let host = OffscreenHost(width: pageWidth,
@@ -416,73 +402,5 @@ private struct SessionExportHeaderCard: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: header.date)
-    }
-}
-
-// MARK: - Tool input / result card
-
-/// Optional inline detail for a tool step. The live chat shows these in a
-/// sheet; the export flattens the same information into a compact card.
-private struct SessionExportToolDetailCard: View {
-    let block: AssistantBlock
-    let scheme: ColorScheme
-    let maxOutput: Int
-
-    private var secondary: Color {
-        scheme == .dark ? Color(white: 0.66) : Color(white: 0.38)
-    }
-
-    private var cardFill: Color {
-        scheme == .dark ? Color(white: 0.13) : Color(UIColor.secondarySystemBackground)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(block.toolDescription)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Text(statusText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(secondary)
-            }
-
-            if let input = block.toolInputArgs, !input.isEmpty {
-                section(String(localized: "Input"), text: String(input.prefix(maxOutput)))
-            }
-
-            if !block.content.isEmpty {
-                section(String(localized: "Result"), text: String(block.content.prefix(maxOutput)))
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(cardFill))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-    }
-
-    private func section(_ title: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(secondary)
-            Text(text)
-                .font(.system(size: 11, design: .monospaced))
-                .lineLimit(40)
-                .textSelection(.enabled)
-        }
-    }
-
-    private var statusText: String {
-        switch block.toolStatus {
-        case .success: return String(localized: "Succeeded")
-        case .failed:  return String(localized: "Failed")
-        case .cancelled: return String(localized: "Cancelled")
-        case .running, .streaming: return String(localized: "Running")
-        case .none: return String(localized: "Done")
-        }
     }
 }

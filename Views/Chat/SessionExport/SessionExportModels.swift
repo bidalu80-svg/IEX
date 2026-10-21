@@ -86,8 +86,6 @@ struct SessionExportOptions: Equatable {
     var includeToolCalls: Bool = true
     /// Include the model's "thinking" blocks.
     var includeThinking: Bool = false
-    /// Include a tool card's raw input arguments and its execution output.
-    var includeToolIO: Bool = true
     /// Include the avatar / title / model name / date header.
     var includeHeader: Bool = true
 }
@@ -160,9 +158,7 @@ struct SessionExportDocument {
 @MainActor
 enum SessionExportBuilder {
 
-    /// Hard caps so one runaway tool result can't produce a 50 MB image.
-    private static let maxToolOutput = 4_000
-    private static let maxToolInput = 2_000
+    /// Hard cap so one runaway thinking block can't produce a 50 MB image.
     private static let maxThinking = 6_000
 
     static func build(messages: [ChatMessage],
@@ -232,7 +228,7 @@ enum SessionExportBuilder {
             case .shellTool, .fileReadTool, .fileWriteTool, .fileEditTool,
                  .browserTool, .readImageTool, .memoryTool:
                 guard options.includeToolCalls else { continue }
-                out.append(.tool(tool(for: block, includeIO: options.includeToolIO)))
+                out.append(.tool(tool(for: block)))
             }
         }
 
@@ -244,7 +240,7 @@ enum SessionExportBuilder {
         return out
     }
 
-    private static func tool(for block: AssistantBlock, includeIO: Bool) -> SessionExportTool {
+    private static func tool(for block: AssistantBlock) -> SessionExportTool {
         let statusText: String
         var isFailure = false
         var isPending = false
@@ -270,19 +266,10 @@ enum SessionExportBuilder {
             statusText = String(localized: "Done")
         }
 
-        let input: String? = includeIO
-            ? block.toolInputArgs.flatMap { raw -> String? in
-                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : truncate(trimmed, limit: maxToolInput)
-            }
-            : nil
-
-        let output: String? = includeIO
-            ? {
-                let trimmed = block.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : truncate(trimmed, limit: maxToolOutput)
-            }()
-            : nil
+        // The export renders the live chat rows, where tool steps are collapsed
+        // chips. Raw arguments and outputs stay out of the image entirely.
+        let input: String? = nil
+        let output: String? = nil
 
         return SessionExportTool(
             name: toolDisplayName(for: block.kind),
