@@ -156,59 +156,14 @@ struct SessionShareSheet: View {
                 }
                 .navigationTitle(String(localized: "Share Session"))
                 .navigationBarTitleDisplayMode(.inline)
-                // [T-share-toolbar-ambiguous] Three ToolbarItems in one
-                // `toolbar(content:)` closure made overload resolution
-                // ambiguous on the CI toolchain (Xcode 16.4) — the builder
-                // could not pick between the ToolbarContentBuilder overloads
-                // when the closure also sits on a Form this large. One
-                // modifier per item keeps each closure single-item, which
-                // resolves unambiguously and merges into the same bar.
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(String(localized: "Cancel")) { dismiss() }
-                    }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            preview()
-                        } label: {
-                            Image(systemName: "eye")
-                        }
-                        .disabled(isRendering || selectedCount == 0)
-                    }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button {
-                            export()
-                        } label: {
-                            Group {
-                                if isRendering {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "square.and.arrow.up")
-                                }
-                            }
-                        }
-                        .disabled(isRendering || selectedCount == 0)
-                    }
-                }
+                .toolbar { shareToolbar }
                 .overlay {
                     if isRendering {
                         Color.black.opacity(0.05).ignoresSafeArea()
                     }
                 }
                 .sheet(item: $route) { route in
-                    switch route {
-                    case .range:
-                        SessionExportRangePicker(messages: selectableMessages, scope: $scope)
-                    case .share(let payload):
-                        SessionExportActivityView(items: payload.shareItems)
-                            .ignoresSafeArea()
-                    case .preview(let payload):
-                        SessionExportPreviewSheet(payload: payload, title: header.title)
-                    }
+                    routeContent(route)
                 }
             }
         }
@@ -221,6 +176,57 @@ struct SessionShareSheet: View {
         }
         .onAppear {
             schedulePreview()
+        }
+    }
+
+    // MARK: Toolbar
+
+    /// [T-share-toolbar-ambiguous] Kept out of `body` as an explicitly typed
+    /// `ToolbarContent` value. Inline, `toolbar(content:)` had two viable
+    /// overloads — the `@ViewBuilder` one and the `@ToolbarContentBuilder`
+    /// one — and the compiler gave up on the whole chain rather than picking
+    /// the latter (Xcode 16.4, iOS 18.5 SDK). Returning an opaque
+    /// `some ToolbarContent` makes the `View` overload inapplicable, and it
+    /// also keeps `body` short enough for the type checker.
+    @ToolbarContentBuilder
+    private var shareToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button(String(localized: "Cancel")) { dismiss() }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                preview()
+            } label: {
+                Image(systemName: "eye")
+            }
+            .disabled(isRendering || selectedCount == 0)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button {
+                export()
+            } label: {
+                Group {
+                    if isRendering {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+            .disabled(isRendering || selectedCount == 0)
+        }
+    }
+
+    @ViewBuilder
+    private func routeContent(_ route: SessionExportRoute) -> some View {
+        switch route {
+        case .range:
+            SessionExportRangePicker(messages: selectableMessages, scope: $scope)
+        case .share(let payload):
+            SessionExportActivityView(items: payload.shareItems)
+                .ignoresSafeArea()
+        case .preview(let payload):
+            SessionExportPreviewSheet(payload: payload, title: header.title)
         }
     }
 
@@ -496,7 +502,9 @@ struct SessionShareSheet: View {
         }
     }
 
-    private static func writePDF(_ data: Data) -> URL? {
+    /// `nonisolated` because it runs inside the background render closure;
+    /// without it the call is main-actor isolated and Swift 6 rejects it.
+    nonisolated private static func writePDF(_ data: Data) -> URL? {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = "Ze-Session-\(formatter.string(from: Date())).pdf"
