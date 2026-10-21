@@ -102,6 +102,41 @@ private enum SessionShareRoute: Identifiable {
     }
 }
 
+// [T-share-toolbar-ambiguous] Concrete `ToolbarContent` so `toolbar(content:)`
+// can only resolve to the `ToolbarContentBuilder` overload. See the note on
+// `SessionShareSheet.formContent`.
+private struct SessionShareToolbar: ToolbarContent {
+    let isRendering: Bool
+    let isDisabled: Bool
+    let onCancel: () -> Void
+    let onPreview: () -> Void
+    let onExport: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button(action: onCancel) {
+                Text(String(localized: "Cancel"))
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button(action: onPreview) {
+                Image(systemName: "eye")
+            }
+            .disabled(isDisabled)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button(action: onExport) {
+                if isRendering {
+                    ProgressView()
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+            .disabled(isDisabled)
+        }
+    }
+}
+
 @MainActor
 struct SessionShareSheet: View {
     let messages: [ChatMessage]
@@ -140,31 +175,26 @@ struct SessionShareSheet: View {
             VStack(spacing: 0) {
                 previewPanel
 
-                Form {
-                    formatSection
-                    appearanceSection
-                    contentSection
-                    rangeSection
-
-                    if let errorText {
-                        Section {
-                            Text(errorText)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
+                formContent
+                    .navigationTitle(String(localized: "Share Session"))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        SessionShareToolbar(
+                            isRendering: isRendering,
+                            isDisabled: isRendering || selectedCount == 0,
+                            onCancel: { dismiss() },
+                            onPreview: { preview() },
+                            onExport: { export() }
+                        )
+                    }
+                    .overlay {
+                        if isRendering {
+                            Color.black.opacity(0.05).ignoresSafeArea()
                         }
                     }
-                }
-                .navigationTitle(String(localized: "Share Session"))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { shareToolbar }
-                .overlay {
-                    if isRendering {
-                        Color.black.opacity(0.05).ignoresSafeArea()
+                    .sheet(item: $route) { route in
+                        routeContent(route)
                     }
-                }
-                .sheet(item: $route) { route in
-                    routeContent(route)
-                }
             }
         }
         .onChange(of: options) { _, newValue in
@@ -181,39 +211,29 @@ struct SessionShareSheet: View {
 
     // MARK: Toolbar
 
-    /// [T-share-toolbar-ambiguous] Kept out of `body` as an explicitly typed
-    /// `ToolbarContent` value. Inline, `toolbar(content:)` had two viable
-    /// overloads — the `@ViewBuilder` one and the `@ToolbarContentBuilder`
-    /// one — and the compiler gave up on the whole chain rather than picking
-    /// the latter (Xcode 16.4, iOS 18.5 SDK). Returning an opaque
-    /// `some ToolbarContent` makes the `View` overload inapplicable, and it
-    /// also keeps `body` short enough for the type checker.
-    @ToolbarContentBuilder
-    private var shareToolbar: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button(String(localized: "Cancel")) { dismiss() }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                preview()
-            } label: {
-                Image(systemName: "eye")
-            }
-            .disabled(isRendering || selectedCount == 0)
-        }
-        ToolbarItem(placement: .confirmationAction) {
-            Button {
-                export()
-            } label: {
-                Group {
-                    if isRendering {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "square.and.arrow.up")
-                    }
+    /// [T-share-toolbar-ambiguous] `toolbar(content:)` ships two generic
+    /// overloads on iOS 16 — one taking `@ViewBuilder` content constrained to
+    /// `View`, one taking `@ToolbarContentBuilder` content constrained to
+    /// `ToolbarContent`. Writing the items inline, or behind an opaque
+    /// `some ToolbarContent` property, left the compiler unable to discard the
+    /// `View` overload (opaque results are opened inside their own module), so
+    /// it reported "ambiguous use of 'toolbar(content:)'" on Xcode 16.4 /
+    /// iOS 18.5 SDK. A concrete `ToolbarContent` type cannot satisfy
+    /// `Content: View`, which makes the choice unambiguous.
+    private var formContent: some View {
+        Form {
+            formatSection
+            appearanceSection
+            contentSection
+            rangeSection
+
+            if let errorText {
+                Section {
+                    Text(errorText)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 }
             }
-            .disabled(isRendering || selectedCount == 0)
         }
     }
 
