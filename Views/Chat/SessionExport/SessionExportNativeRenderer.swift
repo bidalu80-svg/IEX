@@ -342,8 +342,16 @@ private struct SessionExportHeaderCard: View {
     let header: SessionExportHeader
     let scheme: ColorScheme
 
+    /// Sampled from ZeAssistantAvatar so the wordmark matches the mark:
+    /// violet (#5A5CFF) on the left of the ghost, cyan (#239CF6) on the right.
+    private var brandColor: Color { Color(red: 0.35, green: 0.36, blue: 1.0) }
+
     private var secondary: Color {
         scheme == .dark ? Color(white: 0.66) : Color(white: 0.38)
+    }
+
+    private var primaryText: Color {
+        scheme == .dark ? .white : .black
     }
 
     var body: some View {
@@ -352,9 +360,11 @@ private struct SessionExportHeaderCard: View {
                 avatar
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(header.title)
-                        .font(.system(size: 17, weight: .semibold))
+                    // Wordmark rides on the title line: a separate brand row
+                    // pushed the first message too far down in the export.
+                    titleLine
                         .lineLimit(2)
+
                     HStack(spacing: 6) {
                         Text(header.modelName)
                         if let provider = header.providerName, !provider.isEmpty {
@@ -379,6 +389,18 @@ private struct SessionExportHeaderCard: View {
         .background(Color(UIColor.systemBackground))
     }
 
+    private var titleLine: Text {
+        Text("Ze")
+            .font(.system(size: 17, weight: .heavy))
+            .foregroundColor(brandColor)
+        + Text(" · ")
+            .font(.system(size: 17, weight: .regular))
+            .foregroundColor(secondary)
+        + Text(header.title)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundColor(primaryText)
+    }
+
     @ViewBuilder
     private var avatar: some View {
         if let image = header.avatar {
@@ -392,10 +414,13 @@ private struct SessionExportHeaderCard: View {
                 .font(.system(size: 24))
                 .frame(width: 34, height: 34)
         } else {
-            Image(systemName: "sparkles")
-                .font(.system(size: 16, weight: .medium))
+            // The ghost mark itself carries the gradient; it has a transparent
+            // interior, so it reads correctly on both export themes.
+            Image("ZeAssistantAvatar")
+                .resizable()
+                .scaledToFit()
                 .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(UIColor.secondarySystemBackground)))
+                .accessibilityLabel("Ze")
         }
     }
 
