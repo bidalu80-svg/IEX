@@ -156,12 +156,210 @@ final class AOJITAcceleration: ObservableObject {
             id: "pillow",
             name: "Pillow",
             paths: "PIL._imaging (python3 -c \"from PIL import Image\")",
-            summary: String(localized: "Image work with Pillow: opening and decoding images, resizing, blurring and sharpening."),
-            package: "python3",
-            repairVersion: "3.12.15-r0",
+            summary: String(localized: "Image work with Pillow: opening and decoding images, resizing, blurring and sharpening filters, and colour conversion."),
+            package: "py3-pillow",
+            repairVersion: "11.0.0-r0",
             probe: "python3 -c \"import PIL\" >/dev/null 2>&1",
             warmup: "python3 -c \"from PIL import Image; Image.new('RGB', (8, 8))\"",
             timeout: 25
+        ),
+        AOJITLibrary(
+            id: "libwebp",
+            name: "libwebp",
+            paths: "/usr/lib/libwebp.so.7 (Pillow's WebP support)",
+            summary: String(localized: "Saving and opening WebP images with Pillow. libwebp leans on vector instructions, which are still emulated, so the gain is small."),
+            package: "libwebp",
+            repairVersion: "1.4.0-r0",
+            probe: "apk info -e libwebp >/dev/null 2>&1",
+            warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libwebp.so.7')\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "libjpeg",
+            name: "libjpeg-turbo",
+            paths: "/usr/lib/libjpeg.so.8 (Pillow's JPEG support)",
+            summary: String(localized: "Saving and opening JPEG images with Pillow. libjpeg-turbo leans on vector instructions, which are still emulated, so the gain is small."),
+            package: "libjpeg-turbo",
+            repairVersion: "3.0.4-r0",
+            probe: "apk info -e libjpeg-turbo >/dev/null 2>&1",
+            warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libjpeg.so.8')\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "numpy",
+            name: "NumPy",
+            paths: "numpy._core._multiarray_umath (python3 -c \"import numpy\")",
+            summary: String(localized: "NumPy array work in Python: array arithmetic, reductions such as sum and mean, sorting and indexing (also underneath pandas and matplotlib). Linear algebra runs in OpenBLAS, which has no image."),
+            package: "py3-numpy",
+            repairVersion: "2.1.3-r0",
+            probe: "python3 -c \"import numpy\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import numpy as np; np.arange(1000).sum()\"",
+            timeout: 30
+        ),
+        AOJITLibrary(
+            id: "zlib",
+            name: "zlib",
+            paths: "/usr/lib/libz.so.1",
+            summary: String(localized: "Compression and decompression: PNG images, Python's zlib and gzip modules, pip unpacking wheels, and any other program using zlib."),
+            package: "zlib",
+            repairVersion: "1.3.1-r2",
+            probe: "apk info -e zlib >/dev/null 2>&1",
+            warmup: "python3 -c \"import zlib; zlib.compress(b'x' * 4096)\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "sqlite",
+            name: "SQLite",
+            paths: "/usr/lib/libsqlite3.so.0 (python3 sqlite3, node:sqlite)",
+            summary: String(localized: "SQLite databases in Python (sqlite3), Node (node:sqlite) and other programs: inserts, indexed and range queries, full-text search and JSON functions."),
+            package: "sqlite-libs",
+            repairVersion: "3.48.0-r4",
+            probe: "apk info -e sqlite-libs >/dev/null 2>&1",
+            warmup: "python3 -c \"import sqlite3; sqlite3.connect(':memory:').execute('create table t(a)')\"",
+            timeout: 25
+        ),
+        AOJITLibrary(
+            id: "libcrypto",
+            name: "OpenSSL libcrypto",
+            paths: "/usr/lib/libcrypto.so.3 (python3 ssl/hashlib, curl, git, node)",
+            summary: String(localized: "HTTPS and cryptography: TLS handshakes, certificate checks and hashing (Python hashlib and ssl, curl, git, pip, node https). Bulk AES-GCM encrypt/decrypt gains little."),
+            package: "libcrypto3",
+            repairVersion: "3.3.2-r4",
+            probe: "apk info -e libcrypto3 >/dev/null 2>&1",
+            warmup: "python3 -c \"import hashlib; hashlib.sha256(b'x').hexdigest()\"",
+            timeout: 25
+        ),
+        AOJITLibrary(
+            id: "libssl",
+            name: "OpenSSL libssl",
+            paths: "/usr/lib/libssl.so.3",
+            summary: String(localized: "The TLS protocol layer behind HTTPS, used together with libcrypto; most of the HTTPS gain comes from libcrypto."),
+            package: "libssl3",
+            repairVersion: "3.3.2-r4",
+            probe: "apk info -e libssl3 >/dev/null 2>&1",
+            warmup: "python3 -c \"import ssl\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pcre2",
+            name: "PCRE2",
+            paths: "/usr/lib/libpcre2-8.so.0 (git grep -P, grep -P, rg -P)",
+            summary: String(localized: "Only searches that explicitly use PCRE regexes benefit: git grep -P, GNU grep -P and rg -P / --pcre2. ripgrep's default search does not use PCRE2, and jq uses another regex library, so neither benefits."),
+            package: "pcre2",
+            repairVersion: "10.43-r0",
+            probe: "apk info -e pcre2 >/dev/null 2>&1",
+            warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libpcre2-8.so.0')\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "ssh",
+            name: "OpenSSH ssh",
+            paths: "/usr/bin/ssh (also under scp, sftp, rsync and git over SSH)",
+            summary: String(localized: "ssh logins and remote commands, plus every tool that connects through ssh: scp, sftp, rsync and git over SSH. Each new connection's handshake gets faster; the data itself is encrypted in libcrypto."),
+            package: "openssh-client-default",
+            repairVersion: "9.9_p2-r0",
+            probe: "apk info -e openssh-client-default >/dev/null 2>&1",
+            warmup: "/usr/bin/ssh -V",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "scp",
+            name: "OpenSSH scp",
+            paths: "/usr/bin/scp",
+            summary: String(localized: "Copying files with scp. Most of the gain comes from the ssh connection scp opens, and ssh has its own image."),
+            package: "openssh-client-common",
+            repairVersion: "9.9_p2-r0",
+            probe: "apk info -e openssh-client-common >/dev/null 2>&1",
+            warmup: "/usr/bin/ssh -V",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pyjson",
+            name: "Python json",
+            paths: "_json (import json)",
+            summary: String(localized: "json.loads and json.dumps in Python scripts and python3 -c one-liners."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import json\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import json; json.loads('{\\\"a\\\": 1}')\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pyhashlib",
+            name: "Python hashlib",
+            paths: "_hashlib (import hashlib)",
+            summary: String(localized: "Python hashlib digests such as sha256 and md5; the hashing itself runs in libcrypto."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import hashlib\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import hashlib; hashlib.sha256(b'x').digest()\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pyblake2",
+            name: "Python blake2",
+            paths: "_blake2 (hashlib.blake2b / blake2s)",
+            summary: String(localized: "hashlib.blake2b and hashlib.blake2s in Python."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import _blake2\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import hashlib; hashlib.blake2b(b'x').digest()\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pystruct",
+            name: "Python struct",
+            paths: "_struct (import struct)",
+            summary: String(localized: "struct.pack and struct.unpack: reading and writing binary data in Python."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import struct\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import struct; struct.pack('i', 1)\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pydatetime",
+            name: "Python datetime",
+            paths: "_datetime (import datetime)",
+            summary: String(localized: "Parsing, formatting and calculating dates and times with Python's datetime."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import datetime\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import datetime; datetime.datetime.now()\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pybinascii",
+            name: "Python binascii",
+            paths: "binascii (import base64, binascii)",
+            summary: String(localized: "Base64, hex and CRC conversions in Python (base64 and binascii)."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import binascii\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import base64, binascii; base64.b64encode(b'x')\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pymath",
+            name: "Python math",
+            paths: "math (import math)",
+            summary: String(localized: "Python's math module."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import math\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import math; math.sqrt(2)\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pyzlib",
+            name: "Python zlib",
+            paths: "zlib (import zlib, gzip, zipfile)",
+            summary: String(localized: "Compression in Python (zlib, gzip, zipfile); the compression itself runs in libz."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import zlib\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import zlib; zlib.compress(b'x' * 4096)\"",
+            timeout: 20
         ),
         AOJITLibrary(
             id: "pysocket",
@@ -228,7 +426,7 @@ final class AOJITAcceleration: ObservableObject {
     private let queue = DispatchQueue(label: "com.ze.aojit.record", qos: .utility)
     private let logger = AppLogger(category: "AOJIT")
 
-    private static let probeScript = #"for p in musl busybox python3 nodejs; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(apk info -v "$p" 2>/dev/null | head -n 1)"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
+    private static let probeScript = #"for p in musl busybox python3 nodejs py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(apk info -v "$p" 2>/dev/null | head -n 1)"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
 
     private init() {
         let defaults = UserDefaults.standard
@@ -394,9 +592,15 @@ final class AOJITAcceleration: ObservableObject {
                 )
                 let elapsed = Int(Date().timeIntervalSince(start) * 1000)
 
-                guard result?.exitCode == 0, let version = state.installedVersion else {
+                guard let version = state.installedVersion else {
                     failed.insert(state.id)
                     continue
+                }
+                if result?.exitCode != 0 {
+                    // Best-effort: a missing helper (python3 for the C
+                    // libraries) must not leave an installed library stuck on
+                    // "preparing" forever.
+                    self?.logger.info("AOJIT warm-up \(state.id) exited \(result?.exitCode ?? -1)")
                 }
                 fresh.append(Recording(id: state.id,
                                        version: version,

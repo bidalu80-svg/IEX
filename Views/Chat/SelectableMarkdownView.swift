@@ -4601,6 +4601,83 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     /// LazyVStack / SwiftUI is still settling.
     var hasScheduledRecoveryForCurrentContent = false
 
+    // [T-chat-search] Query currently painted and the text length it was
+    // painted at, so a SwiftUI update can skip the work when nothing changed.
+    private var appliedSearchQuery: String = ""
+    private var lastHighlightedLength: Int = -1
+    private var searchCancellable: AnyCancellable?
+    private var observesSearchStore = false
+    /// Marks the background ranges this view painted, so they can be removed
+    /// without touching any background the markdown itself carries.
+    private static let searchHighlightKey = NSAttributedString.Key("ZeSearchHighlight")
+
+    /// Re-paint match backgrounds for a new query without re-rendering the
+    /// markdown. Idempotent: only our own ranges are removed and re-added.
+    func applySearchHighlight(query: String) {
+        observeSearchStoreIfNeeded()
+
+        let current = super.attributedText
+        let length = current?.length ?? 0
+        guard query != appliedSearchQuery || length != lastHighlightedLength else { return }
+        appliedSearchQuery = query
+        lastHighlightedLength = length
+        guard let current, length > 0 else { return }
+
+        let mutable = NSMutableAttributedString(attributedString: current)
+        let full = NSRange(location: 0, length: mutable.length)
+
+        var stale: [NSRange] = []
+        mutable.enumerateAttribute(Self.searchHighlightKey, in: full, options: []) { value, range, _ in
+            if value != nil { stale.append(range) }
+        }
+        for range in stale {
+            mutable.removeAttribute(.backgroundColor, range: range)
+            mutable.removeAttribute(Self.searchHighlightKey, range: range)
+        }
+
+        let keywords = ChatSearchEngine.keywords(in: query)
+        if !keywords.isEmpty {
+            let text = mutable.string as NSString
+            var painted = 0
+            for keyword in keywords {
+                var searchRange = NSRange(location: 0, length: text.length)
+                while searchRange.length > 0 {
+                    let found = text.range(of: keyword,
+                                           options: [.caseInsensitive, .diacriticInsensitive],
+                                           range: searchRange)
+                    if found.location == NSNotFound { break }
+
+                    mutable.addAttribute(.backgroundColor,
+                                         value: UIColor.tintColor.withAlphaComponent(0.22),
+                                         range: found)
+                    mutable.addAttribute(Self.searchHighlightKey, value: true, range: found)
+                    painted += 1
+                    let next = found.location + max(found.length, 1)
+                    if next >= text.length || painted >= 400 { break }
+                    searchRange = NSRange(location: next, length: text.length - next)
+                }
+                if painted >= 400 { break }
+            }
+        }
+
+        super.attributedText = mutable
+    }
+
+    /// Subscribes once, on first render. Query changes then repaint even while
+    /// the cell is not being re-evaluated by SwiftUI — UIKit cells built with
+    /// `UIHostingConfiguration` do not inherit the chat's environment, so the
+    /// store is the only signal that reaches them.
+    private func observeSearchStoreIfNeeded() {
+        guard !observesSearchStore else { return }
+        observesSearchStore = true
+        searchCancellable = ChatSearchHighlightStore.shared.publisher
+            .removeDuplicates()
+            .debounce(for: .milliseconds(120), scheduler: DispatchQueue.main)
+            .sink { [weak self] query in
+                self?.applySearchHighlight(query: query)
+            }
+    }
+
     /// Invoked when the user picks "Copy Screenshot" from the text selection menu.
     /// Set by the SwiftUI layer so the menu item can reach the owning turn.
     var onCopyScreenshot: (() -> Void)?
@@ -6577,6 +6654,9 @@ struct SelectableMarkdownView: UIViewRepresentable {
         textView.onCopyScreenshot = onCopyScreenshot
         textView.onReadAloud = onReadAloud
         textView.onSpeakText = onSpeakText
+        // [T-chat-search] Runs before the markdown-unchanged early return so a
+        // query change re-colours the visible text without re-rendering it.
+        textView.applySearchHighlight(query: ChatSearchHighlightStore.shared.query)
 
         let currentFontSize = FontSettings.shared.scaledMessage(16.5)
         let fontChanged = context.coordinator.lastFontSize != currentFontSize

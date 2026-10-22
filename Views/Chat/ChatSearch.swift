@@ -156,6 +156,32 @@ enum ChatSearchEngine {
     }
 }
 
+// MARK: - In-place highlight
+
+/// Shared query for the in-place highlight.
+///
+/// Deliberately not an `@Environment` value: the transcript is a UIKit
+/// collection view, and each cell is built with its own
+/// `UIHostingConfiguration`, which creates an independent SwiftUI environment
+/// (the file already documents this for `vm`). A store is the only path that
+/// actually reaches the text views inside those cells.
+final class ChatSearchHighlightStore {
+    static let shared = ChatSearchHighlightStore()
+
+    private let subject = CurrentValueSubject<String, Never>("")
+    private(set) var query: String = ""
+
+    var publisher: AnyPublisher<String, Never> { subject.eraseToAnyPublisher() }
+
+    private init() {}
+
+    func set(_ newValue: String) {
+        guard newValue != query else { return }
+        query = newValue
+        subject.send(newValue)
+    }
+}
+
 // MARK: - Highlight
 
 enum ChatSearchHighlight {

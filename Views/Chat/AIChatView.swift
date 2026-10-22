@@ -5661,6 +5661,18 @@ private struct ChatSearchPresentation: ViewModifier {
                     model.bind(messages: messages)
                 }
             }
+            .onChange(of: model.query) { newValue in
+                // [T-chat-search] Paints the reply body itself. The store is
+                // used instead of the environment because the transcript's
+                // UIKit cells do not inherit it.
+                ChatSearchHighlightStore.shared.set(isPresented ? newValue : "")
+            }
+            .onChange(of: isPresented) { presented in
+                ChatSearchHighlightStore.shared.set(presented ? model.query : "")
+            }
+            .onDisappear {
+                ChatSearchHighlightStore.shared.set("")
+            }
     }
 }
 
