@@ -37,6 +37,9 @@ struct ChatSearchHit: Identifiable, Equatable {
     let keywords: [String]
     /// True when the line came from a tool's output rather than prose.
     let isToolOutput: Bool
+    /// Owning block, so the jump can target the exact cell instead of the
+    /// first cell of the message (which is the thinking header).
+    let blockId: UUID?
 }
 
 // MARK: - Engine
