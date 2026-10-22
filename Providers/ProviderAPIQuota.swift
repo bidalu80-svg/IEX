@@ -100,12 +100,17 @@ final class ProviderAPIQuotaStore: ObservableObject {
 
 @MainActor
 enum ProviderAPIQuotaClient {
-    /// One probe target. Paths are relative to the provider root (the base
-    /// URL with a trailing `/v1` stripped), because the shapes below live at
-    /// different depths: `/status` at the root, `/v1/credits` one level in.
+    /// One probe target.
+    ///
+    /// `includesV1` reproduces the original URL building exactly: when the
+    /// instance asks for the `/v1` suffix the path is inserted one level
+    /// deeper (`<base>/v1/usage`), otherwise it is appended to the base as-is.
+    /// Gateway shapes below leave it `false` because their routes are
+    /// absolute (`/status`, `/api/user/self`).
     private struct Candidate {
         let path: String
-        let shape: Shape
+        var includesV1: Bool = false
+        var shape: Shape = .generic
     }
 
     /// Response shapes that generic key matching cannot read.
@@ -138,54 +143,94 @@ enum ProviderAPIQuotaClient {
 
     static func fetch(instance: ProviderInstance, apiKey: String) async throws -> ProviderAPIQuota {
         guard let base = baseURL(for: instance) else { throw QuotaError.unsupported }
-        let root = stripV1Suffix(base)
-
-        // Distinctive gateway shapes run first: a relay that implements only
-        // one route would otherwise burn eight 404s before reaching it.
-        let shaped: [Candidate] = [
-            Candidate(path: "/status", shape: .workbuddyPool),
-            Candidate(path: "/user/balance", shape: .deepSeek),
-            Candidate(path: "/api/user/self", shape: .newAPI),
-            Candidate(path: "/api/v1/user/self", shape: .newAPI),
-            Candidate(path: "/user/info", shape: .newAPI),
-        ]
-        let generic: [Candidate] = [
-            Candidate(path: "/v1/credits", shape: .generic),
-            Candidate(path: "/credits", shape: .generic),
-            Candidate(path: "/api/credits", shape: .generic),
-            Candidate(path: "/v1/dashboard/billing/credit_grants", shape: .generic),
-            Candidate(path: "/dashboard/billing/credit_grants", shape: .generic),
-            Candidate(path: "/usage", shape: .generic),
-            Candidate(path: "/account/balance", shape: .generic),
-            Candidate(path: "/balance", shape: .generic),
-        ]
 
         var lastError: Error = QuotaError.unsupported
 
-        for candidate in shaped + generic {
+        // Tier 1 — the OpenAI-compatible routes this client has always
+        // probed, in their original order and with the original URL building.
+        // Gateway support used to run its own probes *ahead* of this list,
+        // which cost every working provider up to five extra timeouts and
+        // dropped the `/v1`-prefixed variants (`/v1/usage`, `/v1/balance`,
+        // `/v1/account/balance`) entirely. Keep this tier first and unchanged.
+        let compatible: [Candidate] = [
+            Candidate(path: "usage", includesV1: true),
+            Candidate(path: "credits", includesV1: true),
+            Candidate(path: "account/balance", includesV1: true),
+            Candidate(path: "balance", includesV1: true),
+            Candidate(path: "dashboard/billing/credit_grants"),
+        ]
+        for candidate in compatible {
             try Task.checkCancellation()
-            let (quota, error) = await probe(root: root, candidate: candidate,
-                                             instance: instance, apiKey: apiKey)
+            guard let url = endpointURL(base: base, candidate: candidate, instance: instance) else { continue }
+            let (quota, error) = await probe(url: url,
+                                             displayPath: pathForDisplay(candidate, instance: instance),
+                                             shape: candidate.shape,
+                                             instance: instance,
+                                             apiKey: apiKey,
+                                             timeout: 8)
             if let quota { return quota }
             if let error { lastError = error }
         }
 
+        // Tier 2 — gateway shapes that generic key matching cannot read.
+        // Reached only after every compatible route failed, and deliberately
+        // cheap: a host that answers none of these must not turn one picker
+        // refresh into a minute of stalled requests.
+        let root = stripV1Suffix(base)
+        let gateways: [Candidate] = [
+            Candidate(path: "/user/balance", shape: .deepSeek),
+            Candidate(path: "/api/user/self", shape: .newAPI),
+            Candidate(path: "/api/v1/user/self", shape: .newAPI),
+            Candidate(path: "/user/info", shape: .newAPI),
+            Candidate(path: "/status", shape: .workbuddyPool),
+        ]
+        var unreachable = 0
+        for candidate in gateways {
+            try Task.checkCancellation()
+            let (quota, error) = await probe(url: root + candidate.path,
+                                             displayPath: candidate.path,
+                                             shape: candidate.shape,
+                                             instance: instance,
+                                             apiKey: apiKey,
+                                             timeout: 4)
+            if let quota { return quota }
+            if let error {
+                lastError = error
+                if isFatal(error) { break }
+                if error is URLError {
+                    // Connection refused or timed out: the host does not serve
+                    // this family of routes, so the remaining probes only add
+                    // delay to every refresh.
+                    unreachable += 1
+                    if unreachable >= 2 { break }
+                }
+            }
+        }
+
         // OpenAI's billing pair needs two requests, so it cannot be a single
         // candidate: `subscription` carries the ceiling, `usage` the spend.
-        let (billing, billingError) = await probeBilling(root: root, instance: instance, apiKey: apiKey)
+        let (billing, billingError) = await probeBilling(base: base, instance: instance, apiKey: apiKey)
         if let billing { return billing }
         if let billingError { lastError = billingError }
 
         throw lastError
     }
 
-    private static func probe(root: String,
-                              candidate: Candidate,
+    /// Credential problems will not improve by trying more routes.
+    private static func isFatal(_ error: Error) -> Bool {
+        guard let quotaError = error as? QuotaError else { return false }
+        if case .http(let code) = quotaError { return code == 401 || code == 403 }
+        return false
+    }
+
+    private static func probe(url: URL,
+                              displayPath: String,
+                              shape: Shape,
                               instance: ProviderInstance,
-                              apiKey: String) async -> (ProviderAPIQuota?, Error?) {
-        guard let url = URL(string: root + candidate.path) else { return (nil, nil) }
+                              apiKey: String,
+                              timeout: TimeInterval) async -> (ProviderAPIQuota?, Error?) {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request(url: url, instance: instance, apiKey: apiKey))
+            let (data, response) = try await URLSession.shared.data(for: request(url: url, instance: instance, apiKey: apiKey, timeout: timeout))
             guard let http = response as? HTTPURLResponse else { return (nil, QuotaError.invalidResponse) }
             guard (200..<300).contains(http.statusCode) else {
                 // 404/405 only mean "this gateway does not implement the
@@ -193,7 +238,7 @@ enum ProviderAPIQuotaClient {
                 return (nil, QuotaError.http(http.statusCode))
             }
             let object = try JSONSerialization.jsonObject(with: data)
-            guard let parsed = parse(object: object, shape: candidate.shape, sourcePath: candidate.path),
+            guard let parsed = parse(object: object, shape: shape, sourcePath: displayPath),
                   parsed.displayAmount != nil else {
                 return (nil, QuotaError.unrecognizedShape)
             }
@@ -204,14 +249,15 @@ enum ProviderAPIQuotaClient {
         }
     }
 
-    private static func probeBilling(root: String,
+    private static func probeBilling(base: String,
                                      instance: ProviderInstance,
                                      apiKey: String) async -> (ProviderAPIQuota?, Error?) {
-        guard let subscriptionURL = URL(string: root + "/dashboard/billing/subscription") else {
+        let subscriptionString = URLBuilding.join(base, "/dashboard/billing/subscription")
+        guard let subscriptionURL = URL(string: subscriptionString) else {
             return (nil, nil)
         }
         do {
-            let (data, response) = try await URLSession.shared.data(for: request(url: subscriptionURL, instance: instance, apiKey: apiKey))
+            let (data, response) = try await URLSession.shared.data(for: request(url: subscriptionURL, instance: instance, apiKey: apiKey, timeout: 8))
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 return (nil, QuotaError.http((response as? HTTPURLResponse)?.statusCode ?? 0))
             }
@@ -219,8 +265,8 @@ enum ProviderAPIQuotaClient {
 
             // Usage is optional: a gateway may expose only the ceiling.
             var usage: Any?
-            if let usageURL = URL(string: root + "/dashboard/billing/usage"),
-               let (usageData, usageResponse) = try? await URLSession.shared.data(for: request(url: usageURL, instance: instance, apiKey: apiKey)),
+            if let usageURL = URL(string: URLBuilding.join(base, "/dashboard/billing/usage")),
+               let (usageData, usageResponse) = try? await URLSession.shared.data(for: request(url: usageURL, instance: instance, apiKey: apiKey, timeout: 8)),
                let usageHTTP = usageResponse as? HTTPURLResponse,
                (200..<300).contains(usageHTTP.statusCode) {
                 usage = try? JSONSerialization.jsonObject(with: usageData)
@@ -238,10 +284,13 @@ enum ProviderAPIQuotaClient {
         }
     }
 
-    private static func request(url: URL, instance: ProviderInstance, apiKey: String) -> URLRequest {
+    private static func request(url: URL,
+                                instance: ProviderInstance,
+                                apiKey: String,
+                                timeout: TimeInterval = 8) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 8
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(instance.customUserAgent ?? "Ze-iOS", forHTTPHeaderField: "User-Agent")
         if instance.azureMode {
@@ -252,10 +301,13 @@ enum ProviderAPIQuotaClient {
         return request
     }
 
-    /// Root URL for quota probes. Every configured instance is eligible: a
-    /// relay fronting an OpenAI-compatible API can expose a balance route even
-    /// when its provider type is Anthropic or Gemini. Types with no public
-    /// quota endpoint and no custom URL still return nil.
+    /// Root URL for quota probes.
+    ///
+    /// A configured base URL is always eligible — a relay fronting an
+    /// OpenAI-compatible API can expose a balance route whatever its provider
+    /// type says. Built-in hosts only answer for the families that actually
+    /// publish one; Anthropic and Gemini have no quota endpoint, so they keep
+    /// reporting "unsupported" instead of being probed into a bogus number.
     private static func baseURL(for instance: ProviderInstance) -> String? {
         if let custom = instance.customBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
             return instance.appendV1Suffix ? stripV1Suffix(custom) : custom
@@ -265,10 +317,23 @@ enum ProviderAPIQuotaClient {
         case .openRouter: return "https://openrouter.ai/api"
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.moonshot.cn"
-        case .anthropic: return "https://api.anthropic.com"
-        case .gemini: return "https://generativelanguage.googleapis.com"
-        case .antigravity, .githubCopilot, .unsupported: return nil
+        case .anthropic, .gemini, .antigravity, .githubCopilot, .unsupported: return nil
         }
+    }
+
+    private static func endpointURL(base: String, candidate: Candidate, instance: ProviderInstance) -> URL? {
+        let urlString: String
+        if candidate.includesV1 && instance.appendV1Suffix {
+            urlString = URLBuilding.join(base, "/v1", "/\(candidate.path)")
+        } else {
+            urlString = URLBuilding.join(base, "/\(candidate.path)")
+        }
+        return URL(string: urlString)
+    }
+
+    private static func pathForDisplay(_ candidate: Candidate, instance: ProviderInstance) -> String {
+        if candidate.includesV1 && instance.appendV1Suffix { return "/v1/\(candidate.path)" }
+        return "/\(candidate.path)"
     }
 
     private static func stripV1Suffix(_ value: String) -> String {
@@ -334,11 +399,16 @@ enum ProviderAPIQuotaClient {
     }
 
     /// New API / One API express quota in 1/500000 USD units.
+    ///
+    /// Both fields are required. `/user/info` and `/api/user/self` exist on
+    /// plenty of gateways that are not New API, and a bare `quota` there often
+    /// means requests-per-minute; dividing that by 500000 surfaced a fake
+    /// balance on providers that previously (correctly) showed none.
     private static func parseNewAPI(_ object: Any, sourcePath: String) -> ProviderAPIQuota? {
         guard let root = object as? [String: Any] else { return nil }
         let data = (root["data"] as? [String: Any]) ?? root
-        guard let quota = decimal(data["quota"]) else { return nil }
-        let used = decimal(data["used_quota"]) ?? 0
+        guard let quota = decimal(data["quota"]),
+              let used = decimal(data["used_quota"]) ?? decimal(data["usedQuota"]) else { return nil }
         let unit = Decimal(500_000)
         return ProviderAPIQuota(remaining: quota / unit,
                                 total: (quota + used) / unit,
