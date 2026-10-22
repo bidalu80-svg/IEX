@@ -414,7 +414,12 @@ private final class OffscreenHost {
         return UIGraphicsImageRenderer(size: bounds.size, format: format).image { ctx in
             background.setFill()
             ctx.fill(bounds)
-            host.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+            // `drawHierarchy(afterScreenUpdates: true)` only draws for views the
+            // system considers on screen. The host window sits below the app
+            // window, so it produced a blank bitmap — the export and its preview
+            // came out empty. Rendering the layer tree directly does not depend
+            // on window visibility.
+            host.view.layer.render(in: ctx.cgContext)
         }
     }
 

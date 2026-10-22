@@ -2877,15 +2877,13 @@ extension CollectionViewMessageListV3 {
                     // its final reply; the old per-group disclosure row is gone,
                     // and live streaming still lists every step.
                     //
-                    // Deliberately independent of `forceUncollapsedToolsForScreenshot`:
-                    // that flag made every earlier turn pop open whenever a
-                    // screenshot was taken or a new message streamed in. A
-                    // screenshot now captures the transcript exactly as the user
-                    // sees it.
+                    // The "still running" test is per-message (`taskDuration`
+                    // is only set when the turn ends). Using the global
+                    // `vm.isProcessing` here unfolded *every* earlier turn for
+                    // as long as any turn was streaming.
                     let stepsCollapsed = collapseConsecutiveToolCalls
                         && message.isStepsCollapsed
                         && message.taskDuration != nil
-                        && !vm.isProcessing
                     if stepsCollapsed {
                         if let finalText = message.blocks.last(where: { $0.kind == .text }) {
                             newItems.append(.assistantBlock(message.id, finalText.id))
