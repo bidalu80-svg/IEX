@@ -26,7 +26,7 @@ struct AOJITSection: View {
                     // wave inside. Drawn rather than picked from SF Symbols —
                     // `waveform.circle` draws bars and the `.fill` variant
                     // inverts the disc, neither of which matches.
-                    AOJITMark(size: 26)
+                    AOJITMark(size: 28)
                 }
             }
 
@@ -198,10 +198,24 @@ private struct AOJITWave: Shape {
         var path = Path()
         let w = rect.width
         let h = rect.height
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY + h * 0.66))
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.28, y: rect.minY + h * 0.30))
-        path.addLine(to: CGPoint(x: rect.minX + w * 0.55, y: rect.minY + h * 0.58))
-        path.addLine(to: CGPoint(x: rect.minX + w, y: rect.minY + h * 0.20))
+
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + w * x, y: rect.minY + h * y)
+        }
+
+        // Two crests and one trough. The previous version used straight
+        // segments, which read as a checkmark; smooth curves read as a wave,
+        // which is what the mark is.
+        path.move(to: p(0.00, 0.62))
+        path.addCurve(to: p(0.34, 0.62),
+                      control1: p(0.10, 0.20),
+                      control2: p(0.24, 0.20))
+        path.addCurve(to: p(0.66, 0.62),
+                      control1: p(0.44, 0.92),
+                      control2: p(0.56, 0.92))
+        path.addCurve(to: p(1.00, 0.62),
+                      control1: p(0.76, 0.20),
+                      control2: p(0.90, 0.20))
         return path
     }
 }
