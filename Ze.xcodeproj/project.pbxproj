@@ -35,6 +35,9 @@
 		A1B2C3D4E5F60718293A4B5C /* SystemVoiceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* SystemVoiceCatalog.swift */; };
 		AA0838C02F3B941A00049557 /* RootfsResetButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */; };
 		AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */; };
+		AOJSB01 /* AOJITSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AOJS001 /* AOJITSection.swift */; };
+		CNSB001 /* ContainerNetworkSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CNS001 /* ContainerNetworkSection.swift */; };
+		CDNSB01 /* ContainerDNS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDNS001 /* ContainerDNS.swift */; };
 		AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838CD2F3B941A00049557 /* StorageManagementView.swift */; };
 		C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000002 /* MediaFavoritesStore.swift */; };
 		C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000004 /* MediaFavoritesView.swift */; };
@@ -609,6 +612,9 @@
 		88993FC8E3F0199C6638F664 /* VoiceProvider+System.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "VoiceProvider+System.swift"; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* SystemVoiceCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemVoiceCatalog.swift; sourceTree = "<group>"; };
 		AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsManagementView.swift; sourceTree = "<group>"; };
+		AOJS001 /* AOJITSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITSection.swift; sourceTree = "<group>"; };
+		CNS001 /* ContainerNetworkSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerNetworkSection.swift; sourceTree = "<group>"; };
+		CDNS001 /* ContainerDNS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerDNS.swift; sourceTree = "<group>"; };
 		AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsResetButton.swift; sourceTree = "<group>"; };
 		AA0838CD2F3B941A00049557 /* StorageManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManagementView.swift; sourceTree = "<group>"; };
 		C0DEFA000000000000000002 /* MediaFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/MediaFavoritesStore.swift"; sourceTree = SOURCE_ROOT; };
@@ -2051,6 +2057,7 @@
 			isa = PBXGroup;
 			children = (
 				E5F000011 /* ISHExecutionCoordinator.swift */,
+				CDNS001 /* ContainerDNS.swift */,
 				AOJIT001 /* AOJITAcceleration.swift */,
 				E5F000012 /* ZeFsRouter.swift */,
 				E5CR00011 /* ShellCommandRingBuffer.swift */,
@@ -2237,6 +2244,8 @@
 				AA26CCBD2F31080100AECF2D /* ISHTerminalView.swift */,
 				AA0838FE2F3B941A00049557 /* MirrorSpeedTestView.swift */,
 				AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */,
+				AOJS001 /* AOJITSection.swift */,
+				CNS001 /* ContainerNetworkSection.swift */,
 				AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */,
 			);
 			path = Rootfs;
@@ -2661,6 +2670,9 @@
 				E5QA0002 /* AppDelegate.swift in Sources */,
 				AA0838C02F3B941A00049557 /* RootfsResetButton.swift in Sources */,
 				AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */,
+				AOJSB01 /* AOJITSection.swift in Sources */,
+				CNSB001 /* ContainerNetworkSection.swift in Sources */,
+				CDNSB01 /* ContainerDNS.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
 				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,

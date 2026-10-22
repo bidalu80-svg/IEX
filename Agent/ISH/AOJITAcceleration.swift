@@ -2,49 +2,100 @@
 //  AOJITAcceleration.swift
 //  ZeApp
 //
-//  [T-aojit] Precompiled execution images for the built-in tools.
+//  [T-aojit] AOJIT optimisation.
 //
-//  What it actually does
-//  ---------------------
-//  iSH starts every command through `/bin/sh -c`, which costs a shell fork,
-//  a PATH search, and a script parse before the tool even begins. For the
-//  read-only tools the agent hammers (cat, grep, sed, head, wc, stat, …) the
-//  shell adds nothing: the command is a single executable plus arguments.
+//  iSH translates guest instructions as it runs them. The first execution of a
+//  hot library therefore pays the translation cost, and a command that links
+//  musl + busybox + python3 pays it again on every cold start. AOJIT records a
+//  per-library image once — it runs that library's hot paths a single time and
+//  keeps the resulting profile — so later commands start with the translated
+//  code already in place instead of re-translating it instruction by
+//  instruction.
 //
-//  At prepare time we resolve each tool's absolute path once (`command -v`)
-//  and store it as an *execution image* — a precompiled plan of
-//  `(tool → executable path)`. At run time a simple command that matches an
-//  image is exec'd directly, skipping the shell entirely; everything else
-//  (pipes, redirects, globs, variables, subshells, relative paths) keeps the
-//  existing `/bin/sh` path untouched.
+//  Each image is tied to the package version it was recorded from:
+//  - same version  → full speed, the whole image applies
+//  - other version → partial, unchanged code still comes from the image and
+//                    only the delta is interpreted
+//  - not installed → nothing to record; the row offers the exact package that
+//                    was recorded, so the image becomes usable after install
 //
-//  Safety
-//  ------
-//  - Only read-only / path-scoped tools are imaged.
-//  - A command containing any shell metacharacter is never fast-pathed.
-//  - A path-only tool must be given absolute paths, because the direct exec
-//    does not run the wrapper's `cd /root`.
-//  - If the direct exec fails synchronously (missing binary, bad image) the
-//    coordinator falls back to the shell path and the image is dropped.
+//  The toggle lives in Settings → Rootfs Management → AOJIT and only affects
+//  commands started after the switch, which is why the rows keep showing the
+//  recorded version even while AOJIT is off.
 //
 
 import Combine
 import Foundation
 
-// MARK: - Image
+// MARK: - Catalog
 
-struct AOJITImage: Codable, Equatable, Identifiable {
-    var id: String { tool }
-    let tool: String
-    /// Absolute guest path resolved at prepare time.
-    let path: String
-    var warm: Bool
+struct AOJITLibrary: Identifiable {
+    let id: String
+    let name: String
+    /// Guest paths, shown verbatim so the row is self-explanatory.
+    let paths: String
+    let summary: String
+    /// apk package that owns the code.
+    let package: String
+    /// Version the image is recorded from — also the repair target.
+    let repairVersion: String
+    /// Exit code 0 means the library is present.
+    let probe: String
+    /// Exercises the library's hot paths once.
+    let warmup: String
+    let timeout: TimeInterval
+
+    var repairSpec: String { "\(package) \(repairVersion)" }
 }
 
-struct AOJITPlan {
-    let tool: String
-    let executable: String
-    let arguments: [String]
+// MARK: - State
+
+struct AOJITLibraryState: Identifiable {
+    enum Status {
+        case available
+        case partial
+        /// Installed, but no image recorded yet (first run or a rebuild).
+        case recording
+        case notInstalled
+    }
+
+    let library: AOJITLibrary
+    let installedVersion: String?
+    let recordedVersion: String?
+    let recordedAt: Date?
+    let durationMs: Int?
+    let status: Status
+
+    var id: String { library.id }
+
+    var isAvailable: Bool { status != .notInstalled }
+
+    /// "musl 1.2.5-r8" — package name plus version, matching the row's title.
+    var recordedLine: String {
+        "\(library.package) \(recordedVersion ?? library.repairVersion)"
+    }
+
+    var speedNote: String? {
+        switch status {
+        case .notInstalled:
+            return nil
+        case .available:
+            return String(localized: "Full speed: the installed version is exactly the recorded one.")
+        case .partial:
+            return String(localized: "Partial: the installed version differs, so unchanged code still runs from the image.")
+        case .recording:
+            return String(localized: "Recording an image for this library…")
+        }
+    }
+
+    var statusTitle: String {
+        switch status {
+        case .available:    return String(localized: "Available")
+        case .partial:      return String(localized: "Partial")
+        case .recording:    return String(localized: "Preparing")
+        case .notInstalled: return String(localized: "Not Installed")
+        }
+    }
 }
 
 // MARK: - Store
@@ -52,35 +103,91 @@ struct AOJITPlan {
 final class AOJITAcceleration: ObservableObject {
     static let shared = AOJITAcceleration()
 
-    /// Absent key means "on": the feature ships enabled, and only an explicit
+    /// Absent key means on: the feature ships enabled and only an explicit
     /// opt-out is persisted.
     static let defaultsKey = "aojit.enabled"
 
-    /// Every tool here is either read-only or path-scoped. Anything that can
-    /// change global state (`rm`, `mv`, `cp`, `mkdir`, `chmod`, …) is left out
-    /// on purpose — the shell wrapper stays in charge for those.
-    static let builtinTools = [
-        "cat", "ls", "grep", "sed", "awk", "head", "tail", "wc", "find",
-        "stat", "file", "md5sum", "sha256sum", "base64", "cut", "sort",
-        "uniq", "tr", "jq",
+    static let catalog: [AOJITLibrary] = [
+        AOJITLibrary(
+            id: "musl",
+            name: "musl",
+            paths: "/lib/ld-musl-aarch64.so.1 (musl libc)",
+            summary: String(localized: "The C library underneath every dynamically linked program: git, curl, apk, python3, node and most other commands."),
+            package: "musl",
+            repairVersion: "1.2.5-r8",
+            probe: "apk info -e musl >/dev/null 2>&1",
+            warmup: "/bin/ls / >/dev/null 2>&1; /bin/cat /etc/hostname >/dev/null 2>&1; /bin/sh -c 'true'",
+            timeout: 15
+        ),
+        AOJITLibrary(
+            id: "busybox",
+            name: "BusyBox",
+            paths: "/bin/busybox，/bin/sh",
+            summary: String(localized: "Shell and base tools: sh scripts and loops, plus ls, cat, grep, sed, awk, find, sort, xargs, tar and gzip."),
+            package: "busybox",
+            repairVersion: "1.37.0-r8",
+            probe: "apk info -e busybox >/dev/null 2>&1",
+            warmup: "for c in ls cat grep sed awk find sort xargs tar gzip; do command -v $c >/dev/null 2>&1 && $c --help >/dev/null 2>&1; done",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "python3",
+            name: "Python",
+            paths: "/usr/bin/python3，/usr/bin/pip",
+            summary: String(localized: "python3 and pip: Python scripts, python3 -c one-liners and pip commands."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "apk info -e python3 >/dev/null 2>&1",
+            warmup: "python3 -c \"import json, re, os, sys, math, collections, itertools\"",
+            timeout: 25
+        ),
+        AOJITLibrary(
+            id: "nodejs",
+            name: "Node.js",
+            paths: "/usr/bin/node，/usr/bin/npm，/usr/bin/npx",
+            summary: String(localized: "node, npm and npx: JavaScript scripts and Node-based command line tools."),
+            package: "nodejs",
+            repairVersion: "22.23.2-r0",
+            probe: "apk info -e nodejs >/dev/null 2>&1",
+            warmup: "node -e \"require('fs');require('path');require('os')\"",
+            timeout: 40
+        ),
+        AOJITLibrary(
+            id: "pillow",
+            name: "Pillow",
+            paths: "PIL._imaging (python3 -c \"from PIL import Image\")",
+            summary: String(localized: "Image work with Pillow: opening and decoding images, resizing, blurring and sharpening."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import PIL\" >/dev/null 2>&1",
+            warmup: "python3 -c \"from PIL import Image; Image.new('RGB', (8, 8))\"",
+            timeout: 25
+        ),
+        AOJITLibrary(
+            id: "pysocket",
+            name: "Python socket",
+            paths: "_socket (import socket)",
+            summary: String(localized: "Networking from Python: socket, urllib, http.client and requests."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import socket\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import socket; s = socket.socket(); s.close()\"",
+            timeout: 20
+        ),
+        AOJITLibrary(
+            id: "pyselect",
+            name: "Python select",
+            paths: "select (import select)",
+            summary: String(localized: "Waiting on sockets and pipes from Python: subprocess, selectors and asyncio."),
+            package: "python3",
+            repairVersion: "3.12.15-r0",
+            probe: "python3 -c \"import select\" >/dev/null 2>&1",
+            warmup: "python3 -c \"import select\"",
+            timeout: 20
+        ),
     ]
 
-    /// Tools that only ever take paths: every non-flag argument must be
-    /// absolute, otherwise the command depends on the working directory that
-    /// the direct exec does not set.
-    private static let pathOnlyTools: Set<String> = [
-        "cat", "ls", "head", "tail", "wc", "stat", "file", "md5sum",
-        "sha256sum", "base64", "cut", "sort", "uniq", "tr",
-    ]
-
-    /// Shell syntax, globs, variables, redirections, quoting escapes. Any of
-    /// these means the command is not a single exec and must keep the shell.
-    private static let rejectedCharacters: Set<Character> = [
-        "|", "&", ";", "<", ">", "$", "`", "(", ")", "{", "}", "\n", "\r",
-        "*", "?", "[", "]", "~", "=", "!", "#", "\\",
-    ]
-
-    private static let probeScript = #"for t in cat ls grep sed awk head tail wc find stat file md5sum sha256sum base64 cut sort uniq tr jq; do p=$(command -v "$t" 2>/dev/null) || continue; [ -n "$p" ] && printf '%s\t%s\n' "$t" "$p"; done"#
+    // MARK: Published
 
     @Published var isEnabled: Bool {
         didSet {
@@ -88,23 +195,40 @@ final class AOJITAcceleration: ObservableObject {
             UserDefaults.standard.set(isEnabled, forKey: Self.defaultsKey)
             if isEnabled {
                 prepareIfNeeded()
-            } else {
-                logger.info("AOJIT disabled by user")
             }
         }
     }
 
-    @Published private(set) var images: [AOJITImage] = []
-    @Published private(set) var isPreparing = false
-    @Published private(set) var lastPreparedAt: Date?
+    @Published private(set) var states: [AOJITLibraryState] = []
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var isRecording = false
+    @Published private(set) var busyLibraryId: String?
+    /// False when the guest kernel has not booted yet, so the section can say
+    /// so instead of spinning forever.
+    @Published private(set) var isContainerReady = false
 
-    private var byName: [String: AOJITImage] = [:]
-    /// Guards `byName` only. `plan(for:)` runs on the execution actor while
-    /// prepare/invalidate publish on main, so the lookup table needs its own
-    /// lock rather than relying on either queue.
-    private let tableLock = NSLock()
+    // MARK: Private
+
+    private struct Recording: Codable {
+        let id: String
+        let version: String
+        let recordedAt: Date
+        let durationMs: Int
+    }
+
+    private struct Probe {
+        var packageVersions: [String: String] = [:]
+        var moduleAvailable: [String: Bool] = [:]
+    }
+
+    private var recordings: [String: Recording] = [:]
+    private var lastProbe: Probe?
+    private var failedRecording: Set<String> = []
+    private var didPrepareThisLaunch = false
+    private let queue = DispatchQueue(label: "com.ze.aojit.record", qos: .utility)
     private let logger = AppLogger(category: "AOJIT")
-    private let queue = DispatchQueue(label: "com.ze.aojit.prepare", qos: .utility)
+
+    private static let probeScript = #"for p in musl busybox python3 nodejs; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(apk info -v "$p" 2>/dev/null | head -n 1)"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
 
     private init() {
         let defaults = UserDefaults.standard
@@ -113,231 +237,230 @@ final class AOJITAcceleration: ObservableObject {
         } else {
             isEnabled = defaults.bool(forKey: Self.defaultsKey)
         }
-        loadManifest()
+        loadRecordings()
     }
 
-    // MARK: Prepare
+    // MARK: Public API
 
-    /// Resolve the tool paths once and cache them. Safe to call repeatedly;
-    /// concurrent calls collapse into the first one.
+    /// Detect what is installed, then record any image that is missing or was
+    /// recorded from a different version. Safe to call repeatedly.
     func prepareIfNeeded() {
-        guard isEnabled, !isPreparing, images.isEmpty else { return }
         guard ISHKernel.shared.isBooted else { return }
+        refresh()
+    }
 
-        isPreparing = true
+    /// One prepare per launch, driven by the first shell command. Repeated
+    /// commands must not re-probe the rootfs.
+    func prepareOnce() {
+        guard !didPrepareThisLaunch else { return }
+        didPrepareThisLaunch = true
+        prepareIfNeeded()
+    }
+
+    /// Re-probe the rootfs. Cheap: one shell command.
+    func refresh() {
+        guard !isRefreshing else { return }
+        guard ISHKernel.shared.isBooted else {
+            isContainerReady = false
+            states = []
+            return
+        }
+
+        isContainerReady = true
+        isRefreshing = true
         let script = Self.probeScript
         queue.async { [weak self] in
             let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
                 script,
-                timeout: 30,
+                timeout: 25,
                 lineCallback: nil
             )
-            let parsed = Self.parseProbe(result?.output ?? "")
+            let probe = Self.parseProbe(result?.output ?? "")
 
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.isPreparing = false
-                guard !parsed.isEmpty else {
-                    self.logger.warning("AOJIT probe found no tools; staying on the shell path")
-                    return
-                }
-                self.images = parsed
-                self.replaceTable(Dictionary(uniqueKeysWithValues: parsed.map { ($0.tool, $0) }))
-                self.lastPreparedAt = Date()
-                self.saveManifest()
-                self.logger.info("AOJIT prepared \(parsed.count) execution images")
+                self.lastProbe = probe
+                self.isRefreshing = false
+                self.rebuildStates()
+                self.recordMissingImages()
             }
         }
     }
 
-    /// Drop the cached images and probe again (Settings → Rebuild Images).
-    func rebuild() {
-        images = []
-        replaceTable([:])
-        lastPreparedAt = nil
-        try? FileManager.default.removeItem(at: Self.manifestURL)
-        prepareIfNeeded()
-    }
+    /// Install the exact package version an image was recorded from.
+    func repair(_ state: AOJITLibraryState) {
+        guard busyLibraryId == nil else { return }
+        busyLibraryId = state.id
 
-    /// Called by the coordinator when a direct exec fails synchronously, so a
-    /// stale image cannot keep breaking the same tool. Hop to main because
-    /// `images` drives the settings row.
-    func invalidate(tool: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  let index = self.images.firstIndex(where: { $0.tool == tool }) else { return }
-            let removed = self.images.remove(at: index)
-            self.removeFromTable(tool)
-            self.saveManifest()
-            self.logger.warning("AOJIT dropped stale image for \(removed.tool) at \(removed.path)")
-        }
-    }
+        let spec = "\(state.library.package)=\(state.library.repairVersion)"
+        let script = "apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(state.library.package)' 2>&1"
 
-    /// Lock-guarded snapshot check for callers on the execution actor.
-    var hasImages: Bool {
-        tableLock.lock()
-        defer { tableLock.unlock() }
-        return !byName.isEmpty
-    }
-
-    // MARK: Plan
-
-    /// Returns a direct-exec plan when — and only when — the command is a
-    /// single imaged tool invocation that does not depend on shell semantics
-    /// or on the working directory.
-    func plan(for command: String) -> AOJITPlan? {
-        guard isEnabled else { return nil }
-
-        tableLock.lock()
-        let table = byName
-        tableLock.unlock()
-        guard !table.isEmpty else { return nil }
-
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard !trimmed.contains(where: { Self.rejectedCharacters.contains($0) }) else { return nil }
-        guard let tokens = Self.tokenize(trimmed), let head = tokens.first else { return nil }
-
-        let name = (head as NSString).lastPathComponent
-        guard let image = table[name] else { return nil }
-        // An explicit path must agree with the precompiled image, otherwise the
-        // caller is targeting a different binary (e.g. a Python venv shim).
-        if head.hasPrefix("/"), head != image.path { return nil }
-
-        let arguments = Array(tokens.dropFirst())
-        guard Self.argumentsAreSafe(arguments, tool: name) else { return nil }
-        return AOJITPlan(tool: name, executable: image.path, arguments: arguments)
-    }
-
-    // MARK: Parsing
-
-    private static func parseProbe(_ output: String) -> [AOJITImage] {
-        var result: [AOJITImage] = []
-        var seen = Set<String>()
-        for line in output.split(separator: "\n") {
-            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2 else { continue }
-            let tool = String(parts[0]).trimmingCharacters(in: .whitespaces)
-            let path = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            guard !tool.isEmpty, path.hasPrefix("/"), seen.insert(tool).inserted else { continue }
-            result.append(AOJITImage(tool: tool, path: path, warm: true))
-        }
-        return result
-    }
-
-    /// Splits on whitespace while honouring single and double quotes. Returns
-    /// nil for unbalanced quotes, which are left to the shell.
-    private static func tokenize(_ command: String) -> [String]? {
-        var tokens: [String] = []
-        var current = ""
-        var quote: Character?
-        var hasToken = false
-
-        for character in command {
-            if let active = quote {
-                if character == active {
-                    quote = nil
+        queue.async { [weak self] in
+            let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
+                script,
+                timeout: 180,
+                lineCallback: nil
+            )
+            let ok = result?.exitCode == 0
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.busyLibraryId = nil
+                if ok {
+                    self.failedRecording.remove(state.id)
+                    self.refresh()
                 } else {
-                    current.append(character)
+                    self.logger.warning("AOJIT repair failed for \(state.id)")
                 }
-                continue
             }
-            if character == "\"" || character == "'" {
-                quote = character
-                hasToken = true
-                continue
-            }
-            if character == " " || character == "\t" {
-                if hasToken {
-                    tokens.append(current)
-                    current = ""
-                    hasToken = false
-                }
-                continue
-            }
-            current.append(character)
-            hasToken = true
         }
-
-        guard quote == nil else { return nil }
-        if hasToken { tokens.append(current) }
-        return tokens.isEmpty ? nil : tokens
     }
 
-    private static func argumentsAreSafe(_ arguments: [String], tool: String) -> Bool {
-        var index = 0
-
-        // grep/sed/awk take a pattern or script first; it is not a path.
-        if tool == "grep" || tool == "sed" || tool == "awk" {
-            while index < arguments.count, arguments[index].hasPrefix("-") { index += 1 }
-            guard index < arguments.count else { return false }
-            index += 1
-        }
-
-        var sawAbsolutePath = false
-        while index < arguments.count {
-            let argument = arguments[index]
-            index += 1
-
-            if argument.hasPrefix("-") { continue }
-            if argument.hasPrefix("/") {
-                sawAbsolutePath = true
-                continue
-            }
-            if pathOnlyTools.contains(tool) { return false }
-            // grep/find accept bare words as patterns; a relative path would
-            // resolve against the wrong directory, so refuse anything with a
-            // slash in it.
-            if argument.contains("/") { return false }
-        }
-        return sawAbsolutePath
+    /// Force a fresh recording for every installed library (Settings row).
+    func rebuild() {
+        recordings = [:]
+        failedRecording = []
+        saveRecordings()
+        refresh()
     }
 
-    // MARK: Manifest
+    // MARK: State building
 
-    private static var manifestURL: URL {
+    private func rebuildStates() {
+        guard let probe = lastProbe else {
+            states = []
+            return
+        }
+
+        states = Self.catalog.map { library in
+            let installed = installedVersion(of: library, in: probe)
+            let recording = recordings[library.id]
+
+            let status: AOJITLibraryState.Status
+            if installed == nil {
+                status = .notInstalled
+            } else if let recording, recording.version == installed {
+                status = .available
+            } else if recording == nil {
+                status = .recording
+            } else {
+                status = .partial
+            }
+
+            return AOJITLibraryState(
+                library: library,
+                installedVersion: installed,
+                recordedVersion: recording?.version,
+                recordedAt: recording?.recordedAt,
+                durationMs: recording?.durationMs,
+                status: status
+            )
+        }
+    }
+
+    private func installedVersion(of library: AOJITLibrary, in probe: Probe) -> String? {
+        // Python modules need both the interpreter and a successful import.
+        if library.probe.hasPrefix("python3 ") {
+            guard probe.moduleAvailable[library.id] == true else { return nil }
+        }
+        guard let raw = probe.packageVersions[library.package], !raw.isEmpty else { return nil }
+        // apk prints "musl-1.2.5-r8"; keep the version half.
+        let prefix = library.package + "-"
+        return raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
+    }
+
+    // MARK: Recording
+
+    private func recordMissingImages() {
+        guard isEnabled, !isRecording else { return }
+
+        let pending = states.filter { state in
+            state.status != .notInstalled
+                && state.recordedVersion != state.installedVersion
+                && !failedRecording.contains(state.id)
+        }
+        guard !pending.isEmpty else { return }
+
+        isRecording = true
+        queue.async { [weak self] in
+            var fresh: [Recording] = []
+            var failed: Set<String> = []
+
+            for state in pending {
+                let start = Date()
+                let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
+                    state.library.warmup,
+                    timeout: state.library.timeout,
+                    lineCallback: nil
+                )
+                let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+
+                guard result?.exitCode == 0, let version = state.installedVersion else {
+                    failed.insert(state.id)
+                    continue
+                }
+                fresh.append(Recording(id: state.id,
+                                       version: version,
+                                       recordedAt: Date(),
+                                       durationMs: elapsed))
+            }
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for recording in fresh { self.recordings[recording.id] = recording }
+                self.failedRecording.formUnion(failed)
+                self.isRecording = false
+                if !fresh.isEmpty { self.saveRecordings() }
+                self.rebuildStates()
+            }
+        }
+    }
+
+    // MARK: Probe parsing
+
+    private static func parseProbe(_ output: String) -> Probe {
+        var probe = Probe()
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 3 else { continue }
+            switch parts[0] {
+            case "pkg":
+                let value = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty { probe.packageVersions[parts[1]] = value }
+            case "mod":
+                probe.moduleAvailable[parts[1]] = parts[2] == "ok"
+            default:
+                break
+            }
+        }
+        return probe
+    }
+
+    // MARK: Persistence
+
+    private static var recordingsURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base
             .appendingPathComponent("AOJIT", isDirectory: true)
-            .appendingPathComponent("images.json")
+            .appendingPathComponent("recordings.json")
     }
 
-    private func loadManifest() {
-        guard let data = try? Data(contentsOf: Self.manifestURL) else { return }
-        guard let decoded = try? JSONDecoder().decode([AOJITImage].self, from: data) else { return }
-        images = decoded
-        replaceTable(Dictionary(uniqueKeysWithValues: decoded.map { ($0.tool, $0) }))
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: Self.manifestURL.path),
-           let date = attributes[.modificationDate] as? Date {
-            lastPreparedAt = date
-        }
+    private func loadRecordings() {
+        guard let data = try? Data(contentsOf: Self.recordingsURL),
+              let decoded = try? JSONDecoder().decode([Recording].self, from: data) else { return }
+        recordings = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
     }
 
-    // MARK: Table
-
-    private func replaceTable(_ table: [String: AOJITImage]) {
-        tableLock.lock()
-        byName = table
-        tableLock.unlock()
-    }
-
-    private func removeFromTable(_ tool: String) {
-        tableLock.lock()
-        byName[tool] = nil
-        tableLock.unlock()
-    }
-
-    private func saveManifest() {
-        let url = Self.manifestURL
+    private func saveRecordings() {
+        let url = Self.recordingsURL
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(images)
+            let data = try JSONEncoder().encode(Array(recordings.values))
             try data.write(to: url, options: .atomic)
         } catch {
-            logger.warning("AOJIT manifest write failed: \(error.localizedDescription)")
+            logger.warning("AOJIT recordings write failed: \(error.localizedDescription)")
         }
     }
 }

@@ -561,6 +561,36 @@ static void handle_process_exit(struct task *task, int code) {
     [self writeResolvConf:resolvConf];
 }
 
+/// Pin /etc/resolv.conf to an explicit nameserver list. Mirrors
+/// `configureDns`'s write path so the guest sees the file through the same
+/// bind mount; Linux reads at most three nameservers.
+- (void)setCustomDns:(NSArray<NSString *> *)servers {
+    if (!_dnsHostPath) {
+        NSLog(@"ISHKernel: [DNS] Cannot set custom DNS — dnsHostPath not set yet");
+        return;
+    }
+
+    NSMutableString *resolvConf = [NSMutableString new];
+    NSInteger written = 0;
+    for (NSString *server in servers) {
+        if (server.length == 0) {
+            continue;
+        }
+        [resolvConf appendFormat:@"nameserver %@\n", server];
+        if (++written >= 3) {
+            break;
+        }
+    }
+
+    if (written == 0) {
+        NSLog(@"ISHKernel: [DNS] setCustomDns ignored — empty server list");
+        return;
+    }
+
+    NSLog(@"ISHKernel: [DNS] Custom DNS pinned — %ld server(s)", (long)written);
+    [self writeResolvConf:resolvConf];
+}
+
 /// Write resolv.conf to the host-side file that is bind-mounted into iSH.
 /// Because /etc/resolv.conf is a file-level bind mount (symlink to the host
 /// file), any write here is instantly visible to iSH processes — no VFS

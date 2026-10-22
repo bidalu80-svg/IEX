@@ -88,6 +88,11 @@ typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullab
 /// Call this when the network path changes (e.g. WiFi ↔ cellular switch).
 - (void)refreshDns;
 
+/// Write a fixed nameserver list to /etc/resolv.conf instead of following the
+/// system resolver. Linux only uses the first three entries. Passing an empty
+/// array is ignored, so callers keep the previous file.
+- (void)setCustomDns:(NSArray<NSString *> *)servers;
+
 @end
 
 /// One change event emitted by the fakefs bind-mount tracker. Mirrors

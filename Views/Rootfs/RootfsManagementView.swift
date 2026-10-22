@@ -10,6 +10,7 @@ import SwiftUI
 struct RootfsManagementView: View {
     @StateObject private var viewModel = RootfsManagementViewModel()
     @ObservedObject private var aojit = AOJITAcceleration.shared
+    @ObservedObject private var dns = ContainerDNSSettings.shared
     @State private var showFileBrowser = false
 
     var body: some View {
@@ -64,60 +65,11 @@ struct RootfsManagementView: View {
 
                 MirrorsSectionView()
 
-                // [T-aojit] Precompiled execution images for the built-in
-                // tools. Enabled by default; the escape hatch lives right here
-                // so a misbehaving command can be reverted without a reinstall.
-                Section {
-                    Toggle(isOn: $aojit.isEnabled) {
-                        Label {
-                            Text("AOJIT Acceleration")
-                        } icon: {
-                            Image(systemName: "bolt.horizontal.circle.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.yellow, in: Circle())
-                        }
-                    }
-
-                    if aojit.isEnabled {
-                        HStack {
-                            Text("Execution Images")
-                            Spacer()
-                            if aojit.isPreparing {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else if aojit.images.isEmpty {
-                                Text("Not prepared")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("\(aojit.images.count)")
-                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        Button {
-                            aojit.rebuild()
-                        } label: {
-                            Label {
-                                Text("Rebuild Images")
-                            } icon: {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 21, height: 21)
-                                    .background(.indigo, in: Circle())
-                            }
-                        }
-                        .disabled(aojit.isPreparing || !viewModel.isInstalled)
-                    }
-                } header: {
-                    Text("AOJIT")
-                } footer: {
-                    Text("Built-in tools run from precompiled execution images, so commands start and finish sooner. On by default — turn it off if a command misbehaves.")
-                }
+                // [T-aojit] Pre-recorded JIT images for the libraries every
+                // command links against. [T-container-dns] DNS mode sits right
+                // below it, matching the Rootfs page's grouping.
+                AOJITSection(aojit: aojit)
+                ContainerNetworkSection(dns: dns)
             }
 
             Section("Actions") {
@@ -216,6 +168,7 @@ struct RootfsManagementView: View {
         .onAppear {
             viewModel.refresh()
             aojit.prepareIfNeeded()
+            dns.apply()
         }
         .alert("Reset Rootfs?", isPresented: $viewModel.showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
