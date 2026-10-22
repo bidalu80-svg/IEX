@@ -3950,9 +3950,32 @@ extension CollectionViewMessageListV3 {
                                       options: [.caseInsensitive, .diacriticInsensitive],
                                       range: lineRange)
                 guard within.location != NSNotFound else { continue }
-                let rect = textView.firstRect(for: within)
-                guard !rect.isNull, !rect.isEmpty else { continue }
-                return textView.convert(rect, to: cell)
+
+                textView.layoutIfNeeded()
+
+                // UITextInput path — works with both TextKit generations.
+                if let start = textView.position(from: textView.beginningOfDocument,
+                                                 offset: within.location),
+                   let end = textView.position(from: start, offset: within.length),
+                   let textRange = textView.textRange(from: start, to: end) {
+                    let rect = textView.firstRect(for: textRange)
+                    if !rect.isNull, !rect.isEmpty {
+                        return textView.convert(rect, to: cell)
+                    }
+                }
+
+                // Fallback for a text view that cannot build a UITextRange.
+                if let layoutManager = textView.layoutManager {
+                    let glyphs = layoutManager.glyphRange(forCharacterRange: within,
+                                                          actualCharacterRange: nil)
+                    var rect = layoutManager.boundingRect(forGlyphRange: glyphs,
+                                                          in: textView.textContainer)
+                    rect.origin.x += textView.textContainerInset.left
+                    rect.origin.y += textView.textContainerInset.top
+                    if !rect.isEmpty {
+                        return textView.convert(rect, to: cell)
+                    }
+                }
             }
             return nil
         }
