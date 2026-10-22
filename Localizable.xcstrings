@@ -79107,7 +79107,8 @@
     "Parsing, formatting and calculating dates and times with Python's datetime." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "用 Python 的 datetime 解析、格式化和计算日期时间。"}}}} ,
     "Base64, hex and CRC conversions in Python (base64 and binascii)." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 中的 Base64、十六进制和 CRC 转换（base64 与 binascii）。"}}}} ,
     "Python's math module." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 的 math 模块。"}}}} ,
-    "Compression in Python (zlib, gzip, zipfile); the compression itself runs in libz." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 中的压缩（zlib、gzip、zipfile）；压缩计算本身在 libz 中执行。"}}}}
+    "Compression in Python (zlib, gzip, zipfile); the compression itself runs in libz." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 中的压缩（zlib、gzip、zipfile）；压缩计算本身在 libz 中执行。"}}}} ,
+    "Includes:" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "包含："}}}}
   },
   "version" : "1.0"
 }

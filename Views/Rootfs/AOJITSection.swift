@@ -30,35 +30,49 @@ struct AOJITSection: View {
                 }
             }
 
-            if aojit.states.isEmpty {
-                HStack(spacing: 8) {
-                    if aojit.isContainerReady {
-                        ProgressView()
-                            .controlSize(.small)
+            // [T-aojit] When the switch is off the rows are noise — the footer
+            // says what the feature covers instead, matching the app's own
+            // off-state copy.
+            if aojit.isEnabled {
+                if aojit.states.isEmpty {
+                    HStack(spacing: 8) {
+                        if aojit.isContainerReady {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(aojit.isContainerReady
+                             ? String(localized: "Checking installed libraries…")
+                             : String(localized: "The container is not running yet."))
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
                     }
-                    Text(aojit.isContainerReady
-                         ? String(localized: "Checking installed libraries…")
-                         : String(localized: "The container is not running yet."))
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                if !aojit.isEnabled {
-                    Text("AOJIT is off. Turn it on to record images for the installed libraries.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(aojit.states) { state in
-                    row(state)
+                } else {
+                    ForEach(aojit.states) { state in
+                        row(state)
+                    }
                 }
             }
         } header: {
             Text("AOJIT")
         } footer: {
-            Text("AOJIT runs pre-recorded, pre-compiled JIT code for the libraries below instead of emulating every instruction. Shell pipelines are usually 2–4× faster. A switch takes effect for commands started afterwards.\n\nEach library has a single image recorded from the version listed: that version runs at full speed. For other versions of the same library, unchanged code still runs from the image and the rest is emulated, which still gives a partial speed-up.")
+            if aojit.isEnabled {
+                Text(Self.explanation)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(Self.explanation)
+                    Text(String(localized: "Includes:") + " " + Self.includedNames)
+                }
+            }
         }
     }
+
+    /// Two paragraphs shared by both states.
+    private static let explanation = String(localized: "AOJIT runs pre-recorded, pre-compiled JIT code for the libraries below instead of emulating every instruction. Shell pipelines are usually 2–4× faster. A switch takes effect for commands started afterwards.\n\nEach library has a single image recorded from the version listed: that version runs at full speed. For other versions of the same library, unchanged code still runs from the image and the rest is emulated, which still gives a partial speed-up.")
+
+    /// The catalog itself, so the off-state copy can never drift from the rows.
+    private static let includedNames = AOJITAcceleration.catalog
+        .map(\.name)
+        .joined(separator: ", ")
 
     // MARK: Row
 
