@@ -1,0 +1,280 @@
+//
+//  ChatSearch.swift
+//  ZeApp
+//
+//  [T-chat-search] In-conversation search.
+//
+//  The panel is deliberately decoupled from the message list: it publishes a
+//  `chatSearchJump` notification carrying the message id, and the list owns
+//  scrolling + the in-place highlight. That keeps this file free of UIKit and
+//  lets the same engine run in a future iPad sidebar.
+//
+
+import Foundation
+import SwiftUI
+
+// MARK: - Notification
+
+extension Notification.Name {
+    /// `userInfo["messageId"]: UUID` — reveal this message in the transcript.
+    static let chatSearchJump = Notification.Name("chatSearchJump")
+}
+
+// MARK: - Hit
+
+struct ChatSearchHit: Identifiable, Equatable {
+    let id: String
+    let messageId: UUID
+    let isUser: Bool
+    let timestamp: Date
+    /// The matching line, trimmed and windowed around the first keyword.
+    let snippet: String
+    let keywords: [String]
+    /// True when the line came from a tool's output rather than prose.
+    let isToolOutput: Bool
+}
+
+// MARK: - Engine
+
+enum ChatSearchEngine {
+    /// A hard cap so a pathological transcript cannot freeze the panel.
+    static let maxHits = 400
+    /// Tool output can be megabytes; only the head of each block is scanned.
+    static let maxLinesPerBlock = 400
+
+    /// Whitespace-separated keywords, also accepting the full-width
+    /// separators a Chinese keyboard produces. Every keyword must appear on
+    /// the same line for a hit — that is what makes a multi-word query
+    /// behave like a filter instead of an OR.
+    static func keywords(in query: String) -> [String] {
+        query
+            .split(whereSeparator: { $0.isWhitespace || $0 == "，" || $0 == "," || $0 == "、" })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    static func search(messages: [ChatMessage], query: String) -> [ChatSearchHit] {
+        let keys = keywords(in: query)
+        guard !keys.isEmpty else { return [] }
+
+        var hits: [ChatSearchHit] = []
+        var seen = Set<String>()
+
+        for message in messages {
+            for line in lines(for: message) {
+                guard containsAll(keys, in: line.text) else { continue }
+                // The same sentence can appear twice in one turn (prose echoed
+                // in a tool result); one row per line is enough.
+                guard seen.insert("\(message.id.uuidString)|\(line.text)").inserted else { continue }
+                hits.append(ChatSearchHit(
+                    id: "\(message.id.uuidString)-\(hits.count)",
+                    messageId: message.id,
+                    isUser: message.role == .user,
+                    timestamp: message.timestamp,
+                    snippet: snippet(from: line.text, keys: keys),
+                    keywords: keys,
+                    isToolOutput: line.isTool
+                ))
+                if hits.count >= maxHits { return hits }
+            }
+        }
+        return hits
+    }
+
+    // MARK: Private
+
+    private struct SearchLine {
+        let text: String
+        let isTool: Bool
+    }
+
+    private static func lines(for message: ChatMessage) -> [SearchLine] {
+        var out: [SearchLine] = []
+
+        func append(_ text: String, isTool: Bool) {
+            guard !text.isEmpty else { return }
+            var added = 0
+            for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if !line.isEmpty {
+                    out.append(SearchLine(text: line, isTool: isTool))
+                    added += 1
+                    if added >= maxLinesPerBlock { return }
+                }
+            }
+        }
+
+        if message.role == .user {
+            append(message.content, isTool: false)
+            return out
+        }
+
+        for block in message.blocks {
+            switch block.kind {
+            case .text, .info:
+                append(block.content, isTool: false)
+            case .thinking:
+                append(block.content, isTool: false)
+            default:
+                // The one-line summary is what the transcript shows; the full
+                // output is searchable but flagged so the row can say where
+                // the match came from.
+                append(block.toolSummary ?? block.toolDescription, isTool: true)
+                append(block.content, isTool: true)
+            }
+        }
+        return out
+    }
+
+    private static func containsAll(_ keys: [String], in line: String) -> Bool {
+        for key in keys where line.range(of: key, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
+            return false
+        }
+        return true
+    }
+
+    private static func snippet(from line: String, keys: [String], limit: Int = 180) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count > limit else { return trimmed }
+
+        var anchor = trimmed.startIndex
+        for key in keys {
+            if let range = trimmed.range(of: key, options: [.caseInsensitive, .diacriticInsensitive]) {
+                anchor = range.lowerBound
+                break
+            }
+        }
+
+        let lead = 48
+        let start = trimmed.index(anchor, offsetBy: -lead, limitedBy: trimmed.startIndex) ?? trimmed.startIndex
+        let end = trimmed.index(start, offsetBy: limit, limitedBy: trimmed.endIndex) ?? trimmed.endIndex
+
+        var out = String(trimmed[start..<end])
+        if start > trimmed.startIndex { out = "…" + out }
+        if end < trimmed.endIndex { out += "…" }
+        return out
+    }
+}
+
+// MARK: - Highlight
+
+enum ChatSearchHighlight {
+    /// Paints every keyword occurrence with the accent tint, merging overlaps
+    /// so `ab` + `bc` in `abc` does not double-apply attributes. Mirrors the
+    /// session-list highlighter so both search surfaces look the same.
+    static func attributed(_ text: String,
+                           keywords: [String],
+                           base: Color,
+                           accent: Color = .accentColor) -> AttributedString {
+        var attr = AttributedString(text)
+        attr.foregroundColor = base
+        guard !keywords.isEmpty else { return attr }
+
+        let total = text.count
+        var ranges: [Range<String.Index>] = []
+        for key in keywords {
+            var searchStart = text.startIndex
+            while searchStart < text.endIndex,
+                  let range = text.range(of: key,
+                                         options: [.caseInsensitive, .diacriticInsensitive],
+                                         range: searchStart..<text.endIndex) {
+                ranges.append(range)
+                searchStart = range.upperBound
+                if ranges.count > 200 { break }
+            }
+        }
+        guard !ranges.isEmpty else { return attr }
+
+        ranges.sort { $0.lowerBound < $1.lowerBound }
+        var merged: [Range<String.Index>] = []
+        for range in ranges {
+            if let last = merged.last, range.lowerBound <= last.upperBound {
+                merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+            } else {
+                merged.append(range)
+            }
+        }
+
+        for range in merged {
+            let lo = text.distance(from: text.startIndex, to: range.lowerBound)
+            let hi = text.distance(from: text.startIndex, to: range.upperBound)
+            // `AttributedString.index(_:offsetByCharacters:)` traps out of
+            // range, so clamp before indexing.
+            guard lo >= 0, hi <= total, lo < hi else { continue }
+            let lower = attr.index(attr.startIndex, offsetByCharacters: lo)
+            let upper = attr.index(attr.startIndex, offsetByCharacters: hi)
+            attr[lower..<upper].backgroundColor = accent.opacity(0.22)
+            attr[lower..<upper].foregroundColor = accent
+            attr[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return attr
+    }
+}
+
+// MARK: - Model
+
+/// Owns the query, the debounce and the hit list. Deliberately not
+/// `@MainActor`: `@StateObject` initialisers run before the view is isolated,
+/// and every mutation here already happens on the main queue (SwiftUI
+/// bindings and the debounce work item).
+final class ChatSearchModel: ObservableObject {
+    @Published var query: String = "" {
+        didSet { schedule() }
+    }
+    @Published private(set) var hits: [ChatSearchHit] = []
+    @Published private(set) var currentIndex: Int = 0
+
+    private var messages: [ChatMessage] = []
+    private var pending: DispatchWorkItem?
+
+    var current: ChatSearchHit? {
+        hits.indices.contains(currentIndex) ? hits[currentIndex] : nil
+    }
+
+    /// Re-read the transcript. Called when the panel opens and whenever the
+    /// conversation grows underneath it.
+    func bind(messages: [ChatMessage]) {
+        self.messages = messages
+        schedule()
+    }
+
+    func clear() {
+        pending?.cancel()
+        pending = nil
+        query = ""
+        hits = []
+        currentIndex = 0
+    }
+
+    func step(_ delta: Int) {
+        guard !hits.isEmpty else { return }
+        currentIndex = (currentIndex + delta + hits.count) % hits.count
+    }
+
+    func select(_ hit: ChatSearchHit) {
+        if let index = hits.firstIndex(of: hit) { currentIndex = index }
+    }
+
+    private func schedule() {
+        pending?.cancel()
+        let query = self.query
+        let snapshot = messages
+
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            hits = []
+            currentIndex = 0
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            let result = ChatSearchEngine.search(messages: snapshot, query: query)
+            guard let self else { return }
+            self.hits = result
+            self.currentIndex = 0
+        }
+        pending = work
+        // Typing debounce: a 400-message transcript costs a few milliseconds,
+        // but running that on every keystroke still shows up as input lag.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
+}

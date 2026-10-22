@@ -1835,6 +1835,17 @@ extension CollectionViewMessageListV3 {
                 }
                 .store(in: &subscriptions)
 
+            // 2d. [T-chat-search] Reveal a search hit. A browse action: do NOT
+            // touch scrollMode, otherwise streaming would yank the viewport
+            // back to the bottom right after the jump.
+            NotificationCenter.default.publisher(for: .chatSearchJump)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] note in
+                    guard let messageId = note.userInfo?["messageId"] as? UUID else { return }
+                    self?.revealSearchHit(messageId: messageId)
+                }
+                .store(in: &subscriptions)
+
             // 3. Session load
             vm.$isLoadingSession
                 .removeDuplicates()
@@ -3878,12 +3889,73 @@ extension CollectionViewMessageListV3 {
             cv.scrollToItem(at: IndexPath(item: item, section: section), at: .bottom, animated: animated)
         }
 
+        // MARK: - Search
+
+        /// [T-chat-search] Reveal a hit posted by the search panel: scroll its
+        /// first item to the middle of the viewport, then flash an accent ring
+        /// around the row so the eye lands on it after the animation.
+        func revealSearchHit(messageId: UUID, animated: Bool = true) {
+            guard let cv = viewController?.collectionView, let ds = dataSource else { return }
+            guard let item = ds.snapshot().itemIdentifiers.first(where: { $0.messageId == messageId }),
+                  let indexPath = ds.indexPath(for: item) else {
+                AppLogger(category: "ScrollDiag").info("[ScrollDiag][searchJump] item not found msg=\(messageId.uuidString.prefix(8))")
+                return
+            }
+            cv.scrollToItem(at: indexPath, at: .centeredVertically, animated: animated)
+            flashSearchHighlight(messageId: messageId, delay: animated ? 0.28 : 0)
+        }
+
+        private func flashSearchHighlight(messageId: UUID, delay: TimeInterval) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let cv = self.viewController?.collectionView else { return }
+                self.searchHighlightView?.removeFromSuperview()
+
+                let cell = cv.visibleCells.first { cell in
+                    guard let indexPath = cv.indexPath(for: cell),
+                          let item = self.dataSource?.itemIdentifier(for: indexPath) else { return false }
+                    return item.messageId == messageId
+                }
+                guard let cell else { return }
+
+                // Content coordinates: the overlay is a subview of the scroll
+                // view, so it travels with the cell instead of floating.
+                let frame = cv.convert(cell.bounds, from: cell).insetBy(dx: 6, dy: 2)
+                let highlight = UIView(frame: frame)
+                highlight.isUserInteractionEnabled = false
+                highlight.backgroundColor = UIColor.tintColor.withAlphaComponent(0.10)
+                highlight.layer.cornerRadius = 14
+                highlight.layer.cornerCurve = .continuous
+                highlight.layer.borderWidth = 1.5
+                highlight.layer.borderColor = UIColor.tintColor.withAlphaComponent(0.55).cgColor
+                highlight.alpha = 0
+                cv.addSubview(highlight)
+                self.searchHighlightView = highlight
+
+                UIView.animate(withDuration: 0.18, animations: {
+                    highlight.alpha = 1
+                }, completion: { _ in
+                    UIView.animate(withDuration: 0.55, delay: 1.4, options: [.curveEaseOut], animations: {
+                        highlight.alpha = 0
+                    }, completion: { _ in
+                        highlight.removeFromSuperview()
+                        if self.searchHighlightView === highlight {
+                            self.searchHighlightView = nil
+                        }
+                    })
+                })
+            }
+        }
+
         /// The user-message id the up-button last jumped to, so a repeated tap
         /// walks one turn further back. Reset (nil) whenever the anchoring
         /// context changes — manual drag, jump-to-bottom, snapshot change, or
         /// session load — so the next tap re-anchors to the current viewport
         /// instead of continuing from a stale turn.
         var lastJumpedUserId: UUID?
+
+        /// [T-chat-search] The transient ring drawn around the row a search hit
+        /// landed on. Held so a second jump replaces it instead of stacking.
+        private var searchHighlightView: UIView?
 
         /// Diagnostics: which user turn the current viewport TOP is in.
         /// Returns (turnIndex, totalTurns); turnIndex is 0-based into the ordered

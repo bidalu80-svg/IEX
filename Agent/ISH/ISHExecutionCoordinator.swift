@@ -101,6 +101,15 @@ actor ISHExecutionCoordinator {
             throw ISHCoordinatorError.kernelNotBooted
         }
 
+        // [T-aojit] First shell use is what turns the feature on in practice —
+        // the settings screen is only needed to turn it *off*. The guard
+        // inside prepareIfNeeded collapses repeated commands into one probe.
+        if AOJITAcceleration.shared.isEnabled, !AOJITAcceleration.shared.hasImages {
+            Task { @MainActor in
+                AOJITAcceleration.shared.prepareIfNeeded()
+            }
+        }
+
         // Register ourselves in the in-flight table purely for
         // stop/preempt visibility — we do NOT wait for prior entries.
         let myId = UUID()
@@ -273,6 +282,7 @@ actor ISHExecutionCoordinator {
         fsContext: UInt64,
         command: String,
         timeout: TimeInterval?,
+        useAOJIT: Bool = true,
         lineCallback: @escaping (String) -> Void,
         pidCallback: @escaping (Int32) -> Void
     ) async throws -> ISHCommandResult {
@@ -303,6 +313,16 @@ actor ISHExecutionCoordinator {
         let scriptContent = "cd /root\n({ exec 0</dev/null; } 2>/dev/null || true; \(command)\n)\n"
         let stdinData = scriptContent.data(using: .utf8)
 
+        // [T-aojit] A single imaged tool invocation skips the shell entirely:
+        // the image already carries the resolved absolute path, so there is no
+        // fork, no PATH search and no script parse. Every other command —
+        // pipes, redirects, globs, variables, relative paths — keeps the
+        // `/bin/sh` path unchanged below.
+        let plan = useAOJIT ? AOJITAcceleration.shared.plan(for: command) : nil
+        let launchExecutable = plan?.executable ?? "/bin/sh"
+        let launchArguments = plan?.arguments
+        let launchStdin = plan == nil ? stdinData : nil
+
         return try await withCheckedThrowingContinuation { continuation in
             let resumeLock = NSLock()
             var resumed = false
@@ -316,10 +336,10 @@ actor ISHExecutionCoordinator {
             var timeoutWork: DispatchWorkItem?
 
             let pid = ISHShellExecutor.executeExecutable(
-                "/bin/sh",
-                arguments: nil,
+                launchExecutable,
+                arguments: launchArguments,
                 environment: customEnv.isEmpty ? nil : customEnv,
-                stdinData: stdinData,
+                stdinData: launchStdin,
                 fsContext: fsContext,
                 lineCallback: { line, _ in
                 lineCallback(line)
@@ -349,6 +369,38 @@ actor ISHExecutionCoordinator {
 
             if pid < 0 {
                 guard claimResume() else { return }
+                // [T-aojit] A stale execution image must never surface as a
+                // user-visible failure. Drop it and retry through the shell so
+                // the command still runs.
+                if let plan {
+                    AOJITAcceleration.shared.invalidate(tool: plan.tool)
+                    Task { [weak self] in
+                        guard let self else {
+                            continuation.resume(returning: ISHCommandResult(
+                                output: "Error: Failed to execute command",
+                                exitCode: -1
+                            ))
+                            return
+                        }
+                        do {
+                            let retried = try await self.runCommand(
+                                sessionId: sessionId,
+                                myId: myId,
+                                fsContext: fsContext,
+                                command: command,
+                                timeout: timeout,
+                                useAOJIT: false,
+                                lineCallback: lineCallback,
+                                pidCallback: pidCallback
+                            )
+                            continuation.resume(returning: retried)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                    return
+                }
+
                 let errorMsg: String
                 switch ISHShellExecutorError(rawValue: Int(pid)) {
                 case .processCreationFailed:

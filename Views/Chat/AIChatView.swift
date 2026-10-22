@@ -415,6 +415,10 @@ struct AIChatView: View {
     @State private var pendingProviderImport: PendingProviderImport?
     @State private var providerImportResult: String?
     @State private var screenshotPreview: ChatScreenshotPreview?
+    /// [T-chat-search] In-conversation search panel. The model owns the query
+    /// and hits; the overlay owns presentation only.
+    @StateObject private var chatSearchModel = ChatSearchModel()
+    @State private var showChatSearch = false
     /// [T-session-share] Presents the session export / share configuration.
     @State private var showSessionShare = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -709,6 +713,26 @@ struct AIChatView: View {
                     .background(Color.accentColor.opacity(0.08).clipShape(RoundedRectangle(cornerRadius: 16)))
                     .padding(8)
                     .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .top) {
+            // [T-chat-search] Floats over the transcript so a jump is visible
+            // behind the panel. ZIndex keeps it above the drop-target ring.
+            if showChatSearch {
+                ChatSearchOverlay(
+                    model: chatSearchModel,
+                    onJump: { jumpToSearchHit($0) },
+                    onClose: { closeChatSearch() }
+                )
+                .padding(.top, 6)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(20)
+            }
+        }
+        .onChange(of: vm.messages.count) { _ in
+            // Keep the panel honest while a reply streams in underneath it.
+            if showChatSearch {
+                chatSearchModel.bind(messages: vm.messages)
             }
         }
         .environment(\.chatSessionId, vm.sessionId)
@@ -1800,9 +1824,38 @@ struct AIChatView: View {
             // to the very next Codex request.
             setFastMode: { enabled in codexFastModeEnabled = enabled },
             onTokenUsage: { showTokenUsage = true },
+            // [T-chat-search] Sits above Share Session in the menu.
+            onSearchChat: { openChatSearch() },
             // [T-session-share] Opens the export / share configuration sheet.
             onShareSession: { showSessionShare = true }
         )
+    }
+
+    // MARK: - Chat search
+
+    /// [T-chat-search] Bind the current transcript, then reveal the panel.
+    /// Re-binding on every open keeps a long-running session searchable
+    /// without subscribing the model to `$messages`.
+    private func openChatSearch() {
+        chatSearchModel.bind(messages: vm.messages)
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            showChatSearch = true
+        }
+    }
+
+    private func closeChatSearch() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            showChatSearch = false
+        }
+        chatSearchModel.clear()
+    }
+
+    /// The message list owns scrolling + the in-place highlight, so the panel
+    /// only needs to name the message.
+    private func jumpToSearchHit(_ hit: ChatSearchHit) {
+        NotificationCenter.default.post(name: .chatSearchJump,
+                                        object: nil,
+                                        userInfo: ["messageId": hit.messageId])
     }
 
     // MARK: - New Chat (menu entry)
@@ -5230,6 +5283,7 @@ private struct ChatTrailingMenu: View, Equatable {
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
     let onTokenUsage: () -> Void
+    let onSearchChat: () -> Void
     let onShareSession: () -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -5353,6 +5407,12 @@ private struct ChatTrailingMenu: View, Equatable {
                 Label(String(localized: "Token Usage"), systemImage: "chart.bar.fill")
             }
 
+            // [T-chat-search] Above Share Session, matching the UIKit menu.
+            Button { onSearchChat() } label: {
+                Label(String(localized: "Search in Chat"), systemImage: "magnifyingglass")
+            }
+            .disabled(messagesEmpty)
+
             // [T-session-share] Replaces the DEBUG-only "Copy Request Log" /
             // "Copy Session Data" rows.
             Button { onShareSession() } label: {
@@ -5403,6 +5463,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
     let onTokenUsage: () -> Void
+    let onSearchChat: () -> Void
     let onShareSession: () -> Void
 
     /// The displayed-state snapshot — the ONLY trigger for a menu rebuild.
@@ -5561,6 +5622,11 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
             UIAction(title: String(localized: "Token Usage"),
                      image: UIImage(systemName: "chart.bar.fill")) { _ in coordinator.parent.onTokenUsage() },
         ]
+        tailGroup.append(UIAction(title: String(localized: "Search in Chat"),
+                                  image: UIImage(systemName: "magnifyingglass"),
+                                  attributes: key.messagesEmpty ? [.disabled] : []) { _ in
+            coordinator.parent.onSearchChat()
+        })
         tailGroup.append(UIAction(title: String(localized: "Share Session"),
                                   image: UIImage(systemName: "square.and.arrow.up"),
                                   attributes: key.messagesEmpty ? [.disabled] : []) { _ in

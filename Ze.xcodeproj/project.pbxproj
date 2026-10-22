@@ -202,6 +202,9 @@
 		E5E00000A /* MainInterface.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E5E00001A /* MainInterface.storyboard */; };
 		E5E0000A1 /* ExternalFileImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E0000A2 /* ExternalFileImporter.swift */; };
 		E5F000001 /* ISHExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000011 /* ISHExecutionCoordinator.swift */; };
+		AOJITB01 /* AOJITAcceleration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AOJIT001 /* AOJITAcceleration.swift */; };
+		CHSRB01 /* ChatSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSR001 /* ChatSearch.swift */; };
+		CHSOB01 /* ChatSearchOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSO001 /* ChatSearchOverlay.swift */; };
 		E5F000002 /* ZeFsRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000012 /* ZeFsRouter.swift */; };
 		E5F00001 /* LLMProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F00002 /* LLMProviderFactory.swift */; };
 		E5F100001 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100011 /* NetworkMonitor.swift */; };
@@ -832,6 +835,9 @@
 		E5E00001A /* MainInterface.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = MainInterface.storyboard; sourceTree = "<group>"; };
 		E5E0000A2 /* ExternalFileImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalFileImporter.swift; sourceTree = "<group>"; };
 		E5F000011 /* ISHExecutionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISHExecutionCoordinator.swift; sourceTree = "<group>"; };
+		AOJIT001 /* AOJITAcceleration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITAcceleration.swift; sourceTree = "<group>"; };
+		CHSR001 /* ChatSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearch.swift; sourceTree = "<group>"; };
+		CHSO001 /* ChatSearchOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearchOverlay.swift; sourceTree = "<group>"; };
 		E5F000012 /* ZeFsRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeFsRouter.swift; sourceTree = "<group>"; };
 		E5F00002 /* LLMProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProviderFactory.swift; sourceTree = "<group>"; };
 		E5F100011 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
@@ -2045,6 +2051,7 @@
 			isa = PBXGroup;
 			children = (
 				E5F000011 /* ISHExecutionCoordinator.swift */,
+				AOJIT001 /* AOJITAcceleration.swift */,
 				E5F000012 /* ZeFsRouter.swift */,
 				E5CR00011 /* ShellCommandRingBuffer.swift */,
 			);
@@ -2134,6 +2141,8 @@
 			isa = PBXGroup;
 			children = (
 				E53000012 /* AIChatView.swift */,
+				CHSR001 /* ChatSearch.swift */,
+				CHSO001 /* ChatSearchOverlay.swift */,
 				ZESA0012 /* ZeSubAgentViews.swift */,
 				E5F200011 /* MarkdownPrepRegex.swift */,
 				E5F200012 /* ZeMediaViews.swift */,
@@ -2766,6 +2775,9 @@
 				E5T00000A /* RetryRunIntent.swift in Sources */,
 				E5T00000B /* UserMessageEntity.swift in Sources */,
 				E5F000001 /* ISHExecutionCoordinator.swift in Sources */,
+				AOJITB01 /* AOJITAcceleration.swift in Sources */,
+				CHSRB01 /* ChatSearch.swift in Sources */,
+				CHSOB01 /* ChatSearchOverlay.swift in Sources */,
 				E5F000002 /* ZeFsRouter.swift in Sources */,
 				E5CR00001 /* ShellCommandRingBuffer.swift in Sources */,
 				E5BRM0001 /* BrowserResourceMonitor.swift in Sources */,
@@ -3129,7 +3141,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3149,7 +3161,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3181,7 +3193,7 @@
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3210,7 +3222,7 @@
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3392,7 +3404,7 @@
 					"@executable_path/Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				OTHER_LDFLAGS = (
 					"-lish_emu",
 					"-lish",
@@ -3450,7 +3462,7 @@
 					"@executable_path/Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				OTHER_LDFLAGS = (
 					"-lish_emu",
 					"-lish",
@@ -3483,7 +3495,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3510,7 +3522,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3537,7 +3549,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3564,7 +3576,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3591,7 +3603,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.AgentWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3618,7 +3630,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-			MARKETING_VERSION = 1.1.1;
+			MARKETING_VERSION = 1.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.AgentWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
