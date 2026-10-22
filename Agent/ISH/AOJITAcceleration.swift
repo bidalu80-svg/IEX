@@ -497,71 +497,82 @@ final class AOJITAcceleration: ObservableObject {
     }
 
     /// Install the exact package version an image was recorded from.
+    ///
+    /// [T-aojit-repair] Runs through `ISHExecutionCoordinator`, the same path
+    /// every tool call uses. `ISHShellExecutor.executeCommandSync` skips the
+    /// coordinator's `ensureStaticMountsInitialized(for:)`, so apk wrote into
+    /// an unmounted view of the rootfs and the package never appeared — the
+    /// button looked dead. Booting first is still required: the kernel is only
+    /// started when the terminal opens.
     func repair(_ state: AOJITLibraryState) {
         guard busyLibraryId == nil else { return }
         busyLibraryId = state.id
         repairError[state.id] = nil
 
-        // The kernel only boots when the terminal is opened, so tapping Repair
-        // from Settings used to reach `executeCommandSync` while it was down,
-        // get nil back, and change nothing. Boot it here the same way the
-        // terminal does. The hop through `async` lets SwiftUI draw the spinner
-        // before the synchronous boot blocks the main thread.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.ensureBooted() else {
-                self.busyLibraryId = nil
-                self.repairError[state.id] = String(localized: "The container could not be started.")
+        let spec = "\(state.library.package)=\(state.library.repairVersion)"
+        let package = state.library.package
+        // Self-healing install:
+        //  - a rootfs without /etc/apk/repositories fails every apk call, so
+        //    write the mirror for its own Alpine branch first;
+        //  - try the recorded version, then the newest one;
+        //  - refresh the index once before giving up;
+        //  - confirm the package is actually installed before reporting success.
+        let script = """
+        if [ ! -s /etc/apk/repositories ]; then
+          rel=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
+          [ -n "$rel" ] || rel=3.21
+          printf '%s\\n' "https://dl-cdn.alpinelinux.org/alpine/v$rel/main" "https://dl-cdn.alpinelinux.org/alpine/v$rel/community" > /etc/apk/repositories
+        fi
+        apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1 || { apk update 2>&1; apk add '\(package)' 2>&1; }
+        echo "AOJIT-RC=$?"
+        apk info -e '\(package)' >/dev/null 2>&1 && echo "AOJIT-INSTALLED=1" || echo "AOJIT-INSTALLED=0"
+        """
+
+        Task { @MainActor in
+            guard ensureBooted() else {
+                busyLibraryId = nil
+                repairError[state.id] = String(localized: "The container could not be started.")
                 return
             }
-            self.isContainerReady = true
+            isContainerReady = true
 
-            let spec = "\(state.library.package)=\(state.library.repairVersion)"
-            let package = state.library.package
-            // [T-aojit-repair] Self-healing install:
-            //  - a rootfs without /etc/apk/repositories fails every apk call,
-            //    so write the mirror for its own Alpine branch first;
-            //  - try the recorded version, then the newest one;
-            //  - refresh the index once before giving up.
-            let script = """
-            if [ ! -s /etc/apk/repositories ]; then
-              rel=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
-              [ -n "$rel" ] || rel=3.21
-              printf '%s\\n' "https://dl-cdn.alpinelinux.org/alpine/v$rel/main" "https://dl-cdn.alpinelinux.org/alpine/v$rel/community" > /etc/apk/repositories
-            fi
-            apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1 || { apk update 2>&1; apk add '\(package)' 2>&1; }
-            """
-
-            self.queue.async { [weak self] in
-                let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
-                    script,
-                    timeout: 180,
-                    lineCallback: nil
+            let output: String
+            do {
+                let result = try await ISHExecutionCoordinator.shared.execute(
+                    sessionId: Self.settingsSessionId,
+                    command: script,
+                    timeout: 300,
+                    lineCallback: { _ in },
+                    pidCallback: { _ in }
                 )
-                let ok = result?.exitCode == 0
-                let output = (result?.output ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.busyLibraryId = nil
-                    if ok {
-                        self.failedRecording.remove(state.id)
-                        self.refresh()
-                    } else {
-                        self.logger.warning("AOJIT repair failed for \(state.id)")
-                        let tail = output
-                            .split(separator: "\n")
-                            .suffix(6)
-                            .joined(separator: " ")
-                            .trimmingCharacters(in: .whitespaces)
-                        let rc = result?.exitCode ?? -1
-                        self.repairError[state.id] = tail.isEmpty
-                            ? "\(String(localized: "Install failed.")) (rc=\(rc))"
-                            : "\(String(localized: "Install failed.")) (rc=\(rc))\n\(tail)"
-                    }
-                }
+                output = result.output
+            } catch {
+                busyLibraryId = nil
+                repairError[state.id] = "\(String(localized: "Install failed.")) — \(error.localizedDescription)"
+                return
+            }
+
+            busyLibraryId = nil
+            let installed = output.contains("AOJIT-INSTALLED=1")
+            if installed {
+                failedRecording.remove(state.id)
+                refresh()
+            } else {
+                logger.warning("AOJIT repair failed for \(state.id)")
+                let lines = output
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty && !$0.hasPrefix("AOJIT-") }
+                let tail = lines.suffix(6).joined(separator: "\n")
+                repairError[state.id] = tail.isEmpty
+                    ? String(localized: "Install failed.")
+                    : "\(String(localized: "Install failed."))\n\(tail)"
             }
         }
     }
+
+    /// Stable mount context for installs started from Settings.
+    private static let settingsSessionId = "aojit-settings"
 
     /// Boots the guest kernel when the terminal has not done it yet.
     /// Mirrors `ISHTerminalView.startShell`, including the rootfs install step.

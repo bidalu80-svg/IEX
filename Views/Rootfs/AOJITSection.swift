@@ -170,8 +170,11 @@ struct AOJITSection: View {
 
 // MARK: - Mark
 
-/// Blue ring with the wave inside, matching the AOJIT mark used elsewhere in
-/// the app.
+/// Blue ring with a sine wave inside.
+///
+/// Both parts are native: `Circle().strokeBorder` for the ring and
+/// `waveform.path` for the wave. The `waveform.circle` family draws vertical
+/// bars, and a hand-built path read as a checkmark.
 struct AOJITMark: View {
     var size: CGFloat = 26
     var tint: Color = .blue
@@ -179,43 +182,13 @@ struct AOJITMark: View {
     var body: some View {
         ZStack {
             Circle()
-                .strokeBorder(tint, lineWidth: size * 0.07)
+                .strokeBorder(tint, lineWidth: size * 0.072)
 
-            AOJITWave()
-                .stroke(tint,
-                        style: StrokeStyle(lineWidth: size * 0.085,
-                                           lineCap: .round,
-                                           lineJoin: .round))
-                .padding(size * 0.27)
+            Image(systemName: "waveform.path")
+                .font(.system(size: size * 0.44, weight: .medium))
+                .foregroundStyle(tint)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
-    }
-}
-
-private struct AOJITWave: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let w = rect.width
-        let h = rect.height
-
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + w * x, y: rect.minY + h * y)
-        }
-
-        // Two crests and one trough. The previous version used straight
-        // segments, which read as a checkmark; smooth curves read as a wave,
-        // which is what the mark is.
-        path.move(to: p(0.00, 0.62))
-        path.addCurve(to: p(0.34, 0.62),
-                      control1: p(0.10, 0.20),
-                      control2: p(0.24, 0.20))
-        path.addCurve(to: p(0.66, 0.62),
-                      control1: p(0.44, 0.92),
-                      control2: p(0.56, 0.92))
-        path.addCurve(to: p(1.00, 0.62),
-                      control1: p(0.76, 0.20),
-                      control2: p(0.90, 0.20))
-        return path
     }
 }
