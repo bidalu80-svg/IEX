@@ -10,6 +10,7 @@
 //  lets the same engine run in a future iPad sidebar.
 //
 
+import Combine
 import Foundation
 import SwiftUI
 
