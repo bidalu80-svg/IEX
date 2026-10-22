@@ -264,7 +264,7 @@ final class SessionExportNativeRenderer {
     /// inside the views) keeps the export path free of "screenshot mode"
     /// branches in the live chat UI.
     private func exportCopy(of message: ChatMessage) -> ChatMessage {
-        let filtered = message.blocks.filter { block in
+        var filtered = message.blocks.filter { block in
             switch block.kind {
             case .thinking:
                 return options.includeThinking
@@ -273,6 +273,17 @@ final class SessionExportNativeRenderer {
             default:
                 return options.includeToolCalls
             }
+        }
+
+        // [T-collapse-steps] The export mirrors the transcript: when the
+        // appearance setting folds finished turns, a folded turn exports only
+        // its final reply instead of silently unrolling the whole tool trail.
+        if message.role == .assistant,
+           message.isStepsCollapsed,
+           message.taskDuration != nil,
+           Self.collapsesFinishedTurns,
+           let finalText = filtered.last(where: { $0.kind == .text }) {
+            filtered = [finalText]
         }
 
         let copy = ChatMessage(role: message.role,
