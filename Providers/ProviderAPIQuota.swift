@@ -187,7 +187,8 @@ enum ProviderAPIQuotaClient {
         var unreachable = 0
         for candidate in gateways {
             try Task.checkCancellation()
-            let (quota, error) = await probe(url: root + candidate.path,
+            guard let url = URL(string: root + candidate.path) else { continue }
+            let (quota, error) = await probe(url: url,
                                              displayPath: candidate.path,
                                              shape: candidate.shape,
                                              instance: instance,

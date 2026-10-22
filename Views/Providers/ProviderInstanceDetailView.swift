@@ -246,9 +246,18 @@ struct ProviderInstanceDetailView: View {
             // /v1/images/generations and /v1/chat/completions for image output.
             if instance.supportsImageEndpointSetting {
                 imageEndpointSection(instance)
-                if instance.credentialType == .apiKey {
-                    apiKeyQuotaSection(instance)
-                }
+            }
+
+            // MARK: API Key quota
+            // [T-quota-section-all-providers] Balance lookup is not an
+            // OpenAI-only feature. Nesting this inside
+            // `supportsImageEndpointSetting` hid the section from Anthropic,
+            // Gemini and every other protocol, even though a relay fronting
+            // any of them can answer /user/balance, /api/user/self or a
+            // WorkBuddy pool. Gate on the credential type alone; the probe
+            // client decides what the host actually supports.
+            if instance.credentialType == .apiKey {
+                apiKeyQuotaSection(instance)
             }
 
             // Custom rules are honored by the OpenAI-compatible Chat
