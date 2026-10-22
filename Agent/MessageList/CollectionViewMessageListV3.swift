@@ -1843,6 +1843,7 @@ extension CollectionViewMessageListV3 {
                 .sink { [weak self] note in
                     guard let messageId = note.userInfo?["messageId"] as? UUID else { return }
                     self?.revealSearchHit(messageId: messageId,
+                                          blockId: note.userInfo?["blockId"] as? UUID,
                                           line: note.userInfo?["line"] as? String,
                                           keyword: note.userInfo?["keyword"] as? String)
                 }
@@ -3896,10 +3897,22 @@ extension CollectionViewMessageListV3 {
         /// [T-chat-search] Reveal a hit posted by the search panel: scroll its
         /// first item to the middle of the viewport, then flash an accent ring
         /// around the row so the eye lands on it after the animation.
-        func revealSearchHit(messageId: UUID, line: String?, keyword: String?, animated: Bool = true) {
+        func revealSearchHit(messageId: UUID, blockId: UUID?, line: String?, keyword: String?, animated: Bool = true) {
             guard let cv = viewController?.collectionView, let ds = dataSource else { return }
-            guard let item = ds.snapshot().itemIdentifiers.first(where: { $0.messageId == messageId }),
-                  let indexPath = ds.indexPath(for: item) else {
+            // [T-chat-search-block-target] The list is cell-per-block, and the
+            // first cell of an assistant message is its thinking header. Jumping
+            // by message id alone therefore landed on "思考了 4s" instead of the
+            // reply body that actually contains the match.
+            let items = ds.snapshot().itemIdentifiers
+            let item = items.first { item in
+                if let blockId,
+                   case .assistantBlock(let mid, let bid) = item,
+                   mid == messageId, bid == blockId {
+                    return true
+                }
+                return blockId == nil && item.messageId == messageId
+            } ?? items.first { $0.messageId == messageId }
+            guard let item, let indexPath = ds.indexPath(for: item) else {
                 AppLogger(category: "ScrollDiag").info("[ScrollDiag][searchJump] item not found msg=\(messageId.uuidString.prefix(8))")
                 return
             }
@@ -3913,6 +3926,7 @@ extension CollectionViewMessageListV3 {
             cv.layoutIfNeeded()
 
             var target: CGFloat?
+            var matchRect: CGRect?
             if let line, let keyword,
                let cell = cv.cellForItem(at: indexPath),
                let rect = Self.matchRect(in: cell, line: line, keyword: keyword) {
@@ -3920,6 +3934,7 @@ extension CollectionViewMessageListV3 {
                 // below the inset-adjusted top keeps it clear of the search
                 // bar, which the safe-area inset accounts for.
                 target = rect.minY - cv.adjustedContentInset.top - 12
+                matchRect = rect
             }
 
             if let target {
@@ -3931,7 +3946,9 @@ extension CollectionViewMessageListV3 {
                 cv.scrollToItem(at: indexPath, at: .top, animated: animated)
             }
 
-            flashSearchHighlight(messageId: messageId, delay: animated ? 0.3 : 0)
+            flashSearchHighlight(contentRect: matchRect,
+                                 item: item,
+                                 delay: animated ? 0.3 : 0)
         }
 
         /// Rect of `keyword` on `line`, in the cell's coordinate space.
@@ -3988,25 +4005,33 @@ extension CollectionViewMessageListV3 {
             return out
         }
 
-        private func flashSearchHighlight(messageId: UUID, delay: TimeInterval) {
+        private func flashSearchHighlight(contentRect: CGRect?,
+                                          item: MessageListItem?,
+                                          delay: TimeInterval) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, let cv = self.viewController?.collectionView else { return }
                 self.searchHighlightView?.removeFromSuperview()
 
-                let cell = cv.visibleCells.first { cell in
-                    guard let indexPath = cv.indexPath(for: cell),
-                          let item = self.dataSource?.itemIdentifier(for: indexPath) else { return false }
-                    return item.messageId == messageId
+                // [T-chat-search-block-target] Prefer the glyph rect: ringing
+                // the whole cell drew the flash around a thinking row when the
+                // match lived in a later block of the same message.
+                let frame: CGRect
+                if let contentRect {
+                    frame = contentRect.insetBy(dx: -4, dy: -2)
+                } else if let item,
+                          let indexPath = self.dataSource?.indexPath(for: item),
+                          let cell = cv.cellForItem(at: indexPath) {
+                    frame = cv.convert(cell.bounds, from: cell).insetBy(dx: 6, dy: 2)
+                } else {
+                    return
                 }
-                guard let cell else { return }
 
                 // Content coordinates: the overlay is a subview of the scroll
                 // view, so it travels with the cell instead of floating.
-                let frame = cv.convert(cell.bounds, from: cell).insetBy(dx: 6, dy: 2)
                 let highlight = UIView(frame: frame)
                 highlight.isUserInteractionEnabled = false
                 highlight.backgroundColor = UIColor.tintColor.withAlphaComponent(0.10)
-                highlight.layer.cornerRadius = 14
+                highlight.layer.cornerRadius = 6
                 highlight.layer.cornerCurve = .continuous
                 highlight.layer.borderWidth = 1.5
                 highlight.layer.borderColor = UIColor.tintColor.withAlphaComponent(0.55).cgColor

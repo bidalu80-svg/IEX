@@ -1843,6 +1843,7 @@ struct AIChatView: View {
                                         object: nil,
                                         userInfo: [
                                             "messageId": hit.messageId,
+                                            "blockId": hit.blockId as Any,
                                             "line": hit.line,
                                             "keyword": hit.keyword
                                         ])

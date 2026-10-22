@@ -519,9 +519,12 @@ final class AOJITAcceleration: ObservableObject {
         ensureRepositories()
 
         let script = """
+        echo "AOJIT-REPOS:"
+        cat /etc/apk/repositories 2>&1 | head -4
         if ! command -v apk >/dev/null 2>&1; then echo "AOJIT-ERROR=apk-missing"; exit 0; fi
         if [ ! -s /etc/apk/repositories ]; then echo "AOJIT-ERROR=no-repositories"; exit 0; fi
-        apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1 || { apk update 2>&1; apk add '\(package)' 2>&1; }
+        apk update 2>&1 | tail -6
+        apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1
         if apk info -e '\(package)' >/dev/null 2>&1; then echo "AOJIT-INSTALLED=1"; else echo "AOJIT-INSTALLED=0"; fi
         """
 
@@ -538,7 +541,7 @@ final class AOJITAcceleration: ObservableObject {
                 let result = try await ISHExecutionCoordinator.shared.execute(
                     sessionId: Self.settingsSessionId,
                     command: script,
-                    timeout: 300,
+                    timeout: 420,
                     lineCallback: { _ in },
                     pidCallback: { _ in }
                 )
@@ -590,17 +593,23 @@ final class AOJITAcceleration: ObservableObject {
         let data = RootfsManager.shared.dataPath
         let file = data.appendingPathComponent("etc/apk/repositories")
 
-        if let text = try? String(contentsOf: file, encoding: .utf8),
-           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return
-        }
-
         // Match the rootfs's own branch; a mismatched branch 404s every index.
+        // The Mirror screen hard-codes v3.21, so a 3.20 rootfs ends up pointing
+        // at a branch that does not exist.
         let release = (try? String(contentsOf: data.appendingPathComponent("etc/alpine-release"),
                                     encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let parts = release.split(separator: ".").prefix(2)
         let branch = parts.count == 2 ? parts.joined(separator: ".") : "3.21"
+
+        if let text = try? String(contentsOf: file, encoding: .utf8) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let referenced = Self.branch(inRepositories: trimmed)
+            if !trimmed.isEmpty, referenced == nil || referenced == branch {
+                return
+            }
+            logger.info("AOJIT repositories point at v\(referenced ?? "?") but the rootfs is v\(branch); rewriting")
+        }
 
         let base = UserDefaults.standard.string(forKey: "mirror.selected.alpine")
             .flatMap { MirrorEntry.find(baseURL: $0) }?.baseURL
@@ -615,6 +624,14 @@ final class AOJITAcceleration: ObservableObject {
         } catch {
             logger.error("AOJIT repositories write failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Extracts `3.21` from a repositories file containing `/alpine/v3.21/…`.
+    private static func branch(inRepositories text: String) -> String? {
+        guard let range = text.range(of: "/v", options: .backwards) else { return nil }
+        let tail = text[range.upperBound...]
+        let digits = tail.prefix { $0.isNumber || $0 == "." }
+        return digits.isEmpty ? nil : String(digits)
     }
 
     /// Boots the guest kernel when the terminal has not done it yet.

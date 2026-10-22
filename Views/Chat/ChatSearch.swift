@@ -80,7 +80,8 @@ enum ChatSearchEngine {
                     line: line.text,
                     keyword: keys[0],
                     keywords: keys,
-                    isToolOutput: line.isTool
+                    isToolOutput: line.isTool,
+                    blockId: line.blockId
                 ))
                 if hits.count >= maxHits { return hits }
             }
@@ -93,18 +94,22 @@ enum ChatSearchEngine {
     private struct SearchLine {
         let text: String
         let isTool: Bool
+        /// The block this line came from, so a jump can target the exact cell
+        /// instead of the first cell of the message (which is the thinking
+        /// header, not the prose).
+        let blockId: UUID?
     }
 
     private static func lines(for message: ChatMessage) -> [SearchLine] {
         var out: [SearchLine] = []
 
-        func append(_ text: String) {
+        func append(_ text: String, blockId: UUID?) {
             guard !text.isEmpty else { return }
             var added = 0
             for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 if !line.isEmpty {
-                    out.append(SearchLine(text: line, isTool: false))
+                    out.append(SearchLine(text: line, isTool: false, blockId: blockId))
                     added += 1
                     if added >= maxLinesPerBlock { return }
                 }
@@ -112,7 +117,7 @@ enum ChatSearchEngine {
         }
 
         if message.role == .user {
-            append(message.content)
+            append(message.content, blockId: nil)
             return out
         }
 
@@ -125,7 +130,7 @@ enum ChatSearchEngine {
         for block in message.blocks {
             switch block.kind {
             case .text:
-                append(block.content)
+                append(block.content, blockId: block.id)
             default:
                 break
             }
