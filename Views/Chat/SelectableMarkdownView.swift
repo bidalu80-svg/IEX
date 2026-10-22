@@ -4619,9 +4619,19 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
         let current = super.attributedText
         let length = current?.length ?? 0
         guard query != appliedSearchQuery || length != lastHighlightedLength else { return }
+        guard length > 0, let current else {
+            // The query arrived before the cell rendered its text. Retry after
+            // the current update pass, which is where the content lands.
+            if query != appliedSearchQuery {
+                appliedSearchQuery = query
+                DispatchQueue.main.async { [weak self] in
+                    self?.applySearchHighlight(query: query)
+                }
+            }
+            return
+        }
         appliedSearchQuery = query
         lastHighlightedLength = length
-        guard let current, length > 0 else { return }
 
         let mutable = NSMutableAttributedString(attributedString: current)
         let full = NSRange(location: 0, length: mutable.length)
@@ -7032,6 +7042,11 @@ struct SelectableMarkdownView: UIViewRepresentable {
         if !fastPathTaken {
             textView.attributedText = attributed
         }
+
+        // [T-chat-search] Repaint after either path: the fast path mutates
+        // textStorage directly, so the highlight would otherwise be dropped on
+        // the next streaming tick.
+        textView.applySearchHighlight(query: ChatSearchHighlightStore.shared.query)
 
         // [WordFade] Now that storage holds the final text (via either path),
         // fade the revealed range in word-by-word. Decoupled from fastPathTaken
