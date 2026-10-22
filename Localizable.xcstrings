@@ -79042,7 +79042,8 @@
     "Hide Thinking" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "隐藏思考"}}}} ,
     "Show Thinking" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "显示思考"}}}} ,
     "Clear Selection" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "取消选择"}}}} ,
-    "Share (%ld)" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "分享 (%ld)"}}}}
+    "Share (%ld)" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "分享 (%ld)"}}}} ,
+    "Tool Input & Result" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "工具输入与结果"}}}}
   },
   "version" : "1.0"
 }

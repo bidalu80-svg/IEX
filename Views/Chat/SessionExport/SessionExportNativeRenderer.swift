@@ -100,31 +100,74 @@ final class SessionExportNativeRenderer {
         let pageRect = CGRect(origin: .zero, size: pageSize)
         let scale = long.scale
         let pixelHeight = long.size.height * scale
-        let pixelPage = pageSize.height * scale
-        var offset: CGFloat = 0
+
+        // [T-share-pdf-page-number] Reserve a footer band on every page so the
+        // page number never lands on top of the transcript.
+        let footerHeight: CGFloat = 26
+        let contentHeight = pageSize.height - footerHeight
+        let pixelPage = contentHeight * scale
+        let pageCount = max(Int((pixelHeight / pixelPage).rounded(.up)), 1)
 
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
         return renderer.pdfData { ctx in
-            while offset < pixelHeight {
+            for page in 0..<pageCount {
                 ctx.beginPage()
                 background.setFill()
                 // `UIGraphicsPDFRendererContext` is not a CGContext; the fill
                 // has to go through the context it wraps.
                 ctx.cgContext.fill(pageRect)
 
+                let offset = CGFloat(page) * pixelPage
                 let sliceHeight = min(pixelPage, pixelHeight - offset)
-                if let slice = long.cgImage?.cropping(to: CGRect(x: 0,
-                                                                y: offset,
-                                                                width: long.size.width * scale,
-                                                                height: sliceHeight)) {
+                if sliceHeight > 0,
+                   let slice = long.cgImage?.cropping(to: CGRect(x: 0,
+                                                                 y: offset,
+                                                                 width: long.size.width * scale,
+                                                                 height: sliceHeight)) {
                     let image = UIImage(cgImage: slice, scale: scale, orientation: .up)
                     image.draw(in: CGRect(x: 0, y: 0,
                                           width: pageWidth,
                                           height: sliceHeight / scale))
                 }
-                offset += pixelPage
+
+                drawFooter(page: page + 1,
+                           total: pageCount,
+                           pageSize: pageSize,
+                           footerHeight: footerHeight)
+                ctx.endPage()
             }
         }
+    }
+
+    /// Rule + "3 / 12" in the reserved band. The number is right-aligned and
+    /// monospaced so it stays put as the total crosses 9 → 10 → 100.
+    private func drawFooter(page: Int, total: Int, pageSize: CGSize, footerHeight: CGFloat) {
+        let ruleY = pageSize.height - footerHeight
+        (scheme == .dark ? UIColor(white: 1, alpha: 0.10) : UIColor(white: 0, alpha: 0.08)).setFill()
+        UIRectFill(CGRect(x: 0, y: ruleY, width: pageSize.width, height: 0.5))
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: scheme == .dark
+                ? UIColor(white: 0.62, alpha: 1)
+                : UIColor(white: 0.42, alpha: 1)
+        ]
+
+        let number = "\(page) / \(total)" as NSString
+        let numberSize = number.size(withAttributes: attributes)
+        number.draw(at: CGPoint(x: pageSize.width - numberSize.width - 20,
+                                y: ruleY + (footerHeight - numberSize.height) / 2),
+                    withAttributes: attributes)
+
+        let mark = "Ze" as NSString
+        let markAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9, weight: .heavy),
+            .foregroundColor: UIColor(red: 0.35, green: 0.36, blue: 1.0, alpha: 0.55)
+        ]
+        let markSize = mark.size(withAttributes: markAttributes)
+        mark.draw(at: CGPoint(x: 20,
+                              y: ruleY + (footerHeight - markSize.height) / 2),
+                  withAttributes: markAttributes)
     }
 
     // MARK: - Row rendering
@@ -365,7 +408,10 @@ private final class OffscreenHost {
 
 /// Avatar + model name + date, drawn with the same palette as the chat so the
 /// export opens like a conversation rather than a printout.
-private struct SessionExportHeaderCard: View {
+///
+/// Not `private`: the share sheet's picker renders it at the top of the
+/// transcript so the header toggle is visible before exporting.
+struct SessionExportHeaderCard: View {
     let header: SessionExportHeader
     let scheme: ColorScheme
 
