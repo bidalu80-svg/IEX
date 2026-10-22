@@ -4607,6 +4607,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     private var lastHighlightedLength: Int = -1
     private var searchCancellable: AnyCancellable?
     private var observesSearchStore = false
+    /// Only reply bodies participate; see `SelectableMarkdownView`.
+    var allowsSearchHighlight = false
     /// Marks the background ranges this view painted, so they can be removed
     /// without touching any background the markdown itself carries.
     private static let searchHighlightKey = NSAttributedString.Key("ZeSearchHighlight")
@@ -4614,6 +4616,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     /// Re-paint match backgrounds for a new query without re-rendering the
     /// markdown. Idempotent: only our own ranges are removed and re-added.
     func applySearchHighlight(query: String) {
+        guard allowsSearchHighlight else { return }
         observeSearchStoreIfNeeded()
 
         let current = super.attributedText
@@ -6601,6 +6604,11 @@ struct SelectableMarkdownView: UIViewRepresentable {
     var onReadAloud: (() -> Void)?
     /// [T-selection-menu-ze-tts] "Read Selection" (selected text) via Ze TTS.
     var onSpeakText: ((String) -> Void)?
+    /// [T-chat-search] Only reply bodies take the in-place search highlight.
+    /// Thinking blocks, tool output and file previews reuse this renderer, and
+    /// painting matches there made the search look like it covered content it
+    /// never indexed.
+    var allowsSearchHighlight: Bool = false
     @Environment(\.openURL) private var openURL
 
     func makeCoordinator() -> Coordinator {
@@ -6666,6 +6674,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         textView.onSpeakText = onSpeakText
         // [T-chat-search] Runs before the markdown-unchanged early return so a
         // query change re-colours the visible text without re-rendering it.
+        textView.allowsSearchHighlight = allowsSearchHighlight
         textView.applySearchHighlight(query: ChatSearchHighlightStore.shared.query)
 
         let currentFontSize = FontSettings.shared.scaledMessage(16.5)

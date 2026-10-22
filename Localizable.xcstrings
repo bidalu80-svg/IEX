@@ -79111,7 +79111,9 @@
     "Includes:" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "包含："}}}} ,
     "Search" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "搜索"}}}} ,
     "Install failed." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "安装失败。"}}}} ,
-    "The container could not be started." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "容器启动失败。"}}}}
+    "The container could not be started." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "容器启动失败。"}}}} ,
+    "apk is missing from this rootfs." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "此 rootfs 中没有 apk。"}}}} ,
+    "No package source is configured." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "没有配置软件源。"}}}}
   },
   "version" : "1.0"
 }

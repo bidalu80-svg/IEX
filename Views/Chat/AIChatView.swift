@@ -5647,17 +5647,18 @@ private struct ChatSearchPresentation: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .top) {
-                ZStack(alignment: .top) {
-                    if isPresented {
-                        ChatSearchOverlay(model: model, onJump: onJump, onClose: onClose)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                // [T-chat-search-inset] A safe-area inset, not an overlay: the
+                // bar pushes the transcript down, so a jumped-to message can
+                // never sit underneath it. It also means the collection view's
+                // adjustedContentInset already includes the bar, which is what
+                // the jump offset math relies on.
+                if isPresented {
+                    ChatSearchOverlay(model: model, onJump: onJump, onClose: onClose)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isPresented)
-                .allowsHitTesting(isPresented)
-                .zIndex(20)
             }
+            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isPresented)
             .onChange(of: messages.count) { _ in
                 // Keep the panel honest while a reply streams in underneath it.
                 if isPresented {

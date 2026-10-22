@@ -511,21 +511,18 @@ final class AOJITAcceleration: ObservableObject {
 
         let spec = "\(state.library.package)=\(state.library.repairVersion)"
         let package = state.library.package
-        // Self-healing install:
-        //  - a rootfs without /etc/apk/repositories fails every apk call, so
-        //    write the mirror for its own Alpine branch first;
-        //  - try the recorded version, then the newest one;
-        //  - refresh the index once before giving up;
-        //  - confirm the package is actually installed before reporting success.
+        // [T-aojit-repair] `/etc/apk/repositories` lives in the rootfs data dir,
+        // which is bind-mounted into the guest. A fresh rootfs ships without it,
+        // and every `apk add` then fails with "no repositories configured" —
+        // that is why the button appeared to do nothing. Write it from the host,
+        // reusing whichever Alpine mirror the Mirror screen has selected.
+        ensureRepositories()
+
         let script = """
-        if [ ! -s /etc/apk/repositories ]; then
-          rel=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
-          [ -n "$rel" ] || rel=3.21
-          printf '%s\\n' "https://dl-cdn.alpinelinux.org/alpine/v$rel/main" "https://dl-cdn.alpinelinux.org/alpine/v$rel/community" > /etc/apk/repositories
-        fi
+        if ! command -v apk >/dev/null 2>&1; then echo "AOJIT-ERROR=apk-missing"; exit 0; fi
+        if [ ! -s /etc/apk/repositories ]; then echo "AOJIT-ERROR=no-repositories"; exit 0; fi
         apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1 || { apk update 2>&1; apk add '\(package)' 2>&1; }
-        echo "AOJIT-RC=$?"
-        apk info -e '\(package)' >/dev/null 2>&1 && echo "AOJIT-INSTALLED=1" || echo "AOJIT-INSTALLED=0"
+        if apk info -e '\(package)' >/dev/null 2>&1; then echo "AOJIT-INSTALLED=1"; else echo "AOJIT-INSTALLED=0"; fi
         """
 
         Task { @MainActor in
@@ -559,20 +556,66 @@ final class AOJITAcceleration: ObservableObject {
                 refresh()
             } else {
                 logger.warning("AOJIT repair failed for \(state.id)")
+                let hint: String?
+                if output.contains("AOJIT-ERROR=apk-missing") {
+                    hint = String(localized: "apk is missing from this rootfs.")
+                } else if output.contains("AOJIT-ERROR=no-repositories") {
+                    hint = String(localized: "No package source is configured.")
+                } else {
+                    hint = nil
+                }
                 let lines = output
                     .split(separator: "\n")
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .filter { !$0.isEmpty && !$0.hasPrefix("AOJIT-") }
                 let tail = lines.suffix(6).joined(separator: "\n")
-                repairError[state.id] = tail.isEmpty
+                let parts = [hint, tail.isEmpty ? nil : tail].compactMap { $0 }
+                repairError[state.id] = parts.isEmpty
                     ? String(localized: "Install failed.")
-                    : "\(String(localized: "Install failed."))\n\(tail)"
+                    : parts.joined(separator: "\n")
             }
         }
     }
 
     /// Stable mount context for installs started from Settings.
     private static let settingsSessionId = "aojit-settings"
+
+    /// Writes `/etc/apk/repositories` when the rootfs has none.
+    ///
+    /// The Mirror screen (`MirrorSpeedTestViewModel.applyMirror`) writes this
+    /// file straight into the rootfs data directory rather than through the
+    /// guest, so the same approach is used here: it works before the kernel has
+    /// booted and cannot be blocked by a read-only guest view of `/etc`.
+    private func ensureRepositories() {
+        let data = RootfsManager.shared.dataPath
+        let file = data.appendingPathComponent("etc/apk/repositories")
+
+        if let text = try? String(contentsOf: file, encoding: .utf8),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return
+        }
+
+        // Match the rootfs's own branch; a mismatched branch 404s every index.
+        let release = (try? String(contentsOf: data.appendingPathComponent("etc/alpine-release"),
+                                    encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let parts = release.split(separator: ".").prefix(2)
+        let branch = parts.count == 2 ? parts.joined(separator: ".") : "3.21"
+
+        let base = UserDefaults.standard.string(forKey: "mirror.selected.alpine")
+            .flatMap { MirrorEntry.find(baseURL: $0) }?.baseURL
+            ?? "https://dl-cdn.alpinelinux.org/alpine/"
+
+        let content = "\(base)v\(branch)/main\n\(base)v\(branch)/community\n"
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try content.write(to: file, atomically: true, encoding: .utf8)
+            logger.info("AOJIT repositories → v\(branch) via \(base)")
+        } catch {
+            logger.error("AOJIT repositories write failed: \(error.localizedDescription)")
+        }
+    }
 
     /// Boots the guest kernel when the terminal has not done it yet.
     /// Mirrors `ISHTerminalView.startShell`, including the rootfs install step.

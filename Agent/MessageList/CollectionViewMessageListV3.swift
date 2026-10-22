@@ -3916,11 +3916,10 @@ extension CollectionViewMessageListV3 {
             if let line, let keyword,
                let cell = cv.cellForItem(at: indexPath),
                let rect = Self.matchRect(in: cell, line: line, keyword: keyword) {
-                let inContent = cv.convert(rect, from: cell)
-                // Leave room for the search bar and a little air, so the hit
-                // is never hidden behind it.
-                let headroom = cv.adjustedContentInset.top + ChatSearchOverlay.barHeight + 28
-                target = inContent.minY - headroom
+                // `rect` is already in content coordinates. Placing it 12pt
+                // below the inset-adjusted top keeps it clear of the search
+                // bar, which the safe-area inset accounts for.
+                target = rect.minY - cv.adjustedContentInset.top - 12
             }
 
             if let target {
@@ -3929,7 +3928,7 @@ extension CollectionViewMessageListV3 {
                 let y = min(max(target, minY), maxY)
                 cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: y), animated: animated)
             } else {
-                cv.scrollToItem(at: indexPath, at: .centeredVertically, animated: animated)
+                cv.scrollToItem(at: indexPath, at: .top, animated: animated)
             }
 
             flashSearchHighlight(messageId: messageId, delay: animated ? 0.3 : 0)
