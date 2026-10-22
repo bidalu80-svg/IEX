@@ -5647,7 +5647,6 @@ private struct ChatSearchPresentation: ViewModifier {
                 ZStack(alignment: .top) {
                     if isPresented {
                         ChatSearchOverlay(model: model, onJump: onJump, onClose: onClose)
-                            .padding(.top, 6)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }

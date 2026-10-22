@@ -22,12 +22,11 @@ struct AOJITSection: View {
                 Label {
                     Text("AOJIT Optimization")
                 } icon: {
-                    // The app's AOJIT mark is a filled blue disc with the wave
-                    // knocked out in white — `waveform.circle.fill`, not the
-                    // outline variant.
-                    Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: 26, weight: .regular))
-                        .foregroundStyle(.blue)
+                    // [T-aojit-mark] The app's own mark: a blue ring with the
+                    // wave inside. Drawn rather than picked from SF Symbols —
+                    // `waveform.circle` draws bars and the `.fill` variant
+                    // inverts the disc, neither of which matches.
+                    AOJITMark(size: 26)
                 }
             }
 
@@ -111,6 +110,13 @@ struct AOJITSection: View {
             if !state.isAvailable {
                 repairButton(state)
             }
+
+            if let error = aojit.repairError[state.id] {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -158,5 +164,43 @@ struct AOJITSection: View {
         .buttonStyle(.plain)
         .disabled(aojit.busyLibraryId != nil)
         .padding(.top, 2)
+    }
+}
+
+// MARK: - Mark
+
+/// Blue ring with the wave inside, matching the AOJIT mark used elsewhere in
+/// the app.
+struct AOJITMark: View {
+    var size: CGFloat = 26
+    var tint: Color = .blue
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(tint, lineWidth: size * 0.07)
+
+            AOJITWave()
+                .stroke(tint,
+                        style: StrokeStyle(lineWidth: size * 0.085,
+                                           lineCap: .round,
+                                           lineJoin: .round))
+                .padding(size * 0.27)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct AOJITWave: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + h * 0.66))
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.28, y: rect.minY + h * 0.30))
+        path.addLine(to: CGPoint(x: rect.minX + w * 0.55, y: rect.minY + h * 0.58))
+        path.addLine(to: CGPoint(x: rect.minX + w, y: rect.minY + h * 0.20))
+        return path
     }
 }

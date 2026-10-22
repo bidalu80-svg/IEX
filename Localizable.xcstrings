@@ -79108,7 +79108,10 @@
     "Base64, hex and CRC conversions in Python (base64 and binascii)." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 中的 Base64、十六进制和 CRC 转换（base64 与 binascii）。"}}}} ,
     "Python's math module." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 的 math 模块。"}}}} ,
     "Compression in Python (zlib, gzip, zipfile); the compression itself runs in libz." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "Python 中的压缩（zlib、gzip、zipfile）；压缩计算本身在 libz 中执行。"}}}} ,
-    "Includes:" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "包含："}}}}
+    "Includes:" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "包含："}}}} ,
+    "Search" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "搜索"}}}} ,
+    "Install failed." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "安装失败。"}}}} ,
+    "The container could not be started." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "容器启动失败。"}}}}
   },
   "version" : "1.0"
 }

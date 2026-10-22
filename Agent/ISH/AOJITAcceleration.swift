@@ -401,6 +401,10 @@ final class AOJITAcceleration: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var isRecording = false
     @Published private(set) var busyLibraryId: String?
+    /// Last install failure per library, shown under its row. Silent failures
+    /// made the repair button look dead: `executeCommandSync` returns nil when
+    /// the kernel has not booted, and apk's own errors were only logged.
+    @Published private(set) var repairError: [String: String] = [:]
     /// False when the guest kernel has not booted yet, so the section can say
     /// so instead of spinning forever.
     @Published private(set) var isContainerReady = false
@@ -414,7 +418,7 @@ final class AOJITAcceleration: ObservableObject {
         let durationMs: Int
     }
 
-    private struct Probe {
+    private struct Probe: Codable {
         var packageVersions: [String: String] = [:]
         var moduleAvailable: [String: Bool] = [:]
     }
@@ -436,6 +440,11 @@ final class AOJITAcceleration: ObservableObject {
             isEnabled = defaults.bool(forKey: Self.defaultsKey)
         }
         loadRecordings()
+        // [T-aojit-cache] Rebuild from the last probe so the section is filled
+        // the moment it opens. Without this the rows only appeared after a
+        // fresh detection, which is why every relaunch started blank.
+        loadCachedProbe()
+        rebuildStates()
     }
 
     // MARK: Public API
@@ -460,7 +469,8 @@ final class AOJITAcceleration: ObservableObject {
         guard !isRefreshing else { return }
         guard ISHKernel.shared.isBooted else {
             isContainerReady = false
-            states = []
+            // Keep the cached rows: clearing them turned every relaunch into
+            // "wait for a probe" instead of showing the last known state.
             return
         }
 
@@ -479,6 +489,7 @@ final class AOJITAcceleration: ObservableObject {
                 guard let self else { return }
                 self.lastProbe = probe
                 self.isRefreshing = false
+                self.saveCachedProbe()
                 self.rebuildStates()
                 self.recordMissingImages()
             }
@@ -489,28 +500,71 @@ final class AOJITAcceleration: ObservableObject {
     func repair(_ state: AOJITLibraryState) {
         guard busyLibraryId == nil else { return }
         busyLibraryId = state.id
+        repairError[state.id] = nil
 
-        let spec = "\(state.library.package)=\(state.library.repairVersion)"
-        let script = "apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(state.library.package)' 2>&1"
-
-        queue.async { [weak self] in
-            let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
-                script,
-                timeout: 180,
-                lineCallback: nil
-            )
-            let ok = result?.exitCode == 0
-            DispatchQueue.main.async {
-                guard let self else { return }
+        // The kernel only boots when the terminal is opened, so tapping Repair
+        // from Settings used to reach `executeCommandSync` while it was down,
+        // get nil back, and change nothing. Boot it here the same way the
+        // terminal does. The hop through `async` lets SwiftUI draw the spinner
+        // before the synchronous boot blocks the main thread.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.ensureBooted() else {
                 self.busyLibraryId = nil
-                if ok {
-                    self.failedRecording.remove(state.id)
-                    self.refresh()
-                } else {
-                    self.logger.warning("AOJIT repair failed for \(state.id)")
+                self.repairError[state.id] = String(localized: "The container could not be started.")
+                return
+            }
+            self.isContainerReady = true
+
+            let spec = "\(state.library.package)=\(state.library.repairVersion)"
+            let script = "apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(state.library.package)' 2>&1"
+
+            self.queue.async { [weak self] in
+                let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
+                    script,
+                    timeout: 180,
+                    lineCallback: nil
+                )
+                let ok = result?.exitCode == 0
+                let output = (result?.output ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.busyLibraryId = nil
+                    if ok {
+                        self.failedRecording.remove(state.id)
+                        self.refresh()
+                    } else {
+                        self.logger.warning("AOJIT repair failed for \(state.id)")
+                        let tail = output
+                            .split(separator: "\n")
+                            .suffix(3)
+                            .joined(separator: " ")
+                            .trimmingCharacters(in: .whitespaces)
+                        self.repairError[state.id] = tail.isEmpty
+                            ? String(localized: "Install failed.")
+                            : tail
+                    }
                 }
             }
         }
+    }
+
+    /// Boots the guest kernel when the terminal has not done it yet.
+    /// Mirrors `ISHTerminalView.startShell`, including the rootfs install step.
+    private func ensureBooted() -> Bool {
+        if ISHKernel.shared.isBooted { return true }
+        do {
+            try RootfsManager.shared.installIfNeeded()
+        } catch {
+            logger.warning("AOJIT rootfs install failed: \(error.localizedDescription)")
+            return false
+        }
+        let status = ISHKernel.shared.boot(withRootPath: RootfsManager.shared.rootfsPath.path)
+        guard status >= 0 else {
+            logger.warning("AOJIT kernel boot failed: \(status)")
+            return false
+        }
+        return true
     }
 
     /// Force a fresh recording for every installed library (Settings row).
@@ -665,6 +719,30 @@ final class AOJITAcceleration: ObservableObject {
             try data.write(to: url, options: .atomic)
         } catch {
             logger.warning("AOJIT recordings write failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Probe cache
+
+    private static var cachedProbeURL: URL {
+        recordingsURL.deletingLastPathComponent().appendingPathComponent("probe.json")
+    }
+
+    private func loadCachedProbe() {
+        guard let data = try? Data(contentsOf: Self.cachedProbeURL),
+              let decoded = try? JSONDecoder().decode(Probe.self, from: data) else { return }
+        lastProbe = decoded
+    }
+
+    private func saveCachedProbe() {
+        guard let probe = lastProbe else { return }
+        let url = Self.cachedProbeURL
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try JSONEncoder().encode(probe).write(to: url, options: .atomic)
+        } catch {
+            logger.warning("AOJIT probe cache write failed: \(error.localizedDescription)")
         }
     }
 }
