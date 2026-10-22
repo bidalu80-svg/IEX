@@ -134,7 +134,9 @@ final class SessionExportNativeRenderer {
                            total: pageCount,
                            pageSize: pageSize,
                            footerHeight: footerHeight)
-                ctx.endPage()
+                // `UIGraphicsPDFRendererContext` has no `endPage()`: the next
+                // `beginPage()` closes the current page and the renderer closes
+                // the last one when the drawing closure returns.
             }
         }
     }

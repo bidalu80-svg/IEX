@@ -21,7 +21,6 @@ enum SessionExportOptionsStore {
     private static let themeKey = "sessionExport.theme"
     private static let toolCallsKey = "sessionExport.includeToolCalls"
     private static let thinkingKey = "sessionExport.includeThinking"
-    private static let toolIOKey = "sessionExport.includeToolIO"
     private static let headerKey = "sessionExport.includeHeader"
 
     static func load() -> SessionExportOptions {
@@ -49,9 +48,6 @@ enum SessionExportOptionsStore {
         if defaults.object(forKey: thinkingKey) != nil {
             options.includeThinking = defaults.bool(forKey: thinkingKey)
         }
-        if defaults.object(forKey: toolIOKey) != nil {
-            options.includeToolIO = defaults.bool(forKey: toolIOKey)
-        }
         if defaults.object(forKey: headerKey) != nil {
             options.includeHeader = defaults.bool(forKey: headerKey)
         }
@@ -65,7 +61,6 @@ enum SessionExportOptionsStore {
         defaults.set(options.theme.rawValue, forKey: themeKey)
         defaults.set(options.includeToolCalls, forKey: toolCallsKey)
         defaults.set(options.includeThinking, forKey: thinkingKey)
-        defaults.set(options.includeToolIO, forKey: toolIOKey)
         defaults.set(options.includeHeader, forKey: headerKey)
     }
 }
@@ -286,11 +281,6 @@ struct SessionShareSheet: View {
                 toggleChip(String(localized: "Thinking"),
                            systemImage: "brain",
                            isOn: $options.includeThinking)
-
-                toggleChip(String(localized: "Tool Input & Result"),
-                           systemImage: "text.alignleft",
-                           isOn: $options.includeToolIO,
-                           isEnabled: options.includeToolCalls)
 
                 toggleChip(String(localized: "Avatar, Model and Date"),
                            systemImage: "person.crop.circle",
