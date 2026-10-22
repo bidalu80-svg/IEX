@@ -31,8 +31,11 @@ check('collapseConsecutiveToolCallsToggle' in settings and '.tint(.blue)' in set
 check(all("ConsecutiveToolCallsPolicy.preferenceKey" in s for s in [settings, v3, fallback]), "same persisted preference across settings and both renderers")
 check('case .text, .thinking, .info: return false' in models, "text/thinking/info are strict boundaries, including empty text")
 check('ConsecutiveToolCallsPolicy.ranges(isTool: blocks.map' in models, "grouping projects every block without filtering source")
-check('enabled: collapseConsecutiveToolCalls && !forceUncollapsedToolsForScreenshot' in v3, "screenshot always renders original blocks")
-check('if first.isToolGroupExpanded' in v3 and 'segment.blocks.map { .assistantBlock' in v3, "expansion uses original tool cells")
+# [T-collapse-steps] The per-group disclosure row is gone: grouping is disabled
+# in the item builder, and the turn-level fold is gated by the same appearance
+# switch while screenshots still force the original blocks.
+check('enabled: false' in v3 and 'let stepsCollapsed = collapseConsecutiveToolCalls' in v3, "screenshot always renders original blocks")
+check('!forceUncollapsedToolsForScreenshot' in v3 and 'segment.blocks.map { .assistantBlock' in v3, "expansion uses original tool cells")
 check('@ObservedObject var message: ChatMessage' in v3 and 'tools(startingAt: firstBlock.id, in: message.blocks)' in v3, "collapsed header observes streaming membership without snapshot ID changes")
 check('@Published var isToolGroupExpanded: Bool = false' in models, "per-group disclosure survives cell reuse")
 check('newY - oldY' in v3 and 'caller: "tool-group-toggle"' in v3, "tap expansion restores header viewport anchor")
