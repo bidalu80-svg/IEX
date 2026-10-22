@@ -22,10 +22,11 @@ struct AOJITSection: View {
                 Label {
                     Text("AOJIT Optimization")
                 } icon: {
-                    // Matches the app's own AOJIT mark: a blue ring with the
-                    // wave inside, not a filled badge.
-                    Image(systemName: "waveform.circle")
-                        .font(.system(size: 23, weight: .regular))
+                    // The app's AOJIT mark is a filled blue disc with the wave
+                    // knocked out in white — `waveform.circle.fill`, not the
+                    // outline variant.
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.system(size: 26, weight: .regular))
                         .foregroundStyle(.blue)
                 }
             }
