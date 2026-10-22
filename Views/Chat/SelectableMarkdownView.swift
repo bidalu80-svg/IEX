@@ -4613,6 +4613,16 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     /// without touching any background the markdown itself carries.
     private static let searchHighlightKey = NSAttributedString.Key("ZeSearchHighlight")
 
+    /// Tint at 22% disappears on a dark transcript: the blue sits on black and
+    /// the composite is nearly indistinguishable from the background. Dark mode
+    /// gets a lighter base and a much higher alpha so a match reads as a
+    /// highlight rather than a smudge.
+    static let searchHighlightColor: UIColor = UIColor { traits in
+        let dark = traits.userInterfaceStyle == .dark
+        let base: UIColor = dark ? .systemBlue : .tintColor
+        return base.withAlphaComponent(dark ? 0.55 : 0.24)
+    }
+
     /// Re-paint match backgrounds for a new query without re-rendering the
     /// markdown. Idempotent: only our own ranges are removed and re-added.
     func applySearchHighlight(query: String) {
@@ -4661,7 +4671,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                     if found.location == NSNotFound { break }
 
                     mutable.addAttribute(.backgroundColor,
-                                         value: UIColor.tintColor.withAlphaComponent(0.22),
+                                         value: Self.searchHighlightColor,
                                          range: found)
                     mutable.addAttribute(Self.searchHighlightKey, value: true, range: found)
                     painted += 1

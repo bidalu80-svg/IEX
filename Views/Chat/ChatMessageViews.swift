@@ -355,6 +355,28 @@ struct ChatMessageRow: View {
     }
 
     /// Bubble content is separated from `userRow` so the collapse control stays
+    /// [T-chat-search-user-bubble] The user bubble is a plain `Text`, so it
+    /// never went through the markdown text view that paints matches. Mirror
+    /// the same query here as an attributed run background.
+    @State private var searchQuery: String = ""
+
+    /// `userDisplayText` with every keyword backgrounded.
+    private var highlightedUserText: AttributedString {
+        var attr = AttributedString(userDisplayText)
+        let keywords = ChatSearchEngine.keywords(in: searchQuery)
+        guard !keywords.isEmpty else { return attr }
+        let color = Color(uiColor: SelectableMarkdownTextView.searchHighlightColor)
+        for keyword in keywords {
+            var cursor = attr.startIndex
+            while cursor < attr.endIndex,
+                  let found = attr[cursor..<attr.endIndex].range(of: keyword, options: .caseInsensitive) {
+                attr[found].backgroundColor = color
+                cursor = found.upperBound
+            }
+        }
+        return attr
+    }
+
     /// inside the same rounded card and participates in one intrinsic-height
     /// measurement.
     private var userMessageBubble: some View {
@@ -362,13 +384,14 @@ struct ChatMessageRow: View {
         let expanded = message.isUserTextExpanded
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text(userDisplayText)
+            Text(highlightedUserText)
                 .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
                 .foregroundStyle(ChatColors.userMessageText)
                 .lineLimit(collapsible && !expanded
                     ? UserMessageCollapsePolicy.collapsedLineLimit
                     : nil)
                 .truncationMode(.tail)
+                .onReceive(ChatSearchHighlightStore.shared.publisher) { searchQuery = $0 }
 
             if collapsible {
                 HStack(spacing: 4) {
@@ -899,12 +922,14 @@ struct AssistantTaskDurationView: View {
                 .foregroundStyle(ChatColors.secondaryText)
                 .monospacedDigit()
                 .fixedSize(horizontal: true, vertical: false)
-            Rectangle()
-                .fill(ChatColors.secondaryText.opacity(0.22))
-                .frame(height: 0.5)
+            // The chevron sits against the text, between it and the trailing
+            // hairline — the same place the label's own disclosure glyph sits.
             if let accessory {
                 accessory
             }
+            Rectangle()
+                .fill(ChatColors.secondaryText.opacity(0.22))
+                .frame(height: 0.5)
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel("任务耗时 \(durationText)")
