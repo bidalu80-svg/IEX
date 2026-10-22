@@ -715,26 +715,16 @@ struct AIChatView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .top) {
-            // [T-chat-search] Floats over the transcript so a jump is visible
-            // behind the panel. ZIndex keeps it above the drop-target ring.
-            if showChatSearch {
-                ChatSearchOverlay(
-                    model: chatSearchModel,
-                    onJump: { jumpToSearchHit($0) },
-                    onClose: { closeChatSearch() }
-                )
-                .padding(.top, 6)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .zIndex(20)
-            }
-        }
-        .onChange(of: vm.messages.count) { _ in
-            // Keep the panel honest while a reply streams in underneath it.
-            if showChatSearch {
-                chatSearchModel.bind(messages: vm.messages)
-            }
-        }
+        // [T-chat-search] One modifier instead of an inline overlay + onChange:
+        // inlining them pushed `body` past the type-checker's expression
+        // budget ("unable to type-check this expression in reasonable time").
+        .modifier(ChatSearchPresentation(
+            model: chatSearchModel,
+            isPresented: showChatSearch,
+            messages: vm.messages,
+            onJump: jumpToSearchHit,
+            onClose: closeChatSearch
+        ))
         .environment(\.chatSessionId, vm.sessionId)
         .modifier(NavBarStyleModifier(topSafeAreaInset: $topSafeAreaInset))
         .navigationBarTitleDisplayMode(.inline)
@@ -1838,15 +1828,11 @@ struct AIChatView: View {
     /// without subscribing the model to `$messages`.
     private func openChatSearch() {
         chatSearchModel.bind(messages: vm.messages)
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-            showChatSearch = true
-        }
+        showChatSearch = true
     }
 
     private func closeChatSearch() {
-        withAnimation(.easeOut(duration: 0.2)) {
-            showChatSearch = false
-        }
+        showChatSearch = false
         chatSearchModel.clear()
     }
 
@@ -5638,6 +5624,45 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     }
 }
 
+
+// MARK: - Chat Search Host
+
+/// [T-chat-search] Keeps the panel out of `AIChatView.body`.
+///
+/// The body is a single long modifier chain, and inlining the panel pushed it
+/// past the type-checker's expression budget ("unable to type-check this
+/// expression in reasonable time"). One `.modifier(...)` call keeps the chain
+/// unchanged in shape; the modifier owns the slide-in, the stream refresh and
+/// the tap-through gating.
+private struct ChatSearchPresentation: ViewModifier {
+    @ObservedObject var model: ChatSearchModel
+    let isPresented: Bool
+    let messages: [ChatMessage]
+    let onJump: (ChatSearchHit) -> Void
+    let onClose: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .top) {
+                ZStack(alignment: .top) {
+                    if isPresented {
+                        ChatSearchOverlay(model: model, onJump: onJump, onClose: onClose)
+                            .padding(.top, 6)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isPresented)
+                .allowsHitTesting(isPresented)
+                .zIndex(20)
+            }
+            .onChange(of: messages.count) { _ in
+                // Keep the panel honest while a reply streams in underneath it.
+                if isPresented {
+                    model.bind(messages: messages)
+                }
+            }
+    }
+}
 
 // MARK: - Move To Session Sheet
 
