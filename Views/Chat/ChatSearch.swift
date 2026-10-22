@@ -30,6 +30,10 @@ struct ChatSearchHit: Identifiable, Equatable {
     let timestamp: Date
     /// The matching line, trimmed and windowed around the first keyword.
     let snippet: String
+    /// The full line, so the jump can find it inside the rendered text.
+    let line: String
+    /// First keyword, the one the jump scrolls to.
+    let keyword: String
     let keywords: [String]
     /// True when the line came from a tool's output rather than prose.
     let isToolOutput: Bool
@@ -73,6 +77,8 @@ enum ChatSearchEngine {
                     isUser: message.role == .user,
                     timestamp: message.timestamp,
                     snippet: snippet(from: line.text, keys: keys),
+                    line: line.text,
+                    keyword: keys[0],
                     keywords: keys,
                     isToolOutput: line.isTool
                 ))
@@ -92,13 +98,13 @@ enum ChatSearchEngine {
     private static func lines(for message: ChatMessage) -> [SearchLine] {
         var out: [SearchLine] = []
 
-        func append(_ text: String, isTool: Bool) {
+        func append(_ text: String) {
             guard !text.isEmpty else { return }
             var added = 0
             for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 if !line.isEmpty {
-                    out.append(SearchLine(text: line, isTool: isTool))
+                    out.append(SearchLine(text: line, isTool: false))
                     added += 1
                     if added >= maxLinesPerBlock { return }
                 }
@@ -106,22 +112,22 @@ enum ChatSearchEngine {
         }
 
         if message.role == .user {
-            append(message.content, isTool: false)
+            append(message.content)
             return out
         }
 
+        // [T-chat-search-body-only] Prose only.
+        //
+        // Tool output, tool summaries and thinking blocks used to be indexed
+        // too, which inflated the counter (36 hits for a character that
+        // appears a dozen times in the reply) and made "next" land on
+        // terminal logs the reader never meant to search.
         for block in message.blocks {
             switch block.kind {
-            case .text, .info:
-                append(block.content, isTool: false)
-            case .thinking:
-                append(block.content, isTool: false)
+            case .text:
+                append(block.content)
             default:
-                // The one-line summary is what the transcript shows; the full
-                // output is searchable but flagged so the row can say where
-                // the match came from.
-                append(block.toolSummary ?? block.toolDescription, isTool: true)
-                append(block.content, isTool: true)
+                break
             }
         }
         return out

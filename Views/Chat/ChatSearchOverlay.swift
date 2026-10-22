@@ -14,6 +14,10 @@
 import SwiftUI
 
 struct ChatSearchOverlay: View {
+    /// Height of the bar, including its vertical padding. Used by the list to
+    /// keep a jumped-to match clear of it.
+    static let barHeight: CGFloat = 54
+
     @ObservedObject var model: ChatSearchModel
     var onJump: (ChatSearchHit) -> Void
     var onClose: () -> Void

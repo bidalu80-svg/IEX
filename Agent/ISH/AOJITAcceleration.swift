@@ -517,7 +517,20 @@ final class AOJITAcceleration: ObservableObject {
             self.isContainerReady = true
 
             let spec = "\(state.library.package)=\(state.library.repairVersion)"
-            let script = "apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(state.library.package)' 2>&1"
+            let package = state.library.package
+            // [T-aojit-repair] Self-healing install:
+            //  - a rootfs without /etc/apk/repositories fails every apk call,
+            //    so write the mirror for its own Alpine branch first;
+            //  - try the recorded version, then the newest one;
+            //  - refresh the index once before giving up.
+            let script = """
+            if [ ! -s /etc/apk/repositories ]; then
+              rel=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
+              [ -n "$rel" ] || rel=3.21
+              printf '%s\\n' "https://dl-cdn.alpinelinux.org/alpine/v$rel/main" "https://dl-cdn.alpinelinux.org/alpine/v$rel/community" > /etc/apk/repositories
+            fi
+            apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1 || { apk update 2>&1; apk add '\(package)' 2>&1; }
+            """
 
             self.queue.async { [weak self] in
                 let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
@@ -537,12 +550,13 @@ final class AOJITAcceleration: ObservableObject {
                         self.logger.warning("AOJIT repair failed for \(state.id)")
                         let tail = output
                             .split(separator: "\n")
-                            .suffix(3)
+                            .suffix(6)
                             .joined(separator: " ")
                             .trimmingCharacters(in: .whitespaces)
+                        let rc = result?.exitCode ?? -1
                         self.repairError[state.id] = tail.isEmpty
-                            ? String(localized: "Install failed.")
-                            : tail
+                            ? "\(String(localized: "Install failed.")) (rc=\(rc))"
+                            : "\(String(localized: "Install failed.")) (rc=\(rc))\n\(tail)"
                     }
                 }
             }

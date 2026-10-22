@@ -115,6 +115,7 @@ struct AOJITSection: View {
                 Text(error)
                     .font(.system(size: 12))
                     .foregroundStyle(.red)
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

@@ -1842,7 +1842,9 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] note in
                     guard let messageId = note.userInfo?["messageId"] as? UUID else { return }
-                    self?.revealSearchHit(messageId: messageId)
+                    self?.revealSearchHit(messageId: messageId,
+                                          line: note.userInfo?["line"] as? String,
+                                          keyword: note.userInfo?["keyword"] as? String)
                 }
                 .store(in: &subscriptions)
 
@@ -3894,15 +3896,74 @@ extension CollectionViewMessageListV3 {
         /// [T-chat-search] Reveal a hit posted by the search panel: scroll its
         /// first item to the middle of the viewport, then flash an accent ring
         /// around the row so the eye lands on it after the animation.
-        func revealSearchHit(messageId: UUID, animated: Bool = true) {
+        func revealSearchHit(messageId: UUID, line: String?, keyword: String?, animated: Bool = true) {
             guard let cv = viewController?.collectionView, let ds = dataSource else { return }
             guard let item = ds.snapshot().itemIdentifiers.first(where: { $0.messageId == messageId }),
                   let indexPath = ds.indexPath(for: item) else {
                 AppLogger(category: "ScrollDiag").info("[ScrollDiag][searchJump] item not found msg=\(messageId.uuidString.prefix(8))")
                 return
             }
-            cv.scrollToItem(at: indexPath, at: .centeredVertically, animated: animated)
-            flashSearchHighlight(messageId: messageId, delay: animated ? 0.28 : 0)
+
+            // [T-chat-search-exact-jump] Bring the row's top to the viewport
+            // top without animation so its text views exist and are laid out,
+            // then scroll again to the match itself. Centring the whole cell
+            // (the old behaviour) dropped the reader at the start of a reply
+            // and left the hit somewhere off-screen.
+            cv.scrollToItem(at: indexPath, at: .top, animated: false)
+            cv.layoutIfNeeded()
+
+            var target: CGFloat?
+            if let line, let keyword,
+               let cell = cv.cellForItem(at: indexPath),
+               let rect = Self.matchRect(in: cell, line: line, keyword: keyword) {
+                let inContent = cv.convert(rect, from: cell)
+                // Leave room for the search bar and a little air, so the hit
+                // is never hidden behind it.
+                let headroom = cv.adjustedContentInset.top + ChatSearchOverlay.barHeight + 28
+                target = inContent.minY - headroom
+            }
+
+            if let target {
+                let minY = -cv.adjustedContentInset.top
+                let maxY = max(cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom, minY)
+                let y = min(max(target, minY), maxY)
+                cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: y), animated: animated)
+            } else {
+                cv.scrollToItem(at: indexPath, at: .centeredVertically, animated: animated)
+            }
+
+            flashSearchHighlight(messageId: messageId, delay: animated ? 0.3 : 0)
+        }
+
+        /// Rect of `keyword` on `line`, in the cell's coordinate space.
+        /// A cell hosts several text views (prose, thinking, tool output), so
+        /// the first one containing the line wins.
+        private static func matchRect(in cell: UICollectionViewCell,
+                                      line: String,
+                                      keyword: String) -> CGRect? {
+            for textView in textViews(in: cell.contentView) {
+                guard let text = textView.text, !text.isEmpty else { continue }
+                let ns = text as NSString
+                let lineRange = ns.range(of: line)
+                guard lineRange.location != NSNotFound else { continue }
+                let within = ns.range(of: keyword,
+                                      options: [.caseInsensitive, .diacriticInsensitive],
+                                      range: lineRange)
+                guard within.location != NSNotFound else { continue }
+                let rect = textView.firstRect(for: within)
+                guard !rect.isNull, !rect.isEmpty else { continue }
+                return textView.convert(rect, to: cell)
+            }
+            return nil
+        }
+
+        private static func textViews(in view: UIView) -> [UITextView] {
+            var out: [UITextView] = []
+            for sub in view.subviews {
+                if let textView = sub as? UITextView { out.append(textView) }
+                out.append(contentsOf: textViews(in: sub))
+            }
+            return out
         }
 
         private func flashSearchHighlight(messageId: UUID, delay: TimeInterval) {

@@ -1841,7 +1841,11 @@ struct AIChatView: View {
     private func jumpToSearchHit(_ hit: ChatSearchHit) {
         NotificationCenter.default.post(name: .chatSearchJump,
                                         object: nil,
-                                        userInfo: ["messageId": hit.messageId])
+                                        userInfo: [
+                                            "messageId": hit.messageId,
+                                            "line": hit.line,
+                                            "keyword": hit.keyword
+                                        ])
     }
 
     // MARK: - New Chat (menu entry)
