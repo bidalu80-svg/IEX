@@ -31,6 +31,13 @@ final class SessionExportNativeRenderer {
     /// short, so this only guards against pathological text dumps.
     private static let maxRowHeight: CGFloat = 20_000
 
+    /// The appearance switch that folds finished turns, read straight from the
+    /// shared preference so an export cannot drift from the transcript.
+    private static var collapsesFinishedTurns: Bool {
+        (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool)
+            ?? ConsecutiveToolCallsPolicy.defaultEnabled
+    }
+
     private let messages: [ChatMessage]
     private let scope: SessionExportScope
     private let options: SessionExportOptions
