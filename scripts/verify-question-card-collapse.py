@@ -56,4 +56,22 @@ assert "QuestionCardDetailView" in view
 assert "QuestionCardDetailView(block: block)" in sheet
 assert "if block.kind.isQuestionCardTool {" in sheet
 
+# 7. Option text is split only at the top level. The model writes a single
+#    option as "free 生图/gpt-image-2（默认，约 941×1672）"; splitting on every
+#    comma rendered that one answer as two radio rows on device.
+assert "private static func splitOptionList" in lifecycle
+assert "let options = splitOptionList(" in lifecycle
+assert '.split(whereSeparator: { $0 == "|" || $0 == "、" || $0 == "," || $0 == "，" })' not in lifecycle
+assert '"（", "(", "【", "[", "「"' in lifecycle
+assert '"）", ")", "】", "]", "」"' in lifecycle
+
+# 8. The resolved card is one answer sheet with hairline dividers, not a stack
+#    of nested cards each carrying a 3pt accent bar.
+assert "private func answerSheet" in view
+assert "resolvedQuestionRow(card, index: index)" in view
+assert ".frame(width: 3)" not in view
+# Multi-question summaries count answers instead of joining every answer into
+# one truncated subtitle line.
+assert 'return "\\(card.statusLabel) · \\(card.answeredCount)/\\(card.questions.count)"' in view
+
 print("question-card checks passed")

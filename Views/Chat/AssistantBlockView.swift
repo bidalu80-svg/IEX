@@ -1137,6 +1137,13 @@ private struct QuestionCardView: View {
             }
             return card.statusLabel
         case .confirmed:
+            // A multi-question card summarises by count: joining every answer
+            // produced a single truncated line like
+            // "Answered · free 生图/gpt-image-2（默认 · 2…" that said less than
+            // the rows below it.
+            if card.questions.count > 1 {
+                return "\(card.statusLabel) · \(card.answeredCount)/\(card.questions.count)"
+            }
             if let preview = card.answerPreview {
                 return "\(card.statusLabel) · \(preview)"
             }
@@ -1506,15 +1513,46 @@ private struct QuestionCardView: View {
     // MARK: Resolved
 
     private func resolvedContent(_ card: QuestionCardState) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if card.status == .unconfirmed {
                 unconfirmedNote
             }
             if card.status == .confirmed || card.answeredCount > 0 || card.questions.count > 1 {
-                ForEach(card.questions.indices, id: \.self) { index in
-                    resolvedQuestionRow(card, index: index)
+                if card.questions.count > 1 {
+                    answerSheet(card)
+                } else if !card.questions.isEmpty {
+                    // A single answer needs no second border inside the card;
+                    // the header already states the question.
+                    resolvedQuestionRow(card, index: 0)
                 }
             }
+        }
+    }
+
+    /// One quiet sheet with hairline dividers instead of a stack of nested
+    /// cards: each answer is a line of text, not a panel of its own.
+    private func answerSheet(_ card: QuestionCardState) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(card.questions.indices, id: \.self) { index in
+                if index > 0 {
+                    Rectangle()
+                        .fill(QuestionCardTheme.rowBorder)
+                        .frame(height: QuestionCardTheme.hairline)
+                        .padding(.vertical, 10)
+                }
+                resolvedQuestionRow(card, index: index)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: QuestionCardTheme.innerRadius, style: .continuous)
+                .fill(QuestionCardTheme.row)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: QuestionCardTheme.innerRadius, style: .continuous)
+                .stroke(QuestionCardTheme.rowBorder, lineWidth: QuestionCardTheme.hairline)
         }
     }
 
@@ -1545,59 +1583,40 @@ private struct QuestionCardView: View {
         let answer = (index < card.answers.count ? card.answers[index] : nil)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasAnswer = !answer.isEmpty
-        return VStack(alignment: .leading, spacing: 8) {
-            if card.questions.count > 1 {
-                HStack(alignment: .top, spacing: 8) {
-                    Text("\(index + 1)")
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(hasAnswer ? QuestionCardTheme.accent : QuestionCardTheme.secondaryText)
-                        .frame(width: 20, height: 20)
-                        .background(
-                            Circle().fill(
-                                hasAnswer
-                                    ? QuestionCardTheme.accent.opacity(0.12)
-                                    : QuestionCardTheme.accent.opacity(0.05)
-                            )
-                        )
+        let showsPrompt = card.questions.count > 1
+
+        return HStack(alignment: .top, spacing: 10) {
+            // A check confirms the answer; a dash marks an unanswered row.
+            // Numbers were dropped: the prompt sits right above each answer,
+            // so an index only added noise.
+            ZStack {
+                Circle()
+                    .fill(hasAnswer
+                          ? QuestionCardTheme.positive.opacity(0.14)
+                          : QuestionCardTheme.accent.opacity(0.06))
+                Image(systemName: hasAnswer ? "checkmark" : "minus")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(hasAnswer ? QuestionCardTheme.positive : QuestionCardTheme.tertiaryText)
+            }
+            .frame(width: 20, height: 20)
+            .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: showsPrompt ? 3 : 0) {
+                if showsPrompt {
                     Text(question.prompt)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(QuestionCardTheme.primaryText)
+                        .font(.caption)
+                        .foregroundStyle(QuestionCardTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            HStack(alignment: .top, spacing: 7) {
-                Image(systemName: hasAnswer ? "checkmark" : "minus")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(hasAnswer ? QuestionCardTheme.positive : QuestionCardTheme.tertiaryText)
-                    .frame(width: 20, height: 20)
                 Text(hasAnswer ? answer : String(localized: "No answer"))
-                    .font(.subheadline)
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(hasAnswer ? QuestionCardTheme.primaryText : QuestionCardTheme.secondaryText)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(hasAnswer ? QuestionCardTheme.accent.opacity(0.055) : QuestionCardTheme.row)
-        )
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(hasAnswer ? QuestionCardTheme.accent.opacity(0.55) : QuestionCardTheme.rowBorder)
-                .frame(width: 3)
-                .padding(.vertical, 10)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    hasAnswer ? QuestionCardTheme.accent.opacity(0.12) : QuestionCardTheme.rowBorder,
-                    lineWidth: QuestionCardTheme.hairline
-                )
         }
     }
 

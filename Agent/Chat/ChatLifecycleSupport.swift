@@ -902,14 +902,52 @@ enum QuestionCardParser {
                 let prompt = pieces[0]
                     .replacingOccurrences(of: #"^\s*\d+[.)、]\s*"#, with: "", options: .regularExpression)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                let options = pieces.dropFirst()
-                    .joined(separator: "||")
-                    .split(whereSeparator: { $0 == "|" || $0 == "、" || $0 == "," || $0 == "，" })
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
+                let options = splitOptionList(pieces.dropFirst().joined(separator: "||"))
                 return QuestionCardQuestion(id: "q\(index + 1)", prompt: prompt, options: Array(options.prefix(8)))
             }
             .filter { !$0.prompt.isEmpty }
+    }
+
+    /// Splits a free-text option list on `|`, `、`, `,` and `，`, but only at
+    /// the top level.
+    ///
+    /// The model routinely writes one option as
+    /// `free 生图/gpt-image-2（默认，约 941×1672）`. Splitting on every comma
+    /// turned that single answer into two radio rows — `…（默认` and
+    /// `约 941×1672）` — which read as if the card had four choices. A
+    /// separator nested inside brackets belongs to the option text.
+    private static func splitOptionList(_ raw: String) -> [String] {
+        let openers: Set<Character> = ["（", "(", "【", "[", "「", "“"]
+        let closers: Set<Character> = ["）", ")", "】", "]", "」", "”"]
+
+        var parts: [String] = []
+        var current = ""
+        var depth = 0
+
+        for character in raw {
+            if openers.contains(character) {
+                depth += 1
+                current.append(character)
+                continue
+            }
+            if closers.contains(character) {
+                depth = max(depth - 1, 0)
+                current.append(character)
+                continue
+            }
+            let isSeparator = character == "|" || character == "、" || character == "," || character == "，"
+            if isSeparator, depth == 0 {
+                parts.append(current)
+                current = ""
+                continue
+            }
+            current.append(character)
+        }
+        parts.append(current)
+
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     private static func makeQuestion(_ dictionary: [String: Any], index: Int) -> QuestionCardQuestion? {
