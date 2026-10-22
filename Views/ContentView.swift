@@ -3060,15 +3060,21 @@ struct ContentView: View {
                 return
             }
 
-            // Zip the workDir (single file inside, but zip wrapping keeps spec contract
-            // and shrinks large text payloads significantly).
+            // Zip the workDir. Only for multi-select: a single session is one
+            // JSON/text file, and wrapping it in a .zip hid the content from the
+            // preview (which decodes the file as UTF-8) and shared an archive
+            // the user could not read.
             let zipURL = tmpRoot.appendingPathComponent("\(baseName).zip")
             let finalURL: URL
-            do {
-                try await Self.createZip(from: workDir, to: zipURL)
-                finalURL = zipURL
-            } catch {
-                // Fall back to raw payload if zipping failed.
+            if isMulti {
+                do {
+                    try await Self.createZip(from: workDir, to: zipURL)
+                    finalURL = zipURL
+                } catch {
+                    // Fall back to raw payload if zipping failed.
+                    finalURL = payloadURL
+                }
+            } else {
                 finalURL = payloadURL
             }
 
@@ -3698,6 +3704,11 @@ private struct ExportPreviewSheet: View {
                     } else {
                         preview = text
                     }
+                } else if data.starts(with: [0x50, 0x4B]) {
+                    // "PK" — an archive. Saying so beats a blank page.
+                    preview = String(localized: "This export is an archive. Use Share or Save to Files to open it.")
+                } else {
+                    preview = String(localized: "This file cannot be previewed as text. Use Share or Save to Files.")
                 }
             }
             await MainActor.run {
