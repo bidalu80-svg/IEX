@@ -165,6 +165,8 @@ fileprivate struct BridgedAssistantHeaderV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat = 0
+    /// [T-collapse-steps] Flips `isStepsCollapsed` and re-applies the snapshot.
+    var onToggleSteps: (() -> Void)?
     @State private var soulMeta: SoulMetadata = SoulStore.cachedMetadata
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -185,7 +187,7 @@ fileprivate struct BridgedAssistantHeaderV3: View {
             } else if !message.isAwaitingModelResponse,
                       message.error == nil,
                       let duration = message.taskDuration {
-                AssistantTaskDurationView(duration: duration)
+                AssistantTaskDurationView(duration: duration, accessory: stepsChevron)
             }
         }
         .transaction { $0.disablesAnimations = false }
@@ -201,6 +203,23 @@ fileprivate struct BridgedAssistantHeaderV3: View {
         .padding(.horizontal, 16)
         .opacity(message.isCompactedHistory ? 0.5 : 1.0)
         .accessibilityIdentifier("assistantHeader")
+    }
+    /// Chevron that folds the reasoning + tool trail once the turn is done.
+    /// The 22×18 hit area stays inside the header's measured height, so folding
+    /// does not shift the row.
+    private var stepsChevron: AnyView? {
+        guard let onToggleSteps else { return nil }
+        return AnyView(
+            Button(action: onToggleSteps) {
+                Image(systemName: message.isStepsCollapsed ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(ChatColors.secondaryText)
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(message.isStepsCollapsed ? "展开过程" : "收起过程")
+        )
     }
 }
 
@@ -933,6 +952,30 @@ extension CollectionViewMessageListV3 {
             }
         }
 
+        /// [T-collapse-steps] Folds or unfolds a finished turn's reasoning and
+        /// tool trail. Keeps the header anchored so the chevron does not jump
+        /// under the finger.
+        private func toggleStepsCollapsed(messageId: UUID) {
+            guard !forceUncollapsedToolsForScreenshot, let vm,
+                  let message = vm.messages.first(where: { $0.id == messageId }),
+                  let cv = viewController?.collectionView else { return }
+            let item = MessageListItem.assistantHeader(messageId)
+            let oldY = dataSource?.indexPath(for: item).flatMap {
+                cv.layoutAttributesForItem(at: $0)?.frame.minY
+            }
+            let offset = cv.contentOffset
+            scrollMode = .userBrowsing
+            message.isStepsCollapsed.toggle()
+            applySnapshot(messages: vm.messages, caller: "steps-collapse-toggle")
+            cv.layoutIfNeeded()
+            if let oldY, let index = dataSource?.indexPath(for: item),
+               let newY = cv.layoutAttributesForItem(at: index)?.frame.minY {
+                let minimum = -cv.adjustedContentInset.top
+                let maximum = max(minimum, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
+                cv.setContentOffset(CGPoint(x: offset.x, y: min(maximum, max(minimum, offset.y + newY - oldY))), animated: false)
+            }
+        }
+
         #if DEBUG
         deinit {
             // [DecelDisplayLink] CADisplayLink retains its target — must
@@ -1296,7 +1339,11 @@ extension CollectionViewMessageListV3 {
                 let bridge = getOrCreateBridge(for: message, in: messages)
                 cell.backgroundColor = .clear
                 let config = UIHostingConfiguration {
-                    BridgedAssistantHeaderV3(message: message, bridge: bridge, maxWidth: width)
+                    BridgedAssistantHeaderV3(message: message,
+                                             bridge: bridge,
+                                             maxWidth: width) { [weak self] in
+                        self?.toggleStepsCollapsed(messageId: msgId)
+                    }
                         .transaction { $0.disablesAnimations = true }
                         .environmentObject(vm)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
@@ -2819,17 +2866,31 @@ extension CollectionViewMessageListV3 {
                     newItems.append(.wholeMessage(message.id))
                 case .assistant:
                     newItems.append(.assistantHeader(message.id))
-                    for segment in AssistantBlockPresentationSegment.make(
-                        message.blocks,
-                        enabled: collapseConsecutiveToolCalls && !forceUncollapsedToolsForScreenshot
-                    ) {
-                        if segment.isToolGroup, let first = segment.blocks.first {
-                            newItems.append(.assistantToolGroup(message.id, first.id))
-                            if first.isToolGroupExpanded {
+                    // [T-collapse-steps] A finished turn folds its reasoning and
+                    // tool trail, leaving only the final reply. While the turn
+                    // is still running `taskDuration` is nil, so the live tool
+                    // flow renders exactly as before.
+                    let stepsCollapsed = message.isStepsCollapsed
+                        && message.taskDuration != nil
+                        && !vm.isProcessing
+                        && !forceUncollapsedToolsForScreenshot
+                    if stepsCollapsed {
+                        if let finalText = message.blocks.last(where: { $0.kind == .text }) {
+                            newItems.append(.assistantBlock(message.id, finalText.id))
+                        }
+                    } else {
+                        for segment in AssistantBlockPresentationSegment.make(
+                            message.blocks,
+                            enabled: collapseConsecutiveToolCalls && !forceUncollapsedToolsForScreenshot
+                        ) {
+                            if segment.isToolGroup, let first = segment.blocks.first {
+                                newItems.append(.assistantToolGroup(message.id, first.id))
+                                if first.isToolGroupExpanded {
+                                    newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
+                                }
+                            } else {
                                 newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
                             }
-                        } else {
-                            newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
                         }
                     }
                     // Only emit a footer cell when it will actually render

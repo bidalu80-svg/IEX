@@ -861,15 +861,20 @@ struct ChatMessageRow: View {
 struct AssistantTaskDurationView: View {
     private let frozenDuration: TimeInterval?
     private let liveStartTime: TimeInterval?
+    /// Optional trailing control drawn after the right hairline, so the
+    /// collapse chevron shares the duration's line.
+    private var accessory: AnyView?
 
-    init(duration: TimeInterval) {
+    init(duration: TimeInterval, accessory: AnyView? = nil) {
         self.frozenDuration = duration
         self.liveStartTime = nil
+        self.accessory = accessory
     }
 
-    init(liveStartTime: TimeInterval) {
+    init(liveStartTime: TimeInterval, accessory: AnyView? = nil) {
         self.frozenDuration = nil
         self.liveStartTime = liveStartTime
+        self.accessory = accessory
     }
 
     @ViewBuilder
@@ -897,6 +902,9 @@ struct AssistantTaskDurationView: View {
             Rectangle()
                 .fill(ChatColors.secondaryText.opacity(0.22))
                 .frame(height: 0.5)
+            if let accessory {
+                accessory
+            }
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel("任务耗时 \(durationText)")
