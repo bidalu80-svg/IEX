@@ -3965,16 +3965,16 @@ extension CollectionViewMessageListV3 {
                 }
 
                 // Fallback for a text view that cannot build a UITextRange.
-                if let layoutManager = textView.layoutManager {
-                    let glyphs = layoutManager.glyphRange(forCharacterRange: within,
-                                                          actualCharacterRange: nil)
-                    var rect = layoutManager.boundingRect(forGlyphRange: glyphs,
-                                                          in: textView.textContainer)
-                    rect.origin.x += textView.textContainerInset.left
-                    rect.origin.y += textView.textContainerInset.top
-                    if !rect.isEmpty {
-                        return textView.convert(rect, to: cell)
-                    }
+                // `layoutManager` is non-optional on UITextView.
+                let layoutManager = textView.layoutManager
+                let glyphs = layoutManager.glyphRange(forCharacterRange: within,
+                                                      actualCharacterRange: nil)
+                var rect = layoutManager.boundingRect(forGlyphRange: glyphs,
+                                                      in: textView.textContainer)
+                rect.origin.x += textView.textContainerInset.left
+                rect.origin.y += textView.textContainerInset.top
+                if !rect.isEmpty {
+                    return textView.convert(rect, to: cell)
                 }
             }
             return nil
