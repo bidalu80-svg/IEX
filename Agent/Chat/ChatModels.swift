@@ -76,6 +76,11 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var isUserTextExpanded = false
     /// True if this message is from the compacted history zone (read-only, no actions).
     @Published var isCompactedHistory = false
+    /// [T-collapse-steps] When true, a finished turn shows only its final reply
+    /// text: the thinking blocks and the tool trail fold away behind the chevron
+    /// next to "任务耗时". Ignored while the turn is still streaming, so the live
+    /// tool flow stays visible exactly as before.
+    @Published var isStepsCollapsed: Bool = true
     /// True when this compact divider is still loading (LLM generating summary).
     @Published var isCompactLoading = false
     /// SF Symbol name for systemInfo rows (e.g. "brain.head.profile", "arrow.down.right.and.arrow.up.left").
@@ -342,11 +347,6 @@ final class AssistantBlock: Identifiable, ObservableObject {
     @Published var isThinkingExpanded: Bool = false
     /// Transient disclosure state stored on the first tool; survives cell reuse.
     @Published var isToolGroupExpanded: Bool = false
-    /// [T-collapse-steps] When true, a finished turn shows only its final reply
-    /// text: the thinking blocks and the tool trail fold away behind the chevron
-    /// next to "任务耗时". Ignored while the turn is still streaming, so the live
-    /// tool flow stays visible exactly as before.
-    @Published var isStepsCollapsed: Bool = true
     /// Wall-clock timing for the visible thinking summary. These values are
     /// transient UI state; persisted history has no block-level timestamps.
     @Published var thinkingDuration: TimeInterval? = nil
