@@ -45,4 +45,10 @@ struct aot_module {
 // Called by an image's constructor, before main. Needs ish built with -Djit=true.
 void ish_aot_register(const struct aot_module *m);
 
+// [T-aojit-status] What this build actually has linked in. Without -Djit all
+// three return 0/NULL: the host shows "not recorded" rather than guessing.
+unsigned ish_aot_image_count(void);
+const char *ish_aot_image_path(unsigned i);
+unsigned long long ish_aot_image_size(unsigned i);
+
 #endif

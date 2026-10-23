@@ -46,6 +46,19 @@ struct AOJITLibrary: Identifiable {
     let timeout: TimeInterval
 
     var repairSpec: String { "\(package) \(repairVersion)" }
+
+    /// [T-aojit-status] Substrings that identify this library's guest module
+    /// in the AOT registry (aot_module.path). The catalog's `paths` field is
+    /// prose for the UI, so it cannot be matched directly.
+    var imageMatch: [String] {
+        switch id {
+        case "musl": return ["ld-musl"]
+        case "busybox": return ["busybox"]
+        case "python": return ["python3"]
+        case "node": return ["node"]
+        default: return [id]
+        }
+    }
 }
 
 // MARK: - State
@@ -676,10 +689,19 @@ final class AOJITAcceleration: ObservableObject {
             let recording = recordings[library.id]
 
             let status: AOJITLibraryState.Status
+            let linked = Self.linkedImagePaths()
+            let hasImage = linked.contains { path in
+                library.imageMatch.contains { path.contains($0) }
+            }
             if installed == nil {
                 status = .notInstalled
-            } else if let recording, recording.version == installed {
+            } else if hasImage && (recording == nil || recording?.version == installed) {
+                // [T-aojit-status] The build has a real AOT image for this
+                // module linked in — that is what makes it fast, not the
+                // warm-up record.
                 status = .available
+            } else if hasImage {
+                status = .partial
             } else if recording == nil {
                 status = .recording
             } else {
@@ -695,6 +717,19 @@ final class AOJITAcceleration: ObservableObject {
                 status: status
             )
         }
+    }
+
+    /// Guest paths of the AOT images this build actually has linked in.
+    private static func linkedImagePaths() -> [String] {
+        var out: [String] = []
+        let n = ish_aot_image_count()
+        guard n > 0 else { return out }
+        for i in 0..<n {
+            if let c = ish_aot_image_path(i), let s = String(validatingUTF8: c) {
+                out.append(s)
+            }
+        }
+        return out
     }
 
     private func installedVersion(of library: AOJITLibrary, in probe: Probe) -> String? {

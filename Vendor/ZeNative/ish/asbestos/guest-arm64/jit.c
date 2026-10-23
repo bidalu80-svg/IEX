@@ -1937,6 +1937,25 @@ static unsigned aot_nimages;
 static const struct aot_module *aot_registered[AOT_MAX];
 static unsigned aot_nregistered;
 
+// [T-aojit-status] Read-only view of the images linked into this build, so
+// the host can show what is actually registered instead of remembering what
+// it once warmed up. Only meaningful with -Djit; without it these return 0.
+unsigned ish_aot_image_count(void) {
+    return aot_nregistered;
+}
+
+const char *ish_aot_image_path(unsigned i) {
+    if (i >= aot_nregistered || aot_registered[i] == NULL)
+        return NULL;
+    return aot_registered[i]->path;
+}
+
+unsigned long long ish_aot_image_size(unsigned i) {
+    if (i >= aot_nregistered || aot_registered[i] == NULL)
+        return 0;
+    return aot_registered[i]->size;
+}
+
 void ish_aot_register(const struct aot_module *m) {
     if (aot_nregistered < AOT_MAX)
         aot_registered[aot_nregistered++] = m;

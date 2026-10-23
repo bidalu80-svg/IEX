@@ -12,6 +12,8 @@
 #include "ish/ish.h"
 // [T-ish-footprint-brake] ish_set_memory_status(): the host memory feed.
 #include "ish/kernel/mm.h"
+// [T-aojit-status] ish_aot_image_count()/path(): what is linked in.
+#include "ish/asbestos/guest-arm64/aot.h"
 
 // Additional headers not in umbrella
 #include "fs/devices.h"
