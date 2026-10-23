@@ -123,7 +123,8 @@ meson setup "$native_build" "$ish_dir" \
     -Dlog='' \
     -Dkernel=ish \
     -Dengine=asbestos \
-    -Dguest_arch=arm64
+    -Dguest_arch=arm64 \
+    -Djit=true
 ninja -C "$native_build" tools/fakefsify
 
 alpine_version='3.21'

@@ -16,6 +16,9 @@
 
 // Thread-local JIT recovery state (defined in asbestos.c)
 extern __thread volatile sig_atomic_t in_jit;
+#ifdef ISH_JIT
+#include "asbestos/guest-arm64/jit.h"
+#endif
 extern __thread volatile uint64_t jit_saved_pc;
 
 // Diagnostic: JIT crash info (defined in calls.c)
@@ -42,6 +45,10 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
     // This avoids the overhead of _setjmp on every block entry.
     if ((sig == SIGSEGV || sig == SIGBUS) && in_jit) {
         ucontext_t *uc = (ucontext_t *)ctx;
+#ifdef ISH_JIT
+        // Pinned guest registers live only in host registers inside native code.
+        jit_crash_sync(uc);
+#endif
 
         // _cpu is in x1 — pointer to cpu_state within fiber_frame
         uint64_t cpu_ptr = uc->uc_mcontext->__ss.__x[1];

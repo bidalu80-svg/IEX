@@ -2002,9 +2002,22 @@ static int gen_branch(struct gen_state *state, uint32_t insn) {
                 gen(state, rn);
                 break;
             case 1:  // BLR
+#ifdef ISH_JIT
+                // [gadget][block_self_ptr][return_addr][return_cont][rn]: the
+                // first words match BL so an indirect call fills ret_cache too
+                // and its RET (gadget or native) stays out of the run loop.
+                gen(state, (unsigned long) gadget_branch_link_reg);
+                gen(state, 0);                                        // block self-pointer (gen_end)
+                gen(state, state->ip);                                // return address
+                gen(state, (unsigned long) state->ip | (1UL << 63));  // return continuation (chained)
+                gen(state, rn);
+                state->block_patch_ip = state->size - 4;
+                state->jump_ip[0] = state->size - 2;
+#else
                 gen(state, (unsigned long) gadget_branch_link_reg);
                 gen(state, rn);
                 gen(state, state->ip);  // return address
+#endif
                 break;
             case 2:  // RET
                 gen(state, (unsigned long) gadget_ret);
