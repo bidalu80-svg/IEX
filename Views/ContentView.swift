@@ -4907,7 +4907,7 @@ private struct AppearanceSettingsView: View {
     @AppStorage("launchScreen") private var launchScreen: Int = 0  // 0=Auto, 1=Last Session, 2=New Chat, 3=Home
     /// [T-launch-animation] Mirrors `LaunchCoordinator.preferenceKey`; read at
     /// launch by the coordinator, written here. Applies on the next cold start.
-    @AppStorage(LaunchCoordinator.preferenceKey) private var launchAnimationEnabled = true
+    @AppStorage(LaunchAnimationPreference.key) private var launchAnimationEnabled = true
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
     @AppStorage(ZeSubAgentPreferences.dockEnabledKey) private var subAgentDockEnabled: Bool = true

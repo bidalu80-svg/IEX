@@ -13,21 +13,26 @@
 import SwiftUI
 import UIKit
 
+/// Preference key, deliberately outside the `@MainActor` class so the App
+/// initializer and `@AppStorage` can read it from any context.
+///
+/// Read with `object(forKey:)` so "never set" (→ on) is distinguishable from
+/// "explicitly off".
+enum LaunchAnimationPreference {
+    static let key = "appearance.launchAnimationEnabled"
+}
+
 @MainActor
 final class LaunchCoordinator: ObservableObject {
 
     static let shared = LaunchCoordinator()
 
-    /// Preference key. Read with `object(forKey:)` so "never set" (→ on) is
-    /// distinguishable from "explicitly off".
-    static let preferenceKey = "appearance.launchAnimationEnabled"
-
     /// Pure `UserDefaults` read, safe from any context: the App initializer
     /// consults it before the first frame.
     nonisolated static var isEnabled: Bool {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: preferenceKey) != nil else { return true }
-        return defaults.bool(forKey: preferenceKey)
+        guard defaults.object(forKey: LaunchAnimationPreference.key) != nil else { return true }
+        return defaults.bool(forKey: LaunchAnimationPreference.key)
     }
 
     enum Phase: Equatable {
