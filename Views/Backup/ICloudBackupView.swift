@@ -17,10 +17,17 @@ struct ICloudBackupView: View {
     /// archive instead of leaving it buried in the app's Backups folder.
     @State private var exportedShare: ExportedBackup?
     @State private var passwordMode: PasswordMode?
-    @State private var showFileImporter = false
+    /// [T-backup-single-importer] One importer, one presentation.
+    ///
+    /// The screen used to carry two `.fileImporter` modifiers (restore file
+    /// and add destination folder). SwiftUI keeps a single presentation slot
+    /// per modifier chain, so with both attached "选择 Ze 备份文件" set its flag
+    /// and nothing appeared. `isBackupPickerPresented` drives the sheet and
+    /// `backupPickerMode` carries the intent until the completion runs.
+    @State private var backupPickerMode: BackupPickerMode?
+    @State private var isBackupPickerPresented = false
     @State private var importedURL: URL?
     @State private var selectedMode = 0
-    @State private var showDestinationImporter = false
     @State private var showDestinationEditor = false
     @State private var pendingDestinationFolder: URL?
     @State private var selectedDestination: ICloudBackupManager.BackupDestination?
@@ -31,6 +38,11 @@ struct ICloudBackupView: View {
     @State private var showProtocolPicker = false
     @AppStorage("ze.backup.maxFileSizeMB") private var maxFileSizeMB = 100
     @AppStorage("ze.backup.encryptionEnabled") private var encryptionEnabled = true
+    private enum BackupPickerMode {
+        case restoreFile
+        case addDestinationFolder
+    }
+
     private enum PasswordMode: Identifiable {
         case export(ICloudBackupManager.BackupCategory)
         case restore
@@ -152,8 +164,8 @@ struct ICloudBackupView: View {
                         Label(String(localized: "Choose backup contents"), systemImage: "slider.horizontal.3")
                     }
                     Button {
-                        passwordMode = .restore
-                        showFileImporter = true
+                        backupPickerMode = .restoreFile
+                        isBackupPickerPresented = true
                     } label: {
                         Label(String(localized: "Restore .zebak file"), systemImage: "square.and.arrow.down")
                     }
@@ -262,16 +274,38 @@ struct ICloudBackupView: View {
             // restorable after a round trip through Files.
             ZeShareSheet(url: item.url, typeIdentifier: UTType.data.identifier)
         }
-        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [UTType.data, UTType.item], allowsMultipleSelection: false) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            importedURL = url
-            passwordMode = .restore
-            showPasswordSheet = true
-        }
-        .fileImporter(isPresented: $showDestinationImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            pendingDestinationFolder = url
-            showDestinationEditor = true
+        .fileImporter(
+            isPresented: $isBackupPickerPresented,
+            allowedContentTypes: backupPickerMode == .addDestinationFolder
+                ? [.folder]
+                : [UTType.data, UTType.item],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let mode = backupPickerMode else { return }
+            backupPickerMode = nil
+            guard case .success(let urls) = result, let url = urls.first else {
+                // A cancelled picker is not an error worth an alert.
+                if case .failure(let error) = result,
+                   (error as NSError).code != NSUserCancelledError {
+                    showError = error.localizedDescription
+                }
+                return
+            }
+            switch mode {
+            case .restoreFile:
+                importedURL = url
+                // The importer's dismissal transaction has to finish before
+                // this view can present the password sheet.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    passwordMode = .restore
+                    showPasswordSheet = true
+                }
+            case .addDestinationFolder:
+                pendingDestinationFolder = url
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    showDestinationEditor = true
+                }
+            }
         }
         .sheet(isPresented: $showDestinationEditor) {
             if let folder = pendingDestinationFolder {
@@ -339,7 +373,10 @@ struct ICloudBackupView: View {
             Button { showProtocolPicker = true } label: {
                 Label(String(localized: "Add server…"), systemImage: "globe")
             }
-            Button { showDestinationImporter = true } label: {
+            Button {
+                backupPickerMode = .addDestinationFolder
+                isBackupPickerPresented = true
+            } label: {
                 Label(String(localized: "Add backup folder"), systemImage: "folder.badge.plus")
             }
         }
@@ -377,7 +414,10 @@ struct ICloudBackupView: View {
                 ForEach(manager.destinations) { destination in
                     Button {
                         selectedDestination = destination
-                        if destination.kind == .localFolder { showFileImporter = true }
+                        if destination.kind == .localFolder {
+                            backupPickerMode = .restoreFile
+                            isBackupPickerPresented = true
+                        }
                         else { loadRemoteFiles(for: destination) }
                     } label: {
                         Label(destination.name, systemImage: destination.kind == .localFolder ? "folder" : "server.rack")
@@ -410,7 +450,8 @@ struct ICloudBackupView: View {
                 }
             }
             Button {
-                showFileImporter = true
+                backupPickerMode = .restoreFile
+                isBackupPickerPresented = true
             } label: {
                 Label(String(localized: "Choose a Ze backup file"), systemImage: "doc.badge.arrow.down")
             }

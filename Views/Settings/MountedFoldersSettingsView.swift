@@ -30,20 +30,19 @@ struct MountedFoldersSettingsView: View {
     /// [T-mount-single-importer] This view used to carry two `.fileImporter`
     /// modifiers (add + re-authorize) on the same `List`. SwiftUI keeps a
     /// single presentation slot per modifier chain, so with both attached the
-    /// "+" button could flip its own flag without anything appearing. A single
-    /// importer driven by this enum removes the ambiguity.
+    /// "+" button could flip its own flag without anything appearing.
+    ///
+    /// `isPickerPresented` drives the sheet; `pickerMode` carries the intent
+    /// and must stay set until the completion runs. Clearing the intent from
+    /// the `isPresented` setter instead (as an earlier revision did) made the
+    /// completion read nil and return early — the picker opened, "Open" was
+    /// tapped, and nothing happened.
     @State private var pickerMode: MountPickerMode?
+    @State private var isPickerPresented = false
 
-    private enum MountPickerMode: Identifiable {
+    private enum MountPickerMode {
         case add
         case reauthorize(UUID)
-
-        var id: String {
-            switch self {
-            case .add: return "add"
-            case .reauthorize(let id): return "reauth-\(id.uuidString)"
-            }
-        }
     }
 
     var body: some View {
@@ -93,6 +92,7 @@ struct MountedFoldersSettingsView: View {
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 pickerMode = .reauthorize(entry.id)
+                                isPickerPresented = true
                             } label: {
                                 Label(String(localized: "Re-authorize"), systemImage: "key.fill")
                             }
@@ -101,6 +101,7 @@ struct MountedFoldersSettingsView: View {
                         .contextMenu {
                             Button {
                                 pickerMode = .reauthorize(entry.id)
+                                isPickerPresented = true
                             } label: {
                                 Label(String(localized: "Re-authorize"), systemImage: "key.fill")
                             }
@@ -129,6 +130,7 @@ struct MountedFoldersSettingsView: View {
                 Button {
                     pendingMount = nil
                     pickerMode = .add
+                    isPickerPresented = true
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -140,16 +142,12 @@ struct MountedFoldersSettingsView: View {
         // reliably returns the selected security-scoped folder URL instead of
         // leaving a nested UIDocumentPicker sheet stuck on screen.
         .fileImporter(
-            isPresented: Binding(
-                get: { pickerMode != nil },
-                set: { if !$0 { pickerMode = nil } }
-            ),
+            isPresented: $isPickerPresented,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
-            let mode = pickerMode
+            guard let mode = pickerMode else { return }
             pickerMode = nil
-            guard let mode else { return }
             guard case .success(let urls) = result, let url = urls.first else {
                 if case .failure(let error) = result {
                     errorText = error.localizedDescription
@@ -164,10 +162,10 @@ struct MountedFoldersSettingsView: View {
                     name: Self.defaultMountName(for: url),
                     allowWrite: true
                 )
-                // Wait for Files' dismissal transaction before presenting the
-                // confirmation sheet. This avoids competing presentations while
-                // retaining the security-scoped URL for bookmark creation.
-                DispatchQueue.main.async {
+                // The importer's dismissal transaction has to finish before
+                // this view can present anything else; one runloop turn is not
+                // always enough, so wait a beat.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     pendingMount = mount
                     mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
                 }
