@@ -741,7 +741,14 @@ static int exec_posix_spawn(const char *native_path, const char *guest_file,
 
     char *host_cwd = get_host_cwd();
     if (host_cwd)
+#if defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
+        // macOS ships the Darwin spelling only; the POSIX 2024 name is in the
+        // iOS SDK but not the macOS one, which broke the host build the AOT
+        // recorder needs.
+        posix_spawn_file_actions_addchdir_np(&actions, host_cwd);
+#else
         posix_spawn_file_actions_addchdir(&actions, host_cwd);
+#endif
 
     pid_t native_pid;
     int spawn_err = posix_spawn(&native_pid, native_path, &actions, &attrs,
