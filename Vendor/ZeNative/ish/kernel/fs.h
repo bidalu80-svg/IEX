@@ -111,13 +111,40 @@ bool mount_param_flag(const char *info, const char *flag);
 #define O_TRUNC_ (1 << 9)
 #define O_APPEND_ (1 << 10)
 #define O_NONBLOCK_ (1 << 11)
-#define O_DIRECTORY_ (1 << 16)
-// asm-generic/fcntl.h for arm64: O_NOFOLLOW is 00400000 octal = 1 << 17.
-// This table stopped short of it, so generic_openat() and realfs had no guest
-// flag to test; both now use it to stop path_normalize / the host open from
-// resolving the final symlink.
-#define O_NOFOLLOW_ (1 << 17)
+
+// [T-ish-arm64-open-flags] arm64 overrides the asm-generic values for the four
+// flags below (arch/arm64/include/uapi/asm/fcntl.h, kept for AArch32 compat).
+// Taken verbatim from OpenMinis/ish-arm64 kernel/fs.h so this table cannot drift
+// from the tree the rest of the port comes from.
+//
+//   arm64            asm-generic
+//   O_DIRECTORY  1<<14   1<<16
+//   O_NOFOLLOW   1<<15   1<<17
+//   O_DIRECT     1<<16   1<<14
+//   O_LARGEFILE  1<<17   1<<15
+//
+// The permuted bits are the dangerous part: this table carried the x86 numbers
+// until now, so O_DIRECTORY_ (1<<16) was actually arm64's O_DIRECT — the
+// generic_openat() ENOTDIR check never fired for a real O_DIRECTORY, and did
+// fire for O_DIRECT. Worse, defining O_NOFOLLOW_ as 1<<17 in 45201fd put it on
+// arm64's O_LARGEFILE, which musl ORs into *every* open(); every symlink in the
+// rootfs then failed with ELOOP and the dynamic linker could not load libc,
+// libz, libpcre2 or libisl — only busybox's own builtins still ran.
+//
+// This app builds guest_arch=arm64 only, so the arm64 numbers are used
+// unconditionally, matching upstream.
+#define O_DIRECTORY_ (1 << 14)
+#define O_NOFOLLOW_ (1 << 15)
+#define O_DIRECT_ (1 << 16)
+#define O_LARGEFILE_ (1 << 17)
+#define O_NOATIME_ (1 << 18)
 #define O_CLOEXEC_ (1 << 19)
+#define O_PATH_ (1 << 21)
+
+// Tripwire for the exact regression above: bit 17 belongs to O_LARGEFILE.
+_Static_assert(O_LARGEFILE_ == (1 << 17), "arm64 O_LARGEFILE is bit 17");
+_Static_assert(O_NOFOLLOW_ != O_LARGEFILE_, "O_NOFOLLOW must not be bit 17");
+_Static_assert(O_DIRECTORY_ == (1 << 14), "arm64 O_DIRECTORY is bit 14");
 
 // generic ioctls
 #define FIONREAD_ 0x541b
