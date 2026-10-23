@@ -230,7 +230,12 @@ final class MountedFoldersManager {
             switch self {
             case .invalidName: return String(localized: "Mount name is invalid.")
             case .nameTaken: return String(localized: "A mount with this name already exists.")
-            case .scopeDenied: return String(localized: "Could not access the selected folder.")
+            case .scopeDenied:
+                // The usual cause on a re-signed build: the iCloud / ubiquity
+                // entitlements are not in the provisioning profile, so a folder
+                // that lives in iCloud Drive cannot be opened even though the
+                // picker handed us a URL.
+                return String(localized: "Could not access the selected folder. If it lives in iCloud Drive, try a folder under “On My iPhone” instead — re-signed builds lose the iCloud entitlement.")
             case .bookmarkFailed(let msg): return msg
             case .limitReached(let max):
                 return String(

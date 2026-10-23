@@ -39,6 +39,9 @@ struct MountedFoldersSettingsView: View {
     /// tapped, and nothing happened.
     @State private var pickerMode: MountPickerMode?
     @State private var isPickerPresented = false
+    /// Why the last pick failed, shown in the list instead of disappearing
+    /// into a dismissed sheet.
+    @State private var pickerDiagnostic: String?
 
     private enum MountPickerMode {
         case add
@@ -49,6 +52,69 @@ struct MountedFoldersSettingsView: View {
         List {
             Section {
                 InfoBanner()
+            }
+
+            // [T-mount-inline-editor] The confirmation used to be a `.sheet`.
+            // Chaining a sheet straight after `.fileImporter` dismisses is
+            // unreliable — the picker returns, the sheet never appears, and the
+            // whole flow looks dead. Editing inline has no presentation slot to
+            // compete for.
+            if let pending = pendingMount {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Source path")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(pending.url.path)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    TextField("Name", text: Binding(
+                        get: { pendingMount?.name ?? "" },
+                        set: { pendingMount?.name = $0 }
+                    ))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                    Toggle(isOn: Binding(
+                        get: { pendingMount?.allowWrite ?? true },
+                        set: { pendingMount?.allowWrite = $0 }
+                    )) {
+                        Text("Allow writes")
+                    }
+
+                    Button {
+                        confirmMount(pending)
+                    } label: {
+                        Label("Mount", systemImage: "checkmark.circle.fill")
+                    }
+                    .disabled(pending.name.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Button(role: .cancel) {
+                        pendingMount = nil
+                    } label: {
+                        Text("Cancel")
+                    }
+                } header: {
+                    Text("New Mount")
+                } footer: {
+                    Text("This will be the folder name under /var/ze/mounts/")
+                }
+            }
+
+            if let pickerDiagnostic {
+                Section {
+                    Label {
+                        Text(pickerDiagnostic)
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
 
             if model.entries.isEmpty {
@@ -148,63 +214,34 @@ struct MountedFoldersSettingsView: View {
         ) { result in
             guard let mode = pickerMode else { return }
             pickerMode = nil
-            guard case .success(let urls) = result, let url = urls.first else {
-                if case .failure(let error) = result {
-                    errorText = error.localizedDescription
-                }
-                return
-            }
+            pickerDiagnostic = nil
 
-            switch mode {
-            case .add:
-                let mount = PendingMount(
-                    url: url,
-                    name: Self.defaultMountName(for: url),
-                    allowWrite: true
-                )
-                // The importer's dismissal transaction has to finish before
-                // this view can present anything else; one runloop turn is not
-                // always enough, so wait a beat.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    pendingMount = mount
-                    mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
+            switch result {
+            case .failure(let error):
+                let ns = error as NSError
+                // Cancelling is not a failure.
+                if ns.code != NSUserCancelledError {
+                    pickerDiagnostic = "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
+                    mountUILogger.warning("picker failed: \(ns.domain) \(ns.code) \(ns.localizedDescription)")
                 }
-            case .reauthorize(let id):
-                do {
-                    try model.reauthorize(id: id, pickedURL: url)
-                } catch {
-                    errorText = error.localizedDescription
-                }
-            }
-        }
-        .sheet(item: $pendingMount) { pending in
-            AddMountSheet(
-                sourceURL: pending.url,
-                name: Binding(
-                    get: { pendingMount?.name ?? pending.name },
-                    set: { pendingMount?.name = $0 }
-                ),
-                allowWrite: Binding(
-                    get: { pendingMount?.allowWrite ?? pending.allowWrite },
-                    set: { pendingMount?.allowWrite = $0 }
-                ),
-                onCancel: {
-                    pendingMount = nil
-                },
-                onConfirm: {
-                    let current = pendingMount ?? pending
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                switch mode {
+                case .add:
+                    pendingMount = PendingMount(
+                        url: url,
+                        name: Self.defaultMountName(for: url),
+                        allowWrite: true
+                    )
+                    mountUILogger.info("picked \(url.path)")
+                case .reauthorize(let id):
                     do {
-                        _ = try model.add(
-                            pickedURL: current.url,
-                            customName: current.name,
-                            userAllowWrite: current.allowWrite
-                        )
+                        try model.reauthorize(id: id, pickedURL: url)
                     } catch {
                         errorText = error.localizedDescription
                     }
-                    pendingMount = nil
                 }
-            )
+            }
         }
         .alert(String(localized: "Error"),
                isPresented: Binding(get: { errorText != nil },
@@ -212,6 +249,19 @@ struct MountedFoldersSettingsView: View {
             Button(String(localized: "OK"), role: .cancel) { errorText = nil }
         } message: {
             Text(errorText ?? "")
+        }
+    }
+
+    private func confirmMount(_ pending: PendingMount) {
+        do {
+            _ = try model.add(
+                pickedURL: pending.url,
+                customName: pending.name,
+                userAllowWrite: pending.allowWrite
+            )
+            pendingMount = nil
+        } catch {
+            errorText = error.localizedDescription
         }
     }
 
@@ -371,77 +421,6 @@ private struct MountedFolderRow: View {
 }
 
 // MARK: - Add mount sheet
-
-private struct AddMountSheet: View {
-    let sourceURL: URL?
-    @Binding var name: String
-    @Binding var allowWrite: Bool
-    let onCancel: () -> Void
-    let onConfirm: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if let url = sourceURL {
-                    Section {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Source path")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(url.path)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.vertical, 2)
-                    } footer: {
-                        Text("The path above is how iOS exposes the folder you picked. Use it to confirm which app this data belongs to.")
-                            .font(.caption2)
-                    }
-                }
-
-                Section(header: Text("Mount name")) {
-                    TextField("name", text: $name)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Text("This will be the folder name under /var/ze/mounts/")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section {
-                    Toggle(isOn: $allowWrite) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Allow writes")
-                            Text(allowWrite
-                                ? String(localized: "AI, shell, and Files browser can modify files in this mount.")
-                                : String(localized: "This mount will be exposed as read-only. Useful for reference vaults you don't want the AI to touch."))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("Permissions")
-                } footer: {
-                    Text("You can change the write permission later from the mount details page.")
-                        .font(.caption)
-                }
-            }
-            .navigationTitle("New Mount")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Cancel"), action: onCancel)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Mount"), action: onConfirm)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-        }
-    }
-}
 
 // MARK: - ViewModel
 
