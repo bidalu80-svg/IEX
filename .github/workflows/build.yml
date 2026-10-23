@@ -488,13 +488,17 @@ jobs:
           # Rootfs for the recorder: same Alpine the app ships.
           curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
             https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz
-          ./build-macos/tools/fakefsify /tmp/alpine.tar.gz /tmp/aot-rootfs
+          # record.sh invokes `ish -r <rootfs>`, and -r is the REALFS path
+          # (-f is fakefs). Hand it an unpacked Alpine tree, not fakefsify's
+          # data/ + meta.db layout, or the guest cannot find /bin/sh.
+          mkdir -p /tmp/aot-rootfs
+          tar -xzf /tmp/alpine.tar.gz -C /tmp/aot-rootfs
           mkdir -p aot
           # record.sh passes the workload to the guest as a guest path, so it
           # has to live inside the rootfs data dir (fakefs: data/ is /).
-          mkdir -p /tmp/aot-rootfs/data/tmp
-          printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/data/tmp/wl-musl.sh
-          printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/data/tmp/wl-busybox.sh
+          mkdir -p /tmp/aot-rootfs/tmp
+          printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
+          printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
           Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl || true
           Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox || true
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
