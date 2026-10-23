@@ -198,6 +198,7 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
 
         current->blocking = true;
         int stall_count = 0;
+        bool stall_reported = false;
         struct pollfd pfd = { .fd = current->futex_pipe[0], .events = POLLIN };
         for (;;) {
             // Compute poll timeout
@@ -296,45 +297,29 @@ static int futex_wait(addr_t uaddr, dword_t val, struct timespec *timeout) {
                     unlock(&pids_lock);
                 }
             }
-            // Safety valve: continuous infinite futex stall > 180s.
-            if (timeout == NULL && stall_count >= 1800) { // 1800 * 100ms = 180s
-                bool has_live_children = false;
+            // [T-ish-futex-no-exit-valve] The 180s valve used to call
+            // do_exit_group(0) when one thread had been parked in an untimed
+            // futex_wait and the group had no live children. That is normal for
+            // Go's runtime: an idle M parks in an untimed futex for as long as
+            // it stays idle, so `for i in $(seq 10); do sleep 15; done` was
+            // killed at 3:00 and reported exit 0. No guest process asked to
+            // exit, and a long wait is not evidence of a deadlock.
+            //
+            // It now only reports, once per stall, so the diagnostic the valve
+            // was added for is still in the log.
+            if (timeout == NULL && stall_count >= 1800 && !stall_reported) { // 1800 * 100ms = 180s
+                stall_reported = true;
                 int live = 0;
                 lock(&pids_lock);
                 lock(&current->group->lock);
                 struct task *t;
-                list_for_each_entry(&current->group->threads, t, group_links) {
+                list_for_each_entry(&current->group->threads, t, group_links)
                     live++;
-                    struct task *child;
-                    list_for_each_entry(&t->children, child, siblings) {
-                        if (child->group == current->group)
-                            continue;
-                        if (!child->zombie)
-                            has_live_children = true;
-                    }
-                }
                 unlock(&current->group->lock);
                 unlock(&pids_lock);
-                if (live > 1 && !has_live_children) {
-                    if (ish_exec_trace())
-                        printk("SAFETY-VALVE[futex]: pid=%d stalled %ds in futex_wait(uaddr=0x%x val=%d), %d threads, no children → exit_group\n",
-                               current->pid, stall_count / 10, uaddr, val, live);
-                    // Clean up our wait queue entry before exiting — the
-                    // wait struct lives on this thread's stack, so leaving
-                    // it linked into futex->queue after exit_group would
-                    // leave a dangling pointer. Other threads doing
-                    // futex_wake / futex_put_unlocked would then trip the
-                    // assert(list_empty(&futex->queue)) in futex.c:93 when
-                    // refcount hits 0.
-                    lock(&futex_lock);
-                    list_remove_safe(&wait.queue);
-                    futex_put_unlocked(wait.futex);
-                    unlock(&futex_lock);
-                    current->blocking = false;
-                    do_exit_group(0);
-                }
-                if (has_live_children)
-                    stall_count = 0;
+                printk("FUTEX-STALL: pid=%d (%s) in untimed futex_wait(uaddr=0x%x val=%d) "
+                       "for %ds, %d threads; not killed\n",
+                       current->pid, current->comm, uaddr, val, stall_count / 10, live);
             }
         }
         current->blocking = false;
