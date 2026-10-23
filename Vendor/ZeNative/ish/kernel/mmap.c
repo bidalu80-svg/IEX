@@ -352,7 +352,21 @@ addr_t sys_mremap(addr_t addr, dword_t old_len, dword_t new_len, dword_t flags) 
     pages_t extra_pages = new_pages - old_pages;
     if (!pt_is_hole(current->mem, extra_start, extra_pages))
         return _ENOMEM;
+#if ANON_MMAP_LIMIT_PAGES > 0
+    // [T-ish-anon-cap-mremap] Growing an anonymous mapping commits real pages
+    // through pt_map_nothing, which does not charge on its own; every other
+    // commit path (do_mmap, sys_brk, mem_ptr, mprotect) reserves first. Without
+    // this the growth bypasses the cap entirely.
+    if (!anon_pages_reserve((long)extra_pages))
+        return _ENOMEM;
+#endif
     int err = pt_map_nothing(current->mem, extra_start, extra_pages, pt_flags);
+    if (err < 0) {
+#if ANON_MMAP_LIMIT_PAGES > 0
+        anon_pages_unreserve((long)extra_pages);
+#endif
+        return err;
+    }
     if (err < 0)
         return err;
     return addr;
