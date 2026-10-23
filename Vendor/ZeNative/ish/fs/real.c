@@ -607,30 +607,18 @@ int realfs_mkdir(struct mount *mount, const char *path, mode_t_ mode) {
 // processes, fork and close stay exactly the same.
 static char flock_dir[PATH_MAX];
 
-// [T-ish-flock-proxy] One file per (dev, inode) is created and never removed by
-// the happy path, so a long-lived install accumulates thousands of them in
-// $TMPDIR. Sweep the ones no live holder can still be using: anything older
-// than an hour is from an earlier run. Files a concurrent process (the share
-// extension) has open right now are recent, and unlinking them would let a new
-// open create a fresh inode — breaking mutual exclusion between processes.
-static void flock_proxy_purge(void) {
-    DIR *dir = opendir(flock_dir);
-    if (dir == NULL)
-        return;
-    time_t cutoff = time(NULL) - 3600;
-    struct dirent *entry;
-    char path[PATH_MAX];
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", flock_dir, entry->d_name);
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_mtime < cutoff)
-            unlink(path);
-    }
-    closedir(dir);
-}
-
+// [T-ish-flock-proxy] Deliberately no sweep of this directory.
+//
+// Proxies accumulate (one 0-byte file per (dev, inode) ever locked), and an
+// earlier revision did unlink anything older than an hour. That is unsafe:
+// flock() does not touch mtime, so a proxy held continuously since creation
+// still looks stale, and unlinking it lets the next open create a fresh inode
+// under the same name — two processes then both believe they hold LOCK_EX on
+// the same guest file, silently. The case the proxy exists for (codex holding
+// a lock overnight) is exactly the one that trips it, and there is no portable
+// way to ask "is anyone holding a flock on this file?": fcntl(F_GETLK) reports
+// POSIX record locks, not flock(). Leaving the files alone costs a few hundred
+// KB of 0-byte inodes in $TMPDIR, which iOS reclaims.
 static void flock_proxy_dir_init(void) {
     const char *tmp = getenv("TMPDIR");
     char buf[PATH_MAX];
@@ -642,7 +630,6 @@ static void flock_proxy_dir_init(void) {
         tmp = "/tmp";
     snprintf(flock_dir, sizeof(flock_dir), "%s/ish-flock", tmp);
     mkdir(flock_dir, 0700);
-    flock_proxy_purge();
 }
 
 static const char *flock_proxy_dir(void) {
