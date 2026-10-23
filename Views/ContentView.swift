@@ -4905,6 +4905,9 @@ private struct AppearanceSettingsView: View {
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
     @AppStorage("launchScreen") private var launchScreen: Int = 0  // 0=Auto, 1=Last Session, 2=New Chat, 3=Home
+    /// [T-launch-animation] Mirrors `LaunchCoordinator.preferenceKey`; read at
+    /// launch by the coordinator, written here. Applies on the next cold start.
+    @AppStorage(LaunchCoordinator.preferenceKey) private var launchAnimationEnabled = true
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
     @AppStorage(ZeSubAgentPreferences.dockEnabledKey) private var subAgentDockEnabled: Bool = true
@@ -4970,6 +4973,21 @@ private struct AppearanceSettingsView: View {
                 Text("Launch Session")
             } footer: {
                 Text("选择 App 启动时显示的内容。“自动”会在上次会话超过 15 分钟时打开新聊天。")
+            }
+
+            // [T-launch-animation] Default on. `@AppStorage` reports the
+            // fallback only when the key was never written, so an explicit
+            // "off" survives upgrades and relaunches.
+            Section {
+                Toggle(isOn: $launchAnimationEnabled) {
+                    Text("Launch Animation")
+                }
+                .accessibilityIdentifier("settings.appearance.launchAnimation")
+                .accessibilityHint("Plays the Ze launch animation on cold start; when off the app opens straight to the main screen.")
+            } header: {
+                Text("Launch Animation")
+            } footer: {
+                Text("Plays the Ze launch animation on cold start. When off, the app opens straight to the main screen. Applies on the next launch.")
             }
 
             Section {

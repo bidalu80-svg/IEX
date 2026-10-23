@@ -1,11 +1,21 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// `URL` is not `Identifiable`; wrapping it lets `.sheet(item:)` carry the
+/// freshly exported archive without juggling a separate boolean.
+private struct ExportedBackup: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 struct ICloudBackupView: View {
     @StateObject private var manager = ICloudBackupManager.shared
     @State private var showError: String?
     @State private var showRestoreConfirm: ICloudBackupManager.BackupEntry?
     @State private var showPasswordSheet = false
+    /// Set right after an export so the share sheet opens on the finished
+    /// archive instead of leaving it buried in the app's Backups folder.
+    @State private var exportedShare: ExportedBackup?
     @State private var passwordMode: PasswordMode?
     @State private var showFileImporter = false
     @State private var importedURL: URL?
@@ -21,7 +31,6 @@ struct ICloudBackupView: View {
     @State private var showProtocolPicker = false
     @AppStorage("ze.backup.maxFileSizeMB") private var maxFileSizeMB = 100
     @AppStorage("ze.backup.encryptionEnabled") private var encryptionEnabled = true
-
     private enum PasswordMode: Identifiable {
         case export(ICloudBackupManager.BackupCategory)
         case restore
@@ -150,7 +159,9 @@ struct ICloudBackupView: View {
                     }
                     .disabled(manager.isBackingUp || manager.isRestoring)
                     if let url = manager.lastExportURL {
-                        ShareLink(item: url) {
+                        Button {
+                            exportedShare = ExportedBackup(url: url)
+                        } label: {
                             Label(String(localized: "Share latest backup"), systemImage: "link")
                         }
                         Text(url.lastPathComponent)
@@ -245,6 +256,12 @@ struct ICloudBackupView: View {
                 showPasswordSheet = false
                 passwordMode = nil
             } }
+        .sheet(item: $exportedShare) { item in
+            // `.zebak` has no registered UTI, so declare `public.data` while
+            // keeping the real filename — that is what makes the archive
+            // restorable after a round trip through Files.
+            ZeShareSheet(url: item.url, typeIdentifier: UTType.data.identifier)
+        }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [UTType.data, UTType.item], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             importedURL = url
@@ -493,7 +510,17 @@ struct ICloudBackupView: View {
                     if let destination = selectedDestination {
                         _ = try await manager.backupEncrypted(category: category, selection: backupSelection, to: destination, password: password)
                     } else {
-                        _ = try await manager.exportEncryptedBackup(category: category, selection: backupSelection, password: password)
+                        // [T-backup-export-share] The URL used to be discarded
+                        // with `_ =`: the archive was written into the app's
+                        // Backups folder and the user was never shown a way to
+                        // get it out, which read as "导出没反应". Present the
+                        // share sheet as soon as the file exists.
+                        let exported = try await manager.exportEncryptedBackup(
+                            category: category,
+                            selection: backupSelection,
+                            password: password
+                        )
+                        exportedShare = ExportedBackup(url: exported)
                     }
                 case .restore:
                     guard let importedURL else { return }

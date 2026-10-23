@@ -264,6 +264,8 @@
 		E5SEB003 /* SessionExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER003 /* SessionExportRenderer.swift */; };
 		E5SEB004 /* SessionShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER004 /* SessionShareSheet.swift */; };
 		E5SEB005 /* SessionExportNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER005 /* SessionExportNativeRenderer.swift */; };
+		LCHB0001 /* LaunchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = LCHR0001 /* LaunchCoordinator.swift */; };
+		LCHB0002 /* LaunchAnimationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = LCHR0002 /* LaunchAnimationView.swift */; };
 		E5KIMI0A1 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0A2 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0B1 /* KimiDeviceFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR02 /* KimiDeviceFlow.swift */; };
@@ -911,6 +913,8 @@
 		E5SER003 /* SessionExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportRenderer.swift; sourceTree = "<group>"; };
 		E5SER004 /* SessionShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionShareSheet.swift; sourceTree = "<group>"; };
 		E5SER005 /* SessionExportNativeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportNativeRenderer.swift; sourceTree = "<group>"; };
+		LCHR0001 /* LaunchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoordinator.swift; sourceTree = "<group>"; };
+		LCHR0002 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
 		E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthRefreshCoordinator.swift; path = Providers/Kimi/OAuth/KimiOAuthRefreshCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR02 /* KimiDeviceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiDeviceFlow.swift; path = Providers/Kimi/OAuth/KimiDeviceFlow.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR03 /* KimiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthManager.swift; path = Providers/Kimi/OAuth/KimiOAuthManager.swift; sourceTree = SOURCE_ROOT; };
@@ -1663,6 +1667,7 @@
 				F1V00014 /* Alarms */,
 				F1V00015 /* Backup */,
 				F1V00010 /* Chat */,
+				LCHG0001 /* Launch */,
 				F1V00012 /* Providers */,
 				F1V00013 /* Rootfs */,
 				F1V00011 /* Settings */,
@@ -2130,6 +2135,15 @@
 				F1S00011 /* ChatSessionIdEnvironment.swift */,
 			);
 			path = Environment;
+			sourceTree = "<group>";
+		};
+		LCHG0001 /* Launch */ = {
+			isa = PBXGroup;
+			children = (
+				LCHR0001 /* LaunchCoordinator.swift */,
+				LCHR0002 /* LaunchAnimationView.swift */,
+			);
+			path = Launch;
 			sourceTree = "<group>";
 		};
 		E5SEG001 /* SessionExport */ = {
@@ -2943,6 +2957,8 @@
 				E5SEB003 /* SessionExportRenderer.swift in Sources */,
 				E5SEB004 /* SessionShareSheet.swift in Sources */,
 				E5SEB005 /* SessionExportNativeRenderer.swift in Sources */,
+				LCHB0001 /* LaunchCoordinator.swift in Sources */,
+				LCHB0002 /* LaunchAnimationView.swift in Sources */,
 				E5M000007 /* MarkdownRenderView.swift in Sources */,
 				E5M000003 /* ZeMarkdownParser.swift in Sources */,
 				E5U000001 /* KaTeXRenderer.swift in Sources */,

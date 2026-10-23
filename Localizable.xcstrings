@@ -79116,7 +79116,10 @@
     "No package source is configured." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "没有配置软件源。"}}}} ,
     "This export is an archive. Use Share or Save to Files to open it." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "此导出是一个压缩包，请用「分享」或「保存到文件」打开。"}}}} ,
     "This file cannot be previewed as text. Use Share or Save to Files." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "此文件无法以文本方式预览，请用「分享」或「保存到文件」打开。"}}}} ,
-    "No log files to share." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "没有可分享的日志文件。"}}}}
+    "No log files to share." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "没有可分享的日志文件。"}}}} ,
+    "Launch Animation" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "启动动画"}}}} ,
+    "Plays the Ze launch animation on cold start. When off, the app opens straight to the main screen. Applies on the next launch." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "冷启动时播放 Ze 的启动动效，关闭后直接进入主界面。下次启动生效。"}}}} ,
+    "Plays the Ze launch animation on cold start; when off the app opens straight to the main screen." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "冷启动时播放 Ze 的启动动效，关闭后直接进入主界面。"}}}}
   },
   "version" : "1.0"
 }

@@ -90,6 +90,8 @@ struct ZeApp: App {
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
     @StateObject private var shareCoordinator = ShareCoordinator.shared
+    /// [T-launch-animation] App-level owner; never re-created by view updates.
+    @ObservedObject private var launchCoordinator = LaunchCoordinator.shared
     @ObservedObject private var fontSettings = FontSettings.shared
     @ObservedObject private var configConfirmGate = ConfigConfirmationGate.shared
     @Environment(\.scenePhase) private var scenePhase
@@ -155,6 +157,12 @@ struct ZeApp: App {
                     .overlay(alignment: .top) {
                         BackgroundInterruptionBanner()
                     }
+                    // [T-launch-animation] `coreReady` signal: the root has
+                    // produced its first frame. Background work (tool registry,
+                    // shell warm-up, skill scan) does not gate the transition.
+                    .onAppear {
+                        LaunchCoordinator.shared.markCoreReady()
+                    }
                 AudioPiPCapsule()
                 // Global read-replies capsule — a SINGLE app-root instance driven by
                 // VoiceOutputState, so it persists across chat → home (no per-session
@@ -162,6 +170,12 @@ struct ZeApp: App {
                 // tap-to-dismiss catcher), so no positioning wrapper here.
                 SpeechPlayerControl()
                 AppLockOverlay()
+                // Cold-launch layer. With the switch off the phase is already
+                // `.finished` here, so nothing is created and nothing waits.
+                if launchCoordinator.phase != .finished {
+                    LaunchAnimationView(coordinator: launchCoordinator)
+                        .zIndex(1_000)
+                }
             }
                 .onReceive(SessionLockStore.shared.$appIsLocked) { locked in
                     guard !locked, let url = pendingURLWhileLocked else { return }
@@ -326,6 +340,7 @@ struct ZeApp: App {
         }
         .onChange(of: scenePhase) { newPhase in
             handleScenePhaseChange(newPhase)
+            launchCoordinator.handleScenePhase(newPhase)
         }
     }
 

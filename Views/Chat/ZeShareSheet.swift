@@ -14,10 +14,25 @@ import UniformTypeIdentifiers
 /// UIKit share sheet wrapper for sharing a single URL (file or link).
 struct ZeShareSheet: UIViewControllerRepresentable {
     let url: URL
+    /// Explicit UTI for file URLs whose extension iOS does not know (for
+    /// example the encrypted `.zebak` backup). Defaults to the extension's
+    /// registered type, then `public.data`.
+    var typeIdentifier: String? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        let safeURL = ZeShareSheet.sanitizedShareURL(url) ?? url
-        return UIActivityViewController(activityItems: [safeURL], applicationActivities: nil)
+        let item: Any
+        if url.isFileURL, FileManager.default.fileExists(atPath: url.path) {
+            // [T-share-file-item-source] A bare file URL is exported by
+            // UIActivityViewController as a *link*, so Files/Mail/AirDrop get
+            // an item they cannot open and the sheet appears to do nothing.
+            // Vending an item source that declares the UTI keeps the original
+            // filename (the old sanitize path renamed it to `.bin`, which made
+            // a shared `.zebak` backup impossible to restore).
+            item = ZeFileActivityItemSource(fileURL: url, typeIdentifier: typeIdentifier)
+        } else {
+            item = ZeShareSheet.sanitizedShareURL(url) ?? url
+        }
+        return UIActivityViewController(activityItems: [item], applicationActivities: nil)
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
@@ -97,5 +112,48 @@ struct ZeShareSheet: UIViewControllerRepresentable {
         let allowed: Set<Character> = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
         let filtered = String(name.filter { allowed.contains($0) })
         return filtered.isEmpty ? "share" : String(filtered.prefix(40))
+    }
+}
+
+// MARK: - File item source
+
+/// Vends a local file to the share sheet with its concrete UTI.
+///
+/// Passing a bare `URL` makes the sheet treat the item as a link. Declaring
+/// the type is what lets "Save to Files", Mail and AirDrop receive the actual
+/// bytes, and it keeps the original filename — which matters for formats the
+/// app itself has to import later (`.zebak`).
+final class ZeFileActivityItemSource: NSObject, UIActivityItemSource {
+    private let fileURL: URL
+    private let typeIdentifier: String
+
+    init(fileURL: URL, typeIdentifier: String? = nil) {
+        self.fileURL = fileURL
+        if let typeIdentifier {
+            self.typeIdentifier = typeIdentifier
+        } else {
+            let ext = fileURL.pathExtension.lowercased()
+            self.typeIdentifier = (UTType(filenameExtension: ext) ?? .data).identifier
+        }
+        super.init()
+    }
+
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any {
+        fileURL
+    }
+
+    func activityViewController(_ controller: UIActivityViewController,
+                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        fileURL
+    }
+
+    func activityViewController(_ controller: UIActivityViewController,
+                                dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?) -> String {
+        typeIdentifier
+    }
+
+    func activityViewController(_ controller: UIActivityViewController,
+                                subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        fileURL.lastPathComponent
     }
 }

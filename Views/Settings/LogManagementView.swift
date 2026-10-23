@@ -276,48 +276,6 @@ private struct LogTextView: UIViewRepresentable {
 
 // MARK: - Share Sheet
 
-/// Vends a log file with its concrete UTI.
-///
-/// A bare `URL` handed to `UIActivityViewController` makes iPad's "Save to
-/// Files" resolve the item through a file-provider domain, which fails for an
-/// app-sandbox URL (`error fetching file provider domain … (null)`). Declaring
-/// the type lets the picker copy the real bytes.
-private final class LogActivityItemSource: NSObject, UIActivityItemSource {
-    private let fileURL: URL
-    private let typeIdentifier: String
-
-    init(fileURL: URL) {
-        self.fileURL = fileURL
-        let ext = fileURL.pathExtension.lowercased()
-        // `.log` has no registered UTI on iOS; `public.plain-text` is what
-        // Mail, Notes and the Files editor accept for it.
-        let resolved = UTType(filenameExtension: ext)
-            ?? (ext.isEmpty ? nil : UTType(filenameExtension: "txt"))
-            ?? .plainText
-        self.typeIdentifier = resolved.identifier
-        super.init()
-    }
-
-    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any {
-        fileURL
-    }
-
-    func activityViewController(_ controller: UIActivityViewController,
-                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
-        fileURL
-    }
-
-    func activityViewController(_ controller: UIActivityViewController,
-                                dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?) -> String {
-        typeIdentifier
-    }
-
-    func activityViewController(_ controller: UIActivityViewController,
-                                subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
-        fileURL.lastPathComponent
-    }
-}
-
 private struct LogShareSheet: UIViewControllerRepresentable {
     let urls: [URL]
 
@@ -327,7 +285,7 @@ private struct LogShareSheet: UIViewControllerRepresentable {
         let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
         let items: [Any] = existing.isEmpty
             ? [String(localized: "No log files to share.")]
-            : existing.map { LogActivityItemSource(fileURL: $0) }
+            : existing.map { ZeFileActivityItemSource(fileURL: $0) }
         return UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
