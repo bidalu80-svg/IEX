@@ -5904,11 +5904,18 @@ skip_three_different:
     // Mask 0xff201fe0 checks fixed bits, ignores ftype, imm8, Rd
     if ((insn & 0xff201fe0) == 0x1e201000) {
         uint32_t ftype = (insn >> 22) & 3;
-        uint32_t imm8 = (insn >> 13) & 0xff;
+        uint32_t imm8_raw = (insn >> 13) & 0xff;
         uint32_t rd = insn & 0x1f;
         bool is_double = (ftype == 1);
 
-        uint64_t fpbits = arm64_fpimm_to_bits(is_double, imm8);
+        // [T-ish-fmov-imm] The instruction stores NOT(b) in bit 6 of the imm8
+        // field, and `arm64_fpimm_to_bits` expects the architectural form, so
+        // the bit has to be flipped here — exactly as the other caller in
+        // `gen_simd_fp()` does. Passing the raw field made every scalar FP
+        // immediate come out 16x too large (`FMOV Dd, #1.0` -> 16.0), which is
+        // why V8's range-reduction constants turned `Math.cos(Math.PI/4)` into
+        // 15.707106781186546.
+        uint64_t fpbits = arm64_fpimm_to_bits(is_double, imm8_raw ^ 0x40);
 
         gen(state, (unsigned long) gadget_fmov_fp_imm);
         gen(state, rd | (ftype << 8));
