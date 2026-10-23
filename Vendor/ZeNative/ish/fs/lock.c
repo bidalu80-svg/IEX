@@ -197,6 +197,11 @@ int fcntl_getlk(struct fd *fd, struct flock_ *flock) {
     if (flock->type != F_RDLCK_ && flock->type != F_WRLCK_)
         return _EINVAL;
     struct inode_data *inode = fd->inode;
+    // Pipes, sockets and anon inodes have no inode_data. Locking it used to
+    // dereference NULL and wedge the whole emulator (fcntl(F_SETLK) on a pipe
+    // hung forever). Linux returns EBADF for these fds.
+    if (inode == NULL)
+        return _EBADF;
     lock(&inode->lock);
 
     struct file_lock request;
@@ -224,6 +229,8 @@ int fcntl_setlk(struct fd *fd, struct flock_ *flock, bool blocking) {
         return _EBADF;
 
     struct inode_data *inode = fd->inode;
+    if (inode == NULL)
+        return _EBADF;
     lock(&inode->lock);
 
     struct file_lock request;

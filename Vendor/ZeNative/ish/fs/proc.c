@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include "kernel/calls.h"
@@ -100,6 +101,14 @@ static int proc_refresh_data(struct fd *fd) {
         fd->proc.data.capacity = 4096;
         fd->proc.data.data = malloc(fd->proc.data.capacity); // default size
     }
+    // Not every regular proc entry has a show(): entries that serve their
+    // content through pread/pwrite (e.g. /proc/<pid>/mem) leave it NULL, and
+    // proc_entry_mode() defaults a typeless entry to S_IFREG, so the S_ISDIR
+    // check above lets them through. Calling the NULL pointer jumped to
+    // address 0 and the kernel killed us with CODESIGNING/Invalid Page.
+    if (fd->proc.entry.meta->show == NULL)
+        return _EINVAL;
+
     fd->proc.data.size = 0;
     struct proc_entry *entry = &fd->proc.entry;
     int err = entry->meta->show(entry, &fd->proc.data);
@@ -109,6 +118,28 @@ static int proc_refresh_data(struct fd *fd) {
 }
 
 static off_t_ proc_seek(struct fd *fd, off_t_ off, int whence) {
+    // pread-backed entries have no snapshot to size, and their offset is an
+    // address rather than a position in a buffer — /proc/<pid>/mem is read by
+    // seeking to the guest address and reading. Seek them without an end
+    // bound instead of refreshing (which would have no show() to call).
+    // LSEEK_END is meaningless for an address space, so it stays refused.
+    if (fd->proc.entry.meta->pread != NULL) {
+        if (whence == LSEEK_END)
+            return _EINVAL;
+        // generic_seek only rejects negatives on the CUR/END paths; LSEEK_SET
+        // stores the offset verbatim, and fd->offset is unsigned, so a
+        // negative would silently wrap to a huge value and then be truncated
+        // into a guest address by the pread handler. Reject it up front, and
+        // leave fd->offset untouched — a failed seek must not move the file.
+        // (Linux returns EINVAL for a negative resulting position too.)
+        if (whence == LSEEK_SET && off < 0)
+            return _EINVAL;
+        int err = generic_seek(fd, off, whence, 0);
+        if (err < 0)
+            return err;
+        return fd->offset;
+    }
+
     int err = proc_refresh_data(fd);
     if (err < 0)
         return err;
@@ -252,11 +283,27 @@ void proc_buf_append(struct proc_data *buf, const void *data, size_t size) {
 
 void proc_printf(struct proc_data *buf, const char *format, ...) {
     char data[4096];
-    va_list args;
+    va_list args, again;
     va_start(args, format);
-    size_t size = vsnprintf(data, sizeof(data), format, args);
+    va_copy(again, args);
+    int size = vsnprintf(data, sizeof(data), format, args);
     va_end(args);
-    proc_buf_append(buf, data, size);
+    // vsnprintf returns the length the whole text needs: longer ones (e.g.
+    // /proc/ish/jit with many images) are formatted again on the heap instead
+    // of appending past the end of data
+    if (size >= (int) sizeof(data)) {
+        char *big = malloc((size_t) size + 1);
+        if (big) {
+            vsnprintf(big, (size_t) size + 1, format, again);
+            proc_buf_append(buf, big, (size_t) size);
+            free(big);
+        } else {
+            proc_buf_append(buf, data, sizeof(data) - 1);
+        }
+    } else if (size > 0) {
+        proc_buf_append(buf, data, (size_t) size);
+    }
+    va_end(again);
 }
 
 const struct fs_ops procfs = {

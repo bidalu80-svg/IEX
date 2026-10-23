@@ -1,6 +1,7 @@
 #ifndef FD_H
 #define FD_H
 #include <dirent.h>
+#include <stdatomic.h>
 #include "kernel/memory.h"
 #include "util/list.h"
 #include "util/sync.h"
@@ -108,6 +109,9 @@ struct fd {
     // fs/inode data
     struct mount *mount;
     int real_fd; // seeks on this fd require the lock TODO think about making a special lock just for that
+    // [T-ish-flock-proxy] host fd + 1 of this open file's flock proxy (see
+    // realfs_flock), 0 if it never took a flock
+    _Atomic int flock_proxy;
     DIR *dir;
     struct inode_data *inode;
     ino_t fake_inode;
@@ -195,6 +199,7 @@ void fdtable_do_cloexec(struct fdtable *table);
 struct fd *fdtable_get(struct fdtable *table, fd_t f);
 
 struct fd *f_get(fd_t f);
+struct fd *f_get_retained(fd_t f);
 // steals a reference to the fd, gives it to the table on success and destroys it on error
 // flags is checked for O_CLOEXEC and O_NONBLOCK
 fd_t f_install(struct fd *fd, int flags);
