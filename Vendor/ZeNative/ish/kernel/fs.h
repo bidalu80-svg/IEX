@@ -112,6 +112,11 @@ bool mount_param_flag(const char *info, const char *flag);
 #define O_APPEND_ (1 << 10)
 #define O_NONBLOCK_ (1 << 11)
 #define O_DIRECTORY_ (1 << 16)
+// asm-generic/fcntl.h for arm64: O_NOFOLLOW is 00400000 octal = 1 << 17.
+// This table stopped short of it, so generic_openat() and realfs had no guest
+// flag to test; both now use it to stop path_normalize / the host open from
+// resolving the final symlink.
+#define O_NOFOLLOW_ (1 << 17)
 #define O_CLOEXEC_ (1 << 19)
 
 // generic ioctls
