@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <sys/mman.h>
@@ -51,6 +52,11 @@ static int open_flags_real_from_fake(int flags) {
     if (flags & O_TRUNC_) real_flags |= O_TRUNC;
     if (flags & O_APPEND_) real_flags |= O_APPEND;
     if (flags & O_NONBLOCK_) real_flags |= O_NONBLOCK;
+    // path_normalize leaves the final component unresolved for O_NOFOLLOW, so
+    // the host open has to refuse to follow it too — otherwise the flag is a
+    // no-op on realfs/bind mounts while working on fakefs (which never
+    // follows), and generic_openat()'s S_ISLNK check never fires.
+    if (flags & O_NOFOLLOW_) real_flags |= O_NOFOLLOW;
     return real_flags;
 }
 
@@ -601,6 +607,30 @@ int realfs_mkdir(struct mount *mount, const char *path, mode_t_ mode) {
 // processes, fork and close stay exactly the same.
 static char flock_dir[PATH_MAX];
 
+// [T-ish-flock-proxy] One file per (dev, inode) is created and never removed by
+// the happy path, so a long-lived install accumulates thousands of them in
+// $TMPDIR. Sweep the ones no live holder can still be using: anything older
+// than an hour is from an earlier run. Files a concurrent process (the share
+// extension) has open right now are recent, and unlinking them would let a new
+// open create a fresh inode — breaking mutual exclusion between processes.
+static void flock_proxy_purge(void) {
+    DIR *dir = opendir(flock_dir);
+    if (dir == NULL)
+        return;
+    time_t cutoff = time(NULL) - 3600;
+    struct dirent *entry;
+    char path[PATH_MAX];
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", flock_dir, entry->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_mtime < cutoff)
+            unlink(path);
+    }
+    closedir(dir);
+}
+
 static void flock_proxy_dir_init(void) {
     const char *tmp = getenv("TMPDIR");
     char buf[PATH_MAX];
@@ -612,6 +642,7 @@ static void flock_proxy_dir_init(void) {
         tmp = "/tmp";
     snprintf(flock_dir, sizeof(flock_dir), "%s/ish-flock", tmp);
     mkdir(flock_dir, 0700);
+    flock_proxy_purge();
 }
 
 static const char *flock_proxy_dir(void) {

@@ -156,21 +156,10 @@ struct fd *f_get(fd_t f) {
     return fd;
 }
 
-// [T-ish-socketpair-emfile-deadlock] Like f_get(), but holds a reference so the
-// fd cannot be closed by another thread between the lookup and the caller's
-// use of it. Returns NULL when the fd is already gone.
-struct fd *f_get_retained(fd_t f) {
-    lock(&current->files->lock);
-    struct fd *fd = fdtable_get(current->files, f);
-    if (fd != NULL)
-        fd_retain(fd);
-    unlock(&current->files->lock);
-    return fd;
-}
-
-// [T-ish-poll-member-race] f_get() plus a reference taken while files->lock
-// is still held, so a concurrent close() of the number cannot free the fd
-// while the caller uses it. Release with fd_close().
+// [T-ish-socketpair-emfile-deadlock] [T-ish-poll-member-race] f_get() plus a
+// reference taken while files->lock is still held, so a concurrent close() of
+// the number cannot free the fd while the caller uses it. Release with
+// fd_close(). Returns NULL when the fd is already gone.
 struct fd *f_get_retained(fd_t f) {
     lock(&current->files->lock);
     struct fd *fd = fdtable_get(current->files, f);

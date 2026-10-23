@@ -571,8 +571,12 @@ static void fiber_fix_fault_pc(struct asbestos *asbestos, struct fiber_frame *fr
         size_t before = state.size;
         addr_t unit_pc = state.ip;
         bool more = gen_step(&state, tlb);
-        if (state.oom)
-            break;
+        // Upstream checks `state.oom` here, which needs the "don't abort() when
+        // the block buffer cannot grow" refactor: gen_state grows an `oom`
+        // flag, gen() sets it instead of abort(), and fiber_block_compile()
+        // discards the half-emitted block. Ze's generator still aborts on a
+        // failed realloc (asbestos/guest-arm64/gen.c:gen()), so that flag has
+        // nothing to observe and the guard is dead code here.
         if (state.size > before && state.size >= pos) {
             // A two-instruction unit (adrp+ldr, cmp+b.cond) restarts at its
             // first instruction, which is side-effect free.

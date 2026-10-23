@@ -15,7 +15,10 @@ int_t sys_prctl(dword_t option, addr_t arg2, addr_t UNUSED(arg3), addr_t UNUSED(
             return current->undumpable ? 0 : 1;
         case PRCTL_SET_DUMPABLE_:
             STRACE("prctl(PR_SET_DUMPABLE, %d)", arg2);
-            if (arg2 > 1)
+            // Linux accepts SUID_DUMP_DISABLE(0), SUID_DUMP_USER(1) and
+            // SUID_DUMP_ROOT(2). Only 0 differs here: nothing dumps core, so
+            // 1 and 2 both mean "dumpable".
+            if (arg2 > 2)
                 return _EINVAL;
             current->undumpable = arg2 == 0;
             return 0;
