@@ -57,12 +57,13 @@ final class LaunchCoordinator: ObservableObject {
     private var degradeTimer: Timer?
     private var timersArmed = false
 
-    /// 0.9 s: long enough that the logo does not blink, short enough that it
-    /// never feels like a delay.
-    private static let minimumDisplay: TimeInterval = 0.9
+    /// 1.4 s: the launch image hands over a static mark, so anything shorter
+    /// reads as a flicker rather than an animation. Still well inside the
+    /// 1.2–1.8 s budget once the fade is added.
+    private static let minimumDisplay: TimeInterval = 1.4
     /// Past this, stop animating and hold a static mark.
     private static let degradeAfter: TimeInterval = 2.5
-    private static let fadeDuration: TimeInterval = 0.35
+    private static let fadeDuration: TimeInterval = 0.45
 
     /// Decides the very first frame: with the switch off the phase is already
     /// `.finished`, so the launch layer is never created and no timer exists.

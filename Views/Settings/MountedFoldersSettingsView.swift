@@ -23,10 +23,28 @@ private struct PendingMount: Identifiable {
 
 struct MountedFoldersSettingsView: View {
     @StateObject private var model = MountedFoldersViewModel()
-    @State private var showingPicker = false
     @State private var pendingMount: PendingMount?
-    @State private var reauthorizeID: UUID?
     @State private var errorText: String?
+    /// One picker, one presentation.
+    ///
+    /// [T-mount-single-importer] This view used to carry two `.fileImporter`
+    /// modifiers (add + re-authorize) on the same `List`. SwiftUI keeps a
+    /// single presentation slot per modifier chain, so with both attached the
+    /// "+" button could flip its own flag without anything appearing. A single
+    /// importer driven by this enum removes the ambiguity.
+    @State private var pickerMode: MountPickerMode?
+
+    private enum MountPickerMode: Identifiable {
+        case add
+        case reauthorize(UUID)
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .reauthorize(let id): return "reauth-\(id.uuidString)"
+            }
+        }
+    }
 
     var body: some View {
         List {
@@ -74,7 +92,7 @@ struct MountedFoldersSettingsView: View {
                         }
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
-                                reauthorizeID = entry.id
+                                pickerMode = .reauthorize(entry.id)
                             } label: {
                                 Label(String(localized: "Re-authorize"), systemImage: "key.fill")
                             }
@@ -82,7 +100,7 @@ struct MountedFoldersSettingsView: View {
                         }
                         .contextMenu {
                             Button {
-                                reauthorizeID = entry.id
+                                pickerMode = .reauthorize(entry.id)
                             } label: {
                                 Label(String(localized: "Re-authorize"), systemImage: "key.fill")
                             }
@@ -110,7 +128,7 @@ struct MountedFoldersSettingsView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     pendingMount = nil
-                    showingPicker = true
+                    pickerMode = .add
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -122,39 +140,43 @@ struct MountedFoldersSettingsView: View {
         // reliably returns the selected security-scoped folder URL instead of
         // leaving a nested UIDocumentPicker sheet stuck on screen.
         .fileImporter(
-            isPresented: $showingPicker,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            let mount = PendingMount(
-                url: url,
-                name: Self.defaultMountName(for: url),
-                allowWrite: true
-            )
-            // Wait for Files' dismissal transaction before presenting the
-            // confirmation sheet. This avoids competing presentations while
-            // retaining the security-scoped URL for bookmark creation.
-            DispatchQueue.main.async {
-                pendingMount = mount
-                mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
-            }
-        }
-        .fileImporter(
             isPresented: Binding(
-                get: { reauthorizeID != nil },
-                set: { if !$0 { reauthorizeID = nil } }
+                get: { pickerMode != nil },
+                set: { if !$0 { pickerMode = nil } }
             ),
             allowedContentTypes: [.folder],
             allowsMultipleSelection: false
         ) { result in
-            guard let id = reauthorizeID else { return }
-            reauthorizeID = nil
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            do {
-                try model.reauthorize(id: id, pickedURL: url)
-            } catch {
-                errorText = error.localizedDescription
+            let mode = pickerMode
+            pickerMode = nil
+            guard let mode else { return }
+            guard case .success(let urls) = result, let url = urls.first else {
+                if case .failure(let error) = result {
+                    errorText = error.localizedDescription
+                }
+                return
+            }
+
+            switch mode {
+            case .add:
+                let mount = PendingMount(
+                    url: url,
+                    name: Self.defaultMountName(for: url),
+                    allowWrite: true
+                )
+                // Wait for Files' dismissal transaction before presenting the
+                // confirmation sheet. This avoids competing presentations while
+                // retaining the security-scoped URL for bookmark creation.
+                DispatchQueue.main.async {
+                    pendingMount = mount
+                    mountUILogger.info("present pendingMount id=\(mount.id.uuidString) url=\(mount.url.path)")
+                }
+            case .reauthorize(let id):
+                do {
+                    try model.reauthorize(id: id, pickedURL: url)
+                } catch {
+                    errorText = error.localizedDescription
+                }
             }
         }
         .sheet(item: $pendingMount) { pending in

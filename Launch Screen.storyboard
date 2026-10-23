@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  [T-launch-animation] The launch image must be the animation's first frame.
+
+  This used to draw "正在打开 Ze" + a subtitle + three dots, and the SwiftUI
+  launch layer then replaced all of that with the ghost mark. Two different
+  pictures in a row is what made the hand-off feel jumpy, no matter how smooth
+  the animation itself was.
+
+  Now both show the same mark, at the same size, on the same colour, so the
+  system image is indistinguishable from the animation's opening frame.
+-->
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="24506" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
     <device id="retina6_12" orientation="portrait" appearance="light"/>
     <dependencies>
@@ -17,53 +28,19 @@
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="●" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="dot-1-id" userLabel="Dot1">
-                                <rect key="frame" x="172" y="451" width="8" height="10"/>
-                                <fontDescription key="fontDescription" type="system" pointSize="8"/>
-                                <color key="textColor" systemColor="labelColor"/>
-                                <nil key="highlightedColor"/>
-                            </label>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="●" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="dot-2-id" userLabel="Dot2">
-                                <rect key="frame" x="188" y="451" width="8" height="10"/>
-                                <fontDescription key="fontDescription" type="system" pointSize="8"/>
-                                <color key="textColor" systemColor="labelColor"/>
-                                <nil key="highlightedColor"/>
-                            </label>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="●" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="dot-3-id" userLabel="Dot3">
-                                <rect key="frame" x="204" y="451" width="8" height="10"/>
-                                <fontDescription key="fontDescription" type="system" pointSize="8"/>
-                                <color key="textColor" systemColor="labelColor"/>
-                                <nil key="highlightedColor"/>
-                            </label>
-                            <label opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="正在打开 Ze" textAlignment="center" lineBreakMode="middleTruncation" baselineAdjustment="alignBaselines" minimumFontSize="18" translatesAutoresizingMaskIntoConstraints="NO" id="GJd-Yh-RWb">
-                                <rect key="frame" x="148.66666666666666" y="401" width="96" height="22"/>
-                                <fontDescription key="fontDescription" type="boldSystem" pointSize="18"/>
-                                <nil key="highlightedColor"/>
-                            </label>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="您的本地私密智能助手正在启动" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="ioh-oc-Fxv">
-                                <rect key="frame" x="111" y="431" width="171.66666666666663" height="17"/>
-                                <fontDescription key="fontDescription" type="system" pointSize="14"/>
-                                <color key="textColor" systemColor="secondaryLabelColor"/>
-                                <nil key="highlightedColor"/>
-                            </label>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="ZeLaunchMark" translatesAutoresizingMaskIntoConstraints="NO" id="mark-1-vw" userLabel="ZeMark">
+                                <rect key="frame" x="148.5" y="378" width="96" height="96"/>
+                                <constraints>
+                                    <constraint firstAttribute="width" constant="96" id="mark-w"/>
+                                    <constraint firstAttribute="height" constant="96" id="mark-h"/>
+                                </constraints>
+                            </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
                         <color key="backgroundColor" systemColor="systemBackgroundColor"/>
                         <constraints>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="centerX" secondItem="Bcu-3y-fUS" secondAttribute="centerX" id="cX3-title-sa"/>
-                            <constraint firstItem="ioh-oc-Fxv" firstAttribute="centerX" secondItem="Bcu-3y-fUS" secondAttribute="centerX" id="0mo-ik-j59"/>
-                            <constraint firstItem="ioh-oc-Fxv" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="LhO-Af-Md8"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="bottom" secondItem="ioh-oc-Fxv" secondAttribute="top" constant="-12" id="cY1-title-slogan"/>
-                            <!-- Dot2 centered horizontally -->
-                            <constraint firstItem="dot-2-id" firstAttribute="centerX" secondItem="Bcu-3y-fUS" secondAttribute="centerX" id="dot2-cx"/>
-                            <!-- Dot spacing: 1-2-3 with 8pt gaps -->
-                            <constraint firstItem="dot-2-id" firstAttribute="leading" secondItem="dot-1-id" secondAttribute="trailing" constant="8" id="dot12-sp"/>
-                            <constraint firstItem="dot-3-id" firstAttribute="leading" secondItem="dot-2-id" secondAttribute="trailing" constant="8" id="dot23-sp"/>
-                            <!-- All dots same centerY -->
-                            <constraint firstItem="dot-1-id" firstAttribute="centerY" secondItem="dot-2-id" secondAttribute="centerY" id="dot1-cy"/>
-                            <constraint firstItem="dot-3-id" firstAttribute="centerY" secondItem="dot-2-id" secondAttribute="centerY" id="dot3-cy"/>
-                            <!-- Dots 8pt below slogan -->
-                            <constraint firstItem="dot-2-id" firstAttribute="top" secondItem="ioh-oc-Fxv" secondAttribute="bottom" constant="15" id="dots-below"/>
+                            <constraint firstItem="mark-1-vw" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="mark-cx"/>
+                            <constraint firstItem="mark-1-vw" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="mark-cy"/>
                         </constraints>
                     </view>
                 </viewController>
@@ -73,20 +50,9 @@
         </scene>
     </scenes>
     <resources>
-        <systemColor name="labelColor">
-            <color red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-        </systemColor>
-        <systemColor name="secondaryLabelColor">
-            <color red="0.23529411764705882" green="0.23529411764705882" blue="0.2627450980392157" alpha="0.59999999999999998" colorSpace="custom" customColorSpace="sRGB"/>
-        </systemColor>
+        <image name="ZeLaunchMark" width="288" height="288"/>
         <systemColor name="systemBackgroundColor">
             <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-        </systemColor>
-        <systemColor name="systemGray2Color">
-            <color red="0.68235294117647061" green="0.68235294117647061" blue="0.69803921568627447" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-        </systemColor>
-        <systemColor name="systemGray3Color">
-            <color red="0.78039215686274510" green="0.78039215686274510" blue="0.80000000000000004" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
         </systemColor>
     </resources>
 </document>
