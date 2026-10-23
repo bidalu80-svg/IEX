@@ -624,7 +624,6 @@ retry:
     // 1s -> 2s -> 4s to reduce pids_lock contention.
     current->blocking = true;
     {
-        struct timespec waitpid_timeout = {.tv_sec = 1, .tv_nsec = 0};
         // wait_for returns _EINTR (signal), _ETIMEDOUT (deadline expired), or
         // 0 (child_exit was signalled). Only a real signal may set got_signal:
         // treating _ETIMEDOUT as one made every wait for a child that ran
