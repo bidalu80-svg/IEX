@@ -11,6 +11,29 @@
 
 #if ANON_MMAP_LIMIT_PAGES > 0
 _Atomic long anon_page_count;
+_Atomic long anon_page_limit = ANON_MMAP_LIMIT_PAGES;
+
+void ish_set_anon_page_limit(long pages) {
+    if (pages <= 0)
+        return; // host could not measure — keep the ceiling
+    if (pages > ANON_MMAP_LIMIT_PAGES)
+        pages = ANON_MMAP_LIMIT_PAGES;
+    atomic_store(&anon_page_limit, pages);
+}
+
+bool anon_pages_reserve(long pages) {
+    long limit = atomic_load(&anon_page_limit);
+    long count = atomic_load(&anon_page_count);
+    do {
+        if (count + pages > limit)
+            return false;
+    } while (!atomic_compare_exchange_weak(&anon_page_count, &count, count + pages));
+    return true;
+}
+
+void anon_pages_unreserve(long pages) {
+    atomic_fetch_sub(&anon_page_count, pages);
+}
 #endif
 
 struct mm *mm_new() {
@@ -170,15 +193,13 @@ static addr_t do_mmap(addr_t addr, uint64_t len, dword_t prot, dword_t flags, fd
         }
 #endif
 #if ANON_MMAP_LIMIT_PAGES > 0
-        if (!is_prot_none && atomic_load(&anon_page_count) + (long)pages > ANON_MMAP_LIMIT_PAGES)
+        if (!is_prot_none && !anon_pages_reserve((long)pages))
             return _ENOMEM;
-        if (!is_prot_none)
-            atomic_fetch_add(&anon_page_count, (long)pages);
 #endif
         if ((err = pt_map_nothing(current->mem, page, pages, prot)) < 0) {
 #if ANON_MMAP_LIMIT_PAGES > 0
             if (!is_prot_none)
-                atomic_fetch_sub(&anon_page_count, (long)pages);
+                anon_pages_unreserve((long)pages);
 #endif
             return err;
         }
@@ -564,14 +585,13 @@ addr_t sys_brk(addr_t new_brk) {
         if (!pt_is_hole(&mm->mem, start, size))
             goto out;
 #if ANON_MMAP_LIMIT_PAGES > 0
-        if (atomic_load(&anon_page_count) + (long)size > ANON_MMAP_LIMIT_PAGES)
+        if (!anon_pages_reserve((long)size))
             goto out;
-        atomic_fetch_add(&anon_page_count, (long)size);
 #endif
         int err = pt_map_nothing(&mm->mem, start, size, P_WRITE);
         if (err < 0) {
 #if ANON_MMAP_LIMIT_PAGES > 0
-            atomic_fetch_sub(&anon_page_count, (long)size);
+            anon_pages_unreserve((long)size);
 #endif
             goto out;
         }

@@ -2,18 +2,44 @@
 #define KERNEL_MM_H
 
 #include <stdatomic.h>
+#include <stdbool.h>
 #include "kernel/memory.h"
 #include "misc.h"
 
-// Maximum anonymous mmap pages across ALL processes (host memory cap).
+// Maximum anonymous GUEST pages across ALL processes.
 // Prevents iOS app from being killed by jetsam.
-// 0 = no limit. Non-zero = hard limit in pages (4KB each).
-// Go runtime alone needs ~1.1GB for page summary reservations (PROT_NONE).
-// 524288 pages = 2GB.
-#define ANON_MMAP_LIMIT_PAGES 1048576
+// 0 = no limit. Non-zero = hard limit in guest pages (4KB each).
+// Go runtime alone needs ~1.1GB for page summary reservations (PROT_NONE),
+// which do not count here — the mmap path exempts PROT_NONE explicitly.
+//
+// [T-ish-anon-cap-page-units] Budget the host, count the guest. This counter is
+// in 4KB guest pages, but jetsam kills over HOST bytes, and on arm64 iOS the
+// host page is 16KB. Every committed guest page takes a whole host page, so one
+// counted page costs 16KB of footprint, not 4KB. Converting a host-byte budget
+// with the guest page size over-permits by exactly 4x.
+//
+// That is not theoretical: 1048576 pages read as "4GB" here was really 4GB of
+// guest pages = 16GB of host footprint, far above the point where iOS kills the
+// app. A runaway guest allocation reached jetsam before it ever reached the
+// cap, so the guest never got the ENOMEM that would have failed one command and
+// the user lost the whole app instead.
+//
+// 131072 guest pages x 16KB host pages = 2GB of host memory.
+#define ANON_MMAP_LIMIT_PAGES 131072
 
 #if ANON_MMAP_LIMIT_PAGES > 0
 extern _Atomic long anon_page_count;
+// [T-ish-anon-cap-dynamic] Effective limit, host-tunable at boot; defaults to
+// the ceiling so a host that never calls the setter keeps the fixed cap.
+extern _Atomic long anon_page_limit;
+
+// Clamp to the ceiling; a non-positive value means "could not measure" and
+// leaves the default in place.
+void ish_set_anon_page_limit(long pages);
+// Check-and-add. A refusal adds nothing, unlike a blind fetch_add followed by a
+// separate comparison, which races and leaks count on the failure path.
+bool anon_pages_reserve(long pages);
+void anon_pages_unreserve(long pages);
 #endif
 
 // uses mem.lock instead of having a lock of its own

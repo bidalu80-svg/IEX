@@ -907,7 +907,17 @@ void *mem_ptr(struct mem *mem, addr_t addr, int type) {
                 grow_end = grow_start + max_grow; // keep fault page, cap upward
             pages_t grow_count = grow_end - grow_start;
 #if ANON_MMAP_LIMIT_PAGES > 0
-            atomic_fetch_add(&anon_page_count, grow_count);
+            // [T-ish-anon-cap-lazy-commit] This pre-map window used to be
+            // counted with a blind fetch_add and never checked against the cap,
+            // so a large NORESERVE mapping materialising one page per TLB miss
+            // grew the footprint with the cap nominally in place. Reserve
+            // first; when the window does not fit, shrink it to the fault page
+            // and count that unconditionally — a 4KB overrun of the cap is
+            // noise, an unmapped fault page silently corrupts the frame.
+            if (!anon_pages_reserve((long)grow_count)) {
+                grow_count = 1;
+                atomic_fetch_add(&anon_page_count, 1);
+            }
 #endif
             pt_map_nothing(mem, grow_start, grow_count, P_WRITE | P_GROWSDOWN);
         }
@@ -929,9 +939,12 @@ check_reservation: ;
         entry = mem_pt(mem, page);
         if (entry == NULL) {
 #if ANON_MMAP_LIMIT_PAGES > 0
-            atomic_fetch_add(&anon_page_count, 1);
+            // Over the cap: leave the entry unmapped so the guest takes
+            // SIGSEGV on the next touch, the same thing Linux does when
+            // overcommitted memory cannot be backed.
+            if (anon_pages_reserve(1))
 #endif
-            pt_map_nothing(mem, page, 1, res->flags & ~P_GROWSDOWN);
+                pt_map_nothing(mem, page, 1, res->flags & ~P_GROWSDOWN);
         }
         write_wrunlock(&mem->lock);
         read_wrlock(&mem->lock);
