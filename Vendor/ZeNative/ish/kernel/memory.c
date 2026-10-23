@@ -621,7 +621,9 @@ int pt_unmap_always(struct mem *mem, page_t start, pages_t pages) {
         // Decrement per-page for anonymous mappings. This correctly handles
         // partial unmaps (munmap of subset of original mmap region) where the
         // data object's refcount doesn't reach 0 but the guest page is gone.
-        if (pt->flags & P_ANONYMOUS)
+        // [T-ish-anon-count-mprotect] Mirror the charge predicate exactly:
+        // PROT_NONE pages were never charged, so they must not be uncharged.
+        if ((pt->flags & P_ANONYMOUS) && anon_page_is_charged(pt->flags))
             atomic_fetch_sub(&anon_page_count, 1);
 #endif
         mem_pt_del(mem, page);
@@ -698,6 +700,15 @@ int pt_set_flags(struct mem *mem, page_t start, pages_t pages, int flags) {
                     page++;
                     run_len++;
                 }
+#if ANON_MMAP_LIMIT_PAGES > 0
+                // [T-ish-anon-cap-mprotect-commit] pt_map_nothing does not
+                // charge; every other caller (do_mmap, sys_brk, mem_ptr) does
+                // it explicitly. Committing a PROT_NONE reservation through
+                // mprotect has to follow the same rule or the pages are mapped
+                // without ever counting against the cap.
+                if (!anon_pages_reserve((long)run_len))
+                    continue;
+#endif
                 pt_map_nothing(mem, run_start, run_len, flags | P_ANONYMOUS);
             }
 #endif
@@ -705,6 +716,20 @@ int pt_set_flags(struct mem *mem, page_t start, pages_t pages, int flags) {
         }
         int old_flags = entry->flags;
         entry->flags = flags | (old_flags & P_META_FLAGS);
+#if ANON_MMAP_LIMIT_PAGES > 0
+        // [T-ish-anon-count-mprotect] mprotect can flip the very predicate the
+        // charge/uncharge pair is keyed on, so the count has to follow it.
+        // RW -> PROT_NONE was charged at map and skipped at unmap (permanent
+        // leak); PROT_NONE -> RW was never charged yet decremented at unmap
+        // (counter goes negative). Only the charged-state TRANSITION matters:
+        // RW -> RX moves no memory and must not move the count.
+        if (old_flags & P_ANONYMOUS) {
+            bool was_charged = anon_page_is_charged(old_flags);
+            bool now_charged = anon_page_is_charged(entry->flags);
+            if (was_charged != now_charged)
+                atomic_fetch_add(&anon_page_count, now_charged ? 1 : -1);
+        }
+#endif
 
         // check if protection is increasing
         if ((flags & ~old_flags) & (P_READ|P_WRITE)) {
@@ -741,7 +766,10 @@ int pt_copy_on_write(struct mem *src, struct mem *dst, page_t start, page_t page
         // page yet; it re-marks on its own first compile.
         dst_entry->flags = entry->flags & ~P_CODE;
 #if ANON_MMAP_LIMIT_PAGES > 0
-        if (entry->flags & P_ANONYMOUS)
+        // [T-ish-anon-count-cow-predicate] Must mirror pt_unmap's decrement
+        // condition exactly, or every fork of a PROT_NONE region leaks its
+        // full page count permanently.
+        if ((entry->flags & P_ANONYMOUS) && anon_page_is_charged(entry->flags))
             anon_copied++;
 #endif
     }

@@ -9,6 +9,9 @@
 #include "fs/tty.h"
 #include "kernel/calls.h"
 #include "kernel/init.h"
+#include "kernel/mm.h"
+#include <sys/sysctl.h>
+#include <unistd.h>
 #include "kernel/personality.h"
 
 int mount_root(const struct fs_ops *fs, const char *source) {
@@ -98,6 +101,27 @@ static struct task *construct_task(struct task *parent) {
 int become_first_process() {
     // now seems like a nice time
     establish_signal_handlers();
+
+#if ANON_MMAP_LIMIT_PAGES > 0
+    // [T-ish-anon-cap-page-units] Budget the HOST, count the GUEST. Every
+    // committed guest 4KB page occupies a whole host page (16KB on arm64 iOS),
+    // so the guest-page cap must be derived with getpagesize(), never with the
+    // guest page size. Take a quarter of physical RAM, clamp to [512MB, 2GB],
+    // and leave the compile-time default alone if the host cannot be asked.
+    {
+        unsigned long long memsize = 0;
+        size_t len = sizeof(memsize);
+        if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) == 0 && memsize > 0) {
+            unsigned long long budget = memsize / 4;
+            if (budget > (2ULL << 30)) budget = 2ULL << 30;
+            if (budget < (512ULL << 20)) budget = 512ULL << 20;
+            long host_page = getpagesize();
+            long guest_pages = (long) (budget / (unsigned long long) host_page)
+                             * (host_page / 4096);
+            ish_set_anon_page_limit(guest_pages);
+        }
+    }
+#endif
 
     struct task *task = construct_task(NULL);
     if (IS_ERR(task))

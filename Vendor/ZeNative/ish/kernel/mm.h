@@ -40,6 +40,16 @@ void ish_set_anon_page_limit(long pages);
 // separate comparison, which races and leaks count on the failure path.
 bool anon_pages_reserve(long pages);
 void anon_pages_unreserve(long pages);
+
+// [T-ish-anon-count-negative] Charge/uncharge must stay symmetric or the
+// counter drifts negative and the cap silently grants free headroom.
+// The single source of truth for "does this mapping count": PROT_NONE
+// reservations occupy address space but no physical memory, so they are
+// neither charged when mapped nor decremented when unmapped. do_mmap/brk,
+// pt_unmap and pt_copy_on_write all gate on this - keep them agreeing.
+static inline bool anon_page_is_charged(unsigned flags) {
+    return (flags & (P_READ | P_WRITE | P_EXEC)) != 0;
+}
 #endif
 
 // uses mem.lock instead of having a lock of its own

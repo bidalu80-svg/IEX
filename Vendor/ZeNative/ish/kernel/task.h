@@ -106,6 +106,9 @@ struct task {
     // (whole guest address space) from leaking forever when the thread never
     // re-enters do_exit(). Cleared once released so it never double-frees.
     bool mm_release_deferred;
+    // [T-ish-exit-valve-progress] Set at the top of do_exit, so do_exit_group's
+    // safety valve can tell "stuck outside do_exit" from "already leaving".
+    atomic_bool exit_started;
 
     // this structure is allocated on the stack of the parent's clone() call
     struct vfork_info {
@@ -224,6 +227,17 @@ struct tgroup {
     // for everything in this struct not locked by something else
     lock_t lock;
 };
+
+// [T-ish-leaked-thread-poll] True once do_exit_group's safety valve has given
+// up on this thread (it sets `exiting` and unlinks it from the group), or once
+// task_destroy has zeroed the struct under it (group == NULL). Such a thread's
+// group, sighand and files are gone or about to be freed, so a wait loop that
+// wakes up must leave before touching any of them: return to the syscall
+// dispatcher, whose post-syscall guard (calls.c) pthread_exits the thread.
+// Only valid for `current`: no other thread may be leaked while it runs.
+static inline bool task_orphaned(struct task *task) {
+    return task->exiting || task->group == NULL;
+}
 
 static inline bool task_is_leader(struct task *task) {
     return task->group->leader == task;

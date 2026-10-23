@@ -52,6 +52,10 @@ static struct task *find_new_parent(struct task *task) {
 }
 
 noreturn void do_exit(int status) {
+    // [T-ish-exit-valve-progress] From here on this thread is leaving; tell
+    // do_exit_group's safety valve not to give up on it while it waits for
+    // pids_lock below.
+    atomic_store(&current->exit_started, true);
     /* pid 1 dumps to stderr (the original behaviour). With ISH_PC_HIST_DIR set,
      * EVERY exiting process also dumps its own per-pid histogram file, so a
      * fork'd chain (pip wheel-build subprocesses) is captured whole. */
@@ -93,8 +97,27 @@ noreturn void do_exit(int status) {
 
     // release all our resources (may already be NULL if force-released by do_exit_group)
     if (current->mm != NULL) {
-        mm_release(current->mm);
+        // [T-ish-exit-mm-general-lock] general_lock protects task->mm/task->mem
+        // against procfs: /proc/<pid>/{cmdline,environ,stat,statm,maps,mem}
+        // take general_lock, check task->mm, then read through task->mem holding
+        // only mem->lock as a READER. exec already swaps the mm under
+        // general_lock for exactly this reason; do_exit did not, and never
+        // cleared task->mem at all. So a `ps` reading our entry could take
+        // mem->lock the instant mem_destroy unlocked it (pthread_rwlock_destroy
+        // returns EBUSY, wrlock_destroy traps), or touch the freed mem
+        // (EXC_BAD_ACCESS at offsetof(struct mem, lock)).
+        //
+        // Publish "no memory" under general_lock FIRST, then destroy OUTSIDE
+        // it: a reader that got in before us holds general_lock for its whole
+        // read, so we cannot reach the destroy until it is done; a reader that
+        // comes after sees NULL. Never destroy under general_lock — mem_destroy
+        // closes fds and may take other locks.
+        lock(&current->general_lock);
+        struct mm *mm_to_release = current->mm;
         current->mm = NULL;
+        current->mem = NULL;
+        unlock(&current->general_lock);
+        mm_release(mm_to_release);
         // [T-ish-mm-leak-refcount-handoff] We just released it, so the pthread
         // cleanup handler must NOT release again.
         current->mm_release_deferred = false;
@@ -262,19 +285,34 @@ noreturn void do_exit_group(int status) {
         // Poll the thread count until only current thread remains
         int max_wait_ms = 500 + thread_count * 10;  // Scale with thread count
         if (max_wait_ms > 5000) max_wait_ms = 5000;  // Cap at 5s
+        // [T-ish-exit-valve-poll-floor] A thread waiting in poll_wait/epoll
+        // notices doing_group_exit at the latest on its next bounded host
+        // wakeup, which is up to 1 s away when the SIGUSR1 kick is missed. A
+        // budget under that orphans healthy threads.
+        if (max_wait_ms < 1500) max_wait_ms = 1500;
         int wait_interval_ms = 10;  // Check every 10ms
         int waited_ms = 0;
         int last_remaining = -1;
 
-        while (waited_ms < max_wait_ms) {
+        // [T-ish-exit-valve-progress] Threads that have already entered
+        // do_exit are not stuck: they leave the group as soon as they get
+        // pids_lock. Leaking them there - unlinking a thread from its group
+        // and freeing its sighand/files while it is mid-do_exit and about to
+        // touch both - is what set up the pids_lock wedge.
+        const int EXIT_PROGRESS_CAP_MS = 30000;
+        while (true) {
             lock(&pids_lock);
             lock(&group->lock);
 
-            // Count threads still in the group (excluding current)
+            // Count threads still in the group (excluding current), and how
+            // many of them are already on their way out.
             int remaining = 0;
+            int exiting_now = 0;
             list_for_each_entry(&group->threads, task, group_links) {
                 if (task != current) {
                     remaining++;
+                    if (atomic_load(&task->exit_started))
+                        exiting_now++;
                 }
             }
 
@@ -286,6 +324,10 @@ noreturn void do_exit_group(int status) {
             if (remaining == 0) {
                 break;
             }
+            if (waited_ms >= max_wait_ms &&
+                    (exiting_now < remaining || waited_ms >= EXIT_PROGRESS_CAP_MS)) {
+                break;
+            }
 
             // Sleep a bit to let threads exit
             struct timespec ts = {0, wait_interval_ms * 1000000L};
@@ -293,7 +335,9 @@ noreturn void do_exit_group(int status) {
             waited_ms += wait_interval_ms;
         }
 
-        if (waited_ms >= max_wait_ms) {
+        // Some thread is still in the group after the wait: either stuck
+        // outside do_exit, or still exiting when EXIT_PROGRESS_CAP_MS ran out.
+        if (last_remaining > 0) {
             // Threads are stuck in blocking syscalls and won't exit.
             if (ish_exec_trace())
                 printk("SAFETY-VALVE[exit]: pid=%d do_exit_group waited %dms, %d threads still stuck → force kill\n",
@@ -330,7 +374,11 @@ noreturn void do_exit_group(int status) {
             int leaked = 0;
             struct task *task_tmp;
             list_for_each_entry_safe(&group->threads, task, task_tmp, group_links) {
-                if (task != current && !task->exiting) {
+                // [T-ish-exit-valve-progress] Never orphan a thread that is
+                // already inside do_exit unless it outlasted the cap: it is
+                // about to touch its group and sighand, which must stay alive.
+                if (task != current && !task->exiting &&
+                        (!atomic_load(&task->exit_started) || waited_ms >= EXIT_PROGRESS_CAP_MS)) {
                     task->exiting = true;
                     list_remove(&task->group_links);
                     // Release resources so pipes get EOF and memory is freed.
@@ -643,6 +691,13 @@ retry:
         }
     }
     current->blocking = false;
+    // [T-ish-leaked-thread-poll] Same hazard as poll_wait: a thread leaked by
+    // do_exit_group's safety valve while it slept here would go on to rescan
+    // current->group (freed) with pids_lock held. Bail out; `error` unlocks.
+    if (task_orphaned(current)) {
+        err = _EINTR;
+        goto error;
+    }
     {
         // Update last_progress_ns: waitpid is actively polling for a child,
         // this is real work (not a stuck thread). Prevents the poll_wait
