@@ -7,6 +7,9 @@
 #include <time.h>
 #include "asbestos/asbestos.h"
 #include "asbestos/gen.h"
+#ifdef ISH_JIT
+#include "asbestos/guest-arm64/jit.h"
+#endif
 #include "asbestos/frame.h"
 #include "emu/cpu.h"
 #include "emu/interrupt.h"
@@ -366,6 +369,9 @@ struct asbestos *asbestos_new(struct mmu *mmu) {
 }
 
 void asbestos_free(struct asbestos *asbestos) {
+#ifdef ISH_JIT
+    jit_asbestos_free(asbestos);
+#endif
     for (size_t i = 0; i < asbestos->hash_size; i++) {
         struct fiber_block *block, *tmp;
         if (list_null(&asbestos->hash[i]))
@@ -518,9 +524,20 @@ static struct fiber_block *fiber_block_compile(addr_t ip, struct tlb *tlb) {
         }
     }
 #endif
+#ifdef ISH_JIT
+    struct jit_units *jit_units = jit_units_begin();
+#endif
     while (true) {
+#ifdef ISH_JIT
+        struct jit_step jit_step = jit_step_begin(&state);
+        bool more = gen_step(&state, tlb);
+        jit_step_end(jit_units, &jit_step, &state, more, tlb);
+        if (!more)
+            break;
+#else
         if (!gen_step(&state, tlb))
             break;
+#endif
         // no block should span more than 2 pages
         // guarantee this by limiting total block size to 1 page
         // guarantee that by stopping as soon as there's less space left than
@@ -534,6 +551,9 @@ static struct fiber_block *fiber_block_compile(addr_t ip, struct tlb *tlb) {
     gen_end(&state);
     assert(state.ip - ip <= PAGE_SIZE);
     state.block->used = state.capacity;
+#ifdef ISH_JIT
+    jit_block(state.block, jit_units);
+#endif
     ISH_SIGNPOST_SCOPE_END(jit, "block_compile", _bc_spid);
     return state.block;
 }
@@ -663,6 +683,9 @@ static void fiber_block_disconnect(struct asbestos *asbestos, struct fiber_block
         list_for_each_entry_safe(&block->jumps_from[i], prev_block, tmp, jumps_from_links[i]) {
             if (prev_block->jump_ip[i] != NULL)
                 *prev_block->jump_ip[i] = prev_block->old_jump_ip[i];
+#ifdef ISH_JIT
+            jit_unlink(prev_block, i);
+#endif
             list_remove(&prev_block->jumps_from_links[i]);
         }
     }
@@ -935,9 +958,16 @@ static int cpu_step_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
                 if (!last_block->is_jetsam && !block->is_jetsam) {
                     for (int i = 0; i <= 1; i++) {
                         if (last_block->jump_ip[i] != NULL &&
-                                (*last_block->jump_ip[i] & 0xffffffff) == block->addr) {
+                                (*last_block->jump_ip[i] & 0xffffffff) == block->addr
+#ifdef ISH_JIT
+                                && jit_chain_ok(last_block, i, block)
+#endif
+                                ) {
                             *last_block->jump_ip[i] = (unsigned long) block->code;
                             list_add(&block->jumps_from[i], &last_block->jumps_from_links[i]);
+#ifdef ISH_JIT
+                            jit_link(last_block, i, block);
+#endif
                         }
                     }
                 }
@@ -973,6 +1003,9 @@ static int cpu_step_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
 
         jit_frame = frame;
         in_jit = 1;
+#ifdef ISH_JIT
+        jit_exec_ready();
+#endif
         interrupt = fiber_enter(block, frame, tlb);
         in_jit = 0;
         jit_frame = NULL;
