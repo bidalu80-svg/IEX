@@ -2,6 +2,7 @@
 #include <string.h>
 #include <signal.h>
 #include <stdio.h>
+#include <time.h>
 #include "kernel/calls.h"
 #include "kernel/signal.h"
 #include "kernel/task.h"
@@ -1040,34 +1041,90 @@ int_t sys_rt_sigtimedwait(addr_t set_addr, addr_t info_addr, addr_t timeout_addr
     }
     STRACE("sigtimedwait(%#llx, %#x, %#x) = ...\n", (long long) set, info_addr, timeout_addr);
 
+    // [T-ish-sigtimedwait] Scan the queue, then wait — not the other way round.
+    //
+    // sigwait's set is BLOCKED by definition, and is_signal_pending() masks
+    // blocked signals out. So wait_for() reports a spurious wakeup (0) for
+    // exactly the signal this call exists to collect: the old `while
+    // (wait_err == 0)` loop spun until the deadline, then returned EAGAIN with
+    // the signal still sitting in the queue. sigtimedwait was therefore
+    // unusable for every signal — standard, realtime, and musl's SIGTIMER.
+    //
+    // The timeout handed to wait_for() is RELATIVE (pthread_cond_timedwait_
+    // relative_np on Darwin), so it is recomputed from an absolute deadline on
+    // every pass; re-passing the original would restart the clock after each
+    // spurious wakeup. Same shape as nanosleep_interruptible() in time.c.
+    struct timespec start;
+    bool have_timeout = timeout_addr != 0;
+    long long req_ns = 0;
+    if (have_timeout) {
+        if (clock_gettime(CLOCK_MONOTONIC, &start) < 0)
+            return _EINVAL;
+        req_ns = (long long) timeout.tv_sec * 1000000000LL + timeout.tv_nsec;
+    }
+
     lock(&current->sighand->lock);
     assert(current->waiting == 0);
     current->waiting = set;
-    int wait_err;
-    do {
-        wait_err = wait_for(&current->pause, &current->sighand->lock, timeout_addr == 0 ? NULL : &timeout);
-    } while (wait_err == 0);
-    current->waiting = 0;
-    if (wait_err == _ETIMEDOUT) {
-        unlock(&current->sighand->lock);
-        STRACE("sigtimedwait timed out\n");
-        return _EAGAIN;
-    }
 
-    struct sigqueue *sigqueue;
-    bool found = false;
-    list_for_each_entry(&current->queue, sigqueue, queue) {
-        if (sigset_has(set, sigqueue->info.sig)) {
-            found = true;
-            list_remove(&sigqueue->queue);
+    struct sigqueue *sigqueue = NULL;
+    int wait_err = 0;
+    for (;;) {
+        // Look at the queue first: a signal may already be pending, in which
+        // case this must not block at all.
+        struct sigqueue *sq;
+        list_for_each_entry(&current->queue, sq, queue) {
+            if (sigset_has(set, sq->info.sig)) {
+                sigqueue = sq;
+                list_remove(&sq->queue);
+                break;
+            }
+        }
+        if (sigqueue != NULL)
+            break;
+
+        if (!have_timeout) {
+            wait_err = wait_for(&current->pause, &current->sighand->lock, NULL);
+            if (wait_err != 0)
+                break;
+            continue;
+        }
+
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+            wait_err = _EINVAL;
             break;
         }
+        long long elapsed_ns = (long long) (now.tv_sec - start.tv_sec) * 1000000000LL
+                             + (long long) (now.tv_nsec - start.tv_nsec);
+        long long left_ns = req_ns - elapsed_ns;
+        if (left_ns <= 0) {
+            wait_err = _ETIMEDOUT;
+            break;
+        }
+        struct timespec wait_ts = {
+            .tv_sec = (time_t) (left_ns / 1000000000LL),
+            .tv_nsec = (long) (left_ns % 1000000000LL),
+        };
+        wait_err = wait_for(&current->pause, &current->sighand->lock, &wait_ts);
+        if (wait_err == _ETIMEDOUT)
+            continue;   // re-scan once more, then left_ns <= 0 ends the loop
+        if (wait_err != 0 && wait_err != _EINTR)
+            break;
     }
-    unlock(&current->sighand->lock);
-    if (!found)
+    current->waiting = 0;
+
+    if (sigqueue == NULL) {
+        unlock(&current->sighand->lock);
+        if (wait_err == _ETIMEDOUT) {
+            STRACE("sigtimedwait timed out\n");
+            return _EAGAIN;
+        }
         return _EINTR;
+    }
     struct siginfo_ info = sigqueue->info;
     free(sigqueue);
+    unlock(&current->sighand->lock);
     if (info_addr != 0)
         if (user_put(info_addr, info))
             return _EFAULT;

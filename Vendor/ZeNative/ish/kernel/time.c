@@ -431,11 +431,20 @@ int_t sys_timer_create(dword_t clock, addr_t sigevent_addr, addr_t timer_addr) {
     if (sigev.method != SIGEV_SIGNAL_ && sigev.method != SIGEV_NONE_ && sigev.method != SIGEV_THREAD_ID_)
         return _EINVAL;
 
+    // [T-ish-sigev-thread] Validate the requested target thread.
+    //
+    // Two defects in the old check: it returned _EINVAL while still holding
+    // pids_lock (every later pid operation on this thread would deadlock), and
+    // it only proved the tid existed. Linux requires the target to be a thread
+    // of the CALLING process, so a stale or foreign tid has to be rejected here
+    // rather than silently redirecting the timer.
     if (sigev.method == SIGEV_THREAD_ID_) {
         lock(&pids_lock);
-        if (pid_get_task(sigev.tid) == NULL)
-            return _EINVAL;
+        struct task *target = pid_get_task(sigev.tid);
+        bool tid_ok = target != NULL && target->group == current->group;
         unlock(&pids_lock);
+        if (!tid_ok)
+            return _EINVAL;
     }
 
     struct tgroup *group = current->group;
@@ -470,8 +479,15 @@ int_t sys_timer_create(dword_t clock, addr_t sigevent_addr, addr_t timer_addr) {
         // leader, which is what "the process" means here.
         timer->thread_pid = group->leader->pid;
     } else if (sigev.method == SIGEV_THREAD_ID_) {
+        // [T-ish-sigev-thread] Deliver to the thread the caller named.
+        //
+        // musl implements timer_create(SIGEV_THREAD) as an internal worker
+        // thread plus SIGEV_THREAD_ID with signo = SIGTIMER (32). Hardcoding
+        // the group leader sent that signal to the main thread, which has no
+        // handler for 32, so the default action killed the whole process the
+        // moment the timer expired.
         timer->tgroup = group;
-        timer->thread_pid = group->leader->pid;
+        timer->thread_pid = sigev.tid;
     }
     unlock(&group->lock);
     return 0;
