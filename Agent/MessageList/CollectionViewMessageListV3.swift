@@ -190,7 +190,11 @@ fileprivate struct BridgedAssistantHeaderV3: View {
             } else if !message.isAwaitingModelResponse,
                       message.error == nil,
                       let duration = message.taskDuration {
-                AssistantTaskDurationView(duration: duration, accessory: stepsChevron)
+                AssistantTaskDurationView(
+                    duration: duration,
+                    onToggle: stepsToggleEnabled ? onToggleSteps : nil,
+                    isCollapsed: message.isStepsCollapsed
+                )
             }
         }
         .transaction { $0.disablesAnimations = false }
@@ -206,23 +210,6 @@ fileprivate struct BridgedAssistantHeaderV3: View {
         .padding(.horizontal, 16)
         .opacity(message.isCompactedHistory ? 0.5 : 1.0)
         .accessibilityIdentifier("assistantHeader")
-    }
-    /// Chevron that folds the reasoning + tool trail once the turn is done.
-    /// The 22×18 hit area stays inside the header's measured height, so folding
-    /// does not shift the row.
-    private var stepsChevron: AnyView? {
-        guard stepsToggleEnabled, let onToggleSteps else { return nil }
-        return AnyView(
-            Button(action: onToggleSteps) {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(ChatColors.secondaryText)
-                    .frame(width: 20, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(message.isStepsCollapsed ? "展开过程" : "收起过程")
-        )
     }
 }
 

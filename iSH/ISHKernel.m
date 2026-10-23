@@ -1322,9 +1322,15 @@ static int ish_throttle_trampoline(void) {
 #define GOV_CADENCE_NS      (100ULL * 1000000ULL)
 #define GOV_SLOTS           601
 #define GOV_RATE_LOOKBACK   10
-#define GOV_SOFT_CPU_S      30.0
-#define GOV_HARD_CPU_S      38.0
-#define GOV_RED_EXIT_CPU_S  32.0
+// Thresholds are CPU-seconds consumed inside the 60 s window. iOS kills a
+// background process at 80 % average over 60 s (48 s of CPU). The previous
+// targets (30 / 38 s) sat too close to that line: the 2026-10-23
+// cpu_resource_fatal report measured 48 s over 50 s, i.e. the duty cycle was
+// not honoured by the workload. Aim at ~40 % so a workload that ignores the
+// tick hook still lands well under the limit.
+#define GOV_SOFT_CPU_S      24.0
+#define GOV_HARD_CPU_S      30.0
+#define GOV_RED_EXIT_CPU_S  26.0
 #define GOV_YELLOW_MIN_DUTY 0.15
 #define GOV_RED_DUTY        0.03
 #define GOV_PREDICT_S       1.0

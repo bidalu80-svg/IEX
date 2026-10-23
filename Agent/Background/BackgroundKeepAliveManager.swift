@@ -9,6 +9,100 @@ import os.log
 
 private let logger = AppLogger(category: "BackgroundKeepAlive")
 
+// MARK: - Background CPU watchdog
+
+/// [T-ios-bg-cpu-kill] Last-resort guard against iOS's CPU limit.
+///
+/// The iSH governor only lowers CPU when its timer-tick hook runs. A workload
+/// that stays inside a JIT block — a JVM under iSH is the case the 2026-10-23
+/// `cpu_resource_fatal` report captured — can starve that hook, and the system
+/// then kills the process at 80 % average over 60 s (that report measured 95 %
+/// over 50 s).
+///
+/// This watchdog reads the process's own CPU straight from `task_info` on a
+/// user-initiated queue, so sampling survives a saturated guest. When the
+/// average stays above 85 % for 20 s it stops the in-flight guest commands,
+/// which costs one command instead of the whole process.
+///
+/// All mutable state lives on `queue`, so nothing is shared with the main
+/// actor; `start()`/`stop()` just bounce onto that queue.
+final class BackgroundCPUWatchdog {
+    static let shared = BackgroundCPUWatchdog()
+
+    private let queue = DispatchQueue(label: "com.ze.bka.cpuwatchdog", qos: .userInitiated)
+    private var timer: DispatchSourceTimer?
+    private var lastSample: Double = 0
+    private var highStreak = 0
+    private let interval: TimeInterval = 1.0
+    /// 85 % for 20 s still leaves ~30 s of headroom before the OS limit.
+    private let threshold: Double = 0.85
+    private let streakLimit = 20
+
+    private init() {}
+
+    func start() {
+        queue.async { [weak self] in
+            guard let self, self.timer == nil else { return }
+            self.lastSample = Self.processCPUSeconds() ?? 0
+            self.highStreak = 0
+
+            let timer = DispatchSource.makeTimerSource(queue: self.queue)
+            timer.schedule(deadline: .now() + self.interval, repeating: self.interval)
+            timer.setEventHandler { [weak self] in self?.tick() }
+            timer.resume()
+            self.timer = timer
+            logger.info("[BKA][CPUWatchdog] started")
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in
+            guard let self, let timer = self.timer else { return }
+            timer.cancel()
+            self.timer = nil
+            self.highStreak = 0
+            self.lastSample = 0
+            logger.info("[BKA][CPUWatchdog] stopped")
+        }
+    }
+
+    private func tick() {
+        guard let total = Self.processCPUSeconds() else { return }
+        defer { lastSample = total }
+        guard lastSample > 0 else { return }
+
+        // One core fully busy across one interval reads as 1.0.
+        let usage = (total - lastSample) / interval
+        if usage >= threshold {
+            highStreak += 1
+        } else {
+            highStreak = 0
+        }
+        guard highStreak >= streakLimit else { return }
+        highStreak = 0
+
+        let stopped = ISHExecutionCoordinator.stopAllNonisolated()
+        logger.warning("[BKA][CPUWatchdog] sustained \(Int(usage * 100))% CPU in background — stopped \(stopped) guest command(s) to avoid the OS kill")
+    }
+
+    /// CPU-seconds consumed by this process so far. `MACH_TASK_BASIC_INFO`
+    /// counts user + system time for every thread, guest included.
+    private static func processCPUSeconds() -> Double? {
+        var info = mach_task_basic_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size
+                                           / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return Double(info.user_time.seconds) + Double(info.system_time.seconds)
+            + Double(info.user_time.microseconds) / 1_000_000
+            + Double(info.system_time.microseconds) / 1_000_000
+    }
+}
+
 // MARK: - Background Keep Alive Manager
 
 @MainActor
@@ -202,6 +296,15 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
     private var locationTimer: Timer?
     private var appIsInBackground = false
 
+    private func startCPUWatchdog() {
+        BackgroundCPUWatchdog.shared.start()
+    }
+
+    private func stopCPUWatchdog() {
+        BackgroundCPUWatchdog.shared.stop()
+    }
+
+
     // MARK: - CLBackgroundActivitySession (iOS 17+)
     private var bgActivitySession: Any?
     private var liveUpdatesTask: Task<Void, Never>?
@@ -367,6 +470,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         if UIApplication.shared.applicationState == .background {
             appIsInBackground = true
             ISHKernel.shared.beginBackgroundCPUGovernor()
+            startCPUWatchdog()
             logger.info("[BKA] launched in background - iSH CPU governor armed at setup")
         }
 
@@ -381,6 +485,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 self.pendingForegroundTransition = false
                 self.appIsInBackground = true
                 ISHKernel.shared.beginBackgroundCPUGovernor()
+                self.startCPUWatchdog()
                 logger.info("[BKA] iSH background CPU governor STARTED")
                 self.logLifecycleSnapshot("Background")
                 // [T-ios-bg-location-arm-delay] Don't start location keep-alive
@@ -415,6 +520,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                     self.pendingForegroundTransition = false
                     self.appIsInBackground = false
                     ISHKernel.shared.endBackgroundCPUGovernor()
+                    self.stopCPUWatchdog()
                     logger.info("[BKA] iSH background CPU governor STOPPED (foreground)")
                     self.logLifecycleSnapshot("Foreground")
                     // [T-ios-bg-location-arm-delay] Unified location-state

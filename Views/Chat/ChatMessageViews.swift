@@ -884,20 +884,37 @@ struct ChatMessageRow: View {
 struct AssistantTaskDurationView: View {
     private let frozenDuration: TimeInterval?
     private let liveStartTime: TimeInterval?
-    /// Optional trailing control drawn after the right hairline, so the
-    /// collapse chevron shares the duration's line.
-    private var accessory: AnyView?
+    /// [T-collapse-steps] When set, the whole label becomes the disclosure
+    /// control: the chevron is drawn inline and tapping anywhere on the line
+    /// toggles it. A 20×16 chevron was the only hit target before, so folding
+    /// demanded pixel-accurate taps.
+    private let onToggle: (() -> Void)?
+    private let isCollapsed: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
-    init(duration: TimeInterval, accessory: AnyView? = nil) {
+    init(duration: TimeInterval,
+         onToggle: (() -> Void)? = nil,
+         isCollapsed: Bool = false) {
         self.frozenDuration = duration
         self.liveStartTime = nil
-        self.accessory = accessory
+        self.onToggle = onToggle
+        self.isCollapsed = isCollapsed
     }
 
-    init(liveStartTime: TimeInterval, accessory: AnyView? = nil) {
+    init(liveStartTime: TimeInterval) {
         self.frozenDuration = nil
         self.liveStartTime = liveStartTime
-        self.accessory = accessory
+        self.onToggle = nil
+        self.isCollapsed = false
+    }
+
+    /// Blue on dark, neutral on light: the duration doubles as the fold
+    /// control, so it has to read as interactive in the theme where a grey
+    /// 12pt label would otherwise disappear against the bubble.
+    private var tint: Color {
+        colorScheme == .dark
+            ? Color(red: 0.42, green: 0.66, blue: 1.0)
+            : ChatColors.secondaryText
     }
 
     @ViewBuilder
@@ -915,24 +932,44 @@ struct AssistantTaskDurationView: View {
         let durationText = Self.format(duration)
         return HStack(spacing: 8) {
             Rectangle()
-                .fill(ChatColors.secondaryText.opacity(0.22))
+                .fill(tint.opacity(0.22))
                 .frame(height: 0.5)
-            Text("任务耗时 \(durationText)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(ChatColors.secondaryText)
-                .monospacedDigit()
-                .fixedSize(horizontal: true, vertical: false)
-            // The chevron sits against the text, between it and the trailing
-            // hairline — the same place the label's own disclosure glyph sits.
-            if let accessory {
-                accessory
-            }
+            label(durationText)
             Rectangle()
-                .fill(ChatColors.secondaryText.opacity(0.22))
+                .fill(tint.opacity(0.22))
                 .frame(height: 0.5)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("任务耗时 \(durationText)")
+        .accessibilityHint(onToggle == nil ? "" : (isCollapsed ? "展开过程" : "收起过程"))
+    }
+
+    /// The text and the chevron form one button. The two hairlines stay
+    /// outside it so the tappable strip ends where the label does.
+    @ViewBuilder
+    private func label(_ durationText: String) -> some View {
+        let content = HStack(spacing: 5) {
+            Text("任务耗时 \(durationText)")
+                .font(.system(size: 12, weight: .medium))
+                .monospacedDigit()
+                .fixedSize(horizontal: true, vertical: false)
+            if onToggle != nil {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+        }
+        .foregroundStyle(tint)
+        .contentShape(Rectangle())
+
+        if let onToggle {
+            Button(action: onToggle) { content }
+                .buttonStyle(.plain)
+                .accessibilityLabel("任务耗时 \(durationText)")
+                .accessibilityValue(isCollapsed ? "已收起" : "已展开")
+        } else {
+            content
+        }
     }
 
     private static func format(_ duration: TimeInterval) -> String {
