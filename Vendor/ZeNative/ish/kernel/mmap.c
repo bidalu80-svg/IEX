@@ -21,6 +21,30 @@ void ish_set_anon_page_limit(long pages) {
     atomic_store(&anon_page_limit, pages);
 }
 
+// [T-ish-anon-count-negative] Handoff between "reserved by a caller enforcing
+// the cap" and "charged because pages were actually mapped". pt_map_nothing
+// charges every page it maps; a caller that reserves first parks its
+// reservation here and pt_map_nothing consumes it instead of charging twice.
+// Thread-local: the reserve and the map always happen back to back on the same
+// thread under mem->lock, so a global would let concurrent mappers steal credit.
+static __thread long anon_precharged_pages;
+
+void anon_pages_precharged(long pages) {
+    anon_precharged_pages = pages;
+}
+
+long anon_pages_precharge_peek(void) {
+    return anon_precharged_pages;
+}
+
+void anon_pages_charge_mapped(long pages) {
+    long credit = anon_precharged_pages;
+    anon_precharged_pages = 0;
+    if (credit >= pages)
+        return;              // fully covered by the caller's reservation
+    atomic_fetch_add(&anon_page_count, pages - credit);
+}
+
 bool anon_pages_reserve(long pages) {
     long limit = atomic_load(&anon_page_limit);
     long count = atomic_load(&anon_page_count);
@@ -28,10 +52,14 @@ bool anon_pages_reserve(long pages) {
         if (count + pages > limit)
             return false;
     } while (!atomic_compare_exchange_weak(&anon_page_count, &count, count + pages));
+    // The pages are about to be mapped by pt_map_nothing, which charges; hand
+    // the reservation over so they are not counted twice.
+    anon_pages_precharged(pages);
     return true;
 }
 
 void anon_pages_unreserve(long pages) {
+    anon_pages_precharged(0);
     atomic_fetch_sub(&anon_page_count, pages);
 }
 #endif

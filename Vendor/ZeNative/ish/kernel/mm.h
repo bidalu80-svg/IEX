@@ -40,6 +40,9 @@ void ish_set_anon_page_limit(long pages);
 // separate comparison, which races and leaks count on the failure path.
 bool anon_pages_reserve(long pages);
 void anon_pages_unreserve(long pages);
+void anon_pages_precharged(long pages);
+long anon_pages_precharge_peek(void);
+void anon_pages_charge_mapped(long pages);
 
 // [T-ish-anon-count-negative] Charge/uncharge must stay symmetric or the
 // counter drifts negative and the cap silently grants free headroom.

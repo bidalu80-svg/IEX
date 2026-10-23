@@ -654,7 +654,23 @@ int pt_map_nothing(struct mem *mem, page_t start, pages_t pages, unsigned flags)
     void *memory = mmap(NULL, map_size, host_prot, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
     if (memory == MAP_FAILED)
         return _ENOMEM;
-    return pt_map(mem, start, pages, memory, 0, flags | P_ANONYMOUS);
+    int err = pt_map(mem, start, pages, memory, 0, flags | P_ANONYMOUS);
+#if ANON_MMAP_LIMIT_PAGES > 0
+    // [T-ish-anon-count-negative] Charge HERE, not at the call sites.
+    //
+    // pt_unmap decrements once for EVERY P_ANONYMOUS page it removes, so every
+    // page mapped here must be charged exactly once or the counter drifts
+    // negative - and a negative count silently hands the guest extra headroom
+    // on top of the cap. Charging at the call sites had 9 of 15 sites missing;
+    // charging in the one place that creates the mapping makes the asymmetry
+    // structurally impossible. Callers that reserve first hand their credit
+    // over through anon_pages_precharged(), so nothing is counted twice.
+    if (err >= 0 && anon_page_is_charged(flags))
+        anon_pages_charge_mapped(pages);
+    else
+        anon_pages_precharged(0);   // drop any unconsumed reservation credit
+#endif
+    return err;
 }
 
 // W^X stat: stores that hit a P_CODE page and unprotected it (see mem_ptr).
@@ -943,8 +959,10 @@ void *mem_ptr(struct mem *mem, addr_t addr, int type) {
             // and count that unconditionally — a 4KB overrun of the cap is
             // noise, an unmapped fault page silently corrupts the frame.
             if (!anon_pages_reserve((long)grow_count)) {
+                // Shrink to the fault page and let pt_map_nothing charge it
+                // even if that nudges the cap - a 4KB overrun is noise, a
+                // corrupted stack is not.
                 grow_count = 1;
-                atomic_fetch_add(&anon_page_count, 1);
             }
 #endif
             pt_map_nothing(mem, grow_start, grow_count, P_WRITE | P_GROWSDOWN);
@@ -1040,7 +1058,10 @@ have_entry:
 #if ANON_MMAP_LIMIT_PAGES > 0
                 // pt_map will unmap the old page (decrementing anon_page_count),
                 // so pre-increment for the new CoW copy to keep balance.
-                if (entry->flags & P_ANONYMOUS)
+                // Must mirror pt_unmap's decrement predicate: a PROT_NONE
+                // page was never charged, so pt_map's unmap of it will not
+                // decrement, and adding here would inflate the count.
+                if ((entry->flags & P_ANONYMOUS) && anon_page_is_charged(entry->flags))
                     atomic_fetch_add(&anon_page_count, 1);
 #endif
                 pt_map(mem, page, 1, copy, 0, entry->flags &~ P_COW);
