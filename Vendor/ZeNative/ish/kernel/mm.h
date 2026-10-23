@@ -44,6 +44,29 @@ void anon_pages_precharged(long pages);
 long anon_pages_precharge_peek(void);
 void anon_pages_charge_mapped(long pages);
 
+// [T-ish-footprint-brake] Footprint-based memory governor.
+//
+// Once the host starts feeding live memory status through
+// ish_set_memory_status(), the ledger above STOPS being the admission
+// control and becomes accounting only. The decision moves to the number
+// jetsam actually kills on: the app's physical footprint against its live
+// limit.
+//
+// Why: the ledger charges COMMITMENT, jetsam charges DIRTY pages. Node
+// commits ~640MB of V8 cage at startup while dirtying a few tens of MB — the
+// ledger refuses a workload the device runs easily. Conversely the ledger
+// cannot see the app's own memory, so staying under it never guaranteed
+// safety.
+//
+// States: OK admits everything; BRAKE refuses NEW anonymous commitments.
+// Enter BRAKE below 10% headroom, leave above 15% (hysteresis), a critical
+// OS memory-pressure event forces it, and a stale feed (>2s) also reads as
+// BRAKE — a dead sampler must fail closed.
+enum ish_mem_state { ISH_MEM_OK = 0, ISH_MEM_BRAKE = 1 };
+void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pressure_critical);
+bool ish_footprint_mode(void);
+bool ish_mem_commit_ok(uint64_t bytes);
+
 // [T-ish-anon-count-negative] Charge/uncharge must stay symmetric or the
 // counter drifts negative and the cap silently grants free headroom.
 // The single source of truth for "does this mapping count": PROT_NONE

@@ -10,6 +10,8 @@
 
 // iSH umbrella header (includes all necessary headers)
 #include "ish/ish.h"
+// [T-ish-footprint-brake] ish_set_memory_status(): the host memory feed.
+#include "ish/kernel/mm.h"
 
 // Additional headers not in umbrella
 #include "fs/devices.h"

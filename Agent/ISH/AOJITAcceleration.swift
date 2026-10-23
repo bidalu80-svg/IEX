@@ -461,6 +461,9 @@ final class AOJITAcceleration: ObservableObject {
     func prepareOnce() {
         guard !didPrepareThisLaunch else { return }
         didPrepareThisLaunch = true
+        // [T-ish-footprint-brake] The kernel booted: start feeding it live
+        // memory status so admission follows jetsam's number, not the ledger.
+        MemoryPressureMonitor.shared.start()
         prepareIfNeeded()
     }
 

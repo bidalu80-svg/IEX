@@ -723,9 +723,15 @@ int pt_set_flags(struct mem *mem, page_t start, pages_t pages, int flags) {
                 // mprotect has to follow the same rule or the pages are mapped
                 // without ever counting against the cap.
                 if (!anon_pages_reserve((long)run_len))
-                    continue;
-#endif
+                    return _ENOMEM;
+                int merr = pt_map_nothing(mem, run_start, run_len, flags | P_ANONYMOUS);
+                if (merr < 0) {
+                    anon_pages_unreserve((long)run_len);
+                    return merr;
+                }
+#else
                 pt_map_nothing(mem, run_start, run_len, flags | P_ANONYMOUS);
+#endif
             }
 #endif
             continue;

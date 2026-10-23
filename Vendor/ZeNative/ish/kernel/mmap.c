@@ -7,6 +7,7 @@
 #include "kernel/task.h"
 #include "fs/fd.h"
 #include "kernel/memory.h"
+#include <time.h>
 #include "kernel/mm.h"
 
 #if ANON_MMAP_LIMIT_PAGES > 0
@@ -45,7 +46,79 @@ void anon_pages_charge_mapped(long pages) {
     atomic_fetch_add(&anon_page_count, pages - credit);
 }
 
+// [T-ish-footprint-brake] Live memory status. stamp==0 means the host never
+// fed us — legacy ledger mode.
+static _Atomic int ish_mem_state_v = ISH_MEM_OK;
+static _Atomic uint64_t ish_mem_limit_v;
+static _Atomic uint64_t ish_mem_avail_v;
+static _Atomic uint64_t ish_mem_stamp_ms;
+
+// A sampler that stops updating for this long is treated as dead and the
+// brake engages — the governor must fail closed.
+#define ISH_MEM_STALE_MS 2000
+
+static uint64_t ish_monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+bool ish_footprint_mode(void) {
+    return atomic_load(&ish_mem_stamp_ms) != 0;
+}
+
+void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pressure_critical) {
+    if (limit_bytes == 0)
+        return; // host could not measure — don't flip modes on garbage
+    int prev = atomic_load(&ish_mem_state_v);
+    int next;
+    if (pressure_critical) {
+        next = ISH_MEM_BRAKE;
+    } else if (avail_bytes * 10 < limit_bytes) {
+        next = ISH_MEM_BRAKE;                       // < 10% headroom
+    } else if (prev == ISH_MEM_BRAKE && avail_bytes * 100 < limit_bytes * 15) {
+        next = ISH_MEM_BRAKE;                       // hysteresis: exit above 15%
+    } else {
+        next = ISH_MEM_OK;
+    }
+    atomic_store(&ish_mem_limit_v, limit_bytes);
+    atomic_store(&ish_mem_avail_v, avail_bytes);
+    atomic_store(&ish_mem_state_v, next);
+    atomic_store(&ish_mem_stamp_ms, ish_monotonic_ms());
+    if (next != prev)
+        printk("mem: brake %s — footprint %lu MB / limit %lu MB (avail %lu MB)%s\n",
+               next == ISH_MEM_BRAKE ? "ENGAGED" : "released",
+               (unsigned long)((limit_bytes - avail_bytes) >> 20),
+               (unsigned long)(limit_bytes >> 20),
+               (unsigned long)(avail_bytes >> 20),
+               pressure_critical ? " [OS pressure critical]" : "");
+}
+
+bool ish_mem_commit_ok(uint64_t bytes) {
+    uint64_t stamp = atomic_load(&ish_mem_stamp_ms);
+    if (stamp == 0)
+        return true;   // legacy mode: the ledger check decides
+    uint64_t limit = atomic_load(&ish_mem_limit_v);
+    // One request larger than the entire allowance can never be dirtied
+    // safely — clean upfront ENOMEM instead of dying mid-memset later.
+    if (limit != 0 && bytes > limit)
+        return false;
+    if (ish_monotonic_ms() - stamp > ISH_MEM_STALE_MS)
+        return false;  // dead sampler fails closed
+    return atomic_load(&ish_mem_state_v) == ISH_MEM_OK;
+}
+
 bool anon_pages_reserve(long pages) {
+    // [T-ish-footprint-brake] Two admission regimes share this choke point.
+    // In footprint mode the decision comes from live jetsam headroom and the
+    // counter is accounting only; legacy mode keeps the ledger check.
+    if (ish_footprint_mode()) {
+        if (!ish_mem_commit_ok((uint64_t) pages * PAGE_SIZE))
+            return false;
+        atomic_fetch_add(&anon_page_count, pages);
+        anon_pages_precharged(pages);
+        return true;
+    }
     long limit = atomic_load(&anon_page_limit);
     long count = atomic_load(&anon_page_count);
     do {
