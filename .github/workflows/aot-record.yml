@@ -1,0 +1,86 @@
+name: Record AOT images
+
+# Builds a macOS ish with -Djit=true, records the JIT translations of a few
+# guest modules against a real Alpine rootfs, and uploads the generated
+# aot_<name>.S images as an artifact. Those images are what makes AOJIT real:
+# the app links them in and starts with the translations already present.
+#
+# Run this manually. The images depend on the exact gen.c and module versions
+# of the commit that recorded them; re-run after changing either.
+
+on:
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: 'Module substrings to record, space separated'
+        default: 'ld-musl busybox python3'
+        required: false
+      alpine_version:
+        description: 'Alpine minirootfs version'
+        default: '3.21'
+        required: false
+
+jobs:
+  record:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          for p in ninja libarchive pkg-config llvm; do
+            brew list "$p" >/dev/null 2>&1 || brew install "$p"
+          done
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet meson
+
+      - name: Build macOS ish with the JIT
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+          meson setup build-macos Vendor/ZeNative/ish \
+            --buildtype=release \
+            -Dlog='' \
+            -Dkernel=ish \
+            -Dengine=asbestos \
+            -Dguest_arch=arm64 \
+            -Djit=true
+          ninja -C build-macos ish tools/fakefsify
+
+      - name: Prepare rootfs
+        run: |
+          set -euo pipefail
+          v="${{ github.event.inputs.alpine_version }}"
+          curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
+            "https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
+          ./build-macos/tools/fakefsify /tmp/alpine.tar.gz /tmp/rootfs
+          test -d /tmp/rootfs/data
+
+      - name: Record AOT images
+        run: |
+          set -uo pipefail
+          mkdir -p aot
+          for m in ${{ github.event.inputs.modules }}; do
+            case "$m" in
+              ld-musl)
+                printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/wl.sh ;;
+              busybox)
+                printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; grep -c root /etc/passwd >/dev/null; done\n' > /tmp/wl.sh ;;
+              python3)
+                printf 'python3 -c "import json,os,sys,math,hashlib; [hashlib.sha256(b\x27x\x27).hexdigest() for _ in range(50)]"\n' > /tmp/wl.sh ;;
+              *)
+                printf '/bin/true\n' > /tmp/wl.sh ;;
+            esac
+            echo "=== recording $m ==="
+            Vendor/ZeNative/ish/tools/jit_aot/record.sh \
+              build-macos/ish /tmp/rootfs /tmp/wl.sh "aot/aot_$m.S" "$m" || echo "record failed for $m"
+          done
+          ls -lh aot/ || true
+
+      - name: Upload images
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-images
+          path: aot/*.S
+          if-no-files-found: warn
