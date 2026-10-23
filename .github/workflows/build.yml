@@ -472,6 +472,38 @@ jobs:
             test -f "$UP2/deps/frameworks/$fw.framework/Info.plist"
           done
 
+      - name: Build macOS ish and record AOT images
+        id: aot
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          export PATH="$PWD/.venv-aot/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+          python3 -m venv .venv-aot
+          .venv-aot/bin/pip install --quiet meson
+          meson setup build-macos Vendor/ZeNative/ish \
+            --buildtype=release -Dlog='' -Dkernel=ish -Dengine=asbestos \
+            -Dguest_arch=arm64 -Djit=true
+          ninja -C build-macos ish tools/fakefsify
+          # Rootfs for the recorder: same Alpine the app ships.
+          curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
+            https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz
+          ./build-macos/tools/fakefsify /tmp/alpine.tar.gz /tmp/aot-rootfs
+          mkdir -p aot
+          printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/wl-musl.sh
+          printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/wl-busybox.sh
+          Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl || true
+          Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox || true
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          OBJS=""
+          for f in aot/*.S; do
+            [ -f "$f" ] || continue
+            o="${f%.S}.o"
+            xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "$o" && OBJS="$OBJS $PWD/$o"
+          done
+          echo "AOT_OBJECTS=$OBJS" >> "$GITHUB_ENV"
+          ls -lh aot/ || true
+
       - name: Resolve SPM dependencies
         run: |
           xcodebuild -resolvePackageDependencies \
@@ -491,6 +523,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             ENABLE_DEBUG_DYLIB=NO \
+            OTHER_LDFLAGS="\$(inherited) ${AOT_OBJECTS:-}" \
             2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
 
