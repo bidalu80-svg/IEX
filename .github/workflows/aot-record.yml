@@ -18,6 +18,13 @@ on:
         description: 'Alpine minirootfs version'
         default: '3.21'
         required: false
+  # [T-aot-trigger] `workflow_dispatch` only works once the workflow exists on
+  # the DEFAULT branch, and this one lives on a feature branch. A push touching
+  # this sentinel is the supported way to start it from here; ordinary pushes
+  # never match the path filter.
+  push:
+    paths:
+      - '.aot-record-trigger'
 
 jobs:
   record:
