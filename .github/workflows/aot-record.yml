@@ -1,23 +1,19 @@
 name: Record AOT images
 
-# Builds a macOS ish with -Djit=true, records the JIT translations of a few
-# guest modules against a real Alpine rootfs, and uploads the generated
-# aot_<name>.S images as an artifact. Those images are what makes AOJIT real:
-# the app links them in and starts with the translations already present.
+# Records one AOT image per library in scripts/aot-manifest.txt against a real
+# Alpine rootfs and uploads them. These images are what makes AOJIT real: the
+# app links them in and starts with the translations already present.
 #
-# Run this manually. The images depend on the exact gen.c and module versions
-# of the commit that recorded them; re-run after changing either.
+# Run this by hand when gen.c or a module version changes. It is deliberately
+# NOT part of the app build: installing ~120 MB of packages inside the emulator
+# takes the better part of an hour, and every IPA would wait for it.
+#
+# Download the `aot-images` artifact, drop the .o files into `aot/`, commit, and
+# the normal build links them (see ZE_AOT_OBJECTS in build.yml).
 
 on:
   workflow_dispatch:
     inputs:
-      modules:
-        # python3 is not in the Alpine minirootfs, so recording it needs an
-        # `apk add python3` into the rootfs first. Default to what the tarball
-        # actually provides.
-        description: 'Module substrings to record, space separated'
-        default: 'ld-musl busybox'
-        required: false
       alpine_version:
         description: 'Alpine minirootfs version'
         default: '3.21'
@@ -26,7 +22,7 @@ on:
 jobs:
   record:
     runs-on: macos-14
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -61,35 +57,76 @@ jobs:
           # fakefsify output (data/ + meta.db) makes the guest miss /bin/sh,
           # so unpack the tarball instead.
           rm -rf /tmp/rootfs
-          mkdir -p /tmp/rootfs
-          tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs
           mkdir -p /tmp/rootfs/tmp
+          tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs
           test -x /tmp/rootfs/bin/sh
+
+      # [T-aot-fetch] `apk add` inside the emulator decompresses ~120 MB with an
+      # emulated xz, which took over an hour. `apk fetch` only downloads and
+      # resolves — that part is network-bound — and the host's real tar does the
+      # extraction. Same result in a couple of minutes.
+      - name: Fetch and unpack the workload packages
+        run: |
+          set -uo pipefail
+          rel="$(cut -d. -f1,2 /tmp/rootfs/etc/alpine-release)"
+          mkdir -p /tmp/rootfs/etc/apk /tmp/rootfs/tmp/pkgs
+          printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
+            "$rel" "$rel" > /tmp/rootfs/etc/apk/repositories
+          # A fresh minirootfs has no resolver either; without one apk resolves
+          # nothing and every fetch fails with "temporary error".
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
+          [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
+
+          PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
+          echo "── apk fetch --recursive $PKGS"
+          build-macos/ish -r /tmp/rootfs /bin/sh -c \
+            "apk fetch --recursive --no-progress -o /tmp/pkgs $PKGS" \
+            || echo "⚠️  apk fetch failed; libraries already present can still record"
+
+          n=0
+          for f in /tmp/rootfs/tmp/pkgs/*.apk; do
+            [ -f "$f" ] || continue
+            # An .apk is a tar holding .PKGINFO and data.tar.gz; the payload is
+            # the inner tarball.
+            if tar -xzf "$f" -O data.tar.gz 2>/dev/null | tar -xzf - -C /tmp/rootfs 2>/dev/null; then
+              n=$((n + 1))
+            fi
+          done
+          echo "── unpacked $n packages"
+          ls /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
 
       - name: Record AOT images
         run: |
           set -uo pipefail
           mkdir -p aot
-          for m in ${{ github.event.inputs.modules }}; do
-            # The workload lives inside the rootfs because record.sh passes it
-            # to the guest as a guest path (/tmp/wl.sh), not a host path.
-            case "$m" in
-              ld-musl)
-                printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/rootfs/tmp/wl.sh ;;
-              busybox)
-                printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; grep -c root /etc/passwd >/dev/null; done\n' > /tmp/rootfs/tmp/wl.sh ;;
-              python3)
-                printf 'python3 -c "import json,os,sys,math,hashlib; [hashlib.sha256(b\x27x\x27).hexdigest() for _ in range(50)]"\n' > /tmp/rootfs/tmp/wl.sh ;;
-              *)
-                printf '/bin/true\n' > /tmp/rootfs/tmp/wl.sh ;;
-            esac
-            echo "=== recording $m ==="
-            if Vendor/ZeNative/ish/tools/jit_aot/record.sh \
-                 build-macos/ish /tmp/rootfs /tmp/wl.sh "aot/aot_$m.S" "$m"; then
-              ls -l "aot/aot_$m.S" || true
+          SUMMARY="$RUNNER_TEMP/aot-summary.txt"
+          : > "$SUMMARY"
+          while IFS='|' read -r name module workload; do
+            case "$name" in ''|'#'*) continue ;; esac
+            printf '%s\n' "$workload" > "/tmp/rootfs/tmp/wl-$name.sh"
+            echo "=== $name ($module) ==="
+            # A guest workload can hang (V8 startup under emulation does), and
+            # record.sh has no deadline of its own. macOS has no coreutils
+            # `timeout`, so perl's alarm+exec does the same job.
+            if perl -e 'alarm shift; exec @ARGV' 240 \
+                 Vendor/ZeNative/ish/tools/jit_aot/record.sh \
+                 build-macos/ish /tmp/rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"; then
+              size=$(wc -c < "aot/aot_$name.S" 2>/dev/null || echo 0)
+              printf '%-12s %10s bytes\n' "$name" "$size" >> "$SUMMARY"
             else
-              echo "❌ record failed for $m (see the size/exit lines above)"
+              printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
+              echo "❌ record failed for $name"
             fi
+          done < scripts/aot-manifest.txt
+
+          echo "── summary"
+          cat "$SUMMARY"
+          { echo '### AOT images'; echo '```'; cat "$SUMMARY"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          for f in aot/*.S; do
+            [ -f "$f" ] || continue
+            xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "${f%.S}.o" || true
           done
           ls -lh aot/ || true
 
@@ -97,5 +134,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aot-images
-          path: aot/*.S
+          path: |
+            aot/*.S
+            aot/*.o
           if-no-files-found: warn

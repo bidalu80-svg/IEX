@@ -1,0 +1,38 @@
+# One AOT image per library in Agent/ISH/AOJITAcceleration.swift's catalog.
+#
+# name | module path substring | workload (runs inside the rootfs)
+#
+# The module is the guest shared object whose translations the image holds —
+# an image describes exactly one module, so `libz` (the C library) and `zlib.`
+# (the Python binding) are two different images even though one workload
+# exercises both.
+#
+# Workloads exercise the library rather than merely starting it: Pillow encodes
+# a JPEG and a WebP, NumPy sums an array, SQLite inserts 800 rows, git runs a
+# PCRE2 grep. A workload that only prints --help produces an image with almost
+# no translations.
+musl|ld-musl|for i in $(seq 300); do /bin/true; done
+busybox|busybox|for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done
+python3|libpython3|python3 -c "import json,re,os,sys,math,collections,itertools;[json.dumps({'i':i}) for i in range(300)]"
+nodejs|node|node -e "const fs=require('fs');let s=0;for(let i=0;i<200000;i++)s+=i;console.log(s)"
+pillow|_imaging|python3 -c "from PIL import Image;im=Image.new('RGB',(256,256),(200,30,30));im.resize((64,64)).rotate(30).convert('L')"
+libwebp|libwebp|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"
+libjpeg|libjpeg|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"
+numpy|_multiarray_umath|python3 -c "import numpy as np;a=np.arange(200000.0);print((a*2.0+1.0).sum())"
+zlib|libz|python3 -c "import zlib;d=b'x'*200000;zlib.decompress(zlib.compress(d))"
+sqlite|_sqlite3|python3 -c "import sqlite3;c=sqlite3.connect(':memory:');c.execute('create table t(a)');c.executemany('insert into t values(?)',[(i,) for i in range(800)]);print(c.execute('select sum(a) from t').fetchone())"
+libcrypto|libcrypto|python3 -c "import hashlib;[hashlib.sha256(b'x'*2000).digest() for _ in range(300)]"
+libssl|libssl|python3 -c "import ssl;ctx=ssl.create_default_context();print(ctx.minimum_version)"
+pcre2|libpcre2|cd /tmp && rm -rf r && git init -q r && cd r && git config user.email a@b.c && git config user.name a && seq 300 > f && git add f && git commit -qm x && git grep -P '1[0-9]{2}' >/dev/null
+ssh|ssh|ssh -V 2>&1; ssh -Q cipher >/dev/null 2>&1; true
+scp|scp|scp 2>&1 | head -2; true
+pyjson|_json|python3 -c "import json;[json.loads(json.dumps({'a':[1,2,3],'b':'x'})) for _ in range(800)]"
+pyhashlib|_hashlib|python3 -c "import hashlib;[hashlib.md5(b'x'*64).hexdigest() for _ in range(800)]"
+pyblake2|_blake2|python3 -c "import hashlib;[hashlib.blake2b(b'x'*128).digest() for _ in range(800)]"
+pystruct|_struct|python3 -c "import struct;[struct.pack('<iid',1,2,3.0) for _ in range(3000)]"
+pydatetime|_datetime|python3 -c "import datetime;[datetime.datetime.now().isoformat() for _ in range(3000)]"
+pybinascii|_binascii|python3 -c "import binascii;[binascii.hexlify(b'x'*64) for _ in range(1500)]"
+pymath|math.|python3 -c "import math;[math.sin(i*0.01) for i in range(80000)]"
+pyzlib|zlib.|python3 -c "import zlib;d=b'y'*200000;zlib.decompress(zlib.compress(d))"
+pysocket|_socket|python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);s.close()"
+pyselect|select.|python3 -c "import select;select.select([],[],[],0)"
