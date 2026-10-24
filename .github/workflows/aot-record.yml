@@ -35,7 +35,8 @@ jobs:
 
       - name: Install build tools
         run: |
-          for p in ninja libarchive pkg-config llvm; do
+          # lld is required: meson links the guest vdso with -fuse-ld=lld.
+          for p in ninja libarchive pkg-config llvm lld; do
             brew list "$p" >/dev/null 2>&1 || brew install "$p"
           done
           python3 -m venv .venv
@@ -57,7 +58,8 @@ jobs:
       - name: Prepare rootfs
         run: |
           set -euo pipefail
-          v="${{ github.event.inputs.alpine_version }}"
+          # A push trigger has no inputs, so the expression is empty there.
+          v="${{ github.event.inputs.alpine_version || '3.21' }}"
           curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
             "https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
           # `ish -r` is the REALFS path; -f is fakefs. Handing record.sh a
