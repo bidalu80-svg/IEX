@@ -524,18 +524,38 @@ jobs:
 
       - name: Build (Debug, no signing)
         run: |
-          xcodebuild build \
-            -project Ze.xcodeproj \
-            -scheme Ze \
-            -configuration Debug \
-            -destination generic/platform=iOS \
-            -clonedSourcePackagesDirPath .spm \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            ENABLE_DEBUG_DYLIB=NO \
-            OTHER_LDFLAGS="\$(inherited) ${AOT_OBJECTS:-}" \
-            2>&1 | tee build.log
+          # Passing OTHER_LDFLAGS on the command line replaces the target's
+          # value, so only add it when there really are AOT objects. An empty
+          # "$(inherited) " reaches the linker as a literal argument and fails
+          # the link.
+          # macOS ships bash 3.2: an empty array under `set -u` is an error,
+          # so branch instead of building an argument list.
+          if [ -n "${AOT_OBJECTS:-}" ]; then
+            xcodebuild build \
+              -project Ze.xcodeproj \
+              -scheme Ze \
+              -configuration Debug \
+              -destination generic/platform=iOS \
+              -clonedSourcePackagesDirPath .spm \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_IDENTITY="" \
+              DEVELOPMENT_TEAM="" \
+              ENABLE_DEBUG_DYLIB=NO \
+              OTHER_LDFLAGS="\$(inherited) ${AOT_OBJECTS}" \
+              2>&1 | tee build.log
+          else
+            xcodebuild build \
+              -project Ze.xcodeproj \
+              -scheme Ze \
+              -configuration Debug \
+              -destination generic/platform=iOS \
+              -clonedSourcePackagesDirPath .spm \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_IDENTITY="" \
+              DEVELOPMENT_TEAM="" \
+              ENABLE_DEBUG_DYLIB=NO \
+              2>&1 | tee build.log
+          fi
           exit ${PIPESTATUS[0]}
 
       - name: Summarize compiler errors
