@@ -12,8 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       modules:
+        # python3 is not in the Alpine minirootfs, so recording it needs an
+        # `apk add python3` into the rootfs first. Default to what the tarball
+        # actually provides.
         description: 'Module substrings to record, space separated'
-        default: 'ld-musl busybox python3'
+        default: 'ld-musl busybox'
         required: false
       alpine_version:
         description: 'Alpine minirootfs version'
@@ -54,27 +57,39 @@ jobs:
           v="${{ github.event.inputs.alpine_version }}"
           curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
             "https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
-          ./build-macos/tools/fakefsify /tmp/alpine.tar.gz /tmp/rootfs
-          test -d /tmp/rootfs/data
+          # `ish -r` is the REALFS path; -f is fakefs. Handing record.sh a
+          # fakefsify output (data/ + meta.db) makes the guest miss /bin/sh,
+          # so unpack the tarball instead.
+          rm -rf /tmp/rootfs
+          mkdir -p /tmp/rootfs
+          tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs
+          mkdir -p /tmp/rootfs/tmp
+          test -x /tmp/rootfs/bin/sh
 
       - name: Record AOT images
         run: |
           set -uo pipefail
           mkdir -p aot
           for m in ${{ github.event.inputs.modules }}; do
+            # The workload lives inside the rootfs because record.sh passes it
+            # to the guest as a guest path (/tmp/wl.sh), not a host path.
             case "$m" in
               ld-musl)
-                printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/wl.sh ;;
+                printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/rootfs/tmp/wl.sh ;;
               busybox)
-                printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; grep -c root /etc/passwd >/dev/null; done\n' > /tmp/wl.sh ;;
+                printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; grep -c root /etc/passwd >/dev/null; done\n' > /tmp/rootfs/tmp/wl.sh ;;
               python3)
-                printf 'python3 -c "import json,os,sys,math,hashlib; [hashlib.sha256(b\x27x\x27).hexdigest() for _ in range(50)]"\n' > /tmp/wl.sh ;;
+                printf 'python3 -c "import json,os,sys,math,hashlib; [hashlib.sha256(b\x27x\x27).hexdigest() for _ in range(50)]"\n' > /tmp/rootfs/tmp/wl.sh ;;
               *)
-                printf '/bin/true\n' > /tmp/wl.sh ;;
+                printf '/bin/true\n' > /tmp/rootfs/tmp/wl.sh ;;
             esac
             echo "=== recording $m ==="
-            Vendor/ZeNative/ish/tools/jit_aot/record.sh \
-              build-macos/ish /tmp/rootfs /tmp/wl.sh "aot/aot_$m.S" "$m" || echo "record failed for $m"
+            if Vendor/ZeNative/ish/tools/jit_aot/record.sh \
+                 build-macos/ish /tmp/rootfs /tmp/wl.sh "aot/aot_$m.S" "$m"; then
+              ls -l "aot/aot_$m.S" || true
+            else
+              echo "❌ record failed for $m (see the size/exit lines above)"
+            fi
           done
           ls -lh aot/ || true
 

@@ -28,7 +28,15 @@ import os
 import subprocess
 import sys
 
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    # The CI venv installs nothing but meson, and a progress bar is pointless
+    # in a captured log anyway. Without this fallback the import aborted the
+    # script before any output was written, which surfaced only as an empty
+    # aot/ directory ("total 0") after record.sh's failure was swallowed.
+    def tqdm(it, **kwargs):
+        return it
 
 KEY_HDR = 7          # key words before the units: mod, off lo/hi, page offset, units, 2 slots
 KEY_UNIT = 9         # words per unit; words 7 and 8 of a unit are its gadget pointer
@@ -46,6 +54,11 @@ def load_recording(path):
             trans.append(obj)
     if header is None:
         sys.exit(f"❌ {path}: no header line (record with the current ish)")
+    if not trans:
+        # Reached when ish ran but recorded nothing: wrong module filter, or
+        # the JIT never got an executable region and quietly ran gadgets.
+        sys.exit(f"❌ {path}: header present but no translations "
+                 f"(check ISH_JIT_RECORD_MOD against the workload)")
     return header, trans
 
 

@@ -503,8 +503,19 @@ jobs:
           mkdir -p /tmp/aot-rootfs/tmp
           printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
           printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
-          Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl || true
-          Vendor/ZeNative/ish/tools/jit_aot/record.sh build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox || true
+          # Report each recording instead of swallowing it with `|| true`.
+          # A silent failure is what produced an empty aot/ ("total 0") with
+          # nothing in the log to explain it.
+          record() {
+            echo "── record.sh $*"
+            if Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@"; then
+              ls -l "$4" 2>/dev/null || true
+            else
+              echo "❌ record.sh exit $? for $4"
+            fi
+          }
+          record build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl
+          record build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           OBJS=""
           for f in aot/*.S; do
