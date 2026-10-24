@@ -482,6 +482,17 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # [T-aot-committed] The 22 images recorded by the manual "Record AOT
+          # images" workflow live in aot/ as .o, so a normal build only links
+          # them: no ish build, no rootfs download, no recording. The fallback
+          # below stays for a tree that has none (fresh clone, or after gen.c
+          # changed and the images must be re-recorded).
+          if compgen -G "aot/*.o" > /dev/null; then
+            count=$(ls aot/*.o | wc -l | tr -d ' ')
+            echo "── using $count committed images ($(du -sh aot | cut -f1))"
+            echo "AOT_OBJECTS=$(ls "$PWD"/aot/*.o | tr '\n' ' ')" >> "$GITHUB_ENV"
+            exit 0
+          fi
           export PATH="$PWD/.venv-aot/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
           python3 -m venv .venv-aot
           .venv-aot/bin/pip install --quiet meson
