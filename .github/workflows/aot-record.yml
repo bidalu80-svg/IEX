@@ -79,8 +79,11 @@ jobs:
             echo "tar failed"
             exit 1
           fi
+          # /bin/sh is a symlink to the absolute path /bin/busybox, so testing
+          # it from the host dereferences the RUNNER's /bin/busybox and fails.
+          # The real file is what matters.
           ls -l /tmp/rootfs/bin/sh || true
-          test -x /tmp/rootfs/bin/sh || { echo "no executable /bin/sh"; exit 1; }
+          test -x /tmp/rootfs/bin/busybox || { echo "no executable busybox"; exit 1; }
 
       # [T-aot-fetch] `apk add` inside the emulator decompresses ~120 MB with an
       # emulated xz, which took over an hour. `apk fetch` only downloads and
