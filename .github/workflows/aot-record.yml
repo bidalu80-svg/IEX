@@ -28,7 +28,10 @@ on:
 
 jobs:
   record:
-    runs-on: macos-14
+    # Same image as the app build: macos-14's clang 15 rejects the tree's
+    # _Atomic(function pointer) initialisers, and the images should be
+    # produced by the toolchain that links them.
+    runs-on: macos-15
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4

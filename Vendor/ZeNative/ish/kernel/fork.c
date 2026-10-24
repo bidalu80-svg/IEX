@@ -21,7 +21,10 @@
 // Host-controlled process-creation guard.  The callback is intentionally kept
 // as a tiny atomic hook so iOS can reject memory-expensive guest forks before
 // iSH allocates a task, without adding platform-specific policy to the kernel.
-static _Atomic(ish_fork_guard_t) g_fork_guard = NULL;
+// [T-ish-atomic-init] Same clang-15 restriction as g_timer_tick_hook:
+// a NULL initialiser is not a compile-time constant for an _Atomic
+// function pointer. Static storage is zero-initialised anyway.
+static _Atomic(ish_fork_guard_t) g_fork_guard;
 
 void ish_set_fork_guard(ish_fork_guard_t guard) {
     atomic_store_explicit(&g_fork_guard, guard, memory_order_release);
