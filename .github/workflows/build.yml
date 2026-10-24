@@ -499,37 +499,17 @@ jobs:
           tar -xzf /tmp/alpine.tar.gz -C /tmp/aot-rootfs
           mkdir -p aot /tmp/aot-rootfs/tmp
 
-          # [T-aot-all-images] A fresh minirootfs has no package source, so the
-          # first apk call fails with "no repositories configured" and every
-          # library beyond musl/busybox records nothing. Write the mirror for
-          # the rootfs's own branch before booting it.
-          rel="$(cut -d. -f1,2 /tmp/aot-rootfs/etc/alpine-release)"
-          mkdir -p /tmp/aot-rootfs/etc/apk
-          printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
-            "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
-          # ...and no resolv.conf either: without one apk resolves nothing and
-          # every package install fails with "temporary error".
-          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
-          [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
-
-          # One install for every workload below. A failure is reported but does
-          # not stop the build: the libraries already in the rootfs still record,
-          # and a missing image is not an error (the loader just finds no keys).
-          PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
-          echo "── apk add $PACKAGES"
-          build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
-            || echo "⚠️  apk add failed; only libraries already present will record"
-
-          # Report each recording instead of swallowing it with `|| true`.
-          # A silent failure is what produced an empty aot/ ("total 0") with
-          # nothing in the log to explain it.
           SUMMARY="$RUNNER_TEMP/aot-summary.txt"
           : > "$SUMMARY"
           record() {
             name=$1
             shift
             echo "── record.sh $*"
-            if Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
+            # A guest workload can hang (V8 startup under emulation does), and
+            # record.sh has no deadline of its own: one bad entry held the whole
+            # step for over an hour. macOS has no coreutils `timeout`, so perl's
+            # alarm+exec does the same job.
+            if perl -e 'alarm shift; exec @ARGV' 240 Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
               size=$(wc -c < "$4" 2>/dev/null || echo 0)
               printf '%-12s %8s bytes\n' "$name" "$size" >> "$SUMMARY"
               ls -l "$4" 2>/dev/null || true
@@ -539,18 +519,34 @@ jobs:
             fi
           }
 
-          # name | module path substring | workload (runs inside the rootfs)
-          # Every library in Agent/ISH/AOJITAcceleration.swift's catalog except
-          # the two that were already recorded here.
-          while IFS='|' read -r name module workload; do
-            [ -n "${name:-}" ] || continue
-            printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh"
-            record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
-          done <<'MANIFEST'
+          # [T-aot-full-set] The default build records only the two modules that
+          # are already in the minirootfs: ~10 s, and enough for the shell and
+          # libc paths that dominate. The other 23 need ~120 MB of packages
+          # installed *inside the emulator*, which took over an hour and made
+          # every IPA build wait for it. They belong in the manual
+          # "Record AOT images" workflow, whose artifacts get committed and
+          # linked from here. AOT_FULL=1 still runs the whole set inline for
+          # anyone who wants it.
+          if [ "${AOT_FULL:-0}" = "1" ]; then
+            rel="$(cut -d. -f1,2 /tmp/aot-rootfs/etc/alpine-release)"
+            mkdir -p /tmp/aot-rootfs/etc/apk
+            printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
+              "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
+            [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
+            PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
+            echo "── apk add $PACKAGES"
+            build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
+              || echo "⚠️  apk add failed; only libraries already present will record"
+            while IFS='|' read -r name module workload; do
+              [ -n "${name:-}" ] || continue
+              printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh"
+              record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
+            done <<'MANIFEST'
           musl|ld-musl|for i in $(seq 300); do /bin/true; done
           busybox|busybox|for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done
           python3|libpython3|python3 -c "import json,re,os,sys,math,collections,itertools;[json.dumps({'i':i}) for i in range(300)]"
-          nodejs|node|node -e "const fs=require('fs');const path=require('path');let s=0;for(let i=0;i<200000;i++)s+=i;console.log(s)"
+          nodejs|node|node -e "const fs=require('fs');let s=0;for(let i=0;i<200000;i++)s+=i;console.log(s)"
           pillow|_imaging|python3 -c "from PIL import Image;im=Image.new('RGB',(256,256),(200,30,30));im.resize((64,64)).rotate(30).convert('L')"
           libwebp|libwebp|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"
           libjpeg|libjpeg|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"
@@ -573,6 +569,12 @@ jobs:
           pysocket|_socket|python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);s.close()"
           pyselect|select.|python3 -c "import select;select.select([],[],[],0)"
           MANIFEST
+          else
+            printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
+            printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
+            record musl build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl
+            record busybox build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox
+          fi
 
           echo "── recorded images"
           cat "$SUMMARY"
