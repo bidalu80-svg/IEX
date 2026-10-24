@@ -30,3 +30,6 @@ Configs/ProviderCustomization.xcconfig
 *.swp
 *.swo
 *.swn
+
+# AOT images recorded by the manual workflow: the app links these directly.
+!aot/*.o
