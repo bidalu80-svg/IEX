@@ -497,25 +497,87 @@ jobs:
           # data/ + meta.db layout, or the guest cannot find /bin/sh.
           mkdir -p /tmp/aot-rootfs
           tar -xzf /tmp/alpine.tar.gz -C /tmp/aot-rootfs
-          mkdir -p aot
-          # record.sh passes the workload to the guest as a guest path, so it
-          # has to live inside the rootfs data dir (fakefs: data/ is /).
-          mkdir -p /tmp/aot-rootfs/tmp
-          printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
-          printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
+          mkdir -p aot /tmp/aot-rootfs/tmp
+
+          # [T-aot-all-images] A fresh minirootfs has no package source, so the
+          # first apk call fails with "no repositories configured" and every
+          # library beyond musl/busybox records nothing. Write the mirror for
+          # the rootfs's own branch before booting it.
+          rel="$(cut -d. -f1,2 /tmp/aot-rootfs/etc/alpine-release)"
+          mkdir -p /tmp/aot-rootfs/etc/apk
+          printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
+            "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
+          # ...and no resolv.conf either: without one apk resolves nothing and
+          # every package install fails with "temporary error".
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
+          [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
+
+          # One install for every workload below. A failure is reported but does
+          # not stop the build: the libraries already in the rootfs still record,
+          # and a missing image is not an error (the loader just finds no keys).
+          PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
+          echo "── apk add $PACKAGES"
+          build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
+            || echo "⚠️  apk add failed; only libraries already present will record"
+
           # Report each recording instead of swallowing it with `|| true`.
           # A silent failure is what produced an empty aot/ ("total 0") with
           # nothing in the log to explain it.
+          SUMMARY="$RUNNER_TEMP/aot-summary.txt"
+          : > "$SUMMARY"
           record() {
+            name=$1
+            shift
             echo "── record.sh $*"
-            if Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@"; then
+            if Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
+              size=$(wc -c < "$4" 2>/dev/null || echo 0)
+              printf '%-12s %8s bytes\n' "$name" "$size" >> "$SUMMARY"
               ls -l "$4" 2>/dev/null || true
             else
-              echo "❌ record.sh exit $? for $4"
+              printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
+              echo "❌ record.sh failed for $4"
             fi
           }
-          record build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl
-          record build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox
+
+          # name | module path substring | workload (runs inside the rootfs)
+          # Every library in Agent/ISH/AOJITAcceleration.swift's catalog except
+          # the two that were already recorded here.
+          while IFS='|' read -r name module workload; do
+            [ -n "${name:-}" ] || continue
+            printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh"
+            record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
+          done <<'MANIFEST'
+          musl|ld-musl|for i in $(seq 300); do /bin/true; done
+          busybox|busybox|for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done
+          python3|libpython3|python3 -c "import json,re,os,sys,math,collections,itertools;[json.dumps({'i':i}) for i in range(300)]"
+          nodejs|node|node -e "const fs=require('fs');const path=require('path');let s=0;for(let i=0;i<200000;i++)s+=i;console.log(s)"
+          pillow|_imaging|python3 -c "from PIL import Image;im=Image.new('RGB',(256,256),(200,30,30));im.resize((64,64)).rotate(30).convert('L')"
+          libwebp|libwebp|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"
+          libjpeg|libjpeg|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"
+          numpy|_multiarray_umath|python3 -c "import numpy as np;a=np.arange(200000.0);print((a*2.0+1.0).sum())"
+          zlib|libz|python3 -c "import zlib;d=b'x'*200000;zlib.decompress(zlib.compress(d))"
+          sqlite|_sqlite3|python3 -c "import sqlite3;c=sqlite3.connect(':memory:');c.execute('create table t(a)');c.executemany('insert into t values(?)',[(i,) for i in range(800)]);print(c.execute('select sum(a) from t').fetchone())"
+          libcrypto|libcrypto|python3 -c "import hashlib;[hashlib.sha256(b'x'*2000).digest() for _ in range(300)]"
+          libssl|libssl|python3 -c "import ssl;ctx=ssl.create_default_context();print(ctx.minimum_version)"
+          pcre2|libpcre2|cd /tmp && rm -rf r && git init -q r && cd r && git config user.email a@b.c && git config user.name a && seq 300 > f && git add f && git commit -qm x && git grep -P '1[0-9]{2}' >/dev/null
+          ssh|ssh|ssh -V 2>&1; ssh -Q cipher >/dev/null 2>&1; true
+          scp|scp|scp 2>&1 | head -2; true
+          pyjson|_json|python3 -c "import json;[json.loads(json.dumps({'a':[1,2,3],'b':'x'})) for _ in range(800)]"
+          pyhashlib|_hashlib|python3 -c "import hashlib;[hashlib.md5(b'x'*64).hexdigest() for _ in range(800)]"
+          pyblake2|_blake2|python3 -c "import hashlib;[hashlib.blake2b(b'x'*128).digest() for _ in range(800)]"
+          pystruct|_struct|python3 -c "import struct;[struct.pack('<iid',1,2,3.0) for _ in range(3000)]"
+          pydatetime|_datetime|python3 -c "import datetime;[datetime.datetime.now().isoformat() for _ in range(3000)]"
+          pybinascii|_binascii|python3 -c "import binascii;[binascii.hexlify(b'x'*64) for _ in range(1500)]"
+          pymath|math.|python3 -c "import math;[math.sin(i*0.01) for i in range(80000)]"
+          pyzlib|zlib.|python3 -c "import zlib;d=b'y'*200000;zlib.decompress(zlib.compress(d))"
+          pysocket|_socket|python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);s.close()"
+          pyselect|select.|python3 -c "import select;select.select([],[],[],0)"
+          MANIFEST
+
+          echo "── recorded images"
+          cat "$SUMMARY"
+          { echo '### AOT images'; echo '```'; cat "$SUMMARY"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           OBJS=""
           for f in aot/*.S; do
@@ -524,6 +586,7 @@ jobs:
             xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "$o" && OBJS="$OBJS $PWD/$o"
           done
           echo "AOT_OBJECTS=$OBJS" >> "$GITHUB_ENV"
+          echo "── $(ls aot/*.S 2>/dev/null | wc -l | tr -d ' ') images, $(du -sh aot 2>/dev/null | cut -f1) on disk"
           ls -lh aot/ || true
 
       - name: Resolve SPM dependencies
