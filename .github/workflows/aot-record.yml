@@ -93,7 +93,10 @@ jobs:
         run: |
           set -uo pipefail
           rel="$(cut -d. -f1,2 /tmp/rootfs/etc/alpine-release)"
-          mkdir -p /tmp/rootfs/etc/apk /tmp/rootfs/tmp/pkgs
+          # NOT /tmp: the guest mounts its own tmpfs there, so files apk wrote
+          # were invisible to the host ("unpacked 0 packages" after a full set
+          # of successful downloads). /var/cache/apk is on the rootfs itself.
+          mkdir -p /tmp/rootfs/etc/apk /tmp/rootfs/var/cache/apk/pkgs
           printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
             "$rel" "$rel" > /tmp/rootfs/etc/apk/repositories
           # A fresh minirootfs has no resolver either; without one apk resolves
@@ -108,11 +111,14 @@ jobs:
           # and downloads nothing. `apk update` fetches the two indexes (a
           # couple of MB); only then can fetch resolve the dependency graph.
           build-macos/ish -r /tmp/rootfs /bin/sh -c \
-            "apk update && apk fetch --recursive --no-progress -o /tmp/pkgs $PKGS" \
+            "apk update && apk fetch --recursive --no-progress -o /var/cache/apk/pkgs $PKGS" \
             || echo "⚠️  apk fetch failed; libraries already present can still record"
 
+          echo "── downloaded:"
+          ls -l /tmp/rootfs/var/cache/apk/pkgs 2>/dev/null | head -5 || true
+
           n=0
-          for f in /tmp/rootfs/tmp/pkgs/*.apk; do
+          for f in /tmp/rootfs/var/cache/apk/pkgs/*.apk; do
             [ -f "$f" ] || continue
             # An .apk is a tar holding .PKGINFO and data.tar.gz; the payload is
             # the inner tarball.
