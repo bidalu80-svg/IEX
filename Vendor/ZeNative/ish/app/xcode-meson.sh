@@ -67,7 +67,17 @@ guest_arch=${GUEST_ARCH:-x86}
 # AOT image fails to link with "Undefined symbols: _ish_aot_register".
 # ISH_JIT=0 turns it back off for a bisect.
 jit=${ISH_JIT:-true}
-for var in buildtype log b_ndebug b_sanitize log_handler kernel kconfig guest_arch jit; do
+# [T-aojit-no-emit] A dynamically generated code page is not signed, and a
+# re-signed IPA has no dynamic-codesigning entitlement, so iOS kills the
+# process the first time the JIT jumps into one:
+#   EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE at 0x140c00050
+#   termination CODESIGNING "Invalid Page", faulting frame outside every image
+# -Djit_emit=false keeps the JIT runtime but never calls map_dual(): only the
+# AOT images linked into the app run natively, and their code lives in the
+# signed __TEXT,__ish_aot section, so no new executable memory is needed.
+# ISH_JIT_EMIT=1 restores translation for a properly signed build.
+jit_emit=${ISH_JIT_EMIT:-false}
+for var in buildtype log b_ndebug b_sanitize log_handler kernel kconfig guest_arch jit jit_emit; do
     old_value=$(python3 -c "import sys, json; v = next(x['value'] for x in json.load(sys.stdin) if x['name'] == '$var'); print(str(v).lower() if isinstance(v, bool) else ','.join(v) if isinstance(v, list) else v)" <<< $config)
     new_value=${!var}
     if [[ $old_value != $new_value ]]; then
