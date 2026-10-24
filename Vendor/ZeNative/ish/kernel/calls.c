@@ -49,7 +49,11 @@ __thread volatile uint64_t jit_last_x7 = 0;
 __thread volatile uint64_t jit_last_x10 = 0;
 __thread volatile int jit_crash_count = 0;
 
-static _Atomic(ish_timer_tick_hook_t) g_timer_tick_hook = NULL;
+// [T-ish-atomic-init] clang 15 (the macOS 14 runner's toolchain) rejects
+// `= NULL` here: "initializer element is not a compile-time constant".
+// Static storage is zero-initialised anyway, and a null function pointer
+// is all the initializer ever meant.
+static _Atomic(ish_timer_tick_hook_t) g_timer_tick_hook;
 
 void ish_set_timer_tick_hook(ish_timer_tick_hook_t hook) {
     atomic_store_explicit(&g_timer_tick_hook, hook, memory_order_release);
