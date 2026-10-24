@@ -116,6 +116,10 @@ jobs:
 
           echo "── downloaded:"
           ls -l /tmp/rootfs/var/cache/apk/pkgs 2>/dev/null | head -5 || true
+          echo "── cache dir:"
+          ls -l /tmp/rootfs/var/cache/apk 2>/dev/null | head -8 || true
+          echo "── any .apk under the rootfs:"
+          find /tmp/rootfs -name '*.apk' 2>/dev/null | head -5 || true
 
           n=0
           for f in /tmp/rootfs/var/cache/apk/pkgs/*.apk; do
