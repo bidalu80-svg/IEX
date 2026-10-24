@@ -535,38 +535,31 @@ jobs:
 
       - name: Build (Debug, no signing)
         run: |
-          # Passing OTHER_LDFLAGS on the command line replaces the target's
-          # value, so only add it when there really are AOT objects. An empty
-          # "$(inherited) " reaches the linker as a literal argument and fails
-          # the link.
-          # macOS ships bash 3.2: an empty array under `set -u` is an error,
-          # so branch instead of building an argument list.
-          if [ -n "${AOT_OBJECTS:-}" ]; then
-            xcodebuild build \
-              -project Ze.xcodeproj \
-              -scheme Ze \
-              -configuration Debug \
-              -destination generic/platform=iOS \
-              -clonedSourcePackagesDirPath .spm \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_IDENTITY="" \
-              DEVELOPMENT_TEAM="" \
-              ENABLE_DEBUG_DYLIB=NO \
-              OTHER_LDFLAGS="\$(inherited) ${AOT_OBJECTS}" \
-              2>&1 | tee build.log
-          else
-            xcodebuild build \
-              -project Ze.xcodeproj \
-              -scheme Ze \
-              -configuration Debug \
-              -destination generic/platform=iOS \
-              -clonedSourcePackagesDirPath .spm \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_IDENTITY="" \
-              DEVELOPMENT_TEAM="" \
-              ENABLE_DEBUG_DYLIB=NO \
-              2>&1 | tee build.log
-          fi
+          # [T-aot-target-scope] AOT objects reach the linker through a
+          # user-defined setting that only the Ze target's OTHER_LDFLAGS
+          # references. Setting OTHER_LDFLAGS on the command line applies to
+          # EVERY target in the build, so ZeShare.appex and ZeFileProvider.appex
+          # were handed aot_*.o as well and failed with
+          #   Undefined symbols: _gadget_adc_reg / _gadget_add_ext
+          # Those two extensions do not link libish_emu, which is where the
+          # gadgets live, so they can never resolve them.
+          #
+          # ZE_AOT_OBJECTS is allowed to be empty: inside pbxproj `$(...)`
+          # expands normally and an empty expansion contributes no argument.
+          # (A command-line OTHER_LDFLAGS was different: `$(inherited)` there
+          # reached the linker as a literal.)
+          xcodebuild build \
+            -project Ze.xcodeproj \
+            -scheme Ze \
+            -configuration Debug \
+            -destination generic/platform=iOS \
+            -clonedSourcePackagesDirPath .spm \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_DEBUG_DYLIB=NO \
+            ZE_AOT_OBJECTS="${AOT_OBJECTS:-}" \
+            2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
 
       - name: Summarize compiler errors

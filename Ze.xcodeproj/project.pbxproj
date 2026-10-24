@@ -3441,6 +3441,7 @@
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"$(ZE_AOT_OBJECTS)",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
@@ -3499,6 +3500,7 @@
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"$(ZE_AOT_OBJECTS)",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
