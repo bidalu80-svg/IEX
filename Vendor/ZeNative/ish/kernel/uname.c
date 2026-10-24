@@ -23,7 +23,11 @@ void do_uname(struct uname *uts) {
 
     memset(uts, 0, sizeof(struct uname));
     strcpy(uts->system, "Linux");
-    strcpy(uts->hostname, hostname);
+    // [T-ish-uname-hostname-overflow] The host's utsname.nodename is a 256-byte
+    // field on Darwin; the guest's struct uname keeps 65. A CI runner hostname
+    // longer than 64 characters therefore tripped the fortified strcpy and
+    // aborted the macOS build of ish (the AOT recorder). Copy with a bound.
+    snprintf(uts->hostname, sizeof(uts->hostname), "%s", hostname);
     strcpy(uts->release, "4.20.69-ish");
     snprintf(uts->version, sizeof(uts->version), "%s %s %s", uname_version, __DATE__, __TIME__);
 #if defined(GUEST_ARM64)
