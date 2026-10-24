@@ -124,11 +124,15 @@ jobs:
           n=0
           for f in /tmp/rootfs/var/cache/apk/pkgs/*.apk; do
             [ -f "$f" ] || continue
-            # An .apk is a tar holding .PKGINFO and data.tar.gz; the payload is
-            # the inner tarball.
-            if tar -xzf "$f" -O data.tar.gz 2>/dev/null | tar -xzf - -C /tmp/rootfs 2>/dev/null; then
-              n=$((n + 1))
+            # An .apk is a tar holding .PKGINFO and data.tar.gz. Unpack the
+            # outer archive first and then the payload: `tar -O data.tar.gz`
+            # matched no member under bsdtar, so every file silently counted as
+            # a failure.
+            work="$(mktemp -d)"
+            if tar -xzf "$f" -C "$work" 2>/dev/null && [ -f "$work/data.tar.gz" ]; then
+              tar -xzf "$work/data.tar.gz" -C /tmp/rootfs 2>/dev/null && n=$((n + 1))
             fi
+            rm -rf "$work"
           done
           echo "── unpacked $n packages"
           ls /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
