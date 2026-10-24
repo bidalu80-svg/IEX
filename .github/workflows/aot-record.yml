@@ -60,18 +60,27 @@ jobs:
 
       - name: Prepare rootfs
         run: |
-          set -euo pipefail
-          # A push trigger has no inputs, so the expression is empty there.
+          set -uo pipefail
           v="${{ github.event.inputs.alpine_version || '3.21' }}"
-          curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
-            "https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
-          # `ish -r` is the REALFS path; -f is fakefs. Handing record.sh a
-          # fakefsify output (data/ + meta.db) makes the guest miss /bin/sh,
-          # so unpack the tarball instead.
+          url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
+          echo "alpine=$v"
+          echo "url=$url"
+          rm -f /tmp/alpine.tar.gz
+          if ! curl -fSL --retry 3 --retry-delay 2 -o /tmp/alpine.tar.gz "$url"; then
+            rc=$?
+            echo "curl failed rc=$rc"
+            ls -l /tmp/alpine.tar.gz 2>/dev/null || true
+            exit 1
+          fi
+          ls -l /tmp/alpine.tar.gz
           rm -rf /tmp/rootfs
           mkdir -p /tmp/rootfs/tmp
-          tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs
-          test -x /tmp/rootfs/bin/sh
+          if ! tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs; then
+            echo "tar failed"
+            exit 1
+          fi
+          ls -l /tmp/rootfs/bin/sh || true
+          test -x /tmp/rootfs/bin/sh || { echo "no executable /bin/sh"; exit 1; }
 
       # [T-aot-fetch] `apk add` inside the emulator decompresses ~120 MB with an
       # emulated xz, which took over an hour. `apk fetch` only downloads and
