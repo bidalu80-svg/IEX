@@ -85,18 +85,18 @@ jobs:
           ls -l /tmp/rootfs/bin/sh || true
           test -x /tmp/rootfs/bin/busybox || { echo "no executable busybox"; exit 1; }
 
-      # [T-aot-fetch] `apk add` inside the emulator decompresses ~120 MB with an
-      # emulated xz, which took over an hour. `apk fetch` only downloads and
-      # resolves — that part is network-bound — and the host's real tar does the
-      # extraction. Same result in a couple of minutes.
-      - name: Fetch and unpack the workload packages
+      # [T-aot-install] `apk add` inside the emulator is slow (it decompresses
+      # ~116 MB with an emulated xz), but it is the only path that reliably put
+      # the files where the guest can run them. Two host-side attempts failed:
+      # `apk fetch` wrote 116 MB of .apk that `tar -O data.tar.gz` could not
+      # open, and a two-step extract still unpacked nothing. This runs once, by
+      # hand, and the resulting images are committed — so the cost is paid here
+      # and never in the app build.
+      - name: Install the workload packages
         run: |
           set -uo pipefail
           rel="$(cut -d. -f1,2 /tmp/rootfs/etc/alpine-release)"
-          # NOT /tmp: the guest mounts its own tmpfs there, so files apk wrote
-          # were invisible to the host ("unpacked 0 packages" after a full set
-          # of successful downloads). /var/cache/apk is on the rootfs itself.
-          mkdir -p /tmp/rootfs/etc/apk /tmp/rootfs/var/cache/apk/pkgs
+          mkdir -p /tmp/rootfs/etc/apk
           printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
             "$rel" "$rel" > /tmp/rootfs/etc/apk/repositories
           # A fresh minirootfs has no resolver either; without one apk resolves
@@ -105,37 +105,12 @@ jobs:
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
           PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
-          echo "── apk update && apk fetch --recursive $PKGS"
-          # A fresh rootfs has no APKINDEX, and `apk fetch` then reports
-          # "opening from cache ... No such file or directory" for every repo
-          # and downloads nothing. `apk update` fetches the two indexes (a
-          # couple of MB); only then can fetch resolve the dependency graph.
-          build-macos/ish -r /tmp/rootfs /bin/sh -c \
-            "apk update && apk fetch --recursive --no-progress -o /var/cache/apk/pkgs $PKGS" \
-            || echo "⚠️  apk fetch failed; libraries already present can still record"
-
-          echo "── downloaded:"
-          ls -l /tmp/rootfs/var/cache/apk/pkgs 2>/dev/null | head -5 || true
-          echo "── cache dir:"
-          ls -l /tmp/rootfs/var/cache/apk 2>/dev/null | head -8 || true
-          echo "── any .apk under the rootfs:"
-          find /tmp/rootfs -name '*.apk' 2>/dev/null | head -5 || true
-
-          n=0
-          for f in /tmp/rootfs/var/cache/apk/pkgs/*.apk; do
-            [ -f "$f" ] || continue
-            # An .apk is a tar holding .PKGINFO and data.tar.gz. Unpack the
-            # outer archive first and then the payload: `tar -O data.tar.gz`
-            # matched no member under bsdtar, so every file silently counted as
-            # a failure.
-            work="$(mktemp -d)"
-            if tar -xzf "$f" -C "$work" 2>/dev/null && [ -f "$work/data.tar.gz" ]; then
-              tar -xzf "$work/data.tar.gz" -C /tmp/rootfs 2>/dev/null && n=$((n + 1))
-            fi
-            rm -rf "$work"
-          done
-          echo "── unpacked $n packages"
-          ls /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
+          echo "── apk add --no-cache $PKGS"
+          build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
+            || echo "⚠️  apk add failed; only libraries already present can record"
+          echo "── installed:"
+          ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
+          ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
 
       - name: Record AOT images
         run: |
