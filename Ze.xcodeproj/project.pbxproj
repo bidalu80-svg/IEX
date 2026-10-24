@@ -206,6 +206,7 @@
 		E5E0000A1 /* ExternalFileImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E0000A2 /* ExternalFileImporter.swift */; };
 		E5F000001 /* ISHExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000011 /* ISHExecutionCoordinator.swift */; };
 		AOJITB01 /* AOJITAcceleration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AOJIT001 /* AOJITAcceleration.swift */; };
+		MEMPB01 /* MemoryPressureMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMP001 /* MemoryPressureMonitor.swift */; };
 		CHSRB01 /* ChatSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSR001 /* ChatSearch.swift */; };
 		CHSOB01 /* ChatSearchOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSO001 /* ChatSearchOverlay.swift */; };
 		E5F000002 /* ZeFsRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000012 /* ZeFsRouter.swift */; };
@@ -844,6 +845,7 @@
 		E5E0000A2 /* ExternalFileImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalFileImporter.swift; sourceTree = "<group>"; };
 		E5F000011 /* ISHExecutionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISHExecutionCoordinator.swift; sourceTree = "<group>"; };
 		AOJIT001 /* AOJITAcceleration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITAcceleration.swift; sourceTree = "<group>"; };
+		MEMP001 /* MemoryPressureMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryPressureMonitor.swift; sourceTree = "<group>"; };
 		CHSR001 /* ChatSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearch.swift; sourceTree = "<group>"; };
 		CHSO001 /* ChatSearchOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearchOverlay.swift; sourceTree = "<group>"; };
 		E5F000012 /* ZeFsRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeFsRouter.swift; sourceTree = "<group>"; };
@@ -2064,6 +2066,7 @@
 				E5F000011 /* ISHExecutionCoordinator.swift */,
 				CDNS001 /* ContainerDNS.swift */,
 				AOJIT001 /* AOJITAcceleration.swift */,
+				MEMP001 /* MemoryPressureMonitor.swift */,
 				E5F000012 /* ZeFsRouter.swift */,
 				E5CR00011 /* ShellCommandRingBuffer.swift */,
 			);
@@ -2802,6 +2805,7 @@
 				E5T00000B /* UserMessageEntity.swift in Sources */,
 				E5F000001 /* ISHExecutionCoordinator.swift in Sources */,
 				AOJITB01 /* AOJITAcceleration.swift in Sources */,
+				MEMPB01 /* MemoryPressureMonitor.swift in Sources */,
 				CHSRB01 /* ChatSearch.swift in Sources */,
 				CHSOB01 /* ChatSearchOverlay.swift in Sources */,
 				E5F000002 /* ZeFsRouter.swift in Sources */,
