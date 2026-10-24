@@ -102,9 +102,13 @@ jobs:
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
           PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
-          echo "── apk fetch --recursive $PKGS"
+          echo "── apk update && apk fetch --recursive $PKGS"
+          # A fresh rootfs has no APKINDEX, and `apk fetch` then reports
+          # "opening from cache ... No such file or directory" for every repo
+          # and downloads nothing. `apk update` fetches the two indexes (a
+          # couple of MB); only then can fetch resolve the dependency graph.
           build-macos/ish -r /tmp/rootfs /bin/sh -c \
-            "apk fetch --recursive --no-progress -o /tmp/pkgs $PKGS" \
+            "apk update && apk fetch --recursive --no-progress -o /tmp/pkgs $PKGS" \
             || echo "⚠️  apk fetch failed; libraries already present can still record"
 
           n=0
