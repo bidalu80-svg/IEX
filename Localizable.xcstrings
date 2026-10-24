@@ -79119,7 +79119,14 @@
     "No log files to share." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "没有可分享的日志文件。"}}}} ,
     "Launch Animation" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "启动动画"}}}} ,
     "Plays the Ze launch animation on cold start. When off, the app opens straight to the main screen. Applies on the next launch." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "冷启动时播放 Ze 的启动动效，关闭后直接进入主界面。下次启动生效。"}}}} ,
-    "Plays the Ze launch animation on cold start; when off the app opens straight to the main screen." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "冷启动时播放 Ze 的启动动效，关闭后直接进入主界面。"}}}}
+    "Plays the Ze launch animation on cold start; when off the app opens straight to the main screen." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "冷启动时播放 Ze 的启动动效，关闭后直接进入主界面。"}}}} ,
+    "Install" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "安装"}}}} ,
+    "Replace the installed version?" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "替换已安装的版本？"}}}} ,
+    "This installs the recorded version %@ over the current %@." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "将用录制版本 %@ 覆盖当前的 %@。"}}}} ,
+    "JIT runtime" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "JIT 运行时"}}}} ,
+    "Memory: footprint" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内存：按真实占用"}}}} ,
+    "Memory: ledger" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内存：按页数台账"}}}} ,
+    "Images linked" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已链接镜像"}}}}
   },
   "version" : "1.0"
 }

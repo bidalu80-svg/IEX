@@ -404,6 +404,7 @@ final class AOJITAcceleration: ObservableObject {
         didSet {
             guard isEnabled != oldValue else { return }
             UserDefaults.standard.set(isEnabled, forKey: Self.defaultsKey)
+            applyRuntimeSwitch()
             if isEnabled {
                 prepareIfNeeded()
             }
@@ -421,6 +422,14 @@ final class AOJITAcceleration: ObservableObject {
     /// False when the guest kernel has not booted yet, so the section can say
     /// so instead of spinning forever.
     @Published private(set) var isContainerReady = false
+
+    /// [T-aojit-runtime-switch] What the kernel reports, not what the toggle
+    /// says: read back from `ish_jit_is_enabled()` after every sync.
+    @Published private(set) var jitRuntimeEnabled = false
+    /// True once the host feed has moved admission to footprint mode.
+    @Published private(set) var footprintMode = false
+    /// How many AOT images this build actually links (`ish_aot_image_count`).
+    @Published private(set) var linkedImageCount = 0
 
     // MARK: Private
 
@@ -443,7 +452,7 @@ final class AOJITAcceleration: ObservableObject {
     private let queue = DispatchQueue(label: "com.ze.aojit.record", qos: .utility)
     private let logger = AppLogger(category: "AOJIT")
 
-    private static let probeScript = #"for p in musl busybox python3 nodejs py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(apk info -v "$p" 2>/dev/null | head -n 1)"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
+    private static let probeScript = #"for p in musl busybox python3 nodejs py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(v=$(apk info -e -v "$p" 2>/dev/null | head -n 1); v=${v#"$p"-}; if [ -z "$v" ]; then v=$(apk list --installed "$p" 2>/dev/null | head -n 1 | cut -d' ' -f1); v=${v#"$p"-}; fi; printf '%s' "$v")"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
 
     private init() {
         let defaults = UserDefaults.standard
@@ -477,7 +486,18 @@ final class AOJITAcceleration: ObservableObject {
         // [T-ish-footprint-brake] The kernel booted: start feeding it live
         // memory status so admission follows jetsam's number, not the ledger.
         MemoryPressureMonitor.shared.start()
+        applyRuntimeSwitch()
         prepareIfNeeded()
+    }
+
+    /// [T-aojit-runtime-switch] Push the switch into the engine and read it
+    /// back. Logged so a speed test can be tied to the state it ran in.
+    func applyRuntimeSwitch() {
+        ish_jit_set_enabled(isEnabled)
+        jitRuntimeEnabled = ish_jit_is_enabled()
+        footprintMode = ish_footprint_mode()
+        linkedImageCount = Self.linkedImagePaths().count
+        logger.info("[AOJIT] switch=preference:\(isEnabled) runtime:\(jitRuntimeEnabled) footprint:\(footprintMode) images:\(Self.linkedImagePaths().count)")
     }
 
     /// Re-probe the rootfs. Cheap: one shell command.
@@ -507,6 +527,9 @@ final class AOJITAcceleration: ObservableObject {
                 self.isRefreshing = false
                 self.saveCachedProbe()
                 self.rebuildStates()
+                self.footprintMode = ish_footprint_mode()
+                self.jitRuntimeEnabled = ish_jit_is_enabled()
+                self.linkedImageCount = Self.linkedImagePaths().count
                 self.recordMissingImages()
             }
         }
@@ -716,6 +739,19 @@ final class AOJITAcceleration: ObservableObject {
                 durationMs: recording?.durationMs,
                 status: status
             )
+        }
+
+        // [T-aojit-order] Available first: the page should answer "where is the
+        // speed" before "what is missing".
+        states.sort { Self.rank($0.status) < Self.rank($1.status) }
+    }
+
+    private static func rank(_ status: AOJITLibraryState.Status) -> Int {
+        switch status {
+        case .available:    return 0
+        case .partial:      return 1
+        case .recording:    return 2
+        case .notInstalled: return 3
         }
     }
 

@@ -93,5 +93,11 @@ bool jit_crash_sync(void *ucontext);
 // writes the code region.
 void jit_report(void);
 
+// [T-aojit-runtime-switch] Turn the translator on or off while the app runs.
+// Off: every block runs as gadgets (and AOT images are not installed either),
+// which is what makes an A/B speed measurement possible in one session.
+void ish_jit_set_enabled(bool on);
+bool ish_jit_is_enabled(void);
+
 #endif
 #endif

@@ -2643,3 +2643,28 @@ static void jit_segment_installed(struct fiber_block *b, const struct jit_units 
     if (cm_on)
         cm_segment(U, first, end, code, words);
 }
+
+// ---------------------------------------------------------------- runtime switch
+
+// [T-aojit-runtime-switch] The AOJIT toggle used to change nothing inside the
+// engine: it only ran a warm-up command in the guest, so a speed test could
+// never show a difference. These two expose `jit_on`, which jit_units_begin()
+// already consults (NULL -> the block runs as plain gadgets).
+//
+// Enabling with neither a code region nor an AOT image would leave jit_on true
+// with nothing to run, so that case is refused and reported.
+void ish_jit_set_enabled(bool on) {
+    pthread_once(&init_once, jit_init);
+    if (on && !region && aot_nregistered == 0) {
+        jit_on = false;
+        fprintf(stderr, "\U0001F9E9 JIT: no code region and no AOT images, staying off\n");
+        return;
+    }
+    jit_on = on;
+    fprintf(stderr, "\U0001F9E9 JIT: %s\n", on ? "enabled" : "disabled");
+}
+
+bool ish_jit_is_enabled(void) {
+    pthread_once(&init_once, jit_init);
+    return jit_on;
+}

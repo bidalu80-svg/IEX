@@ -16,6 +16,10 @@ import SwiftUI
 struct AOJITSection: View {
     @ObservedObject var aojit: AOJITAcceleration
 
+    /// [T-aojit-repair] A version mismatch is repaired by installing the
+    /// *recorded* version over the installed one, so it asks first.
+    @State private var pendingOverwrite: AOJITLibraryState?
+
     var body: some View {
         Section {
             Toggle(isOn: $aojit.isEnabled) {
@@ -34,6 +38,7 @@ struct AOJITSection: View {
             // says what the feature covers instead, matching the app's own
             // off-state copy.
             if aojit.isEnabled {
+                diagnosticsRow
                 if aojit.states.isEmpty {
                     HStack(spacing: 8) {
                         if aojit.isContainerReady {
@@ -107,7 +112,9 @@ struct AOJITSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !state.isAvailable {
+            // [T-aojit-repair] Partial rows need the button too: that is the
+            // case where the installed version differs from the recorded one.
+            if state.status == .partial || state.status == .notInstalled {
                 repairButton(state)
             }
 
@@ -142,16 +149,45 @@ struct AOJITSection: View {
             )
     }
 
+    private var diagnosticsRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(aojit.jitRuntimeEnabled ? Color.green : Color.secondary)
+                    .frame(width: 7, height: 7)
+                Text(String(localized: "JIT runtime") + ": "
+                     + (aojit.jitRuntimeEnabled ? String(localized: "On") : String(localized: "Off")))
+                    .font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 8)
+                Text(aojit.footprintMode
+                     ? String(localized: "Memory: footprint")
+                     : String(localized: "Memory: ledger"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Text(String(localized: "Images linked") + ": \(aojit.linkedImageCount)")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("settings.aojit.diagnostics")
+    }
+
     private func repairButton(_ state: AOJITLibraryState) -> some View {
         Button {
-            aojit.repair(state)
+            if state.status == .partial {
+                pendingOverwrite = state
+            } else {
+                aojit.repair(state)
+            }
         } label: {
             HStack(spacing: 6) {
                 if aojit.busyLibraryId == state.id {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Text(String(localized: "Repair: install") + " " + state.library.repairSpec)
+                Text((state.status == .partial
+                      ? String(localized: "Repair: install")
+                      : String(localized: "Install")) + " " + state.library.repairSpec)
                     .font(.system(size: 15, weight: .semibold))
             }
             .foregroundStyle(Color.accentColor)
@@ -165,6 +201,21 @@ struct AOJITSection: View {
         .buttonStyle(.plain)
         .disabled(aojit.busyLibraryId != nil)
         .padding(.top, 2)
+        .alert(String(localized: "Replace the installed version?"),
+               isPresented: Binding(get: { pendingOverwrite != nil },
+                                    set: { if !$0 { pendingOverwrite = nil } })) {
+            Button(String(localized: "Cancel"), role: .cancel) { pendingOverwrite = nil }
+            Button(String(localized: "Replace"), role: .destructive) {
+                if let state = pendingOverwrite { aojit.repair(state) }
+                pendingOverwrite = nil
+            }
+        } message: {
+            if let state = pendingOverwrite {
+                Text(String(format: String(localized: "This installs the recorded version %@ over the current %@."),
+                            state.library.repairSpec,
+                            state.installedVersion ?? "?"))
+            }
+        }
     }
 }
 

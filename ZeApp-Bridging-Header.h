@@ -15,6 +15,13 @@
 // [T-aojit-status] ish_aot_image_count()/path(): what is linked in.
 #include "ish/asbestos/guest-arm64/aot.h"
 
+// [T-aojit-runtime-switch] Declared here rather than by including jit.h: that
+// header pulls in the whole translator (gen.h, fiber blocks), which Swift only
+// needs to see as two functions.
+#include <stdbool.h>
+void ish_jit_set_enabled(bool on);
+bool ish_jit_is_enabled(void);
+
 // Additional headers not in umbrella
 #include "fs/devices.h"
 
