@@ -77,6 +77,10 @@ check('"reasoning.text"' in oa_agent and '"reasoning.summary"' in oa_agent
 # 4. Transport must outlive the watchdog.
 check("ResponseIdleTimeoutSetting.transportTimeout(forInstanceId:" in oa,
       "OpenAI extends the request timeout")
+check("TimeInterval(clamp(seconds(forInstanceId: id))) + 30" in agent,
+      "transport follows the setting downward too, so TTFB is bounded by it")
+check("idle > sessionDefault" not in agent,
+      "transport is no longer extension-only (that left 120 s settings on a 600 s socket)")
 check("ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: providerInstanceId)" in gm,
       "Gemini extends the request timeout")
 check("ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: providerInstanceId)" in ag,
@@ -112,6 +116,8 @@ check(detail.index("apiFormatSection" if "apiFormatSection" in detail else "MARK
       "row sits above the API format section")
 check("private func responseIdleTimeoutSection(_ instance: ProviderInstance)" in detail,
       "row is implemented")
+check("guard responseIdleLoadedFor != instance.id else { return }" in detail,
+      "row state loads once per instance, so a Form rebuild cannot reset an edit")
 check("ResponseIdleTimeoutSetting.set(picked, forInstanceId: instance.id)" in detail,
       "preset selection is persisted")
 check("typed >= ResponseIdleTimeoutSetting.minSeconds" in detail

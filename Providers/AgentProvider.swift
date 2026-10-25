@@ -252,18 +252,14 @@ enum ResponseIdleTimeoutSetting {
         defaults.set(clamp(seconds), forKey: key(forInstanceId: id))
     }
 
-    /// The per-request URLSession timeout a streaming request needs so the
-    /// transport does not give up before the watchdog does. nil = leave the
-    /// session's own 600 s alone.
-    static func requestTimeout(forIdleSeconds idle: Int, sessionDefault: Int = 600) -> TimeInterval? {
-        idle > sessionDefault ? TimeInterval(idle + 30) : nil
-    }
-
-    /// [T-sse-idle-timeout] The same budget resolved for an instance, with the
-    /// session default filled in so callers can assign it unconditionally.
-    static func transportTimeout(forInstanceId id: String?, sessionDefault: Int = 600) -> TimeInterval {
-        requestTimeout(forIdleSeconds: seconds(forInstanceId: id), sessionDefault: sessionDefault)
-            ?? TimeInterval(sessionDefault)
+    /// [T-sse-idle-timeout] The transport budget a request needs so URLSession
+    /// does not give up before the stall watchdog does. It follows the setting
+    /// in BOTH directions: the watchdog only starts once the response headers
+    /// have arrived, so a server that never sends the first byte is bounded by
+    /// this value alone. Leaving it at 600 while the user asked for 2 minutes
+    /// made the setting look dead for the exact case it exists for.
+    static func transportTimeout(forInstanceId id: String?, minimum: TimeInterval = 60) -> TimeInterval {
+        max(TimeInterval(clamp(seconds(forInstanceId: id))) + 30, minimum)
     }
 }
 // END ResponseIdleTimeoutSetting

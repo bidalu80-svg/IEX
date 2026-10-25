@@ -288,6 +288,7 @@ extension AIChatViewModel {
         // (a local server prefilling a large context sends nothing for
         // minutes). Read once per stream.
         let stallTimeoutSeconds: TimeInterval = provider.responseIdleTimeout
+        logger.info("[StreamStall] watchdog armed: \(Int(stallTimeoutSeconds))s instance=\(provider.providerInstanceId ?? "nil") provider=\(provider.name)")
         var _streamError: Error? = nil
         let iterBox = StreamIteratorBox(stream)
         do {

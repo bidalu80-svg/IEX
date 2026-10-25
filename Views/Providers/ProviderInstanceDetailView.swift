@@ -26,6 +26,10 @@ struct ProviderInstanceDetailView: View {
     @State private var responseIdleSeconds = ResponseIdleTimeoutSetting.defaultSeconds
     @State private var responseIdleIsCustom = false
     @State private var responseIdleCustomText = ""
+    /// Which instance the three states above were loaded for. The Form rebuilds
+    /// often, and a reload on every `onAppear` would overwrite whatever the
+    /// user is editing with the value still on disk.
+    @State private var responseIdleLoadedFor: String?
     @State private var showManualTokenInput = false
     @State private var manualTokenInputText = ""
     @State private var editingModelEntry: ModelEntry?
@@ -694,12 +698,19 @@ struct ProviderInstanceDetailView: View {
         } footer: {
             Text(String(localized: "The longest wait for the first byte of a reply, and for the gap between two pieces of it. Past that the connection is treated as stalled and retried. This is not a limit on how long a reply may take: a stream that keeps arriving never times out. Raise it when a local model needs minutes to process a long context; a dropped connection is then noticed that much later. Stored on this device only."))
         }
-        .onAppear {
-            let stored = ResponseIdleTimeoutSetting.seconds(forInstanceId: instance.id)
-            responseIdleSeconds = stored
-            responseIdleIsCustom = !ResponseIdleTimeoutSetting.presets.contains(stored)
-            responseIdleCustomText = String(stored)
-        }
+        .onAppear { loadResponseIdle(instance) }
+    }
+
+    /// Reads the stored value once per instance. Repeated `onAppear` calls are
+    /// what made a freshly picked "Custom…" snap back to the default before it
+    /// could be saved.
+    private func loadResponseIdle(_ instance: ProviderInstance) {
+        guard responseIdleLoadedFor != instance.id else { return }
+        responseIdleLoadedFor = instance.id
+        let stored = ResponseIdleTimeoutSetting.seconds(forInstanceId: instance.id)
+        responseIdleSeconds = stored
+        responseIdleIsCustom = !ResponseIdleTimeoutSetting.presets.contains(stored)
+        responseIdleCustomText = String(stored)
     }
 
     private func saveCustomResponseIdle(_ instance: ProviderInstance) {
