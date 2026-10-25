@@ -225,7 +225,11 @@ protocol AgentProvider {
 /// server.
 enum ResponseIdleTimeoutSetting {
     static let defaultSeconds = 120
-    static let minSeconds = 30
+    /// 5, not 30: the row is used to *test* whether a stall is noticed, and a
+    /// 30 s floor made a quick check take half a minute. Typing a value below
+    /// the floor used to be dropped without a word, which read as "it does not
+    /// save"; the row now clamps visibly instead.
+    static let minSeconds = 5
     /// No "never": a stream that really died would leave the turn waiting
     /// forever, holding a session slot and the background keep-alive.
     static let maxSeconds = 3600

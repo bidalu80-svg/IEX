@@ -50,7 +50,7 @@ detail = src("Views/Providers/ProviderInstanceDetailView.swift")
 # 1. Setting shape, identical to upstream v1.15.
 check("enum ResponseIdleTimeoutSetting" in agent, "setting type exists")
 check("static let defaultSeconds = 120" in agent, "default is 120 s")
-check("static let minSeconds = 30" in agent, "minimum is 30 s")
+check("static let minSeconds = 5" in agent, "minimum is 5 s, so a stall test is quick")
 check("static let maxSeconds = 3600" in agent, "maximum is 3600 s")
 check("static let presets = [120, 300, 600, 1800, 3600]" in agent, "presets match upstream")
 check("provider.responseIdleTimeout." in agent, "key is scoped per instance")
@@ -126,5 +126,33 @@ check("typed >= ResponseIdleTimeoutSetting.minSeconds" in detail
 check("if instance.supportsCustomUserAgent {" in detail and
       "responseIdleTimeoutSection(instance)\n" in detail,
       "row is not gated to a single provider type")
+
+# 8. A stall must be surfaced without waiting for one more event.
+#    `group.cancelAll()` after `group.next()` never ran on the throwing path,
+#    and a throwing task group awaits its children before leaving the scope, so
+#    the still-suspended iterator kept the timeout trapped until the stream
+#    produced something else. Every value of the setting was unenforceable
+#    against a server that went silent, which is the only case it exists for.
+check("defer { group.cancelAll() }" in sse,
+      "the watchdog cancels the iterator on the throwing path, not after it")
+check(sse.index("defer { group.cancelAll() }") < sse.index("return try await group.next()!"),
+      "cancellation is armed before awaiting the race")
+check("let result = try await group.next()!\n                group.cancelAll()" not in sse,
+      "the unreachable cancelAll() on the throw path is gone")
+
+# 9. An out-of-range entry must not be dropped without a word.
+check("static let minSeconds = 5" in agent,
+      "the floor allows a quick stall test instead of half a minute")
+check("responseIdleError = String(localized: \"Enter a number of seconds.\")" in detail,
+      "a non-numeric entry reports itself")
+check("responseIdleError = String(\n                format: String(localized: \"Use %d–%d seconds.\")" in detail,
+      "an out-of-range entry reports the range instead of being dropped")
+check("private func commitCustomResponseIdle" in detail
+      and "responseIdleCustomText = String(value)" in detail,
+      "leaving the field clamps and writes the effective value back")
+check(".onDisappear { commitCustomResponseIdle(instance) }" in detail,
+      "leaving the screen commits the edit")
+check("Seconds (30–3600)" not in detail,
+      "the range label is derived from the setting, not hardcoded")
 
 print(f"\nSSE idle timeout structure checks passed: {checks}")

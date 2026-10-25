@@ -26,6 +26,9 @@ struct ProviderInstanceDetailView: View {
     @State private var responseIdleSeconds = ResponseIdleTimeoutSetting.defaultSeconds
     @State private var responseIdleIsCustom = false
     @State private var responseIdleCustomText = ""
+    /// Shown under the field while the typed number is unusable, so an
+    /// out-of-range entry is never silently discarded.
+    @State private var responseIdleError: String?
     /// Which instance the three states above were loaded for. The Form rebuilds
     /// often, and a reload on every `onAppear` would overwrite whatever the
     /// user is editing with the value still on disk.
@@ -682,15 +685,26 @@ struct ProviderInstanceDetailView: View {
             }
             if responseIdleIsCustom {
                 HStack {
-                    Text(String(localized: "Seconds (30–3600)"))
+                    Text(String(
+                        format: String(localized: "Seconds (%d–%d)"),
+                        ResponseIdleTimeoutSetting.minSeconds,
+                        ResponseIdleTimeoutSetting.maxSeconds
+                    ))
                     Spacer()
                     TextField("120", text: $responseIdleCustomText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(maxWidth: 100)
-                        .onSubmit { saveCustomResponseIdle(instance) }
-                        .onDisappear { saveCustomResponseIdle(instance) }
+                        .onSubmit { commitCustomResponseIdle(instance) }
                         .onChange(of: responseIdleCustomText) { _ in saveCustomResponseIdle(instance) }
+                }
+                // A value outside the range used to be dropped silently, so the
+                // field kept showing a number that was never stored and the row
+                // reverted to the default on the next visit.
+                if let responseIdleError {
+                    Text(responseIdleError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 }
             }
         } header: {
@@ -699,6 +713,9 @@ struct ProviderInstanceDetailView: View {
             Text(String(localized: "The longest wait for the first byte of a reply, and for the gap between two pieces of it. Past that the connection is treated as stalled and retried. This is not a limit on how long a reply may take: a stream that keeps arriving never times out. Raise it when a local model needs minutes to process a long context; a dropped connection is then noticed that much later. Stored on this device only."))
         }
         .onAppear { loadResponseIdle(instance) }
+        // Leaving the screen commits whatever is typed, clamped into range, so
+        // an edit can never be discarded just because Return was not pressed.
+        .onDisappear { commitCustomResponseIdle(instance) }
     }
 
     /// Reads the stored value once per instance. Repeated `onAppear` calls are
@@ -711,15 +728,44 @@ struct ProviderInstanceDetailView: View {
         responseIdleSeconds = stored
         responseIdleIsCustom = !ResponseIdleTimeoutSetting.presets.contains(stored)
         responseIdleCustomText = String(stored)
+        responseIdleError = nil
     }
 
+    /// Stores a typed value, but only while it is inside the allowed range.
+    /// Out-of-range input now says so instead of being dropped silently.
     private func saveCustomResponseIdle(_ instance: ProviderInstance) {
-        guard responseIdleIsCustom,
-              let typed = Int(responseIdleCustomText.trimmingCharacters(in: .whitespaces)),
-              typed >= ResponseIdleTimeoutSetting.minSeconds,
-              typed <= ResponseIdleTimeoutSetting.maxSeconds else { return }
+        guard responseIdleIsCustom else { return }
+        guard let typed = Int(responseIdleCustomText.trimmingCharacters(in: .whitespaces)) else {
+            responseIdleError = String(localized: "Enter a number of seconds.")
+            return
+        }
+        guard typed >= ResponseIdleTimeoutSetting.minSeconds,
+              typed <= ResponseIdleTimeoutSetting.maxSeconds else {
+            responseIdleError = String(
+                format: String(localized: "Use %d–%d seconds."),
+                ResponseIdleTimeoutSetting.minSeconds,
+                ResponseIdleTimeoutSetting.maxSeconds
+            )
+            return
+        }
+        responseIdleError = nil
         responseIdleSeconds = typed
         ResponseIdleTimeoutSetting.set(typed, forInstanceId: instance.id)
+    }
+
+    /// Clamps whatever is in the field into range, stores it, and writes the
+    /// effective value back. Runs when the keyboard is dismissed or the screen
+    /// is left, so a half-typed or out-of-range number still ends up as a
+    /// value that is both stored and visible.
+    private func commitCustomResponseIdle(_ instance: ProviderInstance) {
+        guard responseIdleIsCustom else { return }
+        let typed = Int(responseIdleCustomText.trimmingCharacters(in: .whitespaces))
+            ?? responseIdleSeconds
+        let value = ResponseIdleTimeoutSetting.clamp(typed)
+        responseIdleSeconds = value
+        responseIdleError = nil
+        ResponseIdleTimeoutSetting.set(value, forInstanceId: instance.id)
+        responseIdleCustomText = String(value)
     }
 
     // MARK: - Image Generation Endpoint

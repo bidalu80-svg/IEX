@@ -299,9 +299,16 @@ extension AIChatViewModel {
                     try await Task.sleep(nanoseconds: UInt64(stallTimeoutSeconds * 1_000_000_000))
                     throw StreamStallError(seconds: Int(stallTimeoutSeconds))
                 }
-                let result = try await group.next()!
-                group.cancelAll()
-                return result
+                // [T-sse-idle-timeout] `defer`, not a statement after
+                // `group.next()`: when the sleep task threw, `group.next()`
+                // rethrew immediately and the `cancelAll()` on the following
+                // line never ran. A throwing task group has to await every
+                // child before it can leave its scope, so the still-suspended
+                // `iterBox.next()` kept the error trapped until the stream
+                // produced one more event. That is why a server that went
+                // silent never timed out, at 2 minutes or at any other value.
+                defer { group.cancelAll() }
+                return try await group.next()!
             }
             guard let event = maybeEvent else { break }
             try Task.checkCancellation()
