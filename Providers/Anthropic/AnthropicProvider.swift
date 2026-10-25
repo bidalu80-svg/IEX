@@ -21,6 +21,10 @@ final class AnthropicProvider: LLMProvider {
     let name = "Anthropic"
     var model: LLMModel
 
+    /// [T-sse-idle-timeout] The ProviderInstance this client was built for.
+    /// Runtime-only; read by the agent provider for the idle timeout.
+    var providerInstanceId: String?
+
     /// The underlying SDK service — exposed for direct tool-use calls.
     let service: AnthropicService
 
@@ -127,10 +131,18 @@ final class AnthropicProvider: LLMProvider {
         return host == "api.anthropic.com" || host.hasSuffix(".anthropic.com")
     }
 
-    init(apiKey: String, model: LLMModel = .claudeHaiku45, basePath: String? = nil, appendV1Suffix: Bool = true, customUserAgent: String? = nil) {
+    /// [T-sse-idle-timeout] The transport budget this instance needs so
+    /// URLSession does not give up before the stall watchdog does. 600 s unless
+    /// the user raised the response idle timeout above that.
+    static func transportTimeout(for instanceId: String?) -> TimeInterval {
+        ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: instanceId)
+    }
+
+    init(apiKey: String, model: LLMModel = .claudeHaiku45, basePath: String? = nil, appendV1Suffix: Bool = true, customUserAgent: String? = nil, instanceId: String? = nil) {
         self.model = model
         self.isClaudeCode = false
         self.betaHeaders = nil
+        self.providerInstanceId = instanceId
         let resolvedBase = appendV1Suffix
             ? stripV1Suffix(basePath ?? "https://api.anthropic.com")
             : (basePath ?? "https://api.anthropic.com")
@@ -139,16 +151,19 @@ final class AnthropicProvider: LLMProvider {
             apiKey: apiKey,
             basePath: resolvedBase,
             betaHeaders: nil,
-            httpClient: EagerStreamingHTTPClient(customUserAgent: customUserAgent)
+            httpClient: EagerStreamingHTTPClient(
+                customUserAgent: customUserAgent,
+                requestTimeout: Self.transportTimeout(for: instanceId))
         )
     }
 
     /// Manual token constructor: sends both `x-api-key` and `Authorization: Bearer` headers
     /// for maximum compatibility with third-party proxies and Coding Plan endpoints.
-    init(manualToken: String, model: LLMModel = .claudeHaiku45, basePath: String? = nil, appendV1Suffix: Bool = true, customUserAgent: String? = nil) {
+    init(manualToken: String, model: LLMModel = .claudeHaiku45, basePath: String? = nil, appendV1Suffix: Bool = true, customUserAgent: String? = nil, instanceId: String? = nil) {
         self.model = model
         self.isClaudeCode = false
         self.betaHeaders = nil
+        self.providerInstanceId = instanceId
         let resolvedBase = appendV1Suffix
             ? stripV1Suffix(basePath ?? "https://api.anthropic.com")
             : (basePath ?? "https://api.anthropic.com")
@@ -157,7 +172,9 @@ final class AnthropicProvider: LLMProvider {
             apiKey: manualToken,
             basePath: resolvedBase,
             betaHeaders: nil,
-            httpClient: DualAuthHTTPClient(customUserAgent: customUserAgent)
+            httpClient: DualAuthHTTPClient(
+                customUserAgent: customUserAgent,
+                requestTimeout: Self.transportTimeout(for: instanceId))
         )
     }
 
@@ -165,12 +182,14 @@ final class AnthropicProvider: LLMProvider {
         oauthTokenProvider: @escaping @Sendable () async throws -> String,
         model: LLMModel = .claudeHaiku45,
         basePath: String? = nil,
-        appendV1Suffix: Bool = true
+        appendV1Suffix: Bool = true,
+        instanceId: String? = nil
     ) {
         let headers = ["oauth-2025-04-20"]
         self.model = model
         self.isClaudeCode = true
         self.betaHeaders = headers
+        self.providerInstanceId = instanceId
         let resolvedBase = appendV1Suffix
             ? stripV1Suffix(basePath ?? "https://api.anthropic.com")
             : (basePath ?? "https://api.anthropic.com")
@@ -179,7 +198,9 @@ final class AnthropicProvider: LLMProvider {
             apiKey: "oauth-placeholder",
             basePath: resolvedBase,
             betaHeaders: headers,
-            httpClient: OAuthHTTPClient(tokenProvider: oauthTokenProvider)
+            httpClient: OAuthHTTPClient(
+                tokenProvider: oauthTokenProvider,
+                requestTimeout: Self.transportTimeout(for: instanceId))
         )
     }
 

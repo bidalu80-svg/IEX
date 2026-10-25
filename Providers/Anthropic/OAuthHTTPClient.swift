@@ -22,7 +22,11 @@ final class OAuthHTTPClient: HTTPClient {
     private let underlying: URLSessionHTTPClientAdapter
     private let registryId: String
 
-    init(tokenProvider: @escaping @Sendable () async throws -> String) {
+    /// - Parameter requestTimeout: per-request idle budget. The provider passes
+    ///   the instance's response idle timeout here so the transport does not
+    ///   give up before the stall watchdog does.
+    init(tokenProvider: @escaping @Sendable () async throws -> String,
+         requestTimeout: TimeInterval = 600) {
         let box = TokenBox()
         box.set(tokenProvider)
         let rid = UUID().uuidString
@@ -30,7 +34,7 @@ final class OAuthHTTPClient: HTTPClient {
         TokenBoxRegistry.shared.register(id: rid, box: box)
 
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 600  // 10 min — SSE streams can be idle during large tool generation
+        config.timeoutIntervalForRequest = requestTimeout
         config.protocolClasses = [OAuthURLProtocol.self]
         config.httpAdditionalHeaders = (config.httpAdditionalHeaders ?? [:]).merging(
             ["X-Ze-OAuth-UUID": rid]) { _, new in new }
@@ -1424,9 +1428,9 @@ final class EagerStreamingHTTPClient: HTTPClient {
     /// - Parameter customUserAgent: when non-nil, overrides the default URLSession
     ///   `User-Agent` on every request through `httpAdditionalHeaders` (proxies that
     ///   gate on client UA). The SDK never sets User-Agent itself, so this takes effect.
-    init(customUserAgent: String? = nil) {
+    init(customUserAgent: String? = nil, requestTimeout: TimeInterval = 600) {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 600  // 10 min — SSE streams can be idle during large tool generation
+        config.timeoutIntervalForRequest = requestTimeout
         config.protocolClasses = [EagerStreamingURLProtocol.self]
         if let ua = customUserAgent {
             config.httpAdditionalHeaders = (config.httpAdditionalHeaders ?? [:]).merging(
@@ -1451,9 +1455,9 @@ final class DualAuthHTTPClient: HTTPClient {
     private let underlying: URLSessionHTTPClientAdapter
 
     /// - Parameter customUserAgent: see `EagerStreamingHTTPClient.init`.
-    init(customUserAgent: String? = nil) {
+    init(customUserAgent: String? = nil, requestTimeout: TimeInterval = 600) {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 600
+        config.timeoutIntervalForRequest = requestTimeout
         config.protocolClasses = [DualAuthURLProtocol.self]
         if let ua = customUserAgent {
             config.httpAdditionalHeaders = (config.httpAdditionalHeaders ?? [:]).merging(

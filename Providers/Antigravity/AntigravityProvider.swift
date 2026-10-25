@@ -13,6 +13,10 @@ final class AntigravityProvider: LLMProvider {
     private let authTokenProvider: () async throws -> String
     var projectID: String?
 
+    /// [T-sse-idle-timeout] The ProviderInstance this client was built for.
+    /// Runtime-only; read by the agent provider for the idle timeout.
+    var providerInstanceId: String?
+
     /// Stable session ID for the lifetime of this provider instance.
     private let sessionId = UUID().uuidString
 
@@ -330,6 +334,8 @@ final class AntigravityProvider: LLMProvider {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // [T-sse-idle-timeout] Match the stall watchdog when the user raised it.
+        request.timeoutInterval = ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: providerInstanceId)
 
         let token = try await authTokenProvider()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

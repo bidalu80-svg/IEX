@@ -90,6 +90,11 @@ final class OpenAIProvider: LLMProvider {
     /// runtime-only: the rule is selected when a request is built, never sent.
     var thinkingRuleInstanceId: String?
 
+    /// [T-sse-idle-timeout] The ProviderInstance this client was built for.
+    /// Runtime-only, like `thinkingRuleInstanceId`; used to read per-device
+    /// settings such as the response idle timeout.
+    var providerInstanceId: String?
+
     /// [T-model-use-endpoint-override] Absolute-path endpoint override.
     /// When set (must start with "/"), it replaces the ENTIRE URL path after
     /// scheme+host — unlike the legacy `imagePathOverride`, which is joined
@@ -548,6 +553,12 @@ final class OpenAIProvider: LLMProvider {
         )
         logOutgoingRequest(url: url, headers: request.allHTTPHeaderFields, body: body)
         #endif
+
+        // [T-sse-idle-timeout] A provider whose response idle timeout is set
+        // above the session's 600 s needs the transport to wait as long, or
+        // URLSession ends the stream first. Applies to every streaming request
+        // this client makes; the default resolves to the session's own 600 s.
+        request.timeoutInterval = ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: providerInstanceId)
 
         let (byteStream, response) = try await streamingSession.bytes(for: request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1

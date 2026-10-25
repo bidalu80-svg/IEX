@@ -61,6 +61,10 @@ enum LLMProviderFactory {
     @discardableResult
     static func applyCustomUserAgent(_ provider: OpenAIProvider, instance: ProviderInstance) -> OpenAIProvider {
         provider.thinkingRuleInstanceId = instance.id
+        // [T-sse-idle-timeout] Every OpenAI-compatible client carries its
+        // instance id so the streaming path can read the per-device response
+        // idle timeout. Set before the OAuth early return below.
+        provider.providerInstanceId = instance.id
         // OAuth (Codex) requires its own `codex_cli_rs/...` UA — never touch it.
         guard !provider.isOAuth else { return provider }
         // A user-set per-provider custom UA wins (only honored for
@@ -88,6 +92,7 @@ enum LLMProviderFactory {
         // The OAuth (Claude Code) path below is deliberately excluded — its required
         // `claude-cli/...` UA is set in OAuthURLProtocol and must not be overridden.
         let ua = instance.supportsCustomUserAgent ? instance.effectiveCustomUserAgent : nil
+        let provider: AnthropicProvider
         switch instance.credentialType {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
@@ -95,43 +100,53 @@ enum LLMProviderFactory {
             // SDK (which sets no UA itself) doesn't fall back to URLSession's
             // build-number default. OAuth branches below keep nil so the
             // claude-cli UA set in OAuthURLProtocol is preserved.
-            return AnthropicProvider(apiKey: key, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua ?? ZeUserAgent.default)
+            provider = AnthropicProvider(apiKey: key, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua ?? ZeUserAgent.default, instanceId: instance.id)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
-                return AnthropicProvider(manualToken: manualToken, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua)
+                provider = AnthropicProvider(manualToken: manualToken, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua, instanceId: instance.id)
+            } else {
+                let iid = instance.id
+                provider = AnthropicProvider(
+                    oauthTokenProvider: { try await ClaudeOAuthManager.shared.validAccessToken(instanceId: iid) },
+                    model: model,
+                    basePath: customBase,
+                    appendV1Suffix: appendV1,
+                    instanceId: iid
+                )
             }
-            let iid = instance.id
-            return AnthropicProvider(
-                oauthTokenProvider: { try await ClaudeOAuthManager.shared.validAccessToken(instanceId: iid) },
-                model: model,
-                basePath: customBase,
-                appendV1Suffix: appendV1
-            )
         }
+        // [T-sse-idle-timeout] Read by the agent provider for the idle timeout.
+        provider.providerInstanceId = instance.id
+        return provider
     }
 
     static func makeGeminiProvider(instance: ProviderInstance, model: LLMModel) async -> GeminiProvider {
         let customBase = instance.effectiveCustomBaseURL
+        let provider: GeminiProvider
         switch instance.credentialType {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
-            return GeminiProvider(apiKey: key, model: model, customBasePath: customBase)
+            provider = GeminiProvider(apiKey: key, model: model, customBasePath: customBase)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
-                return GeminiProvider(apiKey: manualToken, model: model, customBasePath: customBase)
+                provider = GeminiProvider(apiKey: manualToken, model: model, customBasePath: customBase)
+            } else {
+                let iid = instance.id
+                if GeminiOAuthManager.shared.gcpProjectID(instanceId: iid) == nil {
+                    await GeminiOAuthManager.shared.discoverProjectIfNeeded(instanceId: iid)
+                }
+                let p = GeminiProvider(
+                    oauthTokenProvider: { try await GeminiOAuthManager.shared.validAccessToken(instanceId: iid) },
+                    model: model,
+                    customBasePath: customBase
+                )
+                p.gcpProjectID = GeminiOAuthManager.shared.gcpProjectID(instanceId: iid)
+                provider = p
             }
-            let iid = instance.id
-            if GeminiOAuthManager.shared.gcpProjectID(instanceId: iid) == nil {
-                await GeminiOAuthManager.shared.discoverProjectIfNeeded(instanceId: iid)
-            }
-            let provider = GeminiProvider(
-                oauthTokenProvider: { try await GeminiOAuthManager.shared.validAccessToken(instanceId: iid) },
-                model: model,
-                customBasePath: customBase
-            )
-            provider.gcpProjectID = GeminiOAuthManager.shared.gcpProjectID(instanceId: iid)
-            return provider
         }
+        // [T-sse-idle-timeout] Read by the agent provider for the idle timeout.
+        provider.providerInstanceId = instance.id
+        return provider
     }
 
     static func makeOpenAIProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
@@ -166,6 +181,9 @@ enum LLMProviderFactory {
                 model: model
             )
             provider.codexAccountId = CodexOAuthManager.shared.accountId(instanceId: iid)
+            // [T-sse-idle-timeout] Codex sign-in skips applyCustomUserAgent, so
+            // set the id here too; its timeout stays the default either way.
+            provider.providerInstanceId = iid
             return provider
         }
     }
@@ -310,6 +328,8 @@ enum LLMProviderFactory {
         if let baseURL = AntigravityOAuthManager.shared.resolvedBaseURL(instanceId: iid) {
             provider.activeBaseURL = baseURL
         }
+        // [T-sse-idle-timeout] Read by the agent provider for the idle timeout.
+        provider.providerInstanceId = iid
         return provider
     }
 }

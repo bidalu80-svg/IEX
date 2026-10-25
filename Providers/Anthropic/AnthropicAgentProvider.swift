@@ -14,6 +14,10 @@ final class AnthropicAgentProvider: AgentProvider {
     var model: LLMModel { provider.model }
     var defaultMaxTokens: Int { 64_000 }
 
+    /// [T-sse-idle-timeout] Lets the shared default read this instance's
+    /// response idle timeout.
+    var providerInstanceId: String? { provider.providerInstanceId }
+
     /// Max transparent retries when OPENING the stream fails with a transient
     /// network error. 2 retries = up to 3 total attempts, with 1s + 2s backoff.
     private static let maxStreamConnectRetries = 2

@@ -283,11 +283,11 @@ extension AIChatViewModel {
             return "\(raw)-\(n)"
         }
 
-        // Keep the parser watchdog aligned with the 10-minute idle timeout used
-        // by every provider streaming URLSession. Reasoning-heavy requests can
-        // legitimately emit no parsed AgentStreamEvent for longer than two
-        // minutes; the old 120s guard aborted those live connections early.
-        let stallTimeoutSeconds: TimeInterval = 600
+        // [T-sse-idle-timeout] 120 s for every provider except an
+        // OpenAI-compatible one whose user set a longer response idle timeout
+        // (a local server prefilling a large context sends nothing for
+        // minutes). Read once per stream.
+        let stallTimeoutSeconds: TimeInterval = provider.responseIdleTimeout
         var _streamError: Error? = nil
         let iterBox = StreamIteratorBox(stream)
         do {
@@ -880,6 +880,11 @@ extension AIChatViewModel {
                 #if DEBUG
                 result.iterationUsage.add(u)
                 #endif
+
+            case .streamActivity:
+                // [T-sse-idle-timeout] Nothing to show or store: arriving here
+                // already reset the stall watchdog, which is all it is for.
+                break
 
             case .done(let reason):
                 // Final flush of thinking block content

@@ -151,6 +151,11 @@ enum AgentStreamEvent: @unchecked Sendable {
     /// for in-memory multi-turn replay. Cross-model isolation rules live on
     /// `ReasoningEcho`.
     case reasoningEcho(ReasoningEcho)
+    /// [T-sse-idle-timeout] The server sent real model output that produced no
+    /// other event — reasoning that is not being shown because the thinking
+    /// level is off. Carries nothing: it only tells the stall watchdog the
+    /// stream is alive. Never sent for keepalives, comments or empty chunks.
+    case streamActivity
     /// Response finished.
     case done(stopReason: AgentStopReason)
 }
@@ -186,6 +191,14 @@ protocol AgentProvider {
     var model: LLMModel { get }
     /// Default max output tokens for this provider.
     var defaultMaxTokens: Int { get }
+    /// [T-sse-idle-timeout] How long the agent loop waits for the next stream
+    /// event (the first one included) before calling the stream stalled.
+    /// Read from the per-instance setting; the default is 2 minutes.
+    var responseIdleTimeout: TimeInterval { get }
+    /// [T-sse-idle-timeout] The ProviderInstance this client was built for.
+    /// Runtime-only; providers that are not bound to one answer nil and fall
+    /// back to the default timeout.
+    var providerInstanceId: String? { get }
 
     /// Provider-specific streaming implementation. Receives a thinking level
     /// that has already been clamped to the model's effective max by the
@@ -199,7 +212,74 @@ protocol AgentProvider {
     ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error>
 }
 
+// BEGIN ResponseIdleTimeoutSetting
+/// [T-sse-idle-timeout] The per-provider "response idle timeout": the longest
+/// wait for the next piece of a streamed reply, the first piece included. It is
+/// NOT a limit on how long a reply may take - a stream that keeps delivering
+/// never times out.
+///
+/// Stored per device in UserDefaults, keyed by provider instance id. Nothing
+/// stored means the default, so existing providers behave exactly as before.
+/// Deliberately not a ProviderInstance field: that would need a DB column and
+/// sync / backup wiring for a value that describes this device's link to one
+/// server.
+enum ResponseIdleTimeoutSetting {
+    static let defaultSeconds = 120
+    static let minSeconds = 30
+    /// No "never": a stream that really died would leave the turn waiting
+    /// forever, holding a session slot and the background keep-alive.
+    static let maxSeconds = 3600
+    static let presets = [120, 300, 600, 1800, 3600]
+
+    static func clamp(_ seconds: Int) -> Int { min(max(seconds, minSeconds), maxSeconds) }
+
+    static func key(forInstanceId id: String) -> String { "provider.responseIdleTimeout.\(id)" }
+
+    /// The effective value: the stored one, clamped, or the default.
+    static func seconds(forInstanceId id: String?, defaults: UserDefaults = .standard) -> Int {
+        guard let id, !id.isEmpty, let stored = defaults.object(forKey: key(forInstanceId: id)) as? Int else {
+            return defaultSeconds
+        }
+        return clamp(stored)
+    }
+
+    /// Storing the default removes the key, so "default" stays "never set".
+    static func set(_ seconds: Int?, forInstanceId id: String, defaults: UserDefaults = .standard) {
+        guard let seconds, clamp(seconds) != defaultSeconds else {
+            defaults.removeObject(forKey: key(forInstanceId: id))
+            return
+        }
+        defaults.set(clamp(seconds), forKey: key(forInstanceId: id))
+    }
+
+    /// The per-request URLSession timeout a streaming request needs so the
+    /// transport does not give up before the watchdog does. nil = leave the
+    /// session's own 600 s alone.
+    static func requestTimeout(forIdleSeconds idle: Int, sessionDefault: Int = 600) -> TimeInterval? {
+        idle > sessionDefault ? TimeInterval(idle + 30) : nil
+    }
+
+    /// [T-sse-idle-timeout] The same budget resolved for an instance, with the
+    /// session default filled in so callers can assign it unconditionally.
+    static func transportTimeout(forInstanceId id: String?, sessionDefault: Int = 600) -> TimeInterval {
+        requestTimeout(forIdleSeconds: seconds(forInstanceId: id), sessionDefault: sessionDefault)
+            ?? TimeInterval(sessionDefault)
+    }
+}
+// END ResponseIdleTimeoutSetting
+
 extension AgentProvider {
+    /// [T-sse-idle-timeout] Default for a provider that is not bound to a
+    /// ProviderInstance.
+    var providerInstanceId: String? { nil }
+
+    /// [T-sse-idle-timeout] Every provider family reads the same per-instance
+    /// setting, so raising it works for Anthropic, Gemini, Antigravity and
+    /// every OpenAI-compatible vendor alike.
+    var responseIdleTimeout: TimeInterval {
+        TimeInterval(ResponseIdleTimeoutSetting.seconds(forInstanceId: providerInstanceId))
+    }
+
     func streamAgentMessage(
         messages: [AgentMessage],
         systemPrompt: String?,

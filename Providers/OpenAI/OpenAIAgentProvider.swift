@@ -30,6 +30,40 @@ final class OpenAIAgentProvider: AgentProvider {
     var model: LLMModel { provider.model }
     var defaultMaxTokens: Int { provider.usesChatCompletionsAPI ? 16_384 : 32_768 }
 
+    /// [T-sse-idle-timeout] The provider's own setting, read through the
+    /// shared default implementation from the instance id the factory set.
+    var providerInstanceId: String? { provider.providerInstanceId }
+
+    // BEGIN ChatCompletionsReasoningActivity
+    /// [T-sse-idle-timeout] Does this chunk's `delta` carry reasoning the model
+    /// actually produced? Used to keep the stall watchdog fed while the
+    /// thinking level is off: such reasoning is accumulated but not streamed
+    /// to the UI, so without this a model that reasons for two minutes looked
+    /// exactly like a dead stream.
+    ///
+    /// Only real output counts. An empty string, a missing field, a role-only
+    /// delta and an SSE comment / keepalive line do not - a relay can send
+    /// those forever after its upstream has died.
+    static func deltaCarriesReasoning(_ delta: [String: Any], interleavedField: String?) -> Bool {
+        var fields = ["reasoning_content", "reasoning", "reasoning_text"]
+        if let f = interleavedField, !f.isEmpty, !fields.contains(f) { fields.append(f) }
+        for f in fields {
+            if let s = delta[f] as? String, !s.isEmpty { return true }
+        }
+        if let details = delta["reasoning_details"] as? [[String: Any]] {
+            for item in details {
+                switch item["type"] as? String {
+                case "reasoning.text": if let s = item["text"] as? String, !s.isEmpty { return true }
+                case "reasoning.summary": if let s = item["summary"] as? String, !s.isEmpty { return true }
+                case "reasoning.encrypted": if let s = item["data"] as? String, !s.isEmpty { return true }
+                default: break
+                }
+            }
+        }
+        return false
+    }
+    // END ChatCompletionsReasoningActivity
+
     init(provider: OpenAIProvider) {
         self.provider = provider
     }
@@ -169,7 +203,12 @@ final class OpenAIAgentProvider: AgentProvider {
                 func emitParsed(_ out: (thinking: String, visible: String)) {
                     if !out.thinking.isEmpty {
                         reasoningContent += out.thinking
-                        if thinkingLevel.isEnabled { continuation.yield(.thinkingDelta(out.thinking)) }
+                        if thinkingLevel.isEnabled {
+                            continuation.yield(.thinkingDelta(out.thinking))
+                        } else {
+                            // [T-sse-idle-timeout] Hidden <think> text is still output.
+                            continuation.yield(.streamActivity)
+                        }
                     }
                     if !out.visible.isEmpty {
                         if !emittedTextStart {
@@ -266,6 +305,13 @@ final class OpenAIAgentProvider: AgentProvider {
                             if !rc.isEmpty { continuation.yield(.thinkingDelta(rc)) }
                         }
                         if sawReasoningField { sawReasoningFieldEver = true }
+                        // [T-sse-idle-timeout] With thinking off none of the
+                        // reasoning reads above yields anything, so the agent
+                        // loop saw silence while the model was reasoning.
+                        if !thinkingLevel.isEnabled,
+                           Self.deltaCarriesReasoning(delta, interleavedField: self.model.interleavedReasoningField) {
+                            continuation.yield(.streamActivity)
+                        }
 
                         // Text delta — route through the think-prefix parser so
                         // models that embed reasoning in content (MiniMax

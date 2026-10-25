@@ -12,6 +12,10 @@ final class AntigravityAgentProvider: AgentProvider {
     var model: LLMModel { provider.model }
     var defaultMaxTokens: Int { 16_384 }
 
+    /// [T-sse-idle-timeout] Lets the shared default read this instance's
+    /// response idle timeout.
+    var providerInstanceId: String? { provider.providerInstanceId }
+
     init(provider: AntigravityProvider) {
         self.provider = provider
     }

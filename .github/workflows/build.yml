@@ -74,6 +74,14 @@ jobs:
           xcrun swiftc -frontend -parse Providers/ProviderAPIQuota.swift
           xcrun swiftc -frontend -parse Views/Providers/ProviderInstanceDetailView.swift
 
+      - name: Test response idle timeout structure
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-sse-idle-timeout.py | tee sse-idle-timeout-structure.log
+          xcrun swiftc -frontend -parse Providers/AgentProvider.swift
+          xcrun swiftc -frontend -parse Providers/LLMProviderFactory.swift
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+SSEStream.swift
+
       - name: Parse session export sources
         run: |
           set -euo pipefail

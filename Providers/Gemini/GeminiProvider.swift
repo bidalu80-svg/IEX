@@ -25,6 +25,10 @@ final class GeminiProvider: LLMProvider {
     let name = "Google"
     var model: LLMModel
 
+    /// [T-sse-idle-timeout] The ProviderInstance this client was built for.
+    /// Runtime-only; read by the agent provider for the idle timeout.
+    var providerInstanceId: String?
+
     private static let defaultBasePath = "https://generativelanguage.googleapis.com/v1beta"
     private let basePath: String
     private let cloudCodeBase = "https://cloudcode-pa.googleapis.com/v1internal"
@@ -401,6 +405,8 @@ final class GeminiProvider: LLMProvider {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // [T-sse-idle-timeout] Match the stall watchdog when the user raised it.
+        request.timeoutInterval = ResponseIdleTimeoutSetting.transportTimeout(forInstanceId: providerInstanceId)
 
         if case .oauth(let tokenProvider) = authMode {
             let token = try await tokenProvider()

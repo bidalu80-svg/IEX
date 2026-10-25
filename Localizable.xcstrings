@@ -79126,7 +79126,15 @@
     "JIT runtime" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "JIT 运行时"}}}} ,
     "Memory: footprint" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内存：按真实占用"}}}} ,
     "Memory: ledger" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内存：按页数台账"}}}} ,
-    "Images linked" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已链接镜像"}}}}
+    "Images linked" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已链接镜像"}}}} ,
+    "Response idle timeout" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "响应空闲超时"}}}} ,
+    "2 minutes (default)" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "2 分钟（默认）"}}}} ,
+    "30 minutes" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "30 分钟"}}}} ,
+    "60 minutes" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "60 分钟"}}}} ,
+    "%lld seconds" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "%lld 秒"}}}} ,
+    "Custom…" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "自定义…"}}}} ,
+    "Seconds (30–3600)" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "秒数（30–3600）"}}}} ,
+    "The longest wait for the first byte of a reply, and for the gap between two pieces of it. Past that the connection is treated as stalled and retried. This is not a limit on how long a reply may take: a stream that keeps arriving never times out. Raise it when a local model needs minutes to process a long context; a dropped connection is then noticed that much later. Stored on this device only." : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "等待首次响应、以及两段响应之间的最长等待时间，超过后视为连接卡住并重试。这不是总生成时长的限制：只要回复持续到达就不会超时。本地模型处理很长的上下文需要几分钟时，可以调大。调大后，连接真的断开时也要等这么久才会发现。仅保存在本机。"}}}}
   },
   "version" : "1.0"
 }
