@@ -352,5 +352,6 @@ git status --short
 - 接线：`scripts/sync-aot-objects.py` 扫描 `aot/*.o` 并重写 `Ze.xcodeproj/project.pbxproj` 的三处 `ZE_AOT_OBJECTS`；新增镜像必须跑它，否则文件在仓库里但不会被链接。
 - 自检：录制工作流末尾 “Verify the images attach and hit” 用 `ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1` 跑 musl+busybox，输出必须匹配 `AOT n (2 images)`；`build.yml` 的 IPA 审计要求二进制里存在 `__ish_aot` 段且大于 8 MB。
 - 匹配：镜像按 `struct aot_module.path` 绑定 guest 模块，块按文件偏移 + key 匹配；包版本不同只命中原样未变的块。`AOJITAcceleration.imageMatch` 要写 guest 文件名（`_json`、`math`、`binascii.cpython`、`libz.so`），不能直接拿目录 id。
+- 版本：`aot/VERSIONS.txt` 是镜像真正录制时的包版本，`AOJITAcceleration.imageVersions` 必须与它一致（`scripts/verify-aojit-status.py` 会比对）。状态页的“全速/部分”按镜像版本判定；设备上的 warm-up 记录只知道本机装了什么，拿它比较会把任何安装都显示成“全速”。
 - 已知缺口：`nodejs` 的 V8 启动在录制器里超过 60 分钟，暂不在目录内；需要时把清单里注释掉的行改成 10800 秒并接受六小时任务。
 - 自查（给 Agent 用）：`ze-config get aojit` 返回开关、内核回读、linked/attached、命中计数、逐库表与逐镜像命中（`aojit.images`：path / size_kb / hits，热模块 hits 为 0 说明镜像接了但从没命中）；单值用 `aojit.enabled` / `aojit.jit_runtime` / `aojit.images_attached` / `aojit.aot_hits` / `aojit.hit_rate` / `aojit.status`。AOJIT 状态只在宿主进程里，guest 没有 `/proc` 条目或磁盘标记，`cat /proc/ish/jit`、`find / -name '*aot*'` 一律查不到——不要让 Agent 用这些路径判断开关。

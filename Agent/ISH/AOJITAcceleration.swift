@@ -39,13 +39,18 @@ struct AOJITLibrary: Identifiable {
     let package: String
     /// Version the image is recorded from — also the repair target.
     let repairVersion: String
+
+    /// The version the *committed image* was recorded from, when the build
+    /// knows it (see AOJITAcceleration.imageVersions). Falls back to the
+    /// catalog constant for packages that have no image.
+    var targetVersion: String { AOJITAcceleration.imageVersions[package] ?? repairVersion }
     /// Exit code 0 means the library is present.
     let probe: String
     /// Exercises the library's hot paths once.
     let warmup: String
     let timeout: TimeInterval
 
-    var repairSpec: String { "\(package) \(repairVersion)" }
+    var repairSpec: String { "\(package) \(targetVersion)" }
 
     /// [T-aojit-status] Substrings that identify this library's guest module
     /// in the AOT registry (aot_module.path). The catalog's `paths` field is
@@ -110,7 +115,7 @@ struct AOJITLibraryState: Identifiable {
 
     /// "musl 1.2.5-r8" — package name plus version, matching the row's title.
     var recordedLine: String {
-        "\(library.package) \(recordedVersion ?? library.repairVersion)"
+        "\(library.package) \(recordedVersion ?? library.targetVersion)"
     }
 
     var speedNote: String? {
@@ -140,6 +145,26 @@ struct AOJITLibraryState: Identifiable {
 
 final class AOJITAcceleration: ObservableObject {
     static let shared = AOJITAcceleration()
+
+    /// Versions the committed images were actually recorded from
+    /// (`aot/VERSIONS.txt`, written by the record workflow). The on-device
+    /// warm-up records only know what is installed *here*, so comparing them
+    /// to the install always says "full speed" — that is how a build whose
+    /// musl image predates the installed musl by four revisions kept claiming
+    /// full speed while most blocks were still interpreted.
+    static let imageVersions: [String: String] = [
+        "musl": "1.2.5-r8",
+        "busybox": "1.37.0-r8",
+        "python3": "3.12.16-r0",
+        "py3-pillow": "11.0.0-r0",
+        "py3-numpy": "2.1.3-r0",
+        "zlib": "1.3.1-r2",
+        "sqlite-libs": "3.48.0-r4",
+        "libcrypto3": "3.3.2-r4",
+        "libssl3": "3.3.2-r4",
+        "pcre2": "10.43-r1",
+        "openssh-client-default": "9.9_p2-r0",
+    ]
 
     /// Absent key means on: the feature ships enabled and only an explicit
     /// opt-out is persisted.
@@ -746,9 +771,14 @@ final class AOJITAcceleration: ObservableObject {
             let hasImage = linked.contains { path in
                 library.imageMatch.contains { path.contains($0) }
             }
+            // [T-aojit-status] Compare against the version the *image* was
+            // recorded from. The warm-up record only knows the installed
+            // version, so using it marked every library "full speed" even
+            // when the image predated the install.
+            let recorded = Self.imageVersions[library.package] ?? recording?.version
             if installed == nil {
                 status = .notInstalled
-            } else if hasImage && (recording == nil || recording?.version == installed) {
+            } else if hasImage && (recorded == nil || recorded == installed) {
                 // [T-aojit-status] The build has a real AOT image for this
                 // module linked in — that is what makes it fast, not the
                 // warm-up record.
@@ -764,7 +794,7 @@ final class AOJITAcceleration: ObservableObject {
             return AOJITLibraryState(
                 library: library,
                 installedVersion: installed,
-                recordedVersion: recording?.version,
+                recordedVersion: recorded,
                 recordedAt: recording?.recordedAt,
                 durationMs: recording?.durationMs,
                 status: status
@@ -815,8 +845,11 @@ final class AOJITAcceleration: ObservableObject {
         guard isEnabled, !isRecording else { return }
 
         let pending = states.filter { state in
+            // The warm-up only measures time; it cannot write an image. Run
+            // it once per library, not on every launch, or a version that
+            // differs from the recorded image re-warms forever.
             state.status != .notInstalled
-                && state.recordedVersion != state.installedVersion
+                && state.recordedAt == nil
                 && !failedRecording.contains(state.id)
         }
         guard !pending.isEmpty else { return }

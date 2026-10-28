@@ -87,4 +87,31 @@ check("aot_img_hits" in jit_c and "ish_aot_hits_for_image" in jit_c,
 check("ish_aot_attached_path" in aot_h and "ish_aot_hits_for_image" in aot_h,
       "per-image diagnostics are declared in aot.h")
 
+# The UI must compare against what the image was recorded from, not against
+# the on-device warm-up record (which always says "full speed").
+versions_txt = src("aot/VERSIONS.txt")
+recorded = {}
+for line in versions_txt.splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    # The file uses name-version where version itself contains "-rN":
+    # python3-3.12.16-r0 -> name python3, version 3.12.16-r0.
+    match = re.match(r"^(.+)-(\d[\d.]*(?:_p\d+)?-r\d+)$", line)
+    if match:
+        recorded[match.group(1)] = match.group(2)
+
+check("imageVersions" in accel, "AOJITAcceleration declares the recorded image versions")
+check("Self.imageVersions[library.package]" in accel,
+      "status compares the installed version with the recorded image version")
+
+swift_map = dict(re.findall(
+    r'"([a-z0-9_\-]+)": "([^"]+)"',
+    accel.split("static let imageVersions", 1)[1].split("= [", 1)[1].split("]", 1)[0],
+))
+for pkg, ver in swift_map.items():
+    check(recorded.get(pkg) == ver, f"imageVersions[{pkg}] matches aot/VERSIONS.txt ({ver})")
+for pkg in ["musl", "busybox", "python3"]:
+    check(pkg in swift_map, f"imageVersions covers {pkg}")
+
 print(f"\n{checks} checks passed")
