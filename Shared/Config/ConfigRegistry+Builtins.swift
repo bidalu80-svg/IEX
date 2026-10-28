@@ -760,7 +760,7 @@ extension ConfigRegistry {
         func attachedImages() -> [ConfigValue] {
             (0..<Int(ish_aot_attached_count())).map { i in
                 let path = ish_aot_attached_path(UInt32(i)).map { String(cString: $0) } ?? ""
-                return .object([
+                return ConfigValue.object([
                     "path": .string(path),
                     "size_kb": .int(Int(ish_aot_attached_size(UInt32(i)) / 1024)),
                     "hits": .int(Int(clamping: ish_aot_hits_for_image(UInt32(i)))),
@@ -786,7 +786,7 @@ extension ConfigRegistry {
             if store.states.isEmpty { store.refresh() }
             let iso = ISO8601DateFormatter()
             return store.states.map { s in
-                .object([
+                ConfigValue.object([
                     "id": .string(s.library.id),
                     "package": .string(s.library.package),
                     "status": .string(aojitStatusKey(s.status)),
