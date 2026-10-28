@@ -9,8 +9,14 @@
 
 #include <stdint.h>
 
+// Pointers from the tables are 32-bit offsets from the field itself (0: none),
+// so the linker fixes them once and the loader has nothing to rebase.
+static inline const void *aot_rel(const int32_t *field) {
+    return *field ? (const char *) field + *field : (const void *) 0;
+}
+
 struct aot_seg {
-    const uint32_t *code;
+    int32_t code;                 // -> the native code (aot_rel)
     uint32_t pos;                 // code-stream slot it replaces
     uint32_t words;
 };
@@ -21,15 +27,26 @@ struct aot_loop {                 // self-loop block: promoted registers in [lo,
     int8_t g[8], d[8], h[8];      // promoted guest reg, donor guest reg, host reg
 };
 
+// The key as stored: reg_key()'s 7 header words, then per unit 6 of its 9
+// (start, end, n/follow/last, dpc, w0, w1): the high dpc word and the gadget
+// words are always 0 in an image and left out (AOT_KEY_UNIT).
+#define AOT_KEY_UNIT 6
 struct aot_trans {
     uint64_t off;                 // file offset of the block
-    uint32_t idx, nkey;           // module-context index; key length in words
-    const uint32_t *key;          // module word and gadget words zero
-    const void *const *gadget;    // per unit: the gadget at the unit's start, or 0
-    const struct aot_seg *seg;
+    uint32_t idx, nkey;           // module-context index; key length in words as reg_key() builds it
+    int32_t key;                  // -> compact key (above)
+    int32_t gadget;               // -> per unit an int32 (aot_rel) to the gadget at the unit's start, or 0
+    int32_t seg;                  // -> struct aot_seg[nseg]
     uint32_t nseg, nunits;
-    const uint32_t *link[2];      // direct-link branch per jump_ip slot, or 0
-    const struct aot_loop *loop;
+    int32_t link[2];              // -> direct-link branch per jump_ip slot, or 0
+    int32_t loop;                 // -> struct aot_loop, or 0
+};
+
+// Content hash of a translation's key (key_content_hash()) -> its index in
+// trans[], sorted by hash: finds a block whose bytes moved in another version.
+struct aot_hash {
+    uint64_t hash;
+    uint32_t trans, pad;
 };
 
 struct aot_module {
@@ -38,8 +55,15 @@ struct aot_module {
     uint8_t sha256[32];
     uint32_t ntrans, nidx;        // translations (sorted by off), context indices used
     const struct aot_trans *trans;
-    int32_t prologue_words, entry_off, n_pinned, pad;   // conventions the code was made with
+    int32_t prologue_words, entry_off, n_pinned;   // conventions the code was made with
+    uint32_t abi;                 // jit_abi() of the ish that made it (layouts, code version)
     const uint32_t *text_start, *text_end;
+    uint32_t build_id_len;        // NT_GNU_BUILD_ID of the module, matched before the path
+    uint8_t build_id[20];
+    const char *family;           // fnmatch() pattern over file names this image may also serve
+                                  // (other versions: blocks are matched by content), or NULL
+    const struct aot_hash *by_hash;
+    uint32_t nhash, pad2;
 };
 
 // Called by an image's constructor, before main. Needs ish built with -Djit=true.
@@ -62,5 +86,21 @@ unsigned long long ish_aot_translated_blocks(void);
 const char *ish_aot_attached_path(unsigned i);
 unsigned long long ish_aot_attached_size(unsigned i);
 unsigned long long ish_aot_hits_for_image(unsigned i);
+
+// [T-aojit-v2] Images the running JIT refused at registration (abi or pinned
+// conventions differ) — the case that used to look like a working image.
+unsigned ish_aot_rejected_count(void);
+const char *ish_aot_rejected_path(unsigned i);
+unsigned ish_aot_rejected_abi(unsigned i);
+// [T-aojit-v2] How image i serves its module: 0 not attached, 1 same build
+// (build-id or path matched), 2 family (another version of the same file,
+// matched block by block through by_hash).
+int ish_aot_image_match(unsigned i);
+// [T-aojit-v2] Blocks installed from a family image (a different version of
+// the module): the number that says version drift is being absorbed.
+unsigned long long ish_aot_moved_hits(void);
+// [T-aojit-v2] The abi this binary's JIT was built with, so the host can say
+// why an image was rejected instead of just "not used".
+unsigned ish_aot_jit_abi(void);
 
 #endif

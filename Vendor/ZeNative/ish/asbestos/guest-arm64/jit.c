@@ -6,6 +6,7 @@
 
 #include <TargetConditionals.h>
 #include <dlfcn.h>
+#include <fnmatch.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -48,10 +49,25 @@ static bool env_off(const char *name) {
 
 // ---------------------------------------------------------------- stats
 
-static _Atomic uint64_t st_blocks, st_segments, st_units, st_bytes, st_ns;
+static _Atomic uint64_t st_blocks, st_segments, st_units, st_bytes, st_ticks;
+
+// Timings summed over every block: jit_ticks() reads the counter without the
+// barrier mach_absolute_time() has, which would wait for the cache misses of the
+// lookup just before it (about as long as the lookup).
+static inline uint64_t jit_ticks(void) {
+    uint64_t v;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v));
+    return v;
+}
+static double jit_ticks_ms(uint64_t ticks) {
+    uint64_t hz;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(hz));
+    return hz ? (double) ticks * 1e3 / (double) hz : 0;
+}
 static _Atomic uint64_t st_unsupported_insns, st_fail_regs;
 static _Atomic uint64_t st_block_ends, st_block_end_fail, st_links, st_loops;
-static _Atomic uint64_t st_shared, st_aot;
+static _Atomic uint64_t st_shared, st_aot, st_aot_moved, st_aot_busy, st_aot_fixed;
+static _Atomic uint64_t st_find_ticks;   // jit_ticks() spent in aot_lookup()
 
 // ---------------------------------------------------------------- code region
 //
@@ -254,6 +270,7 @@ struct em {
     // segments of the current block installed so far (translation registry)
     unsigned ninst;
     struct { unsigned pos; uint8_t *code; struct rec_seg *rec; } inst[256];
+    bool chain_fwd;        // the block-end edge being emitted goes to a higher address
     int8_t pin[33];        // guest -> host for this segment: pin_of plus loop promotions
     uint16_t uses[33];     // hreg() requests per guest register (loop planning)
     // Self-loop block: guest registers the loop body uses but that are not
@@ -377,8 +394,9 @@ static void mov_host_ptr(struct em *e, int rd, const void *p) {
 // after it is installed except direct links, whose target is also recorded as
 // data next to the branch.
 // - x29 holds the module context of this address space: the guest address the
-//   module's constants are relative to, and the fiber_block currently holding
-//   each translation of the module (ctx->blk[idx]). It stays the same while
+//   module's constants are relative to, and per translation (ctx->slot[idx])
+//   the fiber_block currently holding it and the guest address its constants
+//   are relative to. It stays the same while
 //   control moves between blocks of one module; a block pointer is loaded
 //   from the context only where needed, so block transitions carry no chain
 //   of dependent loads.
@@ -387,9 +405,12 @@ static void mov_host_ptr(struct em *e, int rd, const void *p) {
 //   x29 = block->jit_ctx) and a hot entry right after it. native_entry is the
 //   cross-module entry; code switching blocks with x9 = &code[0] enters there,
 //   or at the hot entry when the successor's context is already in x29.
-// - Guest addresses are ctx->base plus a constant: a module is mapped at a
-//   page-aligned base, so pc, adr and adrp values differ from it by the same
-//   amount in every process.
+// - Guest addresses are the slot's base plus a constant: a module is mapped
+//   at a page-aligned base, so pc, adr and adrp values differ from it by the
+//   same amount in every process. The base is per translation so that an AOT
+//   translation also serves a block whose bytes moved in another version of
+//   the module: identical bytes keep every pc-relative distance, so the code
+//   is right with base + the distance the block moved (aot_find_moved()).
 // - Direct links need a check that the successor still runs the code the
 //   branch goes to; jit_chain_ok() does it when the slot is chained, so the
 //   branch itself is unconditional.
@@ -401,12 +422,30 @@ static void mov_host_ptr(struct em *e, int rd, const void *p) {
 #define LINK_UNSET 1u   // literal of an unlinked direct link
 static unsigned code_off(unsigned k) { return FIBER_BLOCK_code + 8 * k; }
 
-struct jit_ctx {
-    uint64_t base;
-    struct fiber_block *blk[];
+// Per translation: what its code loads on the way (above x29, small offsets
+// for the first indices)...
+struct jit_slot {
+    struct fiber_block *blk;    // the block holding the translation
+    uint64_t base;              // guest address its constants are relative to
 };
-#define CTX_BLK 8               // offsetof(struct jit_ctx, blk)
-#define CTX_MAX (1u << 20)      // translations per module (reserved address space)
+// ... and what it rarely needs, below x29 (far[idx] at x29 - CTX_FAR * (idx + 1)).
+struct jit_far {
+    uint64_t dbase;             // what base is for the targets of its adr / adrp
+    uintptr_t alt[2];           // per jump_ip slot: &code[0] of a successor the direct link
+                                // cannot go to (jit_chain_refused()), 0 if none
+};
+struct jit_ctx {
+    uint64_t base;              // the module mapping's (for the C side)
+    struct jit_slot slot[];
+};
+#define CTX_BLK 8               // offsetof(struct jit_ctx, slot)
+#define CTX_SLOT 16             // sizeof(struct jit_slot)
+#define CTX_FAR 24              // sizeof(struct jit_far)
+
+static inline struct jit_far *ctx_far(struct jit_ctx *ctx, unsigned idx) {
+    return (struct jit_far *) ((char *) ctx - CTX_FAR * ((size_t) idx + 1));
+}
+#define CTX_MAX (1u << 19)      // translations per module (reserved address space)
 
 // xd = xn +/- magnitude (any size; large values go through `scratch`)
 static void add_imm(struct em *e, int rd, int rn, int64_t d, int scratch) {
@@ -425,6 +464,18 @@ static void add_imm(struct em *e, int rd, int rn, int64_t d, int scratch) {
         put(e, op | (uint32_t) (m & 0xfff) << 10 | ((uint32_t) rn << 5) | (uint32_t) rd);
 }
 
+// xd = [x29 - off] (off a multiple of 8, < 2^24): a field of ctx_far()
+static void ldr_far(struct em *e, int rd, unsigned off) {
+    if (off <= 256) {
+        put(e, 0xF8400000u | ((uint32_t) (-(int) off) & 0x1ff) << 12 | (FP << 5) | (uint32_t) rd);   // ldur xd, [x29, #-off]
+        return;
+    }
+    unsigned r = (off + 4095) & ~4095u;
+    put(e, 0xD1400000u | (r >> 12) << 10 | (FP << 5) | (uint32_t) rd);                          // sub xd, x29, #r, lsl #12
+    put(e, 0xF9400000u | ((r - off) / 8) << 10 | ((uint32_t) rd << 5) | (uint32_t) rd);          // ldr xd, [xd, #r - off]
+}
+static unsigned far_off(unsigned idx, unsigned field) { return CTX_FAR * (idx + 1) - field; }
+
 // xd = [xn + off] (off a multiple of 8, < 2^24)
 static void ldr_off(struct em *e, int rd, int rn, unsigned off) {
     if (off >> 15) {
@@ -435,9 +486,9 @@ static void ldr_off(struct em *e, int rd, int rn, unsigned off) {
     put(e, 0xF9400000u | (off / 8) << 10 | ((uint32_t) rn << 5) | (uint32_t) rd);      // ldr xd, [xn, #off]
 }
 
-// PIC: xd = the block (ctx->blk[idx])
+// PIC: xd = the block (ctx->slot[idx].blk)
 static void ldr_ctx_block(struct em *e, int rd) {
-    ldr_off(e, rd, FP, CTX_BLK + 8 * e->idx);
+    ldr_off(e, rd, FP, CTX_BLK + CTX_SLOT * e->idx);
 }
 
 // xd = (uintptr_t) b + off
@@ -467,7 +518,19 @@ static void mov_guest(struct em *e, int rd, uint64_t v, int scratch) {
         mov_imm64(e, rd, v);
         return;
     }
-    put(e, 0xF9400000u | (FP << 5) | (uint32_t) rd);                         // ldr xd, [x29, #base]
+    ldr_off(e, rd, FP, CTX_BLK + CTX_SLOT * e->idx + 8);                    // ldr xd, [slot.base]
+    add_imm(e, rd, rd, (int64_t) (v - e->base), scratch);
+}
+
+// xd = guest address v, the target of an adr / adrp. Relative to the slot's
+// dbase: in another version of the module the data a block refers to may
+// have moved by another distance than the block (aot_find_moved()).
+static void mov_guest_ref(struct em *e, int rd, uint64_t v, int scratch) {
+    if (!pic_on) {
+        mov_imm64(e, rd, v);
+        return;
+    }
+    ldr_far(e, rd, far_off(e->idx, offsetof(struct jit_far, dbase)));      // xd = far.dbase
     add_imm(e, rd, rd, (int64_t) (v - e->base), scratch);
 }
 
@@ -591,19 +654,18 @@ static uint32_t remap(struct em *e, uint32_t x, int kd, int kn, int km, int ka, 
 static void tlb_lookup(struct em *e, unsigned bytes, bool write, unsigned spos) {
     e->hflags = false;   // the checks below use cmp
     put(e, 0x9240BC00u | (T_A << 5) | T_A);                    // and x9, x9, #0xffffffffffff
-    put(e, 0x12002C00u | (T_A << 5) | T_P);                    // and w8, w9, #0xfff
-    put(e, 0xF100001Fu | ((0x1000 - bytes) << 10) | (T_P << 5));   // cmp x8, #(0x1000-bytes)
-    branch_stub(e, spos, 2);                                   // b.hi stub
-    put(e, 0x9274CC00u | (T_A << 5) | T_P);                    // and x8, x9, #~0xfff
     put(e, 0xD34C6000u | (T_A << 5) | T_I);                    // ubfx x10, x9, #12, #13
     put(e, 0xCA400000u | (T_A << 16) | (25u << 10) | (T_I << 5) | T_I);  // eor x10, x10, x9, lsr #25
     put(e, 0x12003000u | (T_I << 5) | T_I);                    // and w10, w10, #0x1fff
-    put(e, 0xD37BE800u | (T_I << 5) | T_I);                    // lsl x10, x10, #5
-    put(e, 0x8B000000u | (2u << 16) | (T_I << 5) | T_I);       // add x10, x10, x2
+    put(e, 0x8B000000u | (T_I << 16) | (5u << 10) | (2u << 5) | T_I);    // add x10, x2, x10, lsl #5
     unsigned pg = write ? offsetof(struct tlb_entry, page_if_writable) : offsetof(struct tlb_entry, page);
     put(e, 0xF9400000u | ((pg / 8) << 10) | (T_I << 5) | T_E); // ldr x11, [x10, #page]
-    put(e, 0xEB00001Fu | (T_E << 16) | (T_P << 5));            // cmp x8, x11
-    branch_stub(e, spos, 1);                                   // b.ne stub
+    // One check for "this page" and "does not cross it": x9 - page <=
+    // 0x1000 - bytes. An empty entry's page (TLB_PAGE_EMPTY) is above every
+    // 48-bit address, so it never passes.
+    put(e, 0xCB000000u | (T_E << 16) | (T_A << 5) | T_P);      // sub x8, x9, x11
+    put(e, 0xF100001Fu | ((0x1000 - bytes) << 10) | (T_P << 5));   // cmp x8, #(0x1000-bytes)
+    branch_stub(e, spos, 2);                                   // b.hi stub
     put(e, 0xF9400000u | ((offsetof(struct tlb_entry, gen) / 8) << 10) | (T_I << 5) | T_E);  // ldr x11, [x10, #gen]
     int mmu_off = (int) offsetof(struct tlb, mmu) - (int) offsetof(struct tlb, entries);
     put(e, 0xF8400000u | ((uint32_t) (mmu_off & 0x1ff) << 12) | (2u << 5) | T_Q);             // ldur x12, [x2, #mmu]
@@ -898,7 +960,7 @@ static bool emit_insn(struct em *e, uint32_t x, uint64_t pc, unsigned spos, bool
         uint64_t v = (x & 0x80000000u) ? (pc & ~0xfffULL) + ((uint64_t) imm << 12) : pc + (uint64_t) imm;
         if (rd == 31) return true;
         int h = hreg(e, rd);
-        mov_guest(e, h, v, T_Q);
+        mov_guest_ref(e, h, v, T_Q);
         writeback(e, rd);
         return true;
     }
@@ -1131,6 +1193,7 @@ static bool claim_u64(uint64_t *site, uint64_t expected, uint64_t v) {
 // Where a direct link from `from` to `to` goes: the hot entry within one
 // module context, else the cross-module entry (which loads x29; x9 holds the
 // slot, i.e. to's &code[0]). 0: `to` has no native code.
+
 static uintptr_t link_target(struct fiber_block *from, struct fiber_block *to) {
     uintptr_t entry = __atomic_load_n(&to->native_entry, __ATOMIC_ACQUIRE);
     if (!entry)
@@ -1138,33 +1201,52 @@ static uintptr_t link_target(struct fiber_block *from, struct fiber_block *to) {
     return to->jit_ctx == from->jit_ctx ? entry + 4 : entry;
 }
 
+// PIC code is shared: every block with the same translation (in this and
+// other address spaces) has the same direct-link site. So deciding a chain
+// and claiming the site are one step: a successor may be chained only once
+// the site's literal names its code, since any block that claims the site
+// later would take the branch in every chain made while it was unlinked.
 bool jit_chain_ok(struct fiber_block *from, int i, struct fiber_block *to) {
     if (!pic_on || !from->native_link[i])
         return true;
-    uint64_t lit = __atomic_load_n((uint64_t *) (from->native_link[i] + 1), __ATOMIC_ACQUIRE);
+    uint32_t *site = from->native_link[i];
+    bool writable = (uintptr_t) site >= (uintptr_t) region && (uintptr_t) site < (uintptr_t) region + REGION_SIZE;
+    uint64_t lit = __atomic_load_n((uint64_t *) (site + 1), __ATOMIC_ACQUIRE);
+    if (lit == LINK_UNSET && (!writable || link_off))
+        return true;   // never linked (read-only AOT code, or links off): the branch falls through
     uintptr_t target = link_target(from, to);
-    return lit == LINK_UNSET || (target && lit == target - (uintptr_t) from->native_link[i]);
+    if (!target)
+        return false;
+    int64_t d = (int64_t) target - (int64_t) (uintptr_t) site;
+    if (lit == LINK_UNSET) {
+        if (fits(d >> 2, 26) && claim_u64((uint64_t *) (site + 1), LINK_UNSET, (uint64_t) d)) {
+            patch_insn(site, ENC_B(d));
+            atomic_fetch_add_explicit(&st_links, 1, memory_order_relaxed);
+            return true;
+        }
+        lit = __atomic_load_n((uint64_t *) (site + 1), __ATOMIC_ACQUIRE);
+    }
+    return lit == (uint64_t) d;
+}
+
+bool jit_chain_refused(struct fiber_block *from, int i, struct fiber_block *to) {
+    // The slot stays unchained (bit 63, the guest address below: the gadgets
+    // and the run loop read it as before); bit 62 tells from's native code to
+    // enter the successor recorded in from's context slot instead.
+    struct jit_ctx *ctx = from->jit_ctx;
+    if (!pic_on || !ctx || !from->native_link[i] || !from->jump_ip[i] ||
+        __atomic_load_n(&ctx->slot[from->jit_idx].blk, __ATOMIC_ACQUIRE) != from)
+        return false;
+    __atomic_store_n(&ctx_far(ctx, from->jit_idx)->alt[i], (uintptr_t) to->code, __ATOMIC_RELEASE);
+    __atomic_store_n(from->jump_ip[i], *from->jump_ip[i] | 1UL << 62, __ATOMIC_RELEASE);
+    return true;
 }
 
 void jit_link(struct fiber_block *from, int i, struct fiber_block *to) {
     if (!from->native_link[i] || link_off)
         return;
-    if (pic_on) {
-        // [b target][literal]: the literal is claimed first (first successor
-        // wins; jit_chain_ok() keeps every later chain consistent with it),
-        // then the branch is written. Until then the branch still falls
-        // through to the indirect path, which is also correct.
-        uint32_t *site = from->native_link[i];
-        uintptr_t target = link_target(from, to);
-        if (!target || (uintptr_t) site < (uintptr_t) region || (uintptr_t) site >= (uintptr_t) region + REGION_SIZE)
-            return;   // AOT code is read-only: its links are fixed when it is made
-        int64_t d = (int64_t) target - (int64_t) (uintptr_t) site;
-        if (!fits(d >> 2, 26) || !claim_u64((uint64_t *) (site + 1), LINK_UNSET, (uint64_t) d))
-            return;
-        patch_insn(site, ENC_B(d));
-        atomic_fetch_add_explicit(&st_links, 1, memory_order_relaxed);
-        return;
-    }
+    if (pic_on)
+        return;   // jit_chain_ok() claimed the site, if it could, as it allowed the chain
     uintptr_t entry = to->code[0], target = entry + 4 * (uintptr_t) prologue_words;
     if (from->native_loop && i == 0) {
         // back edge of a loop block: only into its own loop head (registers
@@ -1183,7 +1265,14 @@ void jit_link(struct fiber_block *from, int i, struct fiber_block *to) {
 }
 
 void jit_unlink(struct fiber_block *from, int i) {
-    if (!from->native_link[i] || pic_on)   // PIC links are guarded, never undone
+    if (pic_on) {
+        // PIC links are guarded, never undone; a refused successor goes away
+        struct jit_ctx *ctx = from->jit_ctx;
+        if (ctx && __atomic_load_n(&ctx->slot[from->jit_idx].blk, __ATOMIC_ACQUIRE) == from)
+            __atomic_store_n(&ctx_far(ctx, from->jit_idx)->alt[i], 0, __ATOMIC_RELEASE);
+        return;
+    }
+    if (!from->native_link[i])
         return;
     patch_insn(from->native_link[i], from->native_link_orig[i]);
 }
@@ -1192,6 +1281,12 @@ void jit_unlink(struct fiber_block *from, int i) {
 
 // Patch the branch at `at` (b.cond / cbz / tbz / b) to jump to the current end.
 static void patch_here(struct em *e, unsigned at) {
+    // A full buffer makes put() fail and leaves `at` == n: buf[n] is past the
+    // end (it is e->n itself), so never patch then; the segment is dropped.
+    if (e->fail || at >= e->n) {
+        e->fail = true;
+        return;
+    }
     int64_t d = (int64_t) e->n - (int64_t) at;   // words
     uint32_t x = e->buf[at];
     if ((x & 0x7E000000u) == 0x36000000u) {                                     // tbz/tbnz
@@ -1249,8 +1344,11 @@ static void emit_native_dispatch_ex(struct em *e, bool block_start) {
 // self_loop: the taken back edge of a loop block (e->loop). Linked, it goes to
 // the loop head with the promoted registers in place; every other way out
 // swaps them back first.
+static void emit_refused_edge(struct em *e, unsigned generic, int link);
+
 static void emit_chain_ex(struct em *e, struct fiber_block *b, unsigned long *slot, int link, bool self_loop) {
     bool reg_cycle = n_pinned > 0;
+    unsigned generic = 0;   // PIC: chained successor in x9, entered natively or through its gadgets
     unsigned slot_off = (unsigned) ((char *) slot - (char *) b);
     int boff = FIBER_BLOCK_addr - FIBER_BLOCK_code;
     unsigned to_poke1, to_poke2 = 0;
@@ -1259,9 +1357,16 @@ static void emit_chain_ex(struct em *e, struct fiber_block *b, unsigned long *sl
         // count comes first so a direct link needs nothing but the branch:
         // jit_link() turns the nop into `b <successor hot entry>`, skipping
         // the slot load and the pc store (every native exit stores pc).
-        put(e, 0x110005EFu);                                                     // add w15, w15, #1
-        put(e, 0x720025FFu);                                                     // tst w15, #0x3ff
-        to_poke1 = e->n; put(e, 0x54000000u);                                    // b.eq poke
+        // Forward edges do not count: a cycle of blocks always has an edge
+        // to a lower or equal address (or a ret, which counts too), so poke
+        // and the timer are still seen within bounded time.
+        if (e->chain_fwd && !self_loop) {
+            to_poke1 = ~0u;
+        } else {
+            put(e, 0x110005EFu);                                                 // add w15, w15, #1
+            put(e, 0x720025FFu);                                                 // tst w15, #0x3ff
+            to_poke1 = e->n; put(e, 0x54000000u);                                // b.eq poke
+        }
         if (!pic_on) {
             if (link >= 0 && link < 2) e->link_at[link] = (int) e->n;
             put(e, NOP);
@@ -1279,16 +1384,19 @@ static void emit_chain_ex(struct em *e, struct fiber_block *b, unsigned long *sl
     ldr_block(e, 9, slot_off);
     unsigned to_unch = e->n; put(e, 0xB7F80009u);                 // tbnz x9, #63, unchained
     if (pic_on && reg_cycle) {
-        // Direct link: jit_link() turns this branch into `b <successor's link
+        // Direct link: jit_link() turns this branch into `b <successor's hot
         // entry>` (an AOT image has it from the start) and records the target,
-        // relative to the branch, in the literal after it. jit_chain_ok() only lets the slot chain to
-        // a block entered there, so the branch needs no check of its own.
+        // relative to the branch, in the literal after it. jit_chain_ok() only
+        // lets the slot chain to a block entered there, so the branch needs no
+        // check of its own; a successor it refuses marks the slot instead
+        // (jit_chain_refused(), handled at `unchained` below).
         if (!(e->n & 1))
             put(e, NOP);   // keep the literal 8-byte aligned (segments start 16-aligned)
         unsigned site = e->n; put(e, 0x14000000u);                               // b <link entry> (patched)
         if (link >= 0 && link < 2) e->link_at[link] = (int) site;
         put(e, LINK_UNSET); put(e, 0);                                           // literal: target - branch
         patch_here(e, site);                                                     // unlinked: fall to the next line
+        generic = e->n;
         // Not linked yet: the successor's native code, if it has some.
         int ne = (int) offsetof(struct fiber_block, native_entry) - FIBER_BLOCK_code;
         put(e, 0xF8400000u | ((uint32_t) (ne & 0x1ff) << 12) | (9u << 5) | 8);  // ldur x8, [x9, #native_entry-code]
@@ -1317,7 +1425,7 @@ static void emit_chain_ex(struct em *e, struct fiber_block *b, unsigned long *sl
     }
     put(e, 0xAA0903FCu);                                                         // mov x28, x9
     emit_native_dispatch_ex(e, true);
-    patch_here(e, to_poke1);
+    if (to_poke1 != ~0u) patch_here(e, to_poke1);
     if (!reg_cycle) patch_here(e, to_poke2);
     // timer / poke: enter the successor through the run loop
     if (reg_cycle) {
@@ -1331,6 +1439,8 @@ static void emit_chain_ex(struct em *e, struct fiber_block *b, unsigned long *sl
         put(e, 0xAA0903FCu);                                                     // mov x28, x9
         emit_exit(e, (uintptr_t) jit_fiber_ret);
         patch_here(e, to_unch);
+        if (pic_on)
+            emit_refused_edge(e, generic, link);   // not after a poke: that goes to the run loop
         patch_here(e, unch2);
     } else {
         put(e, 0xD1000000u | (FIBER_BLOCK_code << 10) | (9u << 5) | 8);          // sub x8, x9, #code
@@ -1355,6 +1465,14 @@ static void emit_ret(struct em *e, struct fiber_block *b, int rn) {
     int h = rn == 31 ? 31 : hreg(e, rn);
     put(e, 0x9240BC00u | ((uint32_t) h << 5) | 10);                              // and x10, xh, #0xffffffffffff
     put(e, 0xF9000000u | ((CPU_pc / 8) << 10) | (1u << 5) | 10);                 // str x10, [x1, #pc]
+    unsigned miss0 = ~0u;
+    if (n_pinned) {
+        // ret counts a cycle: with forward edges uncounted, a loop closed by
+        // a ret to a cached return address would otherwise never see poke
+        put(e, 0x110005EFu);                                                     // add w15, w15, #1
+        put(e, 0x720025FFu);                                                     // tst w15, #0x3ff
+        miss0 = e->n; put(e, 0x54000000u);                                       // b.eq miss (timer/poke)
+    }
     put(e, 0xD3443D4Bu);                                                         // ubfx x11, x10, #4, #12
     put(e, 0x91000000u | (LOCAL_ret_cache << 10) | (1u << 5) | 12);              // add x12, x1, #ret_cache
     put(e, 0xF86B798Cu);                                                         // ldr x12, [x12, x11, lsl #3]
@@ -1388,6 +1506,7 @@ static void emit_ret(struct em *e, struct fiber_block *b, int rn) {
     emit_exit(e, (uintptr_t) jit_fiber_ret);
     patch_here(e, miss1);
     patch_here(e, miss2);
+    if (miss0 != ~0u) patch_here(e, miss0);
     set_last_block(e, b);
     emit_exit(e, (uintptr_t) jit_fiber_ret);
 }
@@ -1416,6 +1535,45 @@ static void store_ret_cache(struct em *e, int h, uint64_t ret, int base) {
     put(e, 0xF82B7809u | ((uint32_t) base << 5));                                    // str x9, [xbase, x11, lsl #3]
 }
 
+// x9 = the block cached for guest address x10 (tlb->block_cache, as
+// fiber_ret's lookup keeps it); the three branches go to a miss.
+static void emit_block_cache_lookup(struct em *e, unsigned *miss1, unsigned *miss2, unsigned *miss3) {
+    // stale cache? tlb->block_cache_gen != mmu->asbestos->invalidate_gen
+    int mmu_off = (int) offsetof(struct tlb, mmu) - (int) offsetof(struct tlb, entries);
+    put(e, 0xF8400000u | ((uint32_t) (mmu_off & 0x1ff) << 12) | (2u << 5) | 12);  // ldur x12, [x2, #mmu]
+    put(e, 0xF9400000u | ((offsetof(struct mmu, asbestos) / 8) << 10) | (12u << 5) | 12);  // ldr x12, [x12, #asbestos]
+    put(e, 0xB9400000u | ((offsetof(struct asbestos, invalidate_gen) / 4) << 10) | (12u << 5) | 12);  // ldr w12, [x12, #gen]
+    emit_add_x2(e, 11, offsetof(struct tlb, block_cache_gen) - offsetof(struct tlb, entries));
+    put(e, 0xB9400000u | (11u << 5) | 11);                                       // ldr w11, [x11]
+    put(e, 0x6B0C017Fu);                                                         // cmp w11, w12
+    *miss1 = e->n; put(e, 0x54000001u);                                  // b.ne miss
+    // x9 = block_cache[(ip ^ (ip >> 12)) & 4095]
+    put(e, 0xCA4A314Bu);                                                         // eor x11, x10, x10, lsr #12
+    put(e, 0x92402D6Bu);                                                         // and x11, x11, #0xfff
+    emit_add_x2(e, 12, offsetof(struct tlb, block_cache) - offsetof(struct tlb, entries));
+    put(e, 0xF86B7989u);                                                         // ldr x9, [x12, x11, lsl #3]
+    *miss2 = e->n; put(e, 0xB4000009u);                                  // cbz x9, miss
+    put(e, 0xF9400000u | ((FIBER_BLOCK_addr / 8) << 10) | (9u << 5) | 12);       // ldr x12, [x9, #addr]
+    put(e, 0xEB0A019Fu);                                                         // cmp x12, x10
+    *miss3 = e->n; put(e, 0x54000001u);                                  // b.ne miss
+}
+
+// PIC, at a block end's `unchained` exit with the slot in x9: a slot
+// jit_chain_refused() marked (bit 62) has a successor whose native code is
+// not the one the direct link goes to, recorded in this translation's
+// context slot (alt[link]). Enter it (natively or through its gadgets, at
+// `generic`); without one, fall through to the exit.
+static void emit_refused_edge(struct em *e, unsigned generic, int link) {
+    if (link < 0 || link > 1)
+        return;
+    unsigned plain = e->n; put(e, 0xB6F00009u);                              // tbz x9, #62, plain
+    ldr_far(e, 10, far_off(e->idx, offsetof(struct jit_far, alt) + 8 * (unsigned) link));   // x10 = far.alt[link]
+    unsigned none = e->n; put(e, 0xB400000Au);                               // cbz x10, plain
+    put(e, 0xAA0A03E9u);                                                     // mov x9, x10
+    put(e, ENC_B(4 * ((int64_t) generic - (int64_t) e->n)));                  // b generic
+    patch_here(e, plain); patch_here(e, none);
+}
+
 static void emit_indirect(struct em *e, struct fiber_block *b, const struct jit_unit *u, int rn, bool link, uint64_t ret) {
     int h = rn == 31 ? 31 : hreg(e, rn);
     put(e, 0x9240BC00u | ((uint32_t) h << 5) | 10);                              // and x10, xh, #0xffffffffffff
@@ -1428,24 +1586,8 @@ static void emit_indirect(struct em *e, struct fiber_block *b, const struct jit_
         store_ret_cache(e, h30, ret, 12);
     }
     put(e, 0xF9000000u | ((CPU_pc / 8) << 10) | (1u << 5) | 10);                 // str x10, [x1, #pc]
-    // stale cache? tlb->block_cache_gen != mmu->asbestos->invalidate_gen
-    int mmu_off = (int) offsetof(struct tlb, mmu) - (int) offsetof(struct tlb, entries);
-    put(e, 0xF8400000u | ((uint32_t) (mmu_off & 0x1ff) << 12) | (2u << 5) | 12);  // ldur x12, [x2, #mmu]
-    put(e, 0xF9400000u | ((offsetof(struct mmu, asbestos) / 8) << 10) | (12u << 5) | 12);  // ldr x12, [x12, #asbestos]
-    put(e, 0xB9400000u | ((offsetof(struct asbestos, invalidate_gen) / 4) << 10) | (12u << 5) | 12);  // ldr w12, [x12, #gen]
-    emit_add_x2(e, 11, offsetof(struct tlb, block_cache_gen) - offsetof(struct tlb, entries));
-    put(e, 0xB9400000u | (11u << 5) | 11);                                       // ldr w11, [x11]
-    put(e, 0x6B0C017Fu);                                                         // cmp w11, w12
-    unsigned miss1 = e->n; put(e, 0x54000001u);                                  // b.ne miss
-    // x9 = block_cache[(ip ^ (ip >> 12)) & 4095]
-    put(e, 0xCA4A314Bu);                                                         // eor x11, x10, x10, lsr #12
-    put(e, 0x92402D6Bu);                                                         // and x11, x11, #0xfff
-    emit_add_x2(e, 12, offsetof(struct tlb, block_cache) - offsetof(struct tlb, entries));
-    put(e, 0xF86B7989u);                                                         // ldr x9, [x12, x11, lsl #3]
-    unsigned miss2 = e->n; put(e, 0xB4000009u);                                  // cbz x9, miss
-    put(e, 0xF9400000u | ((FIBER_BLOCK_addr / 8) << 10) | (9u << 5) | 12);       // ldr x12, [x9, #addr]
-    put(e, 0xEB0A019Fu);                                                         // cmp x12, x10
-    unsigned miss3 = e->n; put(e, 0x54000001u);                                  // b.ne miss
+    unsigned miss1, miss2, miss3;
+    emit_block_cache_lookup(e, &miss1, &miss2, &miss3);
     // hit: same bookkeeping as a chained branch
     unsigned miss4, miss5;
     if (n_pinned) {
@@ -1513,8 +1655,16 @@ static bool emit_block_end(struct em *e, struct fiber_block *b, const struct jit
         emit_indirect(e, b, u, (x >> 5) & 31, (x & 0x00200000u) != 0, pc + 4);
         return !e->fail;
     }
+    // Does the taken edge go forward (above this branch)? See emit_chain_ex.
+    int64_t toff = 0;
+    if ((x & 0x7C000000u) == 0x14000000u) toff = sext(x & 0x3ffffff, 26);                       // b, bl
+    else if ((x & 0xFF000010u) == 0x54000000u || (x & 0x7E000000u) == 0x34000000u)
+        toff = sext((x >> 5) & 0x7ffff, 19);                                                   // b.cond, cbz
+    else if ((x & 0x7E000000u) == 0x36000000u) toff = sext((x >> 5) & 0x3fff, 14);            // tbz
+    bool taken_fwd = toff > 0;
     if ((x & 0xFC000000u) == 0x14000000u) {                                 // b
         if (!b->jump_ip[0]) return false;
+        e->chain_fwd = taken_fwd;
         emit_chain_ex(e, b, b->jump_ip[0], 0, e->loop);
         return !e->fail;
     }
@@ -1528,6 +1678,7 @@ static bool emit_block_end(struct em *e, struct fiber_block *b, const struct jit
         mov_block_addr(e, 9, code_off(u->start + 1));
         put(e, 0x91000000u | (LOCAL_ret_cache << 10) | (1u << 5) | 10);          // add x10, x1, #ret_cache
         store_ret_cache(e, h, ret, 10);
+        e->chain_fwd = taken_fwd;
         emit_chain(e, b, b->jump_ip[1], 1);
         return !e->fail;
     }
@@ -1542,6 +1693,7 @@ static bool emit_block_end(struct em *e, struct fiber_block *b, const struct jit
     if (is_bcond) {
         unsigned cond = x & 15;
         if (cond >= 14) {   // al / nv
+            e->chain_fwd = taken_fwd;
             emit_chain_ex(e, b, b->jump_ip[0], 0, e->loop);
             return !e->fail;
         }
@@ -1553,12 +1705,15 @@ static bool emit_block_end(struct em *e, struct fiber_block *b, const struct jit
         int h = hreg(e, rt);
         to_taken = e->n;
         put(e, (x & 0xFF000000u & ~(0u)) | (uint32_t) h);                   // cbz/cbnz/tbz/tbnz (same bit/size), offset patched
+        if (to_taken >= e->n) return false;                                  // buffer full
         if (is_tbz) e->buf[to_taken] = (x & 0xFFF80000u) | (uint32_t) h;    // keep b5/b40
         else e->buf[to_taken] = (x & 0xFF000000u) | (uint32_t) h;
     }
     if (e->loop) emit_canon(e);
+    e->chain_fwd = true;
     emit_chain(e, b, b->jump_ip[1], 1);    // not taken: fall through
     patch_here(e, to_taken);
+    e->chain_fwd = taken_fwd;
     emit_chain_ex(e, b, b->jump_ip[0], 0, e->loop);    // taken
     return !e->fail;
 }
@@ -1583,6 +1738,7 @@ static unsigned emit_segment(struct em *e, struct fiber_block *b, const struct j
     e->fail = false;
     e->hflags = false;
     e->body_end = -1;
+    e->chain_fwd = false;
     unsigned covered = 0, real = 0;   // real: units that emitted code
     bool ended = false;
     e->b = b;
@@ -1818,39 +1974,56 @@ static unsigned reg_key(const struct fiber_block *b, const struct jit_units *U, 
 }
 #define REG_KEY_MAX (7 + 9 * JIT_MAX_UNITS)
 
-static uint64_t reg_hash(const uint32_t *k, unsigned n) {
-    uint64_t h = 0xcbf29ce484222325ull;
-    for (unsigned i = 0; i < n; i++)
+// Two independent hashes of a key in one pass (the second only checks a hit in
+// the AOT memo; its chain runs alongside the first).
+static uint64_t reg_hash(const uint32_t *k, unsigned n, uint64_t *h2_out) {
+    uint64_t h = 0xcbf29ce484222325ull, h2 = 0x84222325cbf29ce4ull;
+    for (unsigned i = 0; i < n; i++) {
         h = (h ^ k[i]) * 0x100000001b3ull;
+        h2 = (h2 ^ (k[i] + 0x9e3779b9u)) * 0xff51afd7ed558ccdull;
+    }
+    *h2_out = h2;
     return h;
 }
 
 // ---- module contexts: one per (address space, module, base)
 
+// One per (module mapping, owner): translations made here share one index
+// space, and so does each AOT image -- its indices are baked into its code,
+// so two images of one module (two versions of the file) need two contexts.
 struct ctx_node {
     struct ctx_node *next;
     int mod;
     uint64_t base;
+    const void *owner;      // the AOT image, NULL for this process's own translations
+    size_t bytes;
+    void *map;              // the mapping: ctx_far() of every index, then ctx
     struct jit_ctx *ctx;
 };
 static pthread_mutex_t ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static struct jit_ctx *ctx_get(struct asbestos *a, int mod, uint64_t base) {
+static struct jit_ctx *ctx_get(struct asbestos *a, int mod, uint64_t base, const struct aot_module *owner) {
     pthread_mutex_lock(&ctx_lock);
     struct ctx_node *n;
     for (n = a->jit_ctxs; n; n = n->next)
-        if (n->mod == mod && n->base == base)
+        if (n->mod == mod && n->base == base && n->owner == owner)
             break;
     if (!n && (n = malloc(sizeof(*n)))) {
         // Address space only: pages are touched as translations get indices.
-        void *p = mmap(NULL, CTX_BLK + 8 * (size_t) CTX_MAX, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        // An image knows how many it uses.
+        size_t nidx = owner ? owner->nidx : CTX_MAX;
+        size_t far = CTX_FAR * nidx, bytes = far + CTX_BLK + CTX_SLOT * nidx;
+        void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if (p == MAP_FAILED) {
             free(n);
             n = NULL;
         } else {
             n->mod = mod;
             n->base = base;
-            n->ctx = p;
+            n->owner = owner;
+            n->bytes = bytes;
+            n->map = p;
+            n->ctx = (struct jit_ctx *) ((char *) p + far);
             n->ctx->base = base;
             n->next = a->jit_ctxs;
             a->jit_ctxs = n;
@@ -1867,7 +2040,7 @@ void jit_asbestos_free(struct asbestos *a) {
     pthread_mutex_unlock(&ctx_lock);
     while (n) {
         struct ctx_node *next = n->next;
-        munmap(n->ctx, CTX_BLK + 8 * (size_t) CTX_MAX);
+        munmap(n->map, n->bytes);
         free(n);
         n = next;
     }
@@ -1894,9 +2067,43 @@ static bool one_mapping(const struct jit_units *U, int mod, uint64_t base) {
     return true;
 }
 
+void jit_block_free(struct fiber_block *b) {
+    struct jit_ctx *ctx = b->jit_ctx;
+    if (!ctx || !pic_on)
+        return;
+    struct fiber_block *expected = b;
+    __atomic_compare_exchange_n(&ctx->slot[b->jit_idx].blk, &expected, NULL, false,
+                                __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+}
+
+// Point a slot at block b, whose translation's constants are relative to base.
+// The slot must be free or b's (slot_claim()).
+static void slot_set(struct jit_ctx *ctx, unsigned idx, struct fiber_block *b, uint64_t base, uint64_t dbase) {
+    b->jit_idx = idx;
+    ctx_far(ctx, idx)->alt[0] = ctx_far(ctx, idx)->alt[1] = 0;
+    ctx_far(ctx, idx)->dbase = dbase;
+    ctx->slot[idx].base = base;
+    __atomic_store_n(&ctx->slot[idx].blk, b, __ATOMIC_RELEASE);
+}
+
+// Take slot idx for b if it is free (or b's already): a slot has one owner,
+// whose native code its translation's direct links were made to reach.
+static bool slot_claim(struct jit_ctx *ctx, unsigned idx, struct fiber_block *b, uint64_t base, uint64_t dbase) {
+    pthread_mutex_lock(&ctx_lock);
+    struct fiber_block *owner = ctx->slot[idx].blk;
+    bool ok = !owner || owner == b;
+    if (ok)
+        slot_set(ctx, idx, b, base, dbase);
+    pthread_mutex_unlock(&ctx_lock);
+    return ok;
+}
+
 static void reg_install(struct fiber_block *b, struct jit_ctx *ctx, const struct reg_entry *r) {
+    // Another block of this address space holds the translation (the same
+    // code at the same place, still in the cache): b keeps its gadgets.
+    if (!slot_claim(ctx, r->idx, b, ctx->base, ctx->base))
+        return;
     b->jit_ctx = ctx;
-    __atomic_store_n(&ctx->blk[r->idx], b, __ATOMIC_RELEASE);
     b->native_link[0] = r->link[0];
     b->native_link[1] = r->link[1];
     for (unsigned i = 0; i < r->nseg; i++) {
@@ -1917,6 +2124,9 @@ static bool rec_module(int mod) {
 static unsigned *mod_next_idx;   // per module: indices handed out (reg_lock)
 static const struct aot_module **mod_aot;   // per module: its AOT image, if any (reg_lock)
 static uint8_t *mod_aot_known;
+static uint64_t *mod_same, *mod_family;   // per module: bit i = aot_images[i] is its build / of its family (reg_lock)
+static uint64_t *mod_blocks, *mod_hits, *mod_moved;   // per module: blocks translated or looked up, AOT installs,
+                                                     // of which from an image of another version
 static unsigned mod_next_cap;
 
 // ---- AOT images (asbestos/guest-arm64/aot.h)
@@ -1929,17 +2139,88 @@ static unsigned mod_next_cap;
 
 static const struct aot_module **aot_images;
 static unsigned aot_nimages;
+static const struct aot_module *aot_rejected[64];   // registered, made with other conventions or layouts
+static unsigned aot_nrejected;
+static _Atomic bool aot_off;    // /proc/ish/jit "off": blocks compiled from now on skip the images
+static bool aot_family = true;  // images also serve other versions of their module (ISH_AOT_FAMILY=0: no)
 
 // Images register themselves from a constructor in their own object (see
 // tools/jit_aot/gen.py), before main: the binary that links an image in is
 // the only thing that knows about it.
 #define AOT_MAX 64
+static const struct aot_module *aot_registered[AOT_MAX];
+static unsigned aot_nregistered;
+
 // [T-aojit-per-image] Hits per attached image, so a useless image (recorded
 // from another package version, say) can be told apart from a hot one
 // instead of hiding behind one global counter.
 static _Atomic uint64_t aot_img_hits[AOT_MAX];
-static const struct aot_module *aot_registered[AOT_MAX];
-static unsigned aot_nregistered;
+// [T-aojit-v2] How each attached image serves its module: IMG_SAME (same
+// build or path) or IMG_FAMILY (another version, matched through by_hash).
+static _Atomic int aot_img_match[AOT_MAX];
+
+static int aot_img_index(const struct aot_module *m) {
+    for (unsigned i = 0; i < aot_nimages; i++)
+        if (aot_images[i] == m)
+            return (int) i;
+    return -1;
+}
+
+void ish_aot_register(const struct aot_module *m) {
+    if (aot_nregistered < AOT_MAX)
+        aot_registered[aot_nregistered++] = m;
+}
+
+// Bump whenever the code emitted for some guest instruction, stub or exit
+// changes: images made before would still pass every other check.
+#define JIT_CODE_VERSION 8
+
+// Everything the emitted code bakes in besides the gadgets it names: the
+// conventions, the struct layouts it loads from and the TLB / block cache
+// hashing. An image made by an ish that differs in any of these would run
+// with stale offsets, so it is rejected (never 0: images from before this
+// check carry 0 there).
+static uint32_t jit_abi(void) {
+    const uint64_t v[] = {
+        JIT_CODE_VERSION, (uint64_t) prologue_words, entry_off(), (uint64_t) n_pinned, CTX_BLK, CTX_SLOT, CTX_FAR,
+        FIBER_BLOCK_code, FIBER_BLOCK_addr, offsetof(struct fiber_block, native_entry),
+        offsetof(struct fiber_block, jit_ctx),
+        CPU_pc, CPU_cycle, CPU_poked_ptr, CPU_tls_ptr, offsetof(struct cpu_state, sp),
+        offsetof(struct cpu_state, regs), offsetof(struct cpu_state, nzcv), offsetof(struct cpu_state, fp),
+        LOCAL_last_block, LOCAL_ret_cache,
+        sizeof(struct tlb_entry), offsetof(struct tlb_entry, page), offsetof(struct tlb_entry, page_if_writable),
+        offsetof(struct tlb_entry, gen), offsetof(struct tlb_entry, data_minus_addr), TLB_BITS, PAGE_BITS,
+        offsetof(struct tlb, entries), offsetof(struct tlb, mmu), offsetof(struct tlb, block_cache_gen),
+        offsetof(struct tlb, block_cache), sizeof(((struct tlb *) 0)->block_cache),
+        offsetof(struct mmu, changes), offsetof(struct mmu, asbestos), offsetof(struct asbestos, invalidate_gen),
+        sizeof(struct aot_module), sizeof(struct aot_trans),
+    };
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < sizeof(v); i++)
+        h = (h ^ ((const uint8_t *) v)[i]) * 16777619u;
+    return h ? h : 1;
+}
+
+static void aot_init(void) {
+    unsigned n = aot_nregistered;
+    aot_images = n ? malloc(n * sizeof(*aot_images)) : NULL;
+    uint32_t abi = jit_abi();
+    for (unsigned i = 0; aot_images && i < n; i++) {
+        const struct aot_module *m = aot_registered[i];
+        if (m->abi != abi || m->prologue_words != prologue_words || (uintptr_t) m->entry_off != entry_off() ||
+            m->n_pinned != n_pinned) {
+            fprintf(stderr, "⚠️  AOT image of %s was made by an ish with other conventions or layouts "
+                    "(abi %08x, this ish %08x), not used\n", m->path, m->abi, abi);
+            if (aot_nrejected < 64)
+                aot_rejected[aot_nrejected++] = m;
+            continue;
+        }
+        aot_images[aot_nimages++] = m;
+    }
+}
+
+enum { IMG_NONE, IMG_SAME, IMG_FAMILY };
+static int mod_match(int mod, const struct aot_module *m);
 
 // [T-aojit-status] Read-only view of the images linked into this build, so
 // the host can show what is actually registered instead of remembering what
@@ -1960,11 +2241,10 @@ unsigned long long ish_aot_image_size(unsigned i) {
     return aot_registered[i]->size;
 }
 
-// [T-aojit-per-image] Blocks served from the i-th attached image, in the same
-// order as ish_aot_attached_path(). Zero on a hot module means the image
-// attached but never matched — the module is still running interpreted.
-unsigned long long ish_aot_hits_for_image(unsigned i) {
-    return i < AOT_MAX ? atomic_load_explicit(&aot_img_hits[i], memory_order_relaxed) : 0;
+// [T-aojit-stats] An image that fails the abi check never reaches aot_images,
+// so "linked" and "attached" differ exactly when something is silently unused.
+unsigned ish_aot_attached_count(void) {
+    return aot_nimages;
 }
 
 const char *ish_aot_attached_path(unsigned i) {
@@ -1979,42 +2259,49 @@ unsigned long long ish_aot_attached_size(unsigned i) {
     return aot_images[i]->size;
 }
 
-// [T-aojit-stats] Why the switch can look like it does nothing: an image that
-// is linked is not necessarily one that attached to a module, and an attached
-// image is not necessarily one whose blocks were hit. The host shows all
-// three so "0 images" and "22 images, 0 hits" can be told apart.
-unsigned ish_aot_attached_count(void) {
-    return aot_nimages;
+unsigned long long ish_aot_hits_for_image(unsigned i) {
+    return i < AOT_MAX ? atomic_load_explicit(&aot_img_hits[i], memory_order_relaxed) : 0;
+}
+
+int ish_aot_image_match(unsigned i) {
+    if (i >= aot_nimages || aot_images[i] == NULL)
+        return 0;
+    return atomic_load_explicit(&aot_img_match[i], memory_order_relaxed);
 }
 
 unsigned long long ish_aot_hits(void) {
     return atomic_load_explicit(&st_aot, memory_order_relaxed);
 }
 
+unsigned long long ish_aot_moved_hits(void) {
+    return atomic_load_explicit(&st_aot_moved, memory_order_relaxed);
+}
+
 unsigned long long ish_aot_translated_blocks(void) {
     return atomic_load_explicit(&st_blocks, memory_order_relaxed);
 }
 
-
-void ish_aot_register(const struct aot_module *m) {
-    if (aot_nregistered < AOT_MAX)
-        aot_registered[aot_nregistered++] = m;
+// [T-aojit-v2] Rejected at registration: the host says which image and which
+// abi it wanted, instead of "linked but attached fewer than linked".
+unsigned ish_aot_rejected_count(void) {
+    return aot_nrejected;
 }
 
-static void aot_init(void) {
-    unsigned n = aot_nregistered;
-    aot_images = n ? malloc(n * sizeof(*aot_images)) : NULL;
-    for (unsigned i = 0; aot_images && i < n; i++) {
-        const struct aot_module *m = aot_registered[i];
-        if (m->prologue_words != prologue_words || (uintptr_t) m->entry_off != entry_off() || m->n_pinned != n_pinned) {
-            fprintf(stderr, "⚠️  AOT image of %s was made with other conventions, not used\n", m->path);
-            continue;
-        }
-        aot_images[aot_nimages++] = m;
-    }
+const char *ish_aot_rejected_path(unsigned i) {
+    if (i >= aot_nrejected || aot_rejected[i] == NULL)
+        return NULL;
+    return aot_rejected[i]->path;
 }
 
-static bool mod_path_is(int mod, const char *path);
+unsigned ish_aot_rejected_abi(unsigned i) {
+    if (i >= aot_nrejected || aot_rejected[i] == NULL)
+        return 0;
+    return aot_rejected[i]->abi;
+}
+
+unsigned ish_aot_jit_abi(void) {
+    return jit_abi();
+}
 
 static bool mod_tables_fit(int mod) {   // reg_lock held
     if ((unsigned) mod < mod_next_cap)
@@ -2027,29 +2314,50 @@ static bool mod_tables_fit(int mod) {   // reg_lock held
     if (img) mod_aot = img;
     uint8_t *known = realloc(mod_aot_known, cap);
     if (known) mod_aot_known = known;
-    if (!idx || !img || !known)
+    uint64_t *blocks = realloc(mod_blocks, cap * sizeof(*blocks));
+    if (blocks) mod_blocks = blocks;
+    uint64_t *hits = realloc(mod_hits, cap * sizeof(*hits));
+    if (hits) mod_hits = hits;
+    uint64_t *moved = realloc(mod_moved, cap * sizeof(*moved));
+    if (moved) mod_moved = moved;
+    uint64_t *same = realloc(mod_same, cap * sizeof(*same));
+    if (same) mod_same = same;
+    uint64_t *family = realloc(mod_family, cap * sizeof(*family));
+    if (family) mod_family = family;
+    if (!idx || !img || !known || !blocks || !hits || !moved || !same || !family)
         return false;
     memset(mod_next_idx + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*idx));
     memset(mod_aot + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*img));
     memset(mod_aot_known + mod_next_cap, 0, cap - mod_next_cap);
+    memset(mod_blocks + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*blocks));
+    memset(mod_hits + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*hits));
+    memset(mod_moved + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*moved));
+    memset(mod_same + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*same));
+    memset(mod_family + mod_next_cap, 0, (cap - mod_next_cap) * sizeof(*family));
     mod_next_cap = cap;
     return true;
 }
 
-// The image for a module (reg_lock held). Attaching one reserves its
-// context indices, so JIT translations of the module never reuse them.
+// The first image of a module (reg_lock held), NULL if none.
 static const struct aot_module *mod_image(int mod) {
     if (!mod_tables_fit(mod))
         return NULL;
     if (!mod_aot_known[mod]) {
         mod_aot_known[mod] = 1;
+        // Several images may fit one module (versions of a file without a
+        // build-id share its path); each block matches at most the one
+        // recorded from its bytes.
         for (unsigned i = 0; i < aot_nimages; i++) {
-            if (!mod_path_is(mod, aot_images[i]->path))
+            int match = mod_match(mod, aot_images[i]);
+            if (match == IMG_NONE)
                 continue;
-            mod_aot[mod] = aot_images[i];
-            if (mod_next_idx[mod] < aot_images[i]->nidx)
-                mod_next_idx[mod] = aot_images[i]->nidx;
-            break;
+            if (match == IMG_SAME)
+                mod_same[mod] |= 1ULL << i;
+            else
+                mod_family[mod] |= 1ULL << i;
+            // shown in /proc/ish/jit: this build's image if there is one
+            if (!mod_aot[mod] || (match == IMG_SAME && !(mod_same[mod] & ((1ULL << i) - 1))))
+                mod_aot[mod] = aot_images[i];
         }
     }
     return mod_aot[mod];
@@ -2059,11 +2367,94 @@ static bool key_is_gadget(unsigned i) {
     return i >= 7 && (i - 7) % 9 >= 7;
 }
 
-// The recorded translation of b (key as built by reg_key), if the image has it.
-static const struct aot_trans *aot_find(const struct aot_module *m, const struct fiber_block *b,
+// Where each image's translations of a file offset start (reg_lock): its
+// trans[] is sorted by offset, and a lookup reads first[] for its bucket of
+// offsets instead of binary-searching the whole table (about 15 steps for
+// libpython, most of them cache misses). Made when the image is first
+// looked up, about one bucket per translation.
+struct aot_offidx {
+    uint32_t *first;            // bucket -> index of its first translation; nb + 1 entries
+    uint64_t lo;                // offset of trans[0]
+    size_t nb;
+    unsigned shift;             // bucket = (off - lo) >> shift
+    bool made;
+};
+static struct aot_offidx *aot_offidx;   // one per aot_images[]
+
+static const struct aot_offidx *aot_offidx_get(unsigned img) {
+    if (!aot_offidx)
+        aot_offidx = calloc(aot_nimages ? aot_nimages : 1, sizeof(*aot_offidx));
+    if (!aot_offidx)
+        return NULL;
+    struct aot_offidx *x = &aot_offidx[img];
+    if (x->made)
+        return x->first ? x : NULL;
+    x->made = true;
+    const struct aot_module *m = aot_images[img];
+    if (!m->ntrans || m->ntrans > UINT32_MAX)
+        return NULL;
+    uint64_t lo = m->trans[0].off, span = m->trans[m->ntrans - 1].off - lo + 1;
+    unsigned shift = 0;
+    while ((span >> shift) > m->ntrans)
+        shift++;
+    size_t nb = ((span - 1) >> shift) + 1;
+    uint32_t *first = malloc((nb + 1) * sizeof(*first));
+    if (!first)
+        return NULL;
+    size_t t = 0;
+    for (size_t bk = 0; bk <= nb; bk++) {
+        while (t < m->ntrans && ((m->trans[t].off - lo) >> shift) < bk)
+            t++;
+        first[bk] = (uint32_t) t;
+    }
+    *x = (struct aot_offidx) {first, lo, nb, shift, true};
+    return x;
+}
+
+// Key words of a recorded translation against a block's (gadgets excepted:
+// the image has 0 there, the pointers are compared separately).
+static bool aot_key_same(const struct aot_trans *t, const uint32_t *k, unsigned nkey) {
+    const uint32_t *tk = aot_rel(&t->key);
+    for (unsigned i = 1; i < 7 && i < nkey; i++)
+        if (tk[i] != k[i])
+            return false;
+    for (unsigned u = 7, c = 7; u + 9 <= nkey; u += 9, c += AOT_KEY_UNIT) {
+        const uint32_t *ku = &k[u], *tu = &tk[c];
+        if (ku[0] != tu[0] || ku[1] != tu[1] || ku[2] != tu[2] || ku[3] != tu[3] || ku[4] != 0 ||
+            ku[5] != tu[4] || ku[6] != tu[5])
+            return false;
+    }
+    return true;
+}
+
+// Word i of t's key as reg_key() lays it out (the image leaves out words that are 0).
+static uint32_t aot_key_word(const struct aot_trans *t, unsigned i) {
+    static const int8_t at[9] = {0, 1, 2, 3, -1, 4, 5, -1, -1};
+    const uint32_t *tk = aot_rel(&t->key);
+    if (i < 7)
+        return tk[i];
+    int j = at[(i - 7) % 9];
+    return j < 0 ? 0 : tk[7 + AOT_KEY_UNIT * ((i - 7) / 9) + (unsigned) j];
+}
+
+static const void *aot_gadget(const struct aot_trans *t, unsigned u) {
+    return aot_rel(&((const int32_t *) aot_rel(&t->gadget))[u]);
+}
+
+// The recorded translation of b (key as built by reg_key), if image img has it.
+static const struct aot_trans *aot_find(unsigned img, const struct fiber_block *b,
                                         const struct jit_units *U, const uint32_t *key, unsigned nkey) {
+    const struct aot_module *m = aot_images[img];
     uint64_t off = key[1] | (uint64_t) key[2] << 32;
     size_t lo = 0, hi = m->ntrans;
+    const struct aot_offidx *x = aot_offidx_get(img);
+    if (x) {
+        if (off < x->lo || ((off - x->lo) >> x->shift) >= x->nb)
+            return NULL;
+        size_t bk = (off - x->lo) >> x->shift;
+        lo = x->first[bk];
+        hi = x->first[bk + 1];
+    }
     while (lo < hi) {
         size_t mid = (lo + hi) / 2;
         if (m->trans[mid].off < off) lo = mid + 1; else hi = mid;
@@ -2072,12 +2463,10 @@ static const struct aot_trans *aot_find(const struct aot_module *m, const struct
         const struct aot_trans *t = &m->trans[lo];
         if (t->nkey != nkey || t->nunits != U->n)
             continue;
-        bool same = true;
-        for (unsigned i = 1; same && i < nkey; i++)
-            same = t->key[i] == (key_is_gadget(i) ? 0 : key[i]);
+        bool same = aot_key_same(t, key, nkey);
         for (unsigned u = 0; same && u < U->n; u++) {
             uintptr_t g = U->u[u].start < b->used ? b->code[U->u[u].start] : 0;
-            same = (uintptr_t) t->gadget[u] == g;
+            same = (uintptr_t) aot_gadget(t, u) == g;
         }
         if (same)
             return t;
@@ -2085,16 +2474,201 @@ static const struct aot_trans *aot_find(const struct aot_module *m, const struct
     return NULL;
 }
 
-static void aot_install(struct fiber_block *b, struct jit_ctx *ctx, const struct aot_trans *t, int32_t entry) {
-    b->jit_ctx = ctx;
-    __atomic_store_n(&ctx->blk[t->idx], b, __ATOMIC_RELEASE);
-    b->native_link[0] = (uint32_t *) t->link[0];
-    b->native_link[1] = (uint32_t *) t->link[1];
-    for (unsigned i = 0; i < t->nseg; i++) {
-        b->code[t->seg[i].pos] = (unsigned long) t->seg[i].code;
-        if (t->seg[i].pos == 0 && n_pinned)
-            __atomic_store_n(&b->native_entry, (uintptr_t) t->seg[i].code + (uintptr_t) entry, __ATOMIC_RELEASE);
+// Instruction words of a key: the guest words of each unit.
+static bool key_is_insn(unsigned i) {
+    return i >= 7 && ((i - 7) % 9 == 5 || (i - 7) % 9 == 6);
+}
+
+// A guest word with the pc-relative immediate left out where the translation
+// does not depend on it: block-end branches get their targets from the
+// block's code stream (built from the module's own bytes), and adr / adrp
+// targets are relative to the slot's dbase (mov_guest_ref()), set from the
+// block's own words when it is installed.
+static uint32_t insn_norm(uint32_t w) {
+    if ((w & 0x7C000000u) == 0x14000000u) return w & 0xFC000000u;            // b, bl
+    if ((w & 0xFF000010u) == 0x54000000u) return w & 0xFF00001Fu;            // b.cond
+    if ((w & 0x7E000000u) == 0x34000000u) return w & 0xFF00001Fu;            // cbz / cbnz
+    if ((w & 0x7E000000u) == 0x36000000u) return w & 0xFFF8001Fu;            // tbz / tbnz
+    if ((w & 0x1F000000u) == 0x10000000u) return w & 0x9F00001Fu;            // adr / adrp
+    return w;
+}
+
+// Target of adr / adrp w at pc.
+static uint64_t adr_target(uint32_t w, uint64_t pc) {
+    int64_t imm = sext(((w >> 5) & 0x7ffff) << 2 | ((w >> 29) & 3), 21);
+    return (w & 0x80000000u) ? (pc & ~0xfffULL) + ((uint64_t) imm << 12) : pc + (uint64_t) imm;
+}
+
+// Content of a translation's key, wherever the block is: every word after
+// the module, file offset and page offset (instruction words as insn_norm()
+// has them), except the gadgets (runtime pointers; compared separately).
+// gen.py computes the same hash.
+static uint64_t key_content_hash(const uint32_t *k, unsigned n) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (unsigned i = 4; i < n; i++)
+        if (!key_is_gadget(i))
+            h = (h ^ (key_is_insn(i) ? insn_norm(k[i]) : k[i])) * 0x100000001b3ull;
+    return h;
+}
+
+// Where the block would run: its address space and module mapping. A moved
+// block can only have a translation whose slot is free or serves its place.
+struct aot_place {
+    struct asbestos *a; int mod; uint64_t base;
+    const struct aot_module *m; struct jit_ctx *ctx;   // the last context looked up for image m
+};
+
+static bool aot_slot_usable(struct aot_place *p, const struct aot_module *m, const struct aot_trans *t,
+                            const struct fiber_block *b) {
+    if (p->m != m) {
+        p->ctx = ctx_get(p->a, p->mod, p->base, m);
+        p->m = m;
     }
+    struct jit_ctx *ctx = p->ctx;
+    if (!ctx)
+        return false;
+    struct fiber_block *owner = __atomic_load_n(&ctx->slot[t->idx].blk, __ATOMIC_ACQUIRE);
+    return !owner || owner == b;
+}
+
+// Would recorded translation t (key tk) run block b (key k, at file offset
+// off) right, and with what dbase? Every word must be the same except the
+// immediates insn_norm() leaves out; where adr / adrp targets moved, all of
+// the block's must have moved by the same distance, which dbase then adds.
+// A self-loop translation also keeps its branches.
+static bool aot_fits_moved(const struct aot_trans *t, const uint32_t *k, unsigned nkey, uint64_t off,
+                           const struct fiber_block *b, uint64_t *dbase, bool *fixed_out) {
+    bool loop = t->loop != 0, fixed = false, have = false;
+    int64_t shift = (int64_t) (off - t->off);   // no adr / adrp: as the code moved
+    for (unsigned i = 4; i < nkey; i++) {
+        if (key_is_gadget(i))
+            continue;
+        uint32_t w = aot_key_word(t, i);
+        if (!key_is_insn(i) || loop) {
+            if (w != k[i]) return false;
+            continue;
+        }
+        if (insn_norm(w) != insn_norm(k[i])) return false;
+        fixed |= w != k[i];
+    }
+    for (unsigned u = 0; u < k[4]; u++) {
+        const uint32_t *ku = &k[7 + 9 * u];
+        uint64_t dpc = ku[3] | (uint64_t) ku[4] << 32;
+        for (unsigned j = 0; j < (ku[2] & 0xff) && j < 2; j++) {
+            if ((ku[5 + j] & 0x1F000000u) != 0x10000000u)
+                continue;
+            int64_t d = (int64_t) (adr_target(ku[5 + j], off + dpc + 4 * j) -
+                                   adr_target(aot_key_word(t, 7 + 9 * u + 5 + j), t->off + dpc + 4 * j));
+            if (have && d != shift)
+                return false;
+            have = true;
+            shift = d;
+        }
+    }
+    *dbase = b->addr - off + (uint64_t) shift;
+    *fixed_out = fixed;
+    return true;
+}
+
+// The recorded translation of a block with the same code as b at another
+// file offset (another version of the module, where code before it grew or
+// shrank): the code is right with its constants relative to base + the
+// distance the block moved (identical bytes keep every pc-relative distance)
+// and adr / adrp targets relative to dbase (aot_fits_moved()).
+static const struct aot_trans *aot_find_moved(const struct aot_module *m, const struct fiber_block *b,
+                                              const struct jit_units *U, const uint32_t *key, unsigned nkey,
+                                              struct aot_place *place, uint64_t off, uint64_t *dbase,
+                                              bool *fixed) {
+    if (!m->by_hash)
+        return NULL;
+    uint64_t h = key_content_hash(key, nkey);
+    size_t lo = 0, hi = m->nhash;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (m->by_hash[mid].hash < h) lo = mid + 1; else hi = mid;
+    }
+    for (; lo < m->nhash && m->by_hash[lo].hash == h; lo++) {
+        const struct aot_trans *t = &m->trans[m->by_hash[lo].trans];
+        if (t->nkey != nkey || t->nunits != U->n)
+            continue;
+        bool same = true;
+        for (unsigned u = 0; same && u < U->n; u++) {
+            uintptr_t g = U->u[u].start < b->used ? b->code[U->u[u].start] : 0;
+            same = (uintptr_t) aot_gadget(t, u) == g;
+        }
+        // The same code is often recorded at several places (short
+        // epilogues and the like, one per function): take a copy whose slot
+        // is free rather than give up on the first.
+        if (same && aot_fits_moved(t, key, nkey, off, b, dbase, fixed) && aot_slot_usable(place, m, t, b))
+            return t;
+    }
+    return NULL;
+}
+
+// Look b up in the images recorded from this very file (at its file offset).
+static const struct aot_trans *aot_find_same(int mod, const struct fiber_block *b, const struct jit_units *U,
+                                             const uint32_t *key, unsigned nkey, const struct aot_module **found) {
+    uint64_t images = mod_same[mod];   // mod_image() made it
+    for (unsigned i = 0; images; i++, images >>= 1) {
+        if (!(images & 1))
+            continue;
+        const struct aot_trans *t = aot_find(i, b, U, key, nkey);
+        if (t) {
+            *found = aot_images[i];
+            return t;
+        }
+    }
+    return NULL;
+}
+
+// Look b up in the images of other versions of its module: at its offset,
+// else wherever its code was recorded.
+static const struct aot_trans *aot_find_family(int mod, const struct fiber_block *b, const struct jit_units *U,
+                                               const uint32_t *key, unsigned nkey, struct aot_place *place,
+                                               uint64_t off, const struct aot_module **found, uint64_t *dbase,
+                                               bool *fixed) {
+    uint64_t images = mod_family[mod];
+    for (unsigned i = 0; images; i++, images >>= 1) {
+        if (!(images & 1))
+            continue;
+        const struct aot_module *m = aot_images[i];
+        // at its recorded offset: base (a candidate aot_find_moved() turned
+        // down may have left another dbase here)
+        *dbase = b->addr - off;
+        *fixed = false;
+        const struct aot_trans *t = aot_find(i, b, U, key, nkey);
+        if (!t)
+            t = aot_find_moved(m, b, U, key, nkey, place, off, dbase, fixed);
+        if (t) {
+            *found = m;
+            return t;
+        }
+    }
+    return NULL;
+}
+
+// Install recorded translation t for b; false if its slot has another owner.
+// A translation has one slot, so it serves one block at a time: a block
+// matched by content can have the same bytes as one at another offset (a
+// short epilogue, duplicated code), and the first to get the translation
+// keeps it until it leaves the cache.
+static bool aot_install(struct fiber_block *b, struct jit_ctx *ctx, const struct aot_trans *t, int32_t entry,
+                        uint64_t dbase) {
+    // The recorded constants are relative to the guest address of file
+    // offset 0 where the block was recorded: here, b->addr - t->off.
+    if (!slot_claim(ctx, t->idx, b, b->addr - t->off, dbase))
+        return false;
+    b->jit_ctx = ctx;
+    b->native_link[0] = (uint32_t *) aot_rel(&t->link[0]);
+    b->native_link[1] = (uint32_t *) aot_rel(&t->link[1]);
+    const struct aot_seg *seg = aot_rel(&t->seg);
+    for (unsigned i = 0; i < t->nseg; i++) {
+        uintptr_t code = (uintptr_t) aot_rel(&seg[i].code);
+        b->code[seg[i].pos] = (unsigned long) code;
+        if (seg[i].pos == 0 && n_pinned)
+            __atomic_store_n(&b->native_entry, code + (uintptr_t) entry, __ATOMIC_RELEASE);
+    }
+    return true;
 }
 
 static bool in_aot_text(uintptr_t pc, const struct aot_module **img) {
@@ -2104,6 +2678,71 @@ static bool in_aot_text(uintptr_t pc, const struct aot_module **img) {
             return true;
         }
     return false;
+}
+
+// What aot_find_family() found for a key, kept for the next block with the same
+// key (in any process of this ish): another version's module only costs its
+// search once. Keyed by the key's two independent hashes; a translation that
+// no image has is remembered too (that is the costly search).
+struct aot_memo {
+    uint64_t h, h2;
+    int32_t img, trans;        // trans < 0: no image has it
+    int64_t dshift;            // dbase - (b->addr - off)
+    uint32_t fixed, valid;
+};
+#define AOT_MEMO_BITS 17   // entries, 2-way: a python start looks up ~40k blocks
+static struct aot_memo *aot_memo;   // reg_lock
+static _Atomic uint64_t st_memo_hits, st_search_n, st_search_ticks;
+
+// Look b up in the images of its module (reg_lock held): those recorded from
+// this very file first, so that with several images of one family linked in,
+// the one made from this build wins wherever it has the block; then other
+// versions, through the memo.
+static const struct aot_trans *aot_lookup(int mod, const struct fiber_block *b, const struct jit_units *U,
+                                          const uint32_t *key, unsigned nkey, struct aot_place *place, uint64_t off,
+                                          const struct aot_module **found, uint64_t *dbase, bool *fixed) {
+    *dbase = b->addr - off;
+    *fixed = false;
+    const struct aot_trans *t = aot_find_same(mod, b, U, key, nkey, found);
+    if (t || !mod_family[mod])
+        return t;
+    uint64_t h2, h = reg_hash(key, nkey, &h2);
+    if (!aot_memo)
+        aot_memo = calloc((size_t) 1 << AOT_MEMO_BITS, sizeof(*aot_memo));
+    struct aot_memo *mo = NULL;
+    if (aot_memo) {
+        struct aot_memo *set = &aot_memo[h & ((1u << AOT_MEMO_BITS) - 2)];
+        mo = set[0].valid && set[0].h == h && set[0].h2 == h2 ? &set[0] :
+             set[1].valid && set[1].h == h && set[1].h2 == h2 ? &set[1] : NULL;
+        if (!mo)   // to fill: an empty way, else the one not refilled last time
+            mo = !set[0].valid ? &set[0] : !set[1].valid ? &set[1] : &set[(h >> AOT_MEMO_BITS) & 1];
+    }
+    if (mo && mo->valid && mo->h == h && mo->h2 == h2) {
+        // (its slot may be taken in this address space: aot_install() says)
+        atomic_fetch_add_explicit(&st_memo_hits, 1, memory_order_relaxed);
+        if (mo->trans < 0)
+            return NULL;
+        *found = aot_images[mo->img];
+        *dbase = b->addr - off + (uint64_t) mo->dshift;
+        *fixed = mo->fixed;
+        return &(*found)->trans[mo->trans];
+    }
+    uint64_t ts = jit_ticks();
+    t = aot_find_family(mod, b, U, key, nkey, place, off, found, dbase, fixed);
+    atomic_fetch_add_explicit(&st_search_ticks, jit_ticks() - ts, memory_order_relaxed);
+    atomic_fetch_add_explicit(&st_search_n, 1, memory_order_relaxed);
+    if (mo) {
+        mo->h = h; mo->h2 = h2; mo->valid = 1;
+        mo->trans = -1;
+        if (t) {
+            for (unsigned i = 0; i < aot_nimages; i++)
+                if (aot_images[i] == *found) mo->img = (int32_t) i;
+            mo->trans = (int32_t) (t - (*found)->trans);
+            mo->dshift = (int64_t) (*dbase - (b->addr - off));
+            mo->fixed = *fixed;
+        }
+    }
+    return t;
 }
 
 // Translate b, or install an earlier translation with the same key.
@@ -2118,23 +2757,52 @@ static void jit_translate(struct fiber_block *b, const struct jit_units *U, stru
     struct asbestos *a = cm_tlb ? cm_tlb->mmu->asbestos : NULL;
     if (mod < 0 || !a || !U->n || !one_mapping(U, mod, base))
         return;
-    struct jit_ctx *ctx = ctx_get(a, mod, base);
-    if (!ctx)
+    // This process's own translations need a context with room for CTX_MAX
+    // indices (8MB of address space, per module mapping of every guest
+    // process, all in this one host process): not made when only images run.
+    struct jit_ctx *ctx = NULL;
+    if (!aot_only && !(ctx = ctx_get(a, mod, base, NULL)))
         return;
     unsigned nkey = reg_key(b, U, mod, off, key);
-    uint64_t h = reg_hash(key, nkey);
+    // for the registry (images are found by offset; aot_lookup() hashes for its memo)
+    uint64_t h2 = 0, h = aot_only ? 0 : reg_hash(key, nkey, &h2);
     pthread_mutex_lock(&reg_lock);
     const struct aot_module *img = mod_image(mod);
-    const struct aot_trans *at = img ? aot_find(img, b, U, key, nkey) : NULL;
+    struct aot_place place = {a, mod, base, NULL, NULL};
+    uint64_t dbase = base;
+    bool fixed = false;
+    uint64_t t0 = jit_ticks();
+    const struct aot_trans *at = img && !aot_off ? aot_lookup(mod, b, U, key, nkey, &place, off, &img, &dbase, &fixed)
+                                                 : NULL;
+    if (img)
+        atomic_fetch_add_explicit(&st_find_ticks, jit_ticks() - t0, memory_order_relaxed);
+    if ((unsigned) mod < mod_next_cap)
+        mod_blocks[mod]++;
     if (at) {
         pthread_mutex_unlock(&reg_lock);
-        aot_install(b, ctx, at, img->entry_off);
+        struct jit_ctx *actx = ctx_get(a, mod, base, img);
+        if (!actx)
+            return;
+        if (!aot_install(b, actx, at, img->entry_off, dbase)) {
+            atomic_fetch_add_explicit(&st_aot_busy, 1, memory_order_relaxed);
+            return;
+        }
+        bool moved = at->off != off;
         atomic_fetch_add_explicit(&st_aot, 1, memory_order_relaxed);
-        unsigned img_index = 0;
-        while (img_index < aot_nimages && aot_images[img_index] != img)
-            img_index++;
-        if (img_index < aot_nimages)
-            atomic_fetch_add_explicit(&aot_img_hits[img_index], 1, memory_order_relaxed);
+        // [T-aojit-per-image] Attribute the install to the image it came from.
+        int img_i = aot_img_index(img);
+        if (img_i >= 0)
+            atomic_fetch_add_explicit(&aot_img_hits[img_i], 1, memory_order_relaxed);
+        if (moved)
+            atomic_fetch_add_explicit(&st_aot_moved, 1, memory_order_relaxed);
+        if (fixed)
+            atomic_fetch_add_explicit(&st_aot_fixed, 1, memory_order_relaxed);
+        pthread_mutex_lock(&reg_lock);
+        if ((unsigned) mod < mod_next_cap) {
+            mod_hits[mod]++;
+            mod_moved[mod] += moved;
+        }
+        pthread_mutex_unlock(&reg_lock);
         return;
     }
     if (aot_only) {
@@ -2163,7 +2831,7 @@ static void jit_translate(struct fiber_block *b, const struct jit_units *U, stru
     e->idx = idx;
     e->base = base;
     b->jit_ctx = ctx;
-    __atomic_store_n(&ctx->blk[idx], b, __ATOMIC_RELEASE);
+    slot_set(ctx, idx, b, base, base);
     jit_native(b, U, e);
     if (e->ninst > sizeof(e->inst) / sizeof(e->inst[0]))
         return;
@@ -2217,7 +2885,7 @@ bool jit_crash_sync(void *ucontext) {
         pthread_mutex_unlock(&loopmap_lock);
     } else {
         for (unsigned k = 0; k < img->ntrans; k++) {
-            const struct aot_loop *l = img->trans[k].loop;
+            const struct aot_loop *l = aot_rel(&img->trans[k].loop);
             if (!l || pc < (uintptr_t) l->lo || pc >= (uintptr_t) l->hi)
                 continue;
             lm.n = l->n;
@@ -2246,7 +2914,13 @@ bool jit_crash_sync(void *ucontext) {
 // Host PC samples of native code resolve to modules through the S lines; the
 // same identity is what a recorder needs to find the code in another process.
 
-struct cm_module { char path[256]; uint64_t blocks, units, segments, bytes; };
+// A module is one file build: its ELF build-id when it has one (wherever it
+// is installed), else its path.
+struct cm_module {
+    char path[256];              // the first path it was seen at
+    uint8_t id[20], id_len;      // NT_GNU_BUILD_ID, id_len 0 if none
+    uint64_t blocks, units, segments, bytes;
+};
 struct cm_segment { uint64_t code, off, pc; uint32_t words, units, insn; int mod; };
 static bool cm_on;
 static pthread_mutex_t cm_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -2254,12 +2928,55 @@ static struct cm_module *cm_mods;
 static unsigned cm_nmods, cm_capmods;
 static struct cm_segment *cm_segs;
 static size_t cm_nsegs, cm_capsegs;
-static __thread struct data *cm_last_data;   // one-entry cache: data -> module
-static __thread int cm_last_mod = -1;
 
-static int cm_module_of_path(const char *path) {
+// NT_GNU_BUILD_ID of the ELF file behind fd (at most 20 bytes); 0 if none.
+static unsigned elf_build_id(struct fd *fd, uint8_t id[20]) {
+    uint8_t eh[64];
+    if (!fd->ops->pread || fd->ops->pread(fd, eh, sizeof(eh), 0) != sizeof(eh))
+        return 0;
+    if (memcmp(eh, "\177ELF\2\1", 6) != 0)   // 64-bit little endian
+        return 0;
+    uint64_t phoff;
+    uint16_t phentsize, phnum;
+    memcpy(&phoff, eh + 0x20, 8);
+    memcpy(&phentsize, eh + 0x36, 2);
+    memcpy(&phnum, eh + 0x38, 2);
+    uint8_t ph[64 * 56];
+    if (phentsize != 56 || phnum == 0 || phnum > 64 ||
+        fd->ops->pread(fd, ph, (size_t) phnum * 56, (off_t) phoff) != (ssize_t) phnum * 56)
+        return 0;
+    for (unsigned i = 0; i < phnum; i++) {
+        uint32_t type;
+        uint64_t noff, nsize;
+        memcpy(&type, ph + 56 * i, 4);
+        memcpy(&noff, ph + 56 * i + 8, 8);
+        memcpy(&nsize, ph + 56 * i + 32, 8);
+        uint8_t n[1024];
+        if (type != 4 /* PT_NOTE */ || nsize > sizeof(n) || fd->ops->pread(fd, n, nsize, (off_t) noff) != (ssize_t) nsize)
+            continue;
+        for (uint64_t p = 0; p + 12 <= nsize;) {
+            uint32_t namesz, descsz, ntype;
+            memcpy(&namesz, n + p, 4);
+            memcpy(&descsz, n + p + 4, 4);
+            memcpy(&ntype, n + p + 8, 4);
+            uint64_t name = p + 12, desc = name + ((namesz + 3u) & ~3u);
+            if (desc + descsz > nsize)
+                break;
+            if (ntype == 3 /* NT_GNU_BUILD_ID */ && namesz == 4 && !memcmp(n + name, "GNU", 4) &&
+                descsz > 0 && descsz <= 20) {
+                memcpy(id, n + desc, descsz);
+                return descsz;
+            }
+            p = desc + ((descsz + 3u) & ~3u);
+        }
+    }
+    return 0;
+}
+
+static int cm_module_of(const char *path, const uint8_t *id, unsigned id_len) {
     for (unsigned i = 0; i < cm_nmods; i++)
-        if (!strcmp(cm_mods[i].path, path))
+        if (id_len ? cm_mods[i].id_len == id_len && !memcmp(cm_mods[i].id, id, id_len)
+                   : !cm_mods[i].id_len && !strcmp(cm_mods[i].path, path))
             return (int) i;
     if (cm_nmods == cm_capmods) {
         unsigned cap = cm_capmods ? 2 * cm_capmods : 64;
@@ -2272,12 +2989,15 @@ static int cm_module_of_path(const char *path) {
     struct cm_module *m = &cm_mods[cm_nmods];
     memset(m, 0, sizeof(*m));
     snprintf(m->path, sizeof(m->path), "%s", path);
+    memcpy(m->id, id, id_len);
+    m->id_len = (uint8_t) id_len;
     return (int) cm_nmods++;
 }
 
-// Module and file offset of guest address pc (cm_lock held). The caller runs
-// guest code, so the address space is read-locked.
-static int cm_locate(addr_t pc, uint64_t *off) {
+// Module and file offset of guest address pc (cm_lock held), and the data
+// mapped there. The caller runs guest code, so the address space is
+// read-locked.
+static int cm_locate(addr_t pc, uint64_t *off, struct data **datap) {
     *off = 0;
     if (!cm_tlb)
         return -1;
@@ -2286,26 +3006,36 @@ static int cm_locate(addr_t pc, uint64_t *off) {
     if (!pt)
         return -1;
     struct data *data = pt->data;
+    if (datap)
+        *datap = data;
     // realfs maps the file from file_offset rounded down to a host page, and
     // pt->offset counts from there.
     if (data->fd)
         *off = data->file_offset - data->file_offset % real_page_size + pt->offset + PGOFFSET(pc);
-    if (data == cm_last_data)
-        return cm_last_mod;
+    // Looked up once per mapping (shared by forked address spaces).
+    if (data->jit_mod)
+        return data->jit_mod - 1;
     char path[MAX_PATH] = "[anon]";
-    if (data->name)
+    uint8_t id[20];
+    unsigned id_len = 0;
+    if (data->name) {
         snprintf(path, sizeof(path), "%s", data->name);
-    else if (data->fd)
-        generic_getpath(data->fd, path);
-    cm_last_data = data;
-    cm_last_mod = cm_module_of_path(path);
-    return cm_last_mod;
+    } else if (data->fd) {
+        if (generic_getpath(data->fd, path) < 0)
+            snprintf(path, sizeof(path), "[unnamed file]");
+        id_len = elf_build_id(data->fd, id);
+    }
+    int mod = cm_module_of(path, id, id_len);
+    if (mod >= 0)
+        data->jit_mod = mod + 1;
+    return mod;
 }
 
 static int jit_locate(addr_t pc, uint64_t *off, uint64_t *base) {
     pthread_mutex_lock(&cm_lock);
-    int mod = cm_locate(pc, off);
-    bool anon = mod >= 0 && !cm_last_data->fd;
+    struct data *data;
+    int mod = cm_locate(pc, off, &data);
+    bool anon = mod >= 0 && !data->fd;
     pthread_mutex_unlock(&cm_lock);
     if (mod < 0)
         return -1;
@@ -2315,11 +3045,35 @@ static int jit_locate(addr_t pc, uint64_t *off, uint64_t *base) {
     return mod;
 }
 
-static bool mod_path_is(int mod, const char *path) {
+// Was image m recorded from this module (IMG_SAME: by build-id when both have
+// one, the same build anywhere in the file system, else by path), or from
+// another version of it (IMG_FAMILY: the file name matches the image's
+// family pattern, e.g. "libz.so.1*")? Either way every block is still
+// checked word by word before it gets recorded code, so the pattern only
+// picks which images to search.
+static int mod_match(int mod, const struct aot_module *m) {
     pthread_mutex_lock(&cm_lock);
-    bool eq = mod >= 0 && (unsigned) mod < cm_nmods && !strcmp(cm_mods[mod].path, path);
+    int match = IMG_NONE;
+    if (mod >= 0 && (unsigned) mod < cm_nmods) {
+        const struct cm_module *c = &cm_mods[mod];
+        bool same = c->id_len && m->build_id_len ? c->id_len == m->build_id_len && !memcmp(c->id, m->build_id, c->id_len)
+                                                 : !strcmp(c->path, m->path);
+        const char *name = strrchr(c->path, '/');
+        name = name ? name + 1 : c->path;
+        if (same)
+            match = IMG_SAME;
+        else if (aot_family && m->family && fnmatch(m->family, name, 0) == 0)
+            match = IMG_FAMILY;
+        // [T-aojit-v2] Remember how this image serves the module, for the host
+        // to show "same build" versus "another version".
+        if (match != IMG_NONE) {
+            int img = aot_img_index(m);
+            if (img >= 0)
+                atomic_store_explicit(&aot_img_match[img], match, memory_order_relaxed);
+        }
+    }
     pthread_mutex_unlock(&cm_lock);
-    return eq;
+    return match;
 }
 
 static bool module_path_has(int mod, const char *sub) {
@@ -2383,8 +3137,8 @@ static void rec_write(const char *path) {
     if (t && w)
         qsort(w, nw, sizeof(*w), rec_where_cmp);
     // The conventions the code was generated with.
-    fprintf(f, "{\"header\": {\"prologue_words\": %d, \"entry_off\": %lu, \"n_pinned\": %d, \"exit_stub\": [",
-            prologue_words, (unsigned long) entry_off(), n_pinned);
+    fprintf(f, "{\"header\": {\"abi\": %u, \"prologue_words\": %d, \"entry_off\": %lu, \"n_pinned\": %d, \"exit_stub\": [",
+            jit_abi(), prologue_words, (unsigned long) entry_off(), n_pinned);
     for (unsigned i = 0; i < exit_stub_words; i++)
         fprintf(f, "%s%u", i ? ", " : "", ((uint32_t *) exit_stub)[i]);
     fprintf(f, "]}}\n");
@@ -2474,7 +3228,7 @@ static void rec_write(const char *path) {
 static void cm_block(struct fiber_block *b) {
     pthread_mutex_lock(&cm_lock);
     uint64_t off;
-    int mod = cm_locate(b->addr, &off);
+    int mod = cm_locate(b->addr, &off, NULL);
     if (mod >= 0)
         cm_mods[mod].blocks++;
     pthread_mutex_unlock(&cm_lock);
@@ -2484,7 +3238,7 @@ static void cm_segment(const struct jit_units *U, unsigned first, unsigned end,
                        const uint8_t *code, unsigned words) {
     pthread_mutex_lock(&cm_lock);
     uint64_t off;
-    int mod = cm_locate(U->u[first].pc, &off);
+    int mod = cm_locate(U->u[first].pc, &off, NULL);
     if (mod >= 0) {
         cm_mods[mod].units += end - first;
         cm_mods[mod].segments++;
@@ -2524,6 +3278,70 @@ static void cm_write(const char *path) {
 
 // ================================================================ entry
 
+int jit_control(const char *cmd, size_t len) {
+    while (len && (cmd[len - 1] == '\n' || cmd[len - 1] == ' '))
+        len--;
+    if (len == 2 && !memcmp(cmd, "on", 2)) {
+        aot_off = false;
+        return 0;
+    }
+    if (len == 3 && !memcmp(cmd, "off", 3)) {
+        aot_off = true;
+        return 0;
+    }
+    return -1;
+}
+
+// /proc/ish/jit: what runs and whether the AOT images are being used.
+size_t jit_describe(char *buf, size_t size) {
+    size_t n = 0;
+#define OUT(...) do { if (n < size) n += (size_t) snprintf(buf + n, size - n, __VA_ARGS__); } while (0)
+    const char *mode = !jit_on ? "off (gadgets only)" :
+                       aot_only ? "AOT images only (no executable memory)" :
+                       pic_on ? "JIT, position-independent" : "JIT";
+    OUT("mode: %s\n", mode);
+    OUT("AOT: %s (echo on|off > /proc/ish/jit; affects blocks compiled afterwards, i.e. new processes)\n",
+        aot_off ? "off" : "on");
+    OUT("blocks translated or looked up: %llu, AOT installs: %llu (moved: %llu, with pc-relative immediates "
+        "fixed: %llu, slot taken elsewhere: %llu), reused: %llu\n", (unsigned long long) st_blocks,
+        (unsigned long long) st_aot, (unsigned long long) st_aot_moved, (unsigned long long) st_aot_fixed,
+        (unsigned long long) st_aot_busy, (unsigned long long) st_shared);
+    OUT("other versions: %s (ISH_AOT_FAMILY=0 turns off)\n", aot_family ? "images serve their family" : "off");
+    OUT("image lookups: %.1f ms (%llu answered from the memo; %llu searches of other versions: %.1f ms)\n",
+        jit_ticks_ms(st_find_ticks), (unsigned long long) st_memo_hits,
+        (unsigned long long) st_search_n, jit_ticks_ms(st_search_ticks));
+    OUT("images: %u in use, %u rejected (abi %08x)\n", aot_nimages, aot_nrejected, jit_abi());
+    for (unsigned i = 0; i < aot_nimages; i++)
+        OUT("  ok        %s (%u translations, family %s)\n", aot_images[i]->path, aot_images[i]->ntrans,
+            aot_images[i]->family ? aot_images[i]->family : "-");
+    for (unsigned i = 0; i < aot_nrejected; i++)
+        OUT("  rejected  %s (made by an ish with other conventions or layouts)\n", aot_rejected[i]->path);
+    // Modules that have an image: hits tell whether the module file is the
+    // one the image was recorded from (no hits at all: a different version).
+    pthread_mutex_lock(&reg_lock);
+    OUT("modules with an image (blocks / AOT hits / of which moved):\n");
+    for (unsigned m = 0; m < mod_next_cap; m++) {
+        if (!mod_aot[m])
+            continue;
+        pthread_mutex_lock(&cm_lock);
+        const char *path = (unsigned) m < cm_nmods ? cm_mods[m].path : mod_aot[m]->path;
+        pthread_mutex_unlock(&cm_lock);
+        OUT("  %-40s %8llu / %-8llu / %-8llu %s\n", path, (unsigned long long) mod_blocks[m],
+            (unsigned long long) mod_hits[m], (unsigned long long) mod_moved[m],
+            mod_hits[m] ? "" : mod_blocks[m] ? "<- no match: module file differs from the recorded one" : "");
+    }
+    for (unsigned i = 0; i < aot_nimages; i++) {
+        bool seen = false;
+        for (unsigned m = 0; m < mod_next_cap && !seen; m++)
+            seen = mod_aot_known[m] && ((mod_same[m] | mod_family[m]) >> i & 1);
+        if (!seen)
+            OUT("  %-40s not loaded by any process yet\n", aot_images[i]->path);
+    }
+    pthread_mutex_unlock(&reg_lock);
+#undef OUT
+    return n < size ? n : size;
+}
+
 void jit_report(void) {
     // ISH_JIT_DUMP=<file>: [u64 region base][u64 bytes][code], for attributing
     // host PC samples to generated code.
@@ -2551,7 +3369,7 @@ void jit_report(void) {
             "🛠  JIT(%s): blocks %llu, segments %llu, units %llu, code %llu KB, compile %.1f ms | "
             "block ends %llu (not translated %llu), direct links %llu, loop blocks %llu | "
             "unsupported insns %llu, out of regs %llu | shared %llu, AOT %llu (%u images)\n",
-            dual_map ? (pic_on ? "dual-map, PIC" : "dual-map") : (pic_on ? "MAP_JIT, PIC" : "MAP_JIT"), st_blocks, st_segments, st_units, st_bytes / 1024, st_ns / 1e6,
+            dual_map ? (pic_on ? "dual-map, PIC" : "dual-map") : (pic_on ? "MAP_JIT, PIC" : "MAP_JIT"), st_blocks, st_segments, st_units, st_bytes / 1024, jit_ticks_ms(st_ticks),
             st_block_ends, st_block_end_fail, st_links, st_loops, st_unsupported_insns, st_fail_regs, st_shared, st_aot, aot_nimages);
 }
 
@@ -2592,6 +3410,8 @@ static void jit_init(void) {
     }
     if (pic_on)
         aot_init();
+    const char *fam = getenv("ISH_AOT_FAMILY");
+    aot_family = !(fam && fam[0] == '0');
     const char *ao = getenv("ISH_JIT_AOT_ONLY");
     aot_only = pic_on && (!have_region || (ao && ao[0] == '1'));
     if (aot_only && !aot_nimages)
@@ -2661,19 +3481,17 @@ void jit_block_init(struct fiber_block *b) {
     b->native_loop = NULL;
     b->native_entry = 0;
     b->jit_ctx = NULL;
+    b->jit_idx = 0;
 }
 
 void jit_block(struct fiber_block *b, struct jit_units *U) {
     if (!U || U->n > JIT_MAX_UNITS)
         return;
-    uint64_t t0 = mach_absolute_time();
+    uint64_t t0 = jit_ticks();
     if (cm_on)
         cm_block(b);
     jit_translate(b, U, &scratch->em, scratch->key);
-    static mach_timebase_info_data_t tb;
-    if (!tb.denom)
-        mach_timebase_info(&tb);
-    atomic_fetch_add_explicit(&st_ns, (mach_absolute_time() - t0) * tb.numer / tb.denom, memory_order_relaxed);
+    atomic_fetch_add_explicit(&st_ticks, jit_ticks() - t0, memory_order_relaxed);
     atomic_fetch_add_explicit(&st_blocks, 1, memory_order_relaxed);
 }
 
