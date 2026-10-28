@@ -112,6 +112,17 @@ jobs:
           ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
           ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
 
+      - name: Record the package versions the images are made from
+        run: |
+          set -uo pipefail
+          mkdir -p aot
+          build-macos/ish -r /tmp/rootfs /bin/sh -c '
+            for p in musl busybox python3 nodejs py3-pillow py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do
+              apk info -e -v "$p" 2>/dev/null
+            done' | sort > aot/VERSIONS.txt
+          cat aot/VERSIONS.txt
+          { echo '### Package versions'; echo '```'; cat aot/VERSIONS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Record AOT images
         run: |
           set -uo pipefail
@@ -158,4 +169,5 @@ jobs:
           path: |
             aot/*.S
             aot/*.o
+            aot/VERSIONS.txt
           if-no-files-found: warn
