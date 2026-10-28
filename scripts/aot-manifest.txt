@@ -14,9 +14,31 @@
 # produces an image with almost no translations — the first round of images
 # was recorded that way and left musl at 1379 translations against 4807
 # upstream.
+musl|ld-musl|@scripts/aot-workloads/musl.sh|600
+busybox|busybox|@scripts/aot-workloads/busybox.sh|600
 # Node is not in the catalog: recording /usr/bin/node needs more than the job
 # budget (V8's startup alone ran past 60 minutes under the recorder). Add
 # `nodejs|/usr/bin/node|@scripts/aot-workloads/node.sh|10800` here once a
 # six-hour recording run is acceptable.
-musl|ld-musl|@scripts/aot-workloads/musl.sh|600
-busybox|busybox|@scripts/aot-workloads/busybox.sh|600
+python3|libpython3|@scripts/aot-workloads/python3.sh|900
+pillow|PIL/_imaging.|@scripts/aot-workloads/pillow.sh|600
+libwebp|libwebp.so.7.1.9|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"|300
+libjpeg|libjpeg.so.8.3.2|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"|300
+numpy|_multiarray_umath|@scripts/aot-workloads/numpy.sh|600
+zlib|libz.so|@scripts/aot-workloads/zlib.sh|600
+sqlite|_sqlite3|@scripts/aot-workloads/sqlite.sh|600
+libcrypto|libcrypto.so|@scripts/aot-workloads/libcrypto.sh|900
+libssl|libssl.so|@scripts/aot-workloads/libssl.sh|600
+pcre2|libpcre2-8|@scripts/aot-workloads/pcre2.sh|600
+ssh|/usr/bin/ssh|ssh -V 2>&1; ssh -Q cipher >/dev/null 2>&1; true|120
+scp|/usr/bin/scp|scp 2>&1; true|120
+pyjson|_json|python3 -c "import json;[json.loads(json.dumps({'a':[1,2,3],'b':'x'})) for _ in range(800)]"|120
+pyhashlib|_hashlib|python3 -c "import hashlib;[hashlib.md5(b'x'*64).hexdigest() for _ in range(800)]"|120
+pyblake2|_blake2|python3 -c "import hashlib;[hashlib.blake2b(b'x'*128).digest() for _ in range(800)]"|120
+pystruct|_struct|python3 -c "import struct;[struct.pack('<iid',1,2,3.0) for _ in range(3000)]"|120
+pydatetime|_datetime|python3 -c "import datetime;[datetime.datetime.now().isoformat() for _ in range(3000)]"|120
+pybinascii|binascii.cpython|python3 -c "import binascii;[binascii.hexlify(b'x'*64) for _ in range(1500)]"|120
+pymath|math.|python3 -c "import math;[math.sin(i*0.01) for i in range(80000)]"|120
+pyzlib|zlib.|python3 -c "import zlib;d=b'y'*200000;zlib.decompress(zlib.compress(d))"|120
+pysocket|_socket|python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);s.close()"|120
+pyselect|select.|python3 -c "import select;select.select([],[],[],0)"|120

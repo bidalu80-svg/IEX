@@ -190,7 +190,9 @@ jobs:
         # /bin/true still finishes in the interpreter but the stats line shows
         # 0 AOT and 0 images. A non-zero "AOT n (2 images)" is the proof the
         # app needs — the app reads the same two counters.
-        continue-on-error: true
+        # [T-aojit-v2] No longer continue-on-error: this is the only proof the
+        # images attach to *this* engine, and a silently skipped check once let
+        # a build ship with 24 unusable images.
         run: |
           set -uo pipefail
           export PATH="$PWD/.venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
