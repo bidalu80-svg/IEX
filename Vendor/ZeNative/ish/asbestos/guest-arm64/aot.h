@@ -57,5 +57,10 @@ unsigned long long ish_aot_image_size(unsigned i);
 unsigned ish_aot_attached_count(void);
 unsigned long long ish_aot_hits(void);
 unsigned long long ish_aot_translated_blocks(void);
+// [T-aojit-per-image] Per-attached-image diagnostics: same order as
+// ish_aot_attached_path(), so a zero-hit image can be spotted by name.
+const char *ish_aot_attached_path(unsigned i);
+unsigned long long ish_aot_attached_size(unsigned i);
+unsigned long long ish_aot_hits_for_image(unsigned i);
 
 #endif

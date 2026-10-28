@@ -1934,6 +1934,10 @@ static unsigned aot_nimages;
 // tools/jit_aot/gen.py), before main: the binary that links an image in is
 // the only thing that knows about it.
 #define AOT_MAX 64
+// [T-aojit-per-image] Hits per attached image, so a useless image (recorded
+// from another package version, say) can be told apart from a hot one
+// instead of hiding behind one global counter.
+static _Atomic uint64_t aot_img_hits[AOT_MAX];
 static const struct aot_module *aot_registered[AOT_MAX];
 static unsigned aot_nregistered;
 
@@ -1954,6 +1958,25 @@ unsigned long long ish_aot_image_size(unsigned i) {
     if (i >= aot_nregistered || aot_registered[i] == NULL)
         return 0;
     return aot_registered[i]->size;
+}
+
+// [T-aojit-per-image] Blocks served from the i-th attached image, in the same
+// order as ish_aot_attached_path(). Zero on a hot module means the image
+// attached but never matched — the module is still running interpreted.
+unsigned long long ish_aot_hits_for_image(unsigned i) {
+    return i < AOT_MAX ? atomic_load_explicit(&aot_img_hits[i], memory_order_relaxed) : 0;
+}
+
+const char *ish_aot_attached_path(unsigned i) {
+    if (i >= aot_nimages || aot_images[i] == NULL)
+        return NULL;
+    return aot_images[i]->path;
+}
+
+unsigned long long ish_aot_attached_size(unsigned i) {
+    if (i >= aot_nimages || aot_images[i] == NULL)
+        return 0;
+    return aot_images[i]->size;
 }
 
 // [T-aojit-stats] Why the switch can look like it does nothing: an image that
@@ -2107,6 +2130,9 @@ static void jit_translate(struct fiber_block *b, const struct jit_units *U, stru
         pthread_mutex_unlock(&reg_lock);
         aot_install(b, ctx, at, img->entry_off);
         atomic_fetch_add_explicit(&st_aot, 1, memory_order_relaxed);
+        unsigned img_index = (unsigned) (img - aot_images);
+        if (img_index < aot_nimages)
+            atomic_fetch_add_explicit(&aot_img_hits[img_index], 1, memory_order_relaxed);
         return;
     }
     if (aot_only) {

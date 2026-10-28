@@ -21,6 +21,7 @@ extension ConfigRegistry {
         registerDefaults(into: r)
         registerSync(into: r)
         registerRootfsMirror(into: r)
+        registerAOJIT(into: r)
         registerSession(into: r)
         registerSoul(into: r)
         registerMemory(into: r)
@@ -720,6 +721,197 @@ extension ConfigRegistry {
                 defaultValue: "",
                 maxLength: 256
             ))
+        }
+    }
+
+    // MARK: AOJIT — status the agent can read from inside the guest
+    //
+    // AOJIT state lives only in the host process. The guest has no /proc
+    // entry and no on-disk marker that says whether an image attached, so
+    // an agent checking from the shell (`cat /proc/ish/jit`,
+    // `find / -name '*aot*'`) reports "AOJIT is off" on a build where all
+    // 24 images are attached. That false negative already cost one
+    // debugging session. These fields are the guest-readable answer, so a
+    // speed test can record the state it ran in instead of inferring it.
+
+    @MainActor
+    private static func registerAOJIT(into r: ConfigRegistry) {
+        /// Read straight from the engine, not from what the settings page
+        /// last cached: a stale zero is exactly the wrong answer here.
+        func numbers() -> (enabled: Bool, runtime: Bool, linked: Int, attached: Int, hits: UInt64, blocks: UInt64) {
+            (AOJITAcceleration.shared.isEnabled,
+             ish_jit_is_enabled(),
+             Int(ish_aot_image_count()),
+             Int(ish_aot_attached_count()),
+             ish_aot_hits(),
+             ish_aot_translated_blocks())
+        }
+
+        func statusLine() -> String {
+            let n = numbers()
+            if !n.enabled { return "off: the AOJIT switch is off" }
+            if !n.runtime { return "off: the switch is on but the kernel reports JIT disabled" }
+            guard n.linked > 0 else { return "on, but this build links no AOT images" }
+            guard n.attached > 0 else { return "on, but none of the \(n.linked) linked images attached" }
+            let rate = n.blocks > 0 ? Int((Double(n.hits) / Double(n.blocks) * 100).rounded()) : 0
+            return "on: \(n.attached)/\(n.linked) images attached, \(n.hits) of \(n.blocks) block translations came from AOT (\(rate)%)"
+        }
+
+        func attachedImages() -> [ConfigValue] {
+            (0..<Int(ish_aot_attached_count())).map { i in
+                let path = ish_aot_attached_path(UInt32(i)).map { String(cString: $0) } ?? ""
+                return .object([
+                    "path": .string(path),
+                    "size_kb": .int(Int(ish_aot_attached_size(UInt32(i)) / 1024)),
+                    "hits": .int(Int(clamping: ish_aot_hits_for_image(UInt32(i)))),
+                ])
+            }
+        }
+
+        func unattachedImages() -> [ConfigValue] {
+            let attached = Set((0..<Int(ish_aot_attached_count())).compactMap { i in
+                ish_aot_attached_path(UInt32(i)).map { String(cString: $0) }
+            })
+            return (0..<Int(ish_aot_image_count())).compactMap { i in
+                guard let path = ish_aot_image_path(UInt32(i)).map({ String(cString: $0) }) else { return nil }
+                return attached.contains(path) ? nil : ConfigValue.string(path)
+            }
+        }
+
+        func libraries() -> [ConfigValue] {
+            let store = AOJITAcceleration.shared
+            // Empty means "never probed" (the settings page was not opened
+            // this launch), not "nothing installed" — kick one probe. The
+            // probe is async, so the first read may still be empty.
+            if store.states.isEmpty { store.refresh() }
+            let iso = ISO8601DateFormatter()
+            return store.states.map { s in
+                .object([
+                    "id": .string(s.library.id),
+                    "package": .string(s.library.package),
+                    "status": .string(aojitStatusKey(s.status)),
+                    "installed_version": s.installedVersion.map { ConfigValue.string($0) } ?? .null,
+                    "recorded_version": s.recordedVersion.map { ConfigValue.string($0) } ?? .null,
+                    "recorded_at": s.recordedAt.map { ConfigValue.string(iso.string(from: $0)) } ?? .null,
+                    "warmup_ms": s.durationMs.map { ConfigValue.int($0) } ?? .null,
+                ])
+            }
+        }
+
+        // One-shot aggregate: `ze-config get aojit`.
+        r.register(ReadOnlyField(
+            path: "aojit",
+            displayName: "AOJIT status (summary)",
+            description: "Read-only snapshot of the AOT runtime: switch, kernel readback, linked/attached image counts, block counters and the per-library table. This is the supported way to check AOJIT from inside the guest; there is no /proc entry or on-disk marker for it.",
+            valueSchema: .json,
+            reader: {
+                let n = numbers()
+                return .object([
+                    "enabled": .bool(n.enabled),
+                    "jit_runtime": .bool(n.runtime),
+                    "images_linked": .int(n.linked),
+                    "images_attached": .int(n.attached),
+                    "aot_hits": .int(Int(clamping: n.hits)),
+                    "block_translations": .int(Int(clamping: n.blocks)),
+                    "status": .string(statusLine()),
+                    "libraries": .array(libraries()),
+                    "images": .array(attachedImages()),
+                    "images_unattached": .array(unattachedImages()),
+                ])
+            }
+        ))
+
+        // Individual paths, so a shell script can grep one number without
+        // parsing JSON.
+        r.register(ReadOnlyField(
+            path: "aojit.enabled",
+            displayName: "AOJIT switch (user preference)",
+            description: "The user's AOJIT switch in Settings → Rootfs Management. True means the AOT runtime is meant to be on; read aojit.jit_runtime for what the engine actually reports.",
+            valueSchema: .bool,
+            reader: { .bool(numbers().enabled) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.jit_runtime",
+            displayName: "AOJIT runtime enabled (kernel readback)",
+            description: "What ish_jit_is_enabled() returns. False while aojit.enabled is true means the switch never reached the engine — the usual reason a speed test shows no gain.",
+            valueSchema: .bool,
+            reader: { .bool(numbers().runtime) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.images_linked",
+            displayName: "AOT images linked into this build",
+            description: "Images whose constructor registered at launch. 0 means the binary was built without libish_aot / the __ish_aot section.",
+            valueSchema: .int(min: 0),
+            reader: { .int(numbers().linked) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.images_attached",
+            displayName: "AOT images attached to a guest module",
+            description: "Linked is not attached: an image whose conventions do not match the running JIT is skipped at registration. Must be > 0 for any acceleration to happen.",
+            valueSchema: .int(min: 0),
+            reader: { .int(numbers().attached) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.aot_hits",
+            displayName: "Blocks installed from an AOT image",
+            description: "Cumulative count of block translations served from an AOT image since launch. Compare with aojit.block_translations to judge whether the images cover the workload.",
+            valueSchema: .int(min: 0),
+            reader: { .int(Int(clamping: numbers().hits)) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.block_translations",
+            displayName: "Block translation attempts",
+            description: "Blocks that went through the translator. Under AOT-only builds a miss is re-attempted on every execution, so this grows much faster than the number of distinct blocks — treat the ratio as a rough hit rate, not a coverage map.",
+            valueSchema: .int(min: 0),
+            reader: { .int(Int(clamping: numbers().blocks)) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.hit_rate",
+            displayName: "AOT hit rate (%)",
+            description: "aojit.aot_hits / aojit.block_translations × 100. 0 on a build with no working images; useful as a before/after number for the same workload.",
+            valueSchema: .double(min: 0, max: 100),
+            reader: {
+                let n = numbers()
+                guard n.blocks > 0 else { return .double(0) }
+                return .double(Double(n.hits) / Double(n.blocks) * 100)
+            }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.status",
+            displayName: "AOJIT verdict",
+            description: "One-line human-readable verdict covering switch, kernel readback, image attachment and hit rate.",
+            valueSchema: .string(maxLength: 300),
+            reader: { .string(statusLine()) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.libraries",
+            displayName: "AOJIT libraries",
+            description: "Per-library rows: id, apk package, status (available / partial / recording / not_installed), installed and recorded versions, recorded_at, warmup_ms. Empty on the first read means the rootfs probe has not finished yet.",
+            valueSchema: .json,
+            reader: { .array(libraries()) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.images",
+            displayName: "AOJIT attached images (per-image hits)",
+            description: "One row per attached image: path, size_kb and blocks served from it. A hot module with zero hits means the image attached but its recorded blocks never matched — the module still runs interpreted, which is what 'AOJIT is on but nothing got faster' looks like.",
+            valueSchema: .json,
+            reader: { .array(attachedImages()) }
+        ))
+        r.register(ReadOnlyField(
+            path: "aojit.images_unattached",
+            displayName: "AOJIT linked but unattached images",
+            description: "Images whose constructor registered but which the runtime skipped because their conventions do not match. Non-empty on a build whose ish headers changed without re-recording.",
+            valueSchema: .json,
+            reader: { .array(unattachedImages()) }
+        ))
+    }
+
+    private static func aojitStatusKey(_ status: AOJITLibraryState.Status) -> String {
+        switch status {
+        case .available:    return "available"
+        case .partial:      return "partial"
+        case .recording:    return "recording"
+        case .notInstalled: return "not_installed"
         }
     }
 
