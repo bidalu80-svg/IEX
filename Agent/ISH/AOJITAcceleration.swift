@@ -603,7 +603,7 @@ final class AOJITAcceleration: ObservableObject {
         busyLibraryId = state.id
         repairError[state.id] = nil
 
-        let spec = "\(state.library.package)=\(state.library.repairVersion)"
+        let spec = "\(state.library.package)=\(state.library.targetVersion)"
         let package = state.library.package
         // [T-aojit-repair] `/etc/apk/repositories` lives in the rootfs data dir,
         // which is bind-mounted into the guest. A fresh rootfs ships without it,
