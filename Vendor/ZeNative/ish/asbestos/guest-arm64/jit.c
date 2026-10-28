@@ -2130,7 +2130,9 @@ static void jit_translate(struct fiber_block *b, const struct jit_units *U, stru
         pthread_mutex_unlock(&reg_lock);
         aot_install(b, ctx, at, img->entry_off);
         atomic_fetch_add_explicit(&st_aot, 1, memory_order_relaxed);
-        unsigned img_index = (unsigned) (img - aot_images);
+        unsigned img_index = 0;
+        while (img_index < aot_nimages && aot_images[img_index] != img)
+            img_index++;
         if (img_index < aot_nimages)
             atomic_fetch_add_explicit(&aot_img_hits[img_index], 1, memory_order_relaxed);
         return;
