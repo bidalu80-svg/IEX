@@ -528,7 +528,7 @@ jobs:
             # record.sh has no deadline of its own: one bad entry held the whole
             # step for over an hour. macOS has no coreutils `timeout`, so perl's
             # alarm+exec does the same job.
-            if perl -e 'alarm shift; exec @ARGV' 240 Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
+            if perl -e 'alarm shift; exec @ARGV' "${AOT_TIMEOUT:-240}" Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
               size=$(wc -c < "$4" 2>/dev/null || echo 0)
               printf '%-12s %8s bytes\n' "$name" "$size" >> "$SUMMARY"
               ls -l "$4" 2>/dev/null || true
@@ -553,14 +553,18 @@ jobs:
               "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
             printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
             [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
-            PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
+            PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default pcre2-tools bzip2"
             echo "── apk add $PACKAGES"
             build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
               || echo "⚠️  apk add failed; only libraries already present will record"
-            while IFS='|' read -r name module workload; do
+            while IFS='|' read -r name module workload timeout; do
               [ -n "${name:-}" ] || continue
-              printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh"
-              record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
+              case "$name" in '#'*) continue ;; esac
+              case "$workload" in
+                @*) cp "${workload#@}" "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
+                *)  printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
+              esac
+              AOT_TIMEOUT="$timeout" record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
             done < scripts/aot-manifest.txt
           else
             printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh

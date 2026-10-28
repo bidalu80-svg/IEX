@@ -51,4 +51,11 @@ unsigned ish_aot_image_count(void);
 const char *ish_aot_image_path(unsigned i);
 unsigned long long ish_aot_image_size(unsigned i);
 
+// [T-aojit-stats] Images that actually attached to a module (a linked image
+// whose conventions do not match is skipped), blocks installed from an image,
+// and blocks the JIT translated instead.
+unsigned ish_aot_attached_count(void);
+unsigned long long ish_aot_hits(void);
+unsigned long long ish_aot_translated_blocks(void);
+
 #endif

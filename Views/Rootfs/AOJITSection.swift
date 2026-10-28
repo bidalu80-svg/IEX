@@ -165,7 +165,14 @@ struct AOJITSection: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
-            Text(String(localized: "Images linked") + ": \(aojit.linkedImageCount)")
+            Text(String(localized: "Images linked") + ": \(aojit.linkedImageCount) · "
+                 + String(localized: "attached") + ": \(aojit.attachedImageCount)")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            // [T-aojit-stats] Blocks, not images, are what the speed comes
+            // from: 22 images with 0 hits is the "fake AOJIT" case.
+            Text(String(localized: "AOT hits") + ": \(aojit.aotHitCount) / \(aojit.aotHitCount + aojit.translatedBlockCount) "
+                 + String(localized: "blocks"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

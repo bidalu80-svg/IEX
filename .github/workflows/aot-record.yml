@@ -104,7 +104,7 @@ jobs:
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
-          PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default"
+          PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default pcre2-tools bzip2"
           echo "── apk add --no-cache $PKGS"
           build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
             || echo "⚠️  apk add failed; only libraries already present can record"
@@ -118,14 +118,18 @@ jobs:
           mkdir -p aot
           SUMMARY="$RUNNER_TEMP/aot-summary.txt"
           : > "$SUMMARY"
-          while IFS='|' read -r name module workload; do
+          while IFS='|' read -r name module workload timeout; do
             case "$name" in ''|'#'*) continue ;; esac
-            printf '%s\n' "$workload" > "/tmp/rootfs/tmp/wl-$name.sh"
-            echo "=== $name ($module) ==="
+            case "$workload" in
+              @*) cp "${workload#@}" "/tmp/rootfs/tmp/wl-$name.sh" ;;
+              *)  printf '%s\n' "$workload" > "/tmp/rootfs/tmp/wl-$name.sh" ;;
+            esac
+            limit="${timeout:-240}"
+            echo "=== $name ($module, ${limit}s) ==="
             # A guest workload can hang (V8 startup under emulation does), and
             # record.sh has no deadline of its own. macOS has no coreutils
             # `timeout`, so perl's alarm+exec does the same job.
-            if perl -e 'alarm shift; exec @ARGV' 240 \
+            if perl -e 'alarm shift; exec @ARGV' "$limit" \
                  Vendor/ZeNative/ish/tools/jit_aot/record.sh \
                  build-macos/ish /tmp/rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"; then
               size=$(wc -c < "aot/aot_$name.S" 2>/dev/null || echo 0)

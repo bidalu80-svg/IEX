@@ -1956,6 +1956,23 @@ unsigned long long ish_aot_image_size(unsigned i) {
     return aot_registered[i]->size;
 }
 
+// [T-aojit-stats] Why the switch can look like it does nothing: an image that
+// is linked is not necessarily one that attached to a module, and an attached
+// image is not necessarily one whose blocks were hit. The host shows all
+// three so "0 images" and "22 images, 0 hits" can be told apart.
+unsigned ish_aot_attached_count(void) {
+    return aot_nimages;
+}
+
+unsigned long long ish_aot_hits(void) {
+    return atomic_load_explicit(&st_aot, memory_order_relaxed);
+}
+
+unsigned long long ish_aot_translated_blocks(void) {
+    return atomic_load_explicit(&st_blocks, memory_order_relaxed);
+}
+
+
 void ish_aot_register(const struct aot_module *m) {
     if (aot_nregistered < AOT_MAX)
         aot_registered[aot_nregistered++] = m;

@@ -3443,6 +3443,7 @@
 					"-lfakefs",
 					"$(ZE_AOT_OBJECTS)",
 				);
+				ZE_AOT_OBJECTS = "$(SRCROOT)/aot/aot_busybox.o $(SRCROOT)/aot/aot_libcrypto.o $(SRCROOT)/aot/aot_libjpeg.o $(SRCROOT)/aot/aot_libssl.o $(SRCROOT)/aot/aot_musl.o $(SRCROOT)/aot/aot_numpy.o $(SRCROOT)/aot/aot_pcre2.o $(SRCROOT)/aot/aot_pillow.o $(SRCROOT)/aot/aot_pyblake2.o $(SRCROOT)/aot/aot_pydatetime.o $(SRCROOT)/aot/aot_pyhashlib.o $(SRCROOT)/aot/aot_pyjson.o $(SRCROOT)/aot/aot_pymath.o $(SRCROOT)/aot/aot_pyselect.o $(SRCROOT)/aot/aot_pysocket.o $(SRCROOT)/aot/aot_pystruct.o $(SRCROOT)/aot/aot_python3.o $(SRCROOT)/aot/aot_pyzlib.o $(SRCROOT)/aot/aot_scp.o $(SRCROOT)/aot/aot_sqlite.o $(SRCROOT)/aot/aot_ssh.o $(SRCROOT)/aot/aot_zlib.o";
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3502,6 +3503,7 @@
 					"-lfakefs",
 					"$(ZE_AOT_OBJECTS)",
 				);
+				ZE_AOT_OBJECTS = "$(SRCROOT)/aot/aot_busybox.o $(SRCROOT)/aot/aot_libcrypto.o $(SRCROOT)/aot/aot_libjpeg.o $(SRCROOT)/aot/aot_libssl.o $(SRCROOT)/aot/aot_musl.o $(SRCROOT)/aot/aot_numpy.o $(SRCROOT)/aot/aot_pcre2.o $(SRCROOT)/aot/aot_pillow.o $(SRCROOT)/aot/aot_pyblake2.o $(SRCROOT)/aot/aot_pydatetime.o $(SRCROOT)/aot/aot_pyhashlib.o $(SRCROOT)/aot/aot_pyjson.o $(SRCROOT)/aot/aot_pymath.o $(SRCROOT)/aot/aot_pyselect.o $(SRCROOT)/aot/aot_pysocket.o $(SRCROOT)/aot/aot_pystruct.o $(SRCROOT)/aot/aot_python3.o $(SRCROOT)/aot/aot_pyzlib.o $(SRCROOT)/aot/aot_scp.o $(SRCROOT)/aot/aot_sqlite.o $(SRCROOT)/aot/aot_ssh.o $(SRCROOT)/aot/aot_zlib.o";
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -430,6 +430,12 @@ final class AOJITAcceleration: ObservableObject {
     @Published private(set) var footprintMode = false
     /// How many AOT images this build actually links (`ish_aot_image_count`).
     @Published private(set) var linkedImageCount = 0
+    /// [T-aojit-stats] Linked is not attached: an image whose conventions do
+    /// not match the running JIT is skipped at registration.
+    @Published private(set) var attachedImageCount = 0
+    /// Blocks installed from an image, and blocks the JIT translated instead.
+    @Published private(set) var aotHitCount: UInt64 = 0
+    @Published private(set) var translatedBlockCount: UInt64 = 0
 
     // MARK: Private
 
@@ -497,7 +503,16 @@ final class AOJITAcceleration: ObservableObject {
         jitRuntimeEnabled = ish_jit_is_enabled()
         footprintMode = ish_footprint_mode()
         linkedImageCount = Self.linkedImagePaths().count
-        logger.info("[AOJIT] switch=preference:\(isEnabled) runtime:\(jitRuntimeEnabled) footprint:\(footprintMode) images:\(Self.linkedImagePaths().count)")
+        refreshEngineStats()
+        logger.info("[AOJIT] switch=preference:\(isEnabled) runtime:\(jitRuntimeEnabled) footprint:\(footprintMode) images:\(Self.linkedImagePaths().count) attached:\(attachedImageCount)")
+    }
+
+    /// [T-aojit-stats] Read what the engine has actually done, so a speed test
+    /// can tell "no images" from "images that never hit".
+    private func refreshEngineStats() {
+        attachedImageCount = Int(ish_aot_attached_count())
+        aotHitCount = ish_aot_hits()
+        translatedBlockCount = ish_aot_translated_blocks()
     }
 
     /// Re-probe the rootfs. Cheap: one shell command.
@@ -530,6 +545,7 @@ final class AOJITAcceleration: ObservableObject {
                 self.footprintMode = ish_footprint_mode()
                 self.jitRuntimeEnabled = ish_jit_is_enabled()
                 self.linkedImageCount = Self.linkedImagePaths().count
+                self.refreshEngineStats()
                 self.recordMissingImages()
             }
         }
