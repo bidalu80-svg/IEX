@@ -28,7 +28,7 @@ libcrypto|libcrypto.so|@scripts/aot-workloads/libcrypto.sh|900
 libssl|libssl.so|@scripts/aot-workloads/libssl.sh|600
 pcre2|libpcre2-8|@scripts/aot-workloads/pcre2.sh|600
 ssh|/usr/bin/ssh|ssh -V 2>&1; ssh -Q cipher >/dev/null 2>&1; true|120
-scp|/usr/bin/scp|scp 2>&1 | head -2; true|120
+scp|/usr/bin/scp|scp 2>&1; true|120
 pyjson|_json|python3 -c "import json;[json.loads(json.dumps({'a':[1,2,3],'b':'x'})) for _ in range(800)]"|120
 pyhashlib|_hashlib|python3 -c "import hashlib;[hashlib.md5(b'x'*64).hexdigest() for _ in range(800)]"|120
 pyblake2|_blake2|python3 -c "import hashlib;[hashlib.blake2b(b'x'*128).digest() for _ in range(800)]"|120
