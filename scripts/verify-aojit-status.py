@@ -77,6 +77,18 @@ check("store.refresh()" in block,
 for symbol in ["linkedImageCount", "attachedImageCount", "aotHitCount", "translatedBlockCount", "states"]:
     check(symbol in accel, f"AOJITAcceleration exposes {symbol}")
 
+# [T-aojit-v2] The 1.15 format distinguishes "linked" from "attached" from
+# "serving": an image made by another engine abi is rejected at registration,
+# and an image of another version of the file still serves blocks by content.
+for symbol in ["rejectedImageCount", "familyHitCount", "jitAbi"]:
+    check(symbol in accel, f"AOJITAcceleration exposes {symbol} for the v2 format")
+check("ish_aot_rejected_count()" in accel and "ish_aot_image_match(" in accel,
+      "the status page asks the engine which images it accepted")
+check("imageMatch == 2" in accel,
+      "a family image is reported as serving another version, not as full speed")
+check("ish_aot_moved_hits()" in accel,
+      "blocks served by another version are counted")
+
 check("ze-config get aojit" in code_map, "CODE_MAP documents ze-config get aojit")
 check("/proc/ish/jit" in code_map, "CODE_MAP warns that /proc/ish/jit does not exist")
 
@@ -86,6 +98,13 @@ check("aot_img_hits" in jit_c and "ish_aot_hits_for_image" in jit_c,
       "the engine counts hits per attached image")
 check("ish_aot_attached_path" in aot_h and "ish_aot_hits_for_image" in aot_h,
       "per-image diagnostics are declared in aot.h")
+
+# [T-aojit-v2] The 1.15 image header: identity is build-id + family, the
+# tables are self-relative, and a translation's key is the compact 6-word one.
+check("AOT_KEY_UNIT 6" in aot_h and "build_id_len" in aot_h and "by_hash" in aot_h,
+      "the image header carries the 1.15 identity fields")
+check("aot_rel(" in aot_h and "int32_t key;" in aot_h,
+      "the image tables use self-relative 32-bit pointers")
 
 # The UI must compare against what the image was recorded from, not against
 # the on-device warm-up record (which always says "full speed").

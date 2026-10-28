@@ -175,6 +175,19 @@ struct AOJITSection: View {
                  + String(localized: "blocks"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            // [T-aojit-v2] A build that links images the engine refuses looks
+            // exactly like one with no images: say which, and why.
+            if aojit.rejectedImageCount > 0 {
+                Text(String(localized: "Rejected images") + ": \(aojit.rejectedImageCount) ("
+                     + String(format: "abi %08x", aojit.jitAbi) + ")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+            }
+            if aojit.familyHitCount > 0 {
+                Text(String(localized: "Blocks served by another version") + ": \(aojit.familyHitCount)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityIdentifier("settings.aojit.diagnostics")
     }

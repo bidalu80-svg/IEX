@@ -107,6 +107,11 @@ struct AOJITLibraryState: Identifiable {
     let recordedVersion: String?
     let recordedAt: Date?
     let durationMs: Int?
+    /// [T-aojit-v2] Blocks this library's image has installed; 0 means the
+    /// image is attached but has never served a block.
+    let imageHits: UInt64
+    /// 1: recorded from this build. 2: another version of the same file.
+    let imageMatch: Int
     let status: Status
 
     var id: String { library.id }
@@ -123,8 +128,19 @@ struct AOJITLibraryState: Identifiable {
         case .notInstalled:
             return nil
         case .available:
+            if imageHits > 0 {
+                return String(localized: "Full speed: this build's own image, \(imageHits) blocks served so far.")
+            }
             return String(localized: "Full speed: the installed version is exactly the recorded one.")
         case .partial:
+            // [T-aojit-v2] "Attached" is not "serving": a family image that
+            // has matched nothing is exactly the old fake-AOJIT case.
+            if imageMatch == 2 && imageHits > 0 {
+                return String(localized: "Another version of this library: \(imageHits) blocks came from the image, the rest run interpreted.")
+            }
+            if imageMatch == 2 {
+                return String(localized: "Another version of this library, and no block has matched yet — the image is attached but not serving.")
+            }
             return String(localized: "Partial: the installed version differs, so unchanged code still runs from the image.")
         case .recording:
             return String(localized: "Recording an image for this library…")
@@ -472,6 +488,15 @@ final class AOJITAcceleration: ObservableObject {
     /// [T-aojit-stats] Linked is not attached: an image whose conventions do
     /// not match the running JIT is skipped at registration.
     @Published private(set) var attachedImageCount = 0
+    /// [T-aojit-v2] Attached images the running JIT refused (abi or pinned
+    /// conventions differ). Linked minus attached minus rejected is zero in a
+    /// healthy build.
+    @Published private(set) var rejectedImageCount = 0
+    /// [T-aojit-v2] The abi this binary's engine was built with, so a rejected
+    /// image can be reported as "made by abi X, this is Y".
+    @Published private(set) var jitAbi: UInt32 = 0
+    /// [T-aojit-v2] Blocks served by an image of another version of the file.
+    @Published private(set) var familyHitCount: UInt64 = 0
     /// Blocks installed from an image, and blocks the JIT translated instead.
     @Published private(set) var aotHitCount: UInt64 = 0
     @Published private(set) var translatedBlockCount: UInt64 = 0
@@ -550,6 +575,9 @@ final class AOJITAcceleration: ObservableObject {
     /// can tell "no images" from "images that never hit".
     private func refreshEngineStats() {
         attachedImageCount = Int(ish_aot_attached_count())
+        rejectedImageCount = Int(ish_aot_rejected_count())
+        jitAbi = ish_aot_jit_abi()
+        familyHitCount = ish_aot_moved_hits()
         aotHitCount = ish_aot_hits()
         translatedBlockCount = ish_aot_translated_blocks()
     }
@@ -768,9 +796,17 @@ final class AOJITAcceleration: ObservableObject {
 
             let status: AOJITLibraryState.Status
             let linked = Self.linkedImagePaths()
+            // [T-aojit-v2] A linked image the engine refused is not an image:
+            // counting it made a build with 24 unusable images look healthy.
+            let rejectedPaths = Self.rejectedImagePaths()
             let hasImage = linked.contains { path in
-                library.imageMatch.contains { path.contains($0) }
+                library.imageMatch.contains { path.contains($0) } && !rejectedPaths.contains(path)
             }
+            // [T-aojit-v2] What the engine says about this library's image:
+            // whether it attached as the same build or as another version of
+            // the file, and how many blocks it has actually served. The path
+            // list alone cannot tell "linked" from "serving".
+            let runtime = Self.runtimeImage(for: library)
             // [T-aojit-status] Compare against the version the *image* was
             // recorded from. The warm-up record only knows the installed
             // version, so using it marked every library "full speed" even
@@ -778,6 +814,9 @@ final class AOJITAcceleration: ObservableObject {
             let recorded = Self.imageVersions[library.package] ?? recording?.version
             if installed == nil {
                 status = .notInstalled
+            } else if let runtime, runtime.match == 1 {
+                // Same build (build-id or path): every recorded block applies.
+                status = .available
             } else if hasImage && (recorded == nil || recorded == installed) {
                 // [T-aojit-status] The build has a real AOT image for this
                 // module linked in — that is what makes it fast, not the
@@ -797,6 +836,8 @@ final class AOJITAcceleration: ObservableObject {
                 recordedVersion: recorded,
                 recordedAt: recording?.recordedAt,
                 durationMs: recording?.durationMs,
+                imageHits: runtime?.hits ?? 0,
+                imageMatch: runtime?.match ?? 0,
                 status: status
             )
         }
@@ -826,6 +867,34 @@ final class AOJITAcceleration: ObservableObject {
             }
         }
         return out
+    }
+
+    /// [T-aojit-v2] Images this build registered but the engine refused.
+    private static func rejectedImagePaths() -> [String] {
+        var out: [String] = []
+        let n = ish_aot_rejected_count()
+        guard n > 0 else { return out }
+        for i in 0..<Int(n) {
+            if let c = ish_aot_rejected_path(UInt32(i)), let s = String(validatingUTF8: c) {
+                out.append(s)
+            }
+        }
+        return out
+    }
+
+    /// [T-aojit-v2] The attached image that serves `library`, as the engine
+    /// sees it: `match` is 1 for the same build and 2 for another version of
+    /// the same file, `hits` is how many blocks it has installed. A linked
+    /// image whose conventions the JIT refused never appears here.
+    private static func runtimeImage(for library: AOJITLibrary) -> (index: Int, match: Int, hits: UInt64)? {
+        let n = ish_aot_attached_count()
+        guard n > 0 else { return nil }
+        for i in 0..<Int(n) {
+            guard let c = ish_aot_attached_path(UInt32(i)), let path = String(validatingUTF8: c) else { continue }
+            guard library.imageMatch.contains(where: { path.contains($0) }) else { continue }
+            return (i, Int(ish_aot_image_match(UInt32(i))), ish_aot_hits_for_image(UInt32(i)))
+        }
+        return nil
     }
 
     private func installedVersion(of library: AOJITLibrary, in probe: Probe) -> String? {
