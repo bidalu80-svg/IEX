@@ -171,3 +171,24 @@ jobs:
             aot/*.o
             aot/VERSIONS.txt
           if-no-files-found: warn
+
+      - name: Verify the images attach and hit
+        # [T-aot-verify] Recording only proves gen.py ran. This links two of
+        # the images into the same macOS CLI and runs a workload with the JIT
+        # unable to translate (ISH_JIT_AOT_ONLY): if the images do not attach,
+        # /bin/true still finishes in the interpreter but the stats line shows
+        # 0 AOT and 0 images. A non-zero "AOT n (2 images)" is the proof the
+        # app needs — the app reads the same two counters.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          export PATH="$PWD/.venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+          meson configure build-macos \
+            -Dcli_aot="$PWD/aot/aot_musl.S,$PWD/aot/aot_busybox.S"
+          ninja -C build-macos ish
+          out=$(ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1 build-macos/ish -r /tmp/rootfs \
+                  /bin/sh -c 'for i in $(seq 200); do /bin/true; done; echo workload-ok' 2>&1)
+          echo "$out" | tail -6
+          echo "$out" | grep -q 'workload-ok' || { echo "❌ the workload did not finish"; exit 1; }
+          echo "$out" | grep -Eq 'AOT [1-9][0-9]* \(2 images\)' || { echo "❌ the images attached but never hit"; exit 1; }
+          { echo '### AOT self-check'; echo '```'; echo "$out" | tail -6; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

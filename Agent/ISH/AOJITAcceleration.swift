@@ -52,10 +52,35 @@ struct AOJITLibrary: Identifiable {
     /// prose for the UI, so it cannot be matched directly.
     var imageMatch: [String] {
         switch id {
+        // The guest module path recorded into the image. The id only happens
+        // to appear in a few of them; the Python extension modules are named
+        // `_json`, `math`, `binascii` on disk, so they need the mapping or the
+        // row reports "no image" for a build that links one.
         case "musl": return ["ld-musl"]
         case "busybox": return ["busybox"]
-        case "python": return ["python3"]
-        case "node": return ["node"]
+        case "python3": return ["libpython3"]
+        case "nodejs": return ["usr/bin/node"]
+        case "pillow": return ["PIL/_imaging.cpython"]
+        case "numpy": return ["_multiarray"]
+        case "zlib": return ["libz.so"]
+        case "sqlite": return ["libsqlite3"]
+        case "libcrypto": return ["libcrypto"]
+        case "libssl": return ["libssl"]
+        case "libwebp": return ["libwebp"]
+        case "libjpeg": return ["libjpeg"]
+        case "pcre2": return ["libpcre2"]
+        case "ssh": return ["usr/bin/ssh"]
+        case "scp": return ["usr/bin/scp"]
+        case "pyjson": return ["_json.cpython"]
+        case "pyhashlib": return ["_hashlib.cpython"]
+        case "pyblake2": return ["_blake2.cpython"]
+        case "pystruct": return ["_struct.cpython"]
+        case "pydatetime": return ["_datetime.cpython"]
+        case "pybinascii": return ["binascii.cpython"]
+        case "pymath": return ["math.cpython"]
+        case "pyzlib": return ["zlib.cpython"]
+        case "pysocket": return ["_socket.cpython"]
+        case "pyselect": return ["select.cpython"]
         default: return [id]
         }
     }

@@ -17,8 +17,8 @@
 musl|ld-musl|@scripts/aot-workloads/musl.sh|600
 busybox|busybox|@scripts/aot-workloads/busybox.sh|600
 python3|libpython3|@scripts/aot-workloads/python3.sh|900
-nodejs|/usr/bin/node|@scripts/aot-workloads/node.sh|900
-pillow|_imaging|@scripts/aot-workloads/pillow.sh|600
+nodejs|/usr/bin/node|@scripts/aot-workloads/node.sh|3600
+pillow|PIL/_imaging.|@scripts/aot-workloads/pillow.sh|600
 libwebp|libwebp.so.7.1.9|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"|300
 libjpeg|libjpeg.so.8.3.2|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"|300
 numpy|_multiarray_umath|@scripts/aot-workloads/numpy.sh|600
@@ -34,7 +34,7 @@ pyhashlib|_hashlib|python3 -c "import hashlib;[hashlib.md5(b'x'*64).hexdigest() 
 pyblake2|_blake2|python3 -c "import hashlib;[hashlib.blake2b(b'x'*128).digest() for _ in range(800)]"|120
 pystruct|_struct|python3 -c "import struct;[struct.pack('<iid',1,2,3.0) for _ in range(3000)]"|120
 pydatetime|_datetime|python3 -c "import datetime;[datetime.datetime.now().isoformat() for _ in range(3000)]"|120
-pybinascii|_binascii|python3 -c "import binascii;[binascii.hexlify(b'x'*64) for _ in range(1500)]"|120
+pybinascii|binascii.cpython|python3 -c "import binascii;[binascii.hexlify(b'x'*64) for _ in range(1500)]"|120
 pymath|math.|python3 -c "import math;[math.sin(i*0.01) for i in range(80000)]"|120
 pyzlib|zlib.|python3 -c "import zlib;d=b'y'*200000;zlib.decompress(zlib.compress(d))"|120
 pysocket|_socket|python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);s.close()"|120
