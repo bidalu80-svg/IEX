@@ -140,16 +140,27 @@ jobs:
             # A guest workload can hang (V8 startup under emulation does), and
             # record.sh has no deadline of its own. macOS has no coreutils
             # `timeout`, so perl's alarm+exec does the same job.
-            if perl -e 'alarm shift; exec @ARGV' "$limit" \
-                 Vendor/ZeNative/ish/tools/jit_aot/record.sh \
-                 build-macos/ish /tmp/rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"; then
-              size=$(wc -c < "aot/aot_$name.S" 2>/dev/null || echo 0)
+            #
+            # Absolute paths, one line: a folded continuation here once turned
+            # the argument list into a command of its own and every library
+            # "recorded" a missing file in 30 ms.
+            perl -e 'alarm shift; exec @ARGV' "$limit" /bin/sh "$PWD/Vendor/ZeNative/ish/tools/jit_aot/record.sh" "$PWD/build-macos/ish" /tmp/rootfs "/tmp/wl-$name.sh" "$PWD/aot/aot_$name.S" "$module"
+            rc=$?
+            echo "record.sh rc=$rc"
+            if [ "$rc" -eq 0 ] && [ -s "aot/aot_$name.S" ]; then
+              size=$(wc -c < "aot/aot_$name.S")
               printf '%-12s %10s bytes\n' "$name" "$size" >> "$SUMMARY"
             else
               printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
-              echo "❌ record failed for $name"
+              echo "❌ record failed for $name (rc=$rc)"
             fi
           done < scripts/aot-manifest.txt
+
+          if grep -q 'NO IMAGE' "$SUMMARY"; then
+            cat "$SUMMARY"
+            echo "❌ some images were not recorded"
+            exit 1
+          fi
 
           echo "── summary"
           cat "$SUMMARY"
