@@ -675,6 +675,15 @@ jobs:
             echo "The app still depends on Ze.debug.dylib."
             exit 1
           fi
+          # [T-aot-audit] The images reach the app as bare object files in
+          # OTHER_LDFLAGS. If ZE_AOT_OBJECTS is empty, or dead-stripping drops
+          # the __ish_aot section, the toggle still works and the speed is
+          # still absent — exactly the failure that made AOJIT look fake. Fail
+          # the build instead of shipping an IPA without them.
+          AOT_BYTES=$(otool -l "$APP_AUDIT/Ze" | awk '/sectname __ish_aot/{f=1} f && /^ *size /{print $2; exit}')
+          echo "── __ish_aot section: ${AOT_BYTES:-missing}"
+          test -n "${AOT_BYTES:-}"
+          test "$((AOT_BYTES))" -gt 8000000
           for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
             FRAMEWORK_DIR="$APP_AUDIT/Frameworks/$fw.framework"
             test -f "$FRAMEWORK_DIR/Info.plist"

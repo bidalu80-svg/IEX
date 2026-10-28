@@ -16,8 +16,11 @@
 # upstream.
 musl|ld-musl|@scripts/aot-workloads/musl.sh|600
 busybox|busybox|@scripts/aot-workloads/busybox.sh|600
+# Node is not in the catalog: recording /usr/bin/node needs more than the job
+# budget (V8's startup alone ran past 60 minutes under the recorder). Add
+# `nodejs|/usr/bin/node|@scripts/aot-workloads/node.sh|10800` here once a
+# six-hour recording run is acceptable.
 python3|libpython3|@scripts/aot-workloads/python3.sh|900
-nodejs|/usr/bin/node|@scripts/aot-workloads/node.sh|3600
 pillow|PIL/_imaging.|@scripts/aot-workloads/pillow.sh|600
 libwebp|libwebp.so.7.1.9|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(0,120,255));im.save('/tmp/a.webp');Image.open('/tmp/a.webp').load()"|300
 libjpeg|libjpeg.so.8.3.2|python3 -c "from PIL import Image;im=Image.new('RGB',(128,128),(20,200,90));im.save('/tmp/a.jpg',quality=85);Image.open('/tmp/a.jpg').load()"|300

@@ -33,3 +33,13 @@ Configs/ProviderCustomization.xcconfig
 
 # AOT images recorded by the manual workflow: the app links these directly.
 !aot/*.o
+
+# Local AOT recording/download scratch: the .o goes into aot/, the .S and the
+# zip never get committed.
+.aot-new/
+.aot-new2/
+.ipa-old/
+.ipa-new/
+.tmp-*
+.apkchk/
+.iexa-artifacts/

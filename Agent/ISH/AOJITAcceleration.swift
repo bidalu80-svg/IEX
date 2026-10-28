@@ -180,17 +180,6 @@ final class AOJITAcceleration: ObservableObject {
             timeout: 25
         ),
         AOJITLibrary(
-            id: "nodejs",
-            name: "Node.js",
-            paths: "/usr/bin/node，/usr/bin/npm，/usr/bin/npx",
-            summary: String(localized: "node, npm and npx: JavaScript scripts and Node-based command line tools."),
-            package: "nodejs",
-            repairVersion: "22.23.2-r0",
-            probe: "apk info -e nodejs >/dev/null 2>&1",
-            warmup: "node -e \"require('fs');require('path');require('os')\"",
-            timeout: 40
-        ),
-        AOJITLibrary(
             id: "pillow",
             name: "Pillow",
             paths: "PIL._imaging (python3 -c \"from PIL import Image\")",
@@ -483,7 +472,7 @@ final class AOJITAcceleration: ObservableObject {
     private let queue = DispatchQueue(label: "com.ze.aojit.record", qos: .utility)
     private let logger = AppLogger(category: "AOJIT")
 
-    private static let probeScript = #"for p in musl busybox python3 nodejs py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(v=$(apk info -e -v "$p" 2>/dev/null | head -n 1); v=${v#"$p"-}; if [ -z "$v" ]; then v=$(apk list --installed "$p" 2>/dev/null | head -n 1 | cut -d' ' -f1); v=${v#"$p"-}; fi; printf '%s' "$v")"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
+    private static let probeScript = #"for p in musl busybox python3 py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(v=$(apk info -e -v "$p" 2>/dev/null | head -n 1); v=${v#"$p"-}; if [ -z "$v" ]; then v=$(apk list --installed "$p" 2>/dev/null | head -n 1 | cut -d' ' -f1); v=${v#"$p"-}; fi; printf '%s' "$v")"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
 
     private init() {
         let defaults = UserDefaults.standard

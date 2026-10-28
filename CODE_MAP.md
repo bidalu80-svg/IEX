@@ -344,3 +344,12 @@ git status --short
 - `Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift`：模型创建/查看/启停/删除定时任务。
 - `scripts/verify-agent-scheduled-tools.py`：工具接线与动画性能结构检查。
 - 构建号由 4 升级为 5。
+
+## AOJIT（AOT 镜像）
+
+- 运行时：`Vendor/ZeNative/ish` 的 asbestos arm64 JIT，iOS 侧用 `-Djit=true -Djit_emit=false`（`Vendor/ZeNative/ish/app/xcode-meson.sh`）编译：只安装镜像里的翻译，不申请可执行内存。
+- 录制：`scripts/aot-manifest.txt` 每行一个模块（name | guest 路径子串 | 负载 | 超时），`/.github/workflows/aot-record.yml` 在 macOS 上跑 `tools/jit_aot/record.sh` + `gen.py` 生成 `aot/*.S`，再汇编成 `aot/*.o` 提交进仓库。
+- 接线：`scripts/sync-aot-objects.py` 扫描 `aot/*.o` 并重写 `Ze.xcodeproj/project.pbxproj` 的三处 `ZE_AOT_OBJECTS`；新增镜像必须跑它，否则文件在仓库里但不会被链接。
+- 自检：录制工作流末尾 “Verify the images attach and hit” 用 `ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1` 跑 musl+busybox，输出必须匹配 `AOT n (2 images)`；`build.yml` 的 IPA 审计要求二进制里存在 `__ish_aot` 段且大于 8 MB。
+- 匹配：镜像按 `struct aot_module.path` 绑定 guest 模块，块按文件偏移 + key 匹配；包版本不同只命中原样未变的块。`AOJITAcceleration.imageMatch` 要写 guest 文件名（`_json`、`math`、`binascii.cpython`、`libz.so`），不能直接拿目录 id。
+- 已知缺口：`nodejs` 的 V8 启动在录制器里超过 60 分钟，暂不在目录内；需要时把清单里注释掉的行改成 10800 秒并接受六小时任务。
