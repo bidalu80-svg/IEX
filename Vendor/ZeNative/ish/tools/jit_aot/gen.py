@@ -30,7 +30,13 @@ import struct
 import subprocess
 import sys
 
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    # The recording CI installs meson and nothing else, and a missing
+    # progress bar must not cost a 40-minute recording run.
+    def tqdm(it, **kwargs):
+        return it
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from compact import compact_lines   # noqa: E402
