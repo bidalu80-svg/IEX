@@ -24,7 +24,7 @@ on:
       # exactly what a device on a newer rootfs needs.
       cross_version:
         description: 'Alpine version to test the images against (family matching)'
-        default: '3.22'
+        default: '3.19'
         required: false
   # [T-aot-trigger] `workflow_dispatch` only works once the workflow exists on
   # the DEFAULT branch, and this one lives on a feature branch. A push touching
@@ -221,7 +221,7 @@ jobs:
         # the proof that by_hash serves another version of the same file.
         run: |
           set -uo pipefail
-          v="${{ github.event.inputs.cross_version || '3.22' }}"
+          v="${{ github.event.inputs.cross_version || '3.19' }}"
           url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
           echo "── cross rootfs: alpine $v"
           curl -fSL --retry 3 -o /tmp/alpine-cross.tar.gz "$url"
@@ -229,11 +229,36 @@ jobs:
           mkdir -p /tmp/rootfs-cross/tmp
           tar -xzf /tmp/alpine-cross.tar.gz -C /tmp/rootfs-cross
 
-          echo "── recorded against:"
-          grep -E '^(musl|busybox)-' aot/VERSIONS.txt || true
-          echo "── running on:"
-          build-macos/ish -r /tmp/rootfs-cross /bin/sh -c \
-            'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' || true
+          # Build-id is what the engine matches first: printing both proves the
+          # hits below cannot come from IMG_SAME, only from IMG_FAMILY.
+          bid() {
+            python3 - "$1" <<'PY'
+import sys, struct
+p = sys.argv[1]
+d = open(p, 'rb').read()
+e_shoff, = struct.unpack_from('<Q', d, 0x28)
+e_shentsize, e_shnum = struct.unpack_from('<HH', d, 0x3a)
+for i in range(e_shnum):
+    o = e_shoff + i * e_shentsize
+    sh_type, = struct.unpack_from('<I', d, o + 4)
+    sh_off, sh_size = struct.unpack_from('<QQ', d, o + 0x18)
+    if sh_type == 7:
+        n = d[sh_off:sh_off + sh_size]
+        off = 0
+        while off + 12 <= len(n):
+            namesz, descsz, ntype = struct.unpack_from('<III', n, off)
+            name = n[off + 12:off + 12 + namesz].rstrip(b'\0')
+            desc = n[off + 12 + namesz:off + 12 + namesz + descsz]
+            if name == b'GNU' and ntype == 3:
+                print(desc.hex()); sys.exit()
+            off += 12 + ((namesz + 3) & ~3) + ((descsz + 3) & ~3)
+print('none')
+PY
+          }
+          echo "── recorded against: $(grep -E '^(musl|busybox)-' aot/VERSIONS.txt | tr '\n' ' ')"
+          echo "── running on:      $(build-macos/ish -r /tmp/rootfs-cross /bin/sh -c 'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' | tr '\n' ' ')"
+          echo "── musl build-id recorded: $(bid /tmp/rootfs/lib/ld-musl-aarch64.so.1)"
+          echo "── musl build-id cross:    $(bid /tmp/rootfs-cross/lib/ld-musl-aarch64.so.1)"
 
           out=$(ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1 build-macos/ish -r /tmp/rootfs-cross \
                   /bin/sh -c 'for i in $(seq 200); do /bin/true; done; echo workload-ok' 2>&1)
