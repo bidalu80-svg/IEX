@@ -18,6 +18,14 @@ on:
         description: 'Alpine minirootfs version'
         default: '3.21'
         required: false
+      # [T-aot-family] Record from `alpine_version`, then run the same workload
+      # in a rootfs of this version. musl and busybox differ between releases,
+      # so any hit here can only come from family + by_hash matching — which is
+      # exactly what a device on a newer rootfs needs.
+      cross_version:
+        description: 'Alpine version to test the images against (family matching)'
+        default: '3.22'
+        required: false
   # [T-aot-trigger] `workflow_dispatch` only works once the workflow exists on
   # the DEFAULT branch, and this one lives on a feature branch. A push touching
   # this sentinel is the supported way to start it from here; ordinary pushes
@@ -205,3 +213,32 @@ jobs:
           echo "$out" | grep -q 'workload-ok' || { echo "❌ the workload did not finish"; exit 1; }
           echo "$out" | grep -Eq 'AOT [1-9][0-9]* \(2 images\)' || { echo "❌ the images attached but never hit"; exit 1; }
           { echo '### AOT self-check'; echo '```'; echo "$out" | tail -6; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify a different rootfs still hits (family matching)
+        # [T-aot-family] The images were recorded from alpine_version. This runs
+        # them against cross_version: different musl, different busybox, no
+        # build-id match anywhere. Blocks that still come from the images are
+        # the proof that by_hash serves another version of the same file.
+        run: |
+          set -uo pipefail
+          v="${{ github.event.inputs.cross_version || '3.22' }}"
+          url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
+          echo "── cross rootfs: alpine $v"
+          curl -fSL --retry 3 -o /tmp/alpine-cross.tar.gz "$url"
+          rm -rf /tmp/rootfs-cross
+          mkdir -p /tmp/rootfs-cross/tmp
+          tar -xzf /tmp/alpine-cross.tar.gz -C /tmp/rootfs-cross
+
+          echo "── recorded against:"
+          grep -E '^(musl|busybox)-' aot/VERSIONS.txt || true
+          echo "── running on:"
+          build-macos/ish -r /tmp/rootfs-cross /bin/sh -c \
+            'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' || true
+
+          out=$(ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1 build-macos/ish -r /tmp/rootfs-cross \
+                  /bin/sh -c 'for i in $(seq 200); do /bin/true; done; echo workload-ok' 2>&1)
+          echo "$out" | tail -6
+          echo "$out" | grep -q 'workload-ok' || { echo "❌ the cross-version workload did not finish"; exit 1; }
+          echo "$out" | grep -Eq 'AOT [1-9][0-9]* \(2 images\)' \
+            || { echo "❌ a different rootfs version got no hits at all: family matching is not working"; exit 1; }
+          { echo '### Cross-version (family) self-check'; echo '```'; echo "$out" | tail -6; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
