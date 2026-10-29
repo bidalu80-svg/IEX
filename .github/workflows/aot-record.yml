@@ -120,6 +120,18 @@ jobs:
           ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
           ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
 
+      # [T-aot-current] A fresh minirootfs pins whatever musl/busybox the
+      # release tarball shipped (3.21: musl 1.2.5-r8), while a device that ran
+      # `apk upgrade` has the repo's current one (1.2.5-r12). Record from the
+      # current versions: family matching covers the rest, this removes the gap
+      # for the devices that are up to date.
+      - name: Upgrade musl and busybox to the repository's current versions
+        run: |
+          set -uo pipefail
+          build-macos/ish -r /tmp/rootfs /bin/sh -c 'apk upgrade --no-cache musl busybox 2>&1 | tail -8' \
+            || echo "⚠️  apk upgrade failed; recording the versions the rootfs shipped with"
+          build-macos/ish -r /tmp/rootfs /bin/sh -c 'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' || true
+
       - name: Record the package versions the images are made from
         run: |
           set -uo pipefail
