@@ -169,8 +169,8 @@ final class AOJITAcceleration: ObservableObject {
     /// musl image predates the installed musl by four revisions kept claiming
     /// full speed while most blocks were still interpreted.
     static let imageVersions: [String: String] = [
-        "musl": "1.2.5-r8",
-        "busybox": "1.37.0-r8",
+        "musl": "1.2.5-r12",
+        "busybox": "1.37.0-r14",
         "python3": "3.12.16-r0",
         "py3-pillow": "11.0.0-r0",
         "py3-numpy": "2.1.3-r0",
