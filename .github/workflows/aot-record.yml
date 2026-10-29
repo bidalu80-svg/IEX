@@ -231,30 +231,8 @@ jobs:
 
           # Build-id is what the engine matches first: printing both proves the
           # hits below cannot come from IMG_SAME, only from IMG_FAMILY.
-          bid() {
-            python3 - "$1" <<'PY'
-import sys, struct
-p = sys.argv[1]
-d = open(p, 'rb').read()
-e_shoff, = struct.unpack_from('<Q', d, 0x28)
-e_shentsize, e_shnum = struct.unpack_from('<HH', d, 0x3a)
-for i in range(e_shnum):
-    o = e_shoff + i * e_shentsize
-    sh_type, = struct.unpack_from('<I', d, o + 4)
-    sh_off, sh_size = struct.unpack_from('<QQ', d, o + 0x18)
-    if sh_type == 7:
-        n = d[sh_off:sh_off + sh_size]
-        off = 0
-        while off + 12 <= len(n):
-            namesz, descsz, ntype = struct.unpack_from('<III', n, off)
-            name = n[off + 12:off + 12 + namesz].rstrip(b'\0')
-            desc = n[off + 12 + namesz:off + 12 + namesz + descsz]
-            if name == b'GNU' and ntype == 3:
-                print(desc.hex()); sys.exit()
-            off += 12 + ((namesz + 3) & ~3) + ((descsz + 3) & ~3)
-print('none')
-PY
-          }
+          # llvm-readelf comes with the llvm that meson already needs.
+          bid() { llvm-readelf -n "$1" | sed -n 's/.*Build ID: //p' | head -1; }
           echo "── recorded against: $(grep -E '^(musl|busybox)-' aot/VERSIONS.txt | tr '\n' ' ')"
           echo "── running on:      $(build-macos/ish -r /tmp/rootfs-cross /bin/sh -c 'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' | tr '\n' ' ')"
           echo "── musl build-id recorded: $(bid /tmp/rootfs/lib/ld-musl-aarch64.so.1)"
