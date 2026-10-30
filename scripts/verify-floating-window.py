@@ -166,6 +166,21 @@ def main():
     check("CMTimeRange(start: .zero, duration: .zero)" in pip,
           "a zero-length range keeps the live/skip chrome off the strip")
 
+    # --- The frames actually reach the screen -------------------------
+
+    # A sample-buffer layer with no timebase queues frames that never become
+    # "due": the window opens as a grey card with a spinner.
+    check("CMTimebaseCreateWithSourceClock" in pip and "layer.controlTimebase = timebase" in pip,
+          "the sample-buffer layer gets a timebase before any frame is queued")
+    check("presentationTimeStamp: CMTime(value: index, timescale: frameTimescale)" in pip,
+          "timestamps advance against that timebase instead of the host clock")
+    check("frameIndex += 1" in pip,
+          "every rendered frame gets its own timestamp")
+    check("kCVPixelBufferMetalCompatibilityKey" in pip,
+          "the buffer is displayable by the render path")
+    check("[PiP] first frame" in pip and "[PiP] render produced no image" in pip,
+          "the first frame and a failed render are both logged, so a blank window is diagnosable")
+
     # --- The Live Activity is only a fallback now ---------------------
 
     check("static var usesLiveActivityCard: Bool" in manager,

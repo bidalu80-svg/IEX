@@ -232,6 +232,15 @@ final class ChatPiPController: NSObject {
 
     private var pip: AVPictureInPictureController?
     private var displayLayer: AVSampleBufferDisplayLayer?
+    /// [T-floating-window-pip] A sample-buffer layer shows nothing without one:
+    /// `enqueue` only defines a queue. Without a timebase the system treats
+    /// every frame as "not yet due", which is the grey card with a spinner the
+    /// Picture in Picture window shows when it has no content.
+    private var timebase: CMTimebase?
+    /// Presentation timestamps must advance; a repeated or future timestamp is
+    /// dropped by the layer.
+    private var frameIndex: Int64 = 0
+    private static let frameTimescale: CMTimeScale = 2
     private var hostView: UIView?
     private var frameTimer: Timer?
     private var silentAudio: SilentAudioKeepAlive?
@@ -448,6 +457,7 @@ final class ChatPiPController: NSObject {
 
     private func renderFrame() {
         guard let layer = displayLayer else { return }
+        configureTimebaseIfNeeded(on: layer)
         let elapsed = Date().timeIntervalSince(model.startedAt)
         let card = FloatingConversationCard(model: model, elapsed: elapsed)
         let renderer = ImageRenderer(content: card)
@@ -456,21 +466,59 @@ final class ChatPiPController: NSObject {
             width: FloatingConversationCard.cardWidth,
             height: FloatingConversationCard.cardHeight
         )
-        guard let cgImage = renderer.cgImage,
-              let sample = Self.sampleBuffer(from: cgImage) else { return }
+        guard let cgImage = renderer.cgImage else {
+            AppLogger(category: "PiP").warning("[PiP] render produced no image")
+            return
+        }
+        guard let sample = Self.sampleBuffer(from: cgImage, index: frameIndex) else {
+            AppLogger(category: "PiP").warning("[PiP] could not build a sample buffer")
+            return
+        }
+        frameIndex += 1
         if layer.status == .failed {
+            AppLogger(category: "PiP").warning("[PiP] layer failed (\(String(describing: layer.error))) — flushing")
             layer.flush()
         }
         layer.enqueue(sample)
+        // The first frame is the one that proves the pipeline works, so say so
+        // once instead of logging every tick.
+        if frameIndex == 1 {
+            AppLogger(category: "PiP").info(
+                "[PiP] first frame \(cgImage.width)x\(cgImage.height) enqueued, layer=\(String(describing: layer.status))")
+        }
     }
 
-    private static func sampleBuffer(from image: CGImage) -> CMSampleBuffer? {
+    /// Start the layer's clock. Frames are stamped against it, so it has to
+    /// exist before the first one is enqueued.
+    private func configureTimebaseIfNeeded(on layer: AVSampleBufferDisplayLayer) {
+        guard timebase == nil else { return }
+        var tb: CMTimebase?
+        guard CMTimebaseCreateWithSourceClock(
+            allocator: kCFAllocatorDefault,
+            sourceClock: CMClockGetHostTimeClock(),
+            timebaseOut: &tb
+        ) == noErr, let timebase = tb else {
+            AppLogger(category: "PiP").warning("[PiP] could not create a timebase")
+            return
+        }
+        CMTimebaseSetTime(timebase, .zero)
+        CMTimebaseSetRate(timebase, 1.0)
+        layer.controlTimebase = timebase
+        self.timebase = timebase
+        AppLogger(category: "PiP").info("[PiP] timebase started")
+    }
+
+    private static func sampleBuffer(from image: CGImage, index: Int64) -> CMSampleBuffer? {
         let width = image.width
         let height = image.height
         var pixelBuffer: CVPixelBuffer?
-        let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary] as CFDictionary
+        let attrs: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+            kCVPixelBufferMetalCompatibilityKey as String: kCFBooleanTrue as Any,
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        ]
         guard CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
-                                  attrs, &pixelBuffer) == kCVReturnSuccess,
+                                  attrs as CFDictionary, &pixelBuffer) == kCVReturnSuccess,
               let buffer = pixelBuffer else { return nil }
 
         CVPixelBufferLockBaseAddress(buffer, [])
@@ -493,9 +541,13 @@ final class ChatPiPController: NSObject {
             formatDescriptionOut: &format
         ) == noErr, let format else { return nil }
 
+        // [T-floating-window-pip] Stamped against the layer's timebase, which
+        // starts at zero: a host-clock timestamp is decades in the future and
+        // the layer silently drops it. One tick per rendered frame keeps the
+        // queue in order at the 2 fps the timer produces.
         var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: 2),
-            presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
+            duration: CMTime(value: 1, timescale: frameTimescale),
+            presentationTimeStamp: CMTime(value: index, timescale: frameTimescale),
             decodeTimeStamp: .invalid
         )
         var sample: CMSampleBuffer?
