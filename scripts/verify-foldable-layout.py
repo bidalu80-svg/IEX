@@ -109,9 +109,9 @@ def main():
           "the list schedules a scroll restore after a rebuild")
     check("func restoreScrollIfNeeded()" in message_list,
           "the list can scroll back to the saved anchor")
-    check("func rememberScrollAnchor(in cv: UIScrollView)" in message_list,
+    check("func rememberScrollAnchor()" in message_list,
           "the list records the top row while the reader browses")
-    check("rememberScrollAnchor(in: scrollView)" in message_list,
+    check("rememberScrollAnchor()" in message_list,
           "the scroll callback feeds the anchor store")
     check("coord.scheduleScrollRestoreIfNeeded()" in message_list,
           "updateUIViewController triggers the restore")

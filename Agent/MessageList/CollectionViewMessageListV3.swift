@@ -1143,7 +1143,7 @@ extension CollectionViewMessageListV3 {
             }
             // Browse mode stops the contentSize KVO from re-pinning the list to
             // the bottom while the rows above finish measuring.
-            scrollMode = .browse
+            scrollMode = .userBrowsing
             cv.layoutIfNeeded()
             cv.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
             if anchor.offset.isFinite, abs(anchor.offset) > 0.5 {
@@ -1161,8 +1161,9 @@ extension CollectionViewMessageListV3 {
 
         /// Remember the top row while the reader browses. At the bottom the
         /// default behaviour is already correct, so the anchor is dropped.
-        private func rememberScrollAnchor(in cv: UIScrollView) {
+        private func rememberScrollAnchor() {
             guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing else { return }
+            guard let cv = viewController?.collectionView else { return }
             if isNearBottom() {
                 if lastAnchorMessageId != nil {
                     ChatScrollMemory.shared.clear(key)
@@ -5395,7 +5396,7 @@ extension CollectionViewMessageListV3 {
                 lastScrollFlush = now
             }
             // [T-foldable-scroll] Keep the reader's place current.
-            rememberScrollAnchor(in: scrollView)
+            rememberScrollAnchor()
         }
         private var scrollSamples = 0
         private var lastScrollFlushOffset: CGFloat = 0
