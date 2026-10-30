@@ -375,7 +375,10 @@ git status --short
 
 - 开关：`Views/ContentView.swift` 的 `AppearanceSettingsView`，`@AppStorage("backgroundFloatingWindow")`，默认关。打开即 `ChatPiPController.shared.start()`，关闭即 `stop()`；设备不支持画中画时开关置灰并给出原因。
 - 窗口本体是**画中画**（`Agent/Background/ChatPiPController.swift`）：SwiftUI 卡片 → `ImageRenderer` → `CVPixelBuffer` → `CMSampleBuffer` → `AVSampleBufferDisplayLayer` → `AVPictureInPictureController`。这就和 ToDesk 一样，系统把窗口浮在其他 App 之上。
-- 保活：`SilentAudioKeepAlive` 起一条静音音频会话（`.playback` + `.mixWithOthers`、`outputVolume = 0`），否则 App 退后台被挂起，画面就冻住。`Info.plist` 已有 `audio` 后台模式。
-- 生命周期：`willResignActive` 时按“有活跃会话”拉起，`didBecomeActive` 收起；帧定时器每 0.5s 重画一次，同时检查 `SessionActivityTracker.activeSessions`，**没有任务立刻关闭**。
+- 保活：`SilentAudioKeepAlive` 起一条静音音频会话（`.playback` + `.mixWithOthers`、`outputVolume = 0`），否则 App 退后台被挂起，画面就冻住。`Info.plist` 已有 `audio` 后台模式。**必须随任务开始就启动**，等浮窗出现再启动已经太晚。
+- 卡片尺寸：`FloatingConversationCard.cardWidth/cardHeight = 480×180`。画中画窗口的宽高比取自 sample buffer，改这两个数就是改窗口形状；竖版会变成盖住半屏的大黑卡。内容为等宽字体终端行（最多 9 行工具调用 + 最新一句），180pt 内正好填满。
+- 自动浮窗：`canStartPictureInPictureAutomaticallyFromInline` **跟着任务状态走**——有任务才置 true，`teardown()` 里置 false。恒为 true 会让系统在**没有任务**时也把上一帧浮出来。
+- 播放时间轴：`pictureInPictureControllerTimeRangeForPlayback` 返回 `CMTimeRange(start: .zero, duration: .zero)`。返回无限区间会被系统当成直播，画出“直播”标签和 ±10 秒按钮。
+- 生命周期：`willResignActive` 里有任务就直接 `present()`（此时音频已起，进程不会被挂起）；`didBecomeActive` 收起但保留图层；帧定时器每 0.5s 重画，会话为空且此前跑过任务就 `teardown()`。
 - 兜底：`AgentLiveActivityManager.usesLiveActivityCard = 开关 && !ChatPiPController.isSupported`——只有画中画浮不起来时才用实时活动卡片（`ContentState.floatingWindow` + `conversationLine`），避免两个面同时显示同一句话。
-- 校验：`scripts/verify-floating-window.py`（30 项），CI 步骤 “Test background floating window”。
+- 校验：`scripts/verify-floating-window.py`（56 项），CI 步骤 “Test background floating window”。

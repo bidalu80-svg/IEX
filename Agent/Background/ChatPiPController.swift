@@ -304,11 +304,12 @@ final class ChatPiPController: NSObject {
         )
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
-        // [T-floating-window-pip] Let the system float the strip the moment the
-        // app leaves the foreground. Asking manually inside `willResignActive`
-        // is what made the window appear only on the *second* backgrounding:
-        // by then the app is already transitioning and the request is dropped.
-        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        // [T-floating-window-pip] Only auto-float while a task actually runs.
+        // With this on and a prepared layer, iOS restores the window on *every*
+        // backgrounding — including the ones with nothing running, which is the
+        // "no task but a window shows up" report.
+        controller.canStartPictureInPictureAutomaticallyFromInline =
+            !SessionActivityTracker.shared.activeSessions.isEmpty
 
         hostView = host
         displayLayer = layer
@@ -316,9 +317,13 @@ final class ChatPiPController: NSObject {
         model = Self.currentModel()
 
         isPrepared = true
-        renderFrame()
+        // No frame while idle: a layer holding a rendered card can be floated by
+        // the system even with no task. Content only exists during a run.
+        if !SessionActivityTracker.shared.activeSessions.isEmpty {
+            renderFrame()
+        }
         startFrameTimer()
-        AppLogger(category: "PiP").info("[PiP] prepared — layer on screen, frames flowing")
+        AppLogger(category: "PiP").info("[PiP] prepared — layer on screen")
     }
 
     /// Prepare from the app's launch path, so the very first backgrounding has a
@@ -328,6 +333,19 @@ final class ChatPiPController: NSObject {
     func prepareIfEnabled() {
         guard Self.isEnabled else { return }
         ensurePrepared()
+    }
+
+    /// [T-floating-window-pip] Audio keeps the process alive long enough for the
+    /// system to finish starting PiP as the app backgrounds. It must therefore
+    /// start when a task starts, not when the window appears.
+    private func startAudioIfNeeded() {
+        guard silentAudio == nil else { return }
+        silentAudio = SilentAudioKeepAlive()
+        silentAudio?.start()
+    }
+
+    private func enableAutomaticStart(_ on: Bool) {
+        pip?.canStartPictureInPictureAutomaticallyFromInline = on
     }
 
     /// Ask the system to float the prepared layer.
@@ -360,10 +378,7 @@ final class ChatPiPController: NSObject {
         startRetries = 0
         // Audio only while the window is on screen: it is what keeps the
         // process (and therefore the stream) alive in the background.
-        if silentAudio == nil {
-            silentAudio = SilentAudioKeepAlive()
-            silentAudio?.start()
-        }
+        startAudioIfNeeded()
         pip.startPictureInPicture()
         AppLogger(category: "PiP").info("[PiP] start requested")
     }
@@ -381,6 +396,9 @@ final class ChatPiPController: NSObject {
     /// Drop the layer, the audio session and the timer.
     func teardown() {
         dismiss()
+        // Never leave auto-start armed with no task: the system would float the
+        // last card again on the next backgrounding.
+        pip?.canStartPictureInPictureAutomaticallyFromInline = false
         frameTimer?.invalidate()
         frameTimer = nil
         silentAudio?.stop()
@@ -644,18 +662,14 @@ final class ChatPiPController: NSObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // The automatic start covers the normal path; this is only a
-                // fallback for the case where the system declined, so it waits
-                // until the transition is over instead of racing it.
                 self.ensurePrepared()
                 guard !SessionActivityTracker.shared.activeSessions.isEmpty else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                    Task { @MainActor in
-                        guard let self, self.pip?.isPictureInPictureActive != true else { return }
-                        AppLogger(category: "PiP").info("[PiP] automatic start did not happen — asking directly")
-                        self.present()
-                    }
-                }
+                // [T-floating-window-pip] The automatic start covers the normal
+                // path; this is cheap insurance. The audio session is already
+                // up (it starts with the task), so the process survives long
+                // enough for the request to land — and `present()` retries
+                // while `isPictureInPicturePossible` is still false.
+                self.present()
             }
         })
         observers.append(center.addObserver(
@@ -694,6 +708,14 @@ final class ChatPiPController: NSObject {
                         self.forcedPreview = false
                         self.sawActiveSession = true
                         self.ensurePrepared()
+                        self.enableAutomaticStart(true)
+                        // [T-floating-window-pip] The audio session has to be
+                        // up while the app is still in the foreground: iOS
+                        // suspends a silent app before PiP finishes starting,
+                        // which is why the window only ever appeared on the
+                        // second backgrounding.
+                        self.startAudioIfNeeded()
+                        self.renderFrame()
                     }
                 }
             }
@@ -712,13 +734,10 @@ final class ChatPiPController: NSObject {
 extension ChatPiPController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         isFloating = true
-        // [T-floating-window-pip] The audio session is what keeps the process
-        // alive once the window floats; started here it also covers the
-        // automatic start, which never goes through `present()`.
-        if silentAudio == nil {
-            silentAudio = SilentAudioKeepAlive()
-            silentAudio?.start()
-        }
+        // The audio session is what keeps the process alive once the window
+        // floats; started here it also covers the automatic start, which never
+        // goes through `present()`.
+        startAudioIfNeeded()
         AppLogger(category: "PiP").info("[PiP] floating")
     }
 
@@ -749,7 +768,11 @@ extension ChatPiPController: AVPictureInPictureSampleBufferPlaybackDelegate {
     }
 
     func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
-        CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
+        // [T-floating-window-pip] A zero-length range keeps the system chrome to
+        // a close button. Returning an indefinite one makes iOS treat the strip
+        // as a live broadcast and draw the 直播 label plus 10-second skip
+        // buttons across it.
+        CMTimeRange(start: .zero, duration: .zero)
     }
 
     func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool {

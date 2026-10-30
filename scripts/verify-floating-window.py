@@ -145,15 +145,26 @@ def main():
 
     # --- Appearing on the FIRST backgrounding --------------------------
 
-    check("canStartPictureInPictureAutomaticallyFromInline = true" in pip,
-          "the system floats the window as the app leaves the foreground")
-    check("automatic start did not happen" in pip,
-          "a delayed manual request covers the case where it does not")
-    check("isPictureInPictureActive != true" in pip,
-          "and does not race a start that already happened")
+    check("canStartPictureInPictureAutomaticallyFromInline =" in pip
+          and "!SessionActivityTracker.shared.activeSessions.isEmpty" in pip,
+          "auto-float is armed only while a task runs")
+    check("pip?.canStartPictureInPictureAutomaticallyFromInline = false" in pip,
+          "and is disarmed on teardown, so an idle backgrounding shows nothing")
+    check("if !SessionActivityTracker.shared.activeSessions.isEmpty {\n            renderFrame()" in pip,
+          "an idle prepare leaves the layer empty (nothing to float)")
+    resign = pip.split("willResignActiveNotification", 1)[-1][:900]
+    check("self.present()" in resign,
+          "leaving the foreground asks for the window directly, as insurance")
+    check("self.ensurePrepared()" in resign,
+          "and only after the layer is ready")
     did_start = pip.split("pictureInPictureControllerDidStartPictureInPicture", 1)[-1][:700]
-    check("silentAudio?.start()" in did_start,
+    check("startAudioIfNeeded()" in did_start,
           "the keep-alive starts with the window, including the automatic path")
+    sink = pip.split("private func observeSessions()", 1)[-1][:1600]
+    check("self.startAudioIfNeeded()" in sink and "self.enableAutomaticStart(true)" in sink,
+          "a task that starts brings up audio and auto-float while still in the foreground")
+    check("CMTimeRange(start: .zero, duration: .zero)" in pip,
+          "a zero-length range keeps the live/skip chrome off the strip")
 
     # --- The Live Activity is only a fallback now ---------------------
 
