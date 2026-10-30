@@ -94,6 +94,24 @@ jobs:
             xcrun swiftc -frontend -parse "$file"
           done
 
+      - name: Test foldable pane layout
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-foldable-layout.py | tee foldable-layout-structure.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" \
+            Views/Layout/AdaptivePaneLayout.swift scripts/FoldableLayoutTests.swift \
+            -o "$RUNNER_TEMP/foldable-layout-tests"
+          "$RUNNER_TEMP/foldable-layout-tests"
+          for file in \
+            Views/Layout/AdaptivePaneLayout.swift \
+            Views/Layout/ChatScrollMemory.swift \
+            Views/ContentView.swift \
+            Views/Chat/AIChatView.swift \
+            Agent/Chat/ChatLifecycleSupport.swift \
+            Agent/MessageList/CollectionViewMessageListV3.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+
       - name: Test AOJIT status surface
         run: |
           set -euo pipefail

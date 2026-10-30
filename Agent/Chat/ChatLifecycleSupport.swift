@@ -448,6 +448,7 @@ final class ViewModelCache {
             removed.cancel()
             logger.info("🔄SESSION ViewModelCache REMOVE session=\(sessionId) vm=\(removed.vmInstanceId)")
         }
+        ChatScrollMemory.shared.clear(sessionId)
     }
 
     /// Create a fresh (uncached) ViewModel for draft sessions (nil sessionId).
@@ -457,8 +458,54 @@ final class ViewModelCache {
         return vm
     }
 
+    /// Draft ViewModels keyed by the parent's draft ID (`__new__<UUID>`).
+    ///
+    /// [T-foldable-draft] Changing pane layout rebuilds the chat subtree, and
+    /// the un-keyed `createDraft()` handed the replacement view an empty
+    /// ViewModel — the text already typed into the composer disappeared on
+    /// fold/unfold. ContentView already owns a stable draft ID, so keying the
+    /// draft VM by it makes the rebuild reuse the same instance (composer text,
+    /// attachments and any queued send included).
+    private var drafts: [String: AIChatViewModel] = [:]
+
+    /// Get the draft ViewModel for a stable draft ID, creating it once.
+    func getOrCreateDraft(id: String) -> AIChatViewModel {
+        if let existing = drafts[id] {
+            logger.info("🔄SESSION ViewModelCache DRAFT HIT id=\(id) vm=\(existing.vmInstanceId)")
+            return existing
+        }
+        let vm = createDraft()
+        drafts[id] = vm
+        logger.info("🔄SESSION ViewModelCache DRAFT MISS id=\(id) vm=\(vm.vmInstanceId) — created new")
+        evictDraftsIfOverCap()
+        return vm
+    }
+
+    /// Drop a draft entry once it no longer owns a view (session deleted, or
+    /// the draft was abandoned by starting another one).
+    func forgetDraft(id: String) {
+        drafts.removeValue(forKey: id)
+        ChatScrollMemory.shared.clear(id)
+    }
+
+    /// Drafts are cheap while empty but not once they hold messages, and every
+    /// abandoned "New Chat" leaves one behind.
+    private func evictDraftsIfOverCap() {
+        guard drafts.count > Self.softCap else { return }
+        // Snapshot the keys first: mutating the dictionary while iterating its
+        // `keys` view is not allowed.
+        let victims = Array(drafts.keys).prefix(drafts.count - Self.softCap)
+        for key in victims {
+            drafts.removeValue(forKey: key)
+        }
+    }
+
     /// Move a draft ViewModel into the cache once its session ID is assigned.
     func cacheDraft(_ vm: AIChatViewModel, sessionId: String) {
+        // The draft is a real session now; keeping the draft key would retain
+        // the same VM under two keys and restore the composer text of a draft
+        // that no longer exists.
+        drafts = drafts.filter { $0.value !== vm }
         cache[sessionId] = vm
         touch(sessionId)
         logger.info("🔄SESSION ViewModelCache cacheDraft session=\(sessionId) vm=\(vm.vmInstanceId)")

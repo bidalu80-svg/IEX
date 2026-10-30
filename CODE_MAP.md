@@ -357,3 +357,13 @@ git status --short
 - 版本：`aot/VERSIONS.txt` 是镜像真正录制时的包版本，`AOJITAcceleration.imageVersions` 必须与它一致（`scripts/verify-aojit-status.py` 会比对）。状态页的“全速/部分”按镜像版本判定；设备上的 warm-up 记录只知道本机装了什么，拿它比较会把任何安装都显示成“全速”。
 - 已知缺口：`nodejs` 的 V8 启动在录制器里超过 60 分钟，暂不在目录内；需要时把清单里注释掉的行改成 10800 秒并接受六小时任务。
 - 自查（给 Agent 用）：`ze-config get aojit` 返回开关、内核回读、linked/attached、命中计数、逐库表与逐镜像命中（`aojit.images`：path / size_kb / hits，热模块 hits 为 0 说明镜像接了但从没命中）；单值用 `aojit.enabled` / `aojit.jit_runtime` / `aojit.images_attached` / `aojit.aot_hits` / `aojit.hit_rate` / `aojit.status`。AOJIT 状态只在宿主进程里，guest 没有 `/proc` 条目或磁盘标记，`cat /proc/ish/jit`、`find / -name '*aot*'` 一律查不到——不要让 Agent 用这些路径判断开关。
+
+
+## 折叠屏适配（可折叠 iPhone）
+
+- 判定：`Views/Layout/AdaptivePaneLayout.swift` 的 `AdaptivePanePolicy.layout(for:previous:)` 只按窗口尺寸决定单栏/双栏——宽 ≥ 700pt **且**高 ≥ 500pt 才分栏，退出阈值低 24pt（`hysteresis`）防止拖动时抖动。**不要再用 `userInterfaceIdiom` 判断**：可折叠 iPhone 在 400pt 外屏和 ~900pt 内屏上都是 `.phone`，按机型判断会让内屏永远停在单栏。
+- 接线：`Views/ContentView.swift` 的 `pageLayout` 调 policy；`carrySelectionAcrossPaneChange(wide:)` 在单栏/双栏切换时把 `selectedSessionId` 与 `navigationPath` 对齐，折叠或旋转后仍停在同一个会话。
+- 草稿：`ViewModelCache.getOrCreateDraft(id:)` 按父级草稿 ID 缓存 VM，`AIChatView` 的 `CachedViewModel(sessionId:draftId:)` 复用它；否则每次布局重建都换一个空 VM，输入框里的字会消失。`cacheDraft(_:sessionId:)` 在草稿转正后清掉草稿键。
+- 滚动：`Views/Layout/ChatScrollMemory.swift` 记录“顶部消息 id + 行内偏移”；`CollectionViewMessageListV3` 浏览时写入、重建后 `restoreScrollIfNeeded()` 恢复，恢复期间 `scrollMode = .browse` 防止被自动吸底覆盖。停在底部时不记录，保持默认行为。
+- 侧栏：`navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 460)`——700pt 刚进入分栏时聊天列仍有约 400pt。
+- 校验：`scripts/FoldableLayoutTests.swift`（纯 Swift）+ `scripts/verify-foldable-layout.py`（结构检查），CI 步骤 “Test foldable pane layout”。

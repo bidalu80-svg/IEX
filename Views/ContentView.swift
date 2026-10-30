@@ -320,11 +320,9 @@ struct ContentView: View {
     @State private var searchMatchSnippets: [String: String] = [:]
     @State private var searchTask: Task<Void, Never>?
 
-    /// Width threshold below which the layout collapses to single-column (iPhone-style).
-    private let compactThreshold: CGFloat = 700
-    /// Whether the device is an iPad (iPhones always use stack layout regardless of width).
-    private let isIPad = UIDevice.current.userInterfaceIdiom == .pad
-    /// Whether the current window is wide enough for two-column layout.
+    /// Width threshold below which the layout collapses to single-column.
+    /// [T-foldable-panes] Kept as a name only — the rules live in
+    /// `AdaptivePanePolicy` so they can be tested without UIKit.
     @State private var isWideLayout = false
     /// Navigation path for stack (compact) layout.
     @State private var navigationPath = NavigationPath()
@@ -363,7 +361,15 @@ struct ContentView: View {
     /// keeping all of that in one `body` exceeded Swift's type-check budget.
     private var pageLayout: some View {
         GeometryReader { geo in
-            let wide = isIPad && geo.size.width >= compactThreshold
+            // [T-foldable-panes] Size drives the layout; the device family does
+            // not. A foldable iPhone spans ~400pt folded and ~900pt unfolded
+            // while reporting `.phone` throughout, so the old idiom gate kept it
+            // permanently stacked.
+            let paneLayout = AdaptivePanePolicy.layout(
+                for: geo.size,
+                previous: isWideLayout ? .split : .stack
+            )
+            let wide = paneLayout == .split
             Group {
                 if wide {
                     splitLayout
@@ -381,6 +387,7 @@ struct ContentView: View {
             .animation(.easeInOut(duration: 0.25), value: forceSyncToast)
             .onChange(of: wide) { newWide in
                 isWideLayout = newWide
+                carrySelectionAcrossPaneChange(wide: newWide)
             }
             .onAppear {
                 isWideLayout = wide
@@ -1016,7 +1023,36 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Split Layout (iPad / wide window)
+    // MARK: - Split Layout (iPad / wide window / unfolded foldable)
+
+    /// [T-foldable-selection] Keep the open conversation in view when the pane
+    /// layout changes under the user — fold, unfold, rotate, or a resize in
+    /// Split View.
+    ///
+    /// The two layouts keep the selection in different places: the split uses
+    /// `selectedSessionId`, the stack owns a `navigationPath`. Without this
+    /// hand-off, unfolding while reading a conversation dropped the reader back
+    /// to the list, and folding again surfaced whatever the stack happened to
+    /// hold — a different conversation, or the list itself.
+    private func carrySelectionAcrossPaneChange(wide: Bool) {
+        guard let id = selectedSessionId else { return }
+        if wide {
+            // The stack is not rendered. Leave it pointed at the same
+            // conversation so a later collapse returns here, without churning
+            // the path when it already matches.
+            if navigationPath.count != 1 {
+                var path = NavigationPath()
+                path.append(id)
+                navigationPath = path
+            }
+            return
+        }
+        // Collapsing: the stack is now the only column, so it has to show the
+        // conversation the split was showing.
+        var path = NavigationPath()
+        path.append(id)
+        navigationPath = path
+    }
 
     private var splitLayout: some View {
         // [T-ios-gh29-font-scale-split-column] App-base font scale for the iPad
@@ -1521,7 +1557,7 @@ struct ContentView: View {
 
         }
         .listStyle(.plain)
-        .navigationSplitViewColumnWidth(min: 340, ideal: 380, max: 500)
+        .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 460)
         .opacity(didInitialLoad ? 1 : 0)
         .overlay { if didInitialLoad, displaySessions.isEmpty, !isSearching { emptyState } }
         .safeAreaInset(edge: .bottom) { if isSelecting { selectionToolbar } else { fabRow } }

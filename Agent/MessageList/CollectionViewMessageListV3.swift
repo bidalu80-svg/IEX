@@ -36,6 +36,9 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var maxContentWidth: CGFloat
     var floatingBarHeight: CGFloat
     var inputBarHeight: CGFloat
+    /// Which conversation this list is showing, used to key the saved scroll
+    /// anchor. [T-foldable-scroll]
+    var scrollMemoryKey: String? = nil
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
@@ -139,6 +142,11 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         if !vm.isLoadingSession && !vm.streamingUIUpdatesSuspended {
             coord.flushPendingSnapshotIfNeeded(caller: "updateUIVC-backstop")
         }
+
+        // [T-foldable-scroll] A rebuilt list starts at the bottom. Put the
+        // reader back where they were before the pane layout changed.
+        coord.updateScrollMemoryKey(scrollMemoryKey)
+        coord.scheduleScrollRestoreIfNeeded()
 
         if inputFocused != coord.lastInputFocused {
             let wasNearBottom = coord.scrollMode == .autoScrolling && coord.isNearBottom()
@@ -986,7 +994,15 @@ extension CollectionViewMessageListV3 {
         }
         /// True during settleAfterInteraction flush — suppresses contentSize KVO offset changes.
         private var isFlushing = false
-        /// True while an animated setContentOffset is in flight. KVO grow events must not
+
+        // === [T-foldable-scroll] Reader's place, across a pane-layout change ===
+        /// Conversation this list belongs to; keys the saved scroll anchor.
+        private var scrollMemoryKey: String?
+        /// One restore per list instance — a second pass would fight the user.
+        private var didRestoreScroll = false
+        /// Throttle for the per-frame anchor write in `scrollViewDidScroll`.
+        private var lastAnchorMessageId: UUID?
+        private var lastAnchorOffset: CGFloat = .nan        /// True while an animated setContentOffset is in flight. KVO grow events must not
         /// directly mutate contentOffset during this window — UIKit animation interpolation
         /// can produce a corrupted final offset. Instead, defer via scheduleCoalescedScroll().
         private var isAnimatingScrollToBottom = false
@@ -1083,6 +1099,87 @@ extension CollectionViewMessageListV3 {
         private var contentSizeObservation: NSKeyValueObservation?
 
         // MARK: - Setup
+
+        // MARK: [T-foldable-scroll] Anchor memory
+
+        /// Point the list at a conversation. A different key means a different
+        /// anchor, and this instance starts at the bottom again.
+        func updateScrollMemoryKey(_ key: String?) {
+            guard key != scrollMemoryKey else { return }
+            scrollMemoryKey = key
+            didRestoreScroll = false
+            lastAnchorMessageId = nil
+            lastAnchorOffset = .nan
+        }
+
+        /// Restore once the rebuilt list has rows to scroll to. Called from
+        /// `updateUIViewController`, which runs right after the new view is
+        /// installed; the hop lets the first snapshot commit first.
+        func scheduleScrollRestoreIfNeeded() {
+            guard !didRestoreScroll, scrollMemoryKey != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.restoreScrollIfNeeded()
+            }
+        }
+
+        private func restoreScrollIfNeeded() {
+            guard !didRestoreScroll else { return }
+            guard let key = scrollMemoryKey,
+                  let cv = viewController?.collectionView,
+                  let dataSource = dataSource else { return }
+            // No anchor means the reader was parked at the bottom, or is new
+            // here. Leave the default pin-to-bottom behaviour alone.
+            guard let anchor = ChatScrollMemory.shared.anchor(for: key) else {
+                didRestoreScroll = true
+                return
+            }
+            let items = dataSource.snapshot().itemIdentifiers
+            guard !items.isEmpty else { return }   // retry on the next update
+            guard let index = items.firstIndex(where: { $0.messageId == anchor.messageId }) else {
+                // The message was deleted or compacted away since it was saved.
+                ChatScrollMemory.shared.clear(key)
+                didRestoreScroll = true
+                return
+            }
+            // Browse mode stops the contentSize KVO from re-pinning the list to
+            // the bottom while the rows above finish measuring.
+            scrollMode = .browse
+            cv.layoutIfNeeded()
+            cv.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
+            if anchor.offset.isFinite, abs(anchor.offset) > 0.5 {
+                let minY = -cv.adjustedContentInset.top
+                let maxY = max(minY, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
+                let y = min(maxY, max(minY, cv.contentOffset.y - anchor.offset))
+                cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: y), animated: false)
+            }
+            // Set last: the scroll calls above fire `scrollViewDidScroll`
+            // synchronously, and `rememberScrollAnchor` must not overwrite the
+            // saved anchor with an intermediate position while we move.
+            didRestoreScroll = true
+            AppLogger(category: "Foldable").debug("[ScrollRestore] key=\(key.prefix(8)) msg=\(anchor.messageId) offset=\(String(format: "%.1f", anchor.offset)) rows=\(items.count)")
+        }
+
+        /// Remember the top row while the reader browses. At the bottom the
+        /// default behaviour is already correct, so the anchor is dropped.
+        private func rememberScrollAnchor(in cv: UIScrollView) {
+            guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing else { return }
+            if isNearBottom() {
+                if lastAnchorMessageId != nil {
+                    ChatScrollMemory.shared.clear(key)
+                    lastAnchorMessageId = nil
+                    lastAnchorOffset = .nan
+                }
+                return
+            }
+            guard let indexPath = cv.indexPathsForVisibleItems.min(),
+                  let item = dataSource?.itemIdentifier(for: indexPath),
+                  let frame = cv.layoutAttributesForItem(at: indexPath)?.frame else { return }
+            let offset = frame.minY - cv.contentOffset.y
+            if lastAnchorMessageId == item.messageId, abs(offset - lastAnchorOffset) < 8 { return }
+            lastAnchorMessageId = item.messageId
+            lastAnchorOffset = offset
+            ChatScrollMemory.shared.save(.init(messageId: item.messageId, offset: offset), for: key)
+        }
 
         func attach(to vc: MessageListViewController, vm: AIChatViewModel) {
             self.viewController = vc
@@ -5297,6 +5394,8 @@ extension CollectionViewMessageListV3 {
                 lastScrollFlushOffset = off
                 lastScrollFlush = now
             }
+            // [T-foldable-scroll] Keep the reader's place current.
+            rememberScrollAnchor(in: scrollView)
         }
         private var scrollSamples = 0
         private var lastScrollFlushOffset: CGFloat = 0

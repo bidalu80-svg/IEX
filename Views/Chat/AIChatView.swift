@@ -68,7 +68,7 @@ private final class CachedViewModel: ObservableObject {
     /// observes all @Published changes through the @StateObject.
     private var cancellable: AnyCancellable?
 
-    init(sessionId: String?) {
+    init(sessionId: String?, draftId: String? = nil) {
         if let sessionId {
             let (cached, isNew) = ViewModelCache.shared.getOrCreate(for: sessionId)
             self.vm = cached
@@ -86,6 +86,14 @@ private final class CachedViewModel: ObservableObject {
                 }
             }
             zeLogger.info("🔑DRAFT CachedViewModel.init sessionId=\(sessionId) vm=\(cached.vmInstanceId) isNew=\(isNew)")
+        } else if let draftId {
+            // [T-foldable-draft] Reuse the draft's ViewModel across a pane
+            // layout change so the composer text and attachments survive the
+            // rebuild. Falls back to a fresh draft when no ID was supplied.
+            let draft = ViewModelCache.shared.getOrCreateDraft(id: draftId)
+            self.vm = draft
+            self.isNew = true
+            zeLogger.info("🔑DRAFT CachedViewModel.init DRAFT id=\(draftId) vm=\(draft.vmInstanceId)")
         } else {
             let draft = ViewModelCache.shared.createDraft()
             self.vm = draft
@@ -272,7 +280,7 @@ struct AIChatView: View {
         // re-init a no-op when the StateObject already exists. CachedViewModel.init
         // logs its own creation (🔑DRAFT), so the redundant per-init [SessionLoad]
         // line is dropped.
-        _cached = StateObject(wrappedValue: CachedViewModel(sessionId: sessionId))
+        _cached = StateObject(wrappedValue: CachedViewModel(sessionId: sessionId, draftId: draftId))
         AIChatViewModel.onAppearTimestamp = CFAbsoluteTimeGetCurrent()
     }
     @StateObject private var oauth = ClaudeOAuthManager.shared
@@ -2473,7 +2481,10 @@ struct AIChatView: View {
                 // safety band for message content without using it to place
                 // attachment previews.
                 floatingBarHeight: hasFloatingPreview ? max(floatingBarHeight, 80) : 0,
-                inputBarHeight: inputBarHeight + attachmentTrayHeight
+                inputBarHeight: inputBarHeight + attachmentTrayHeight,
+                // [T-foldable-scroll] Same key the draft VM uses, so a rebuilt
+                // list (fold/unfold) resumes at the message the reader was on.
+                scrollMemoryKey: sessionId ?? draftId
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the

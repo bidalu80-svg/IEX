@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1L00005 /* AdaptivePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00001 /* AdaptivePaneLayout.swift */; };
+		F1L00006 /* ChatScrollMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00002 /* ChatScrollMemory.swift */; };
 		F9GH00000000000000000001 /* GitHubModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000011 /* GitHubModels.swift */; };
 		F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000012 /* GitHubAccountStore.swift */; };
 		F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000013 /* GitHubAIToolGateway.swift */; };
@@ -596,6 +598,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1L00001 /* AdaptivePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePaneLayout.swift; sourceTree = "<group>"; };
+		F1L00002 /* ChatScrollMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollMemory.swift; sourceTree = "<group>"; };
 		A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubCopilotOAuthManager.swift; sourceTree = "<group>"; };
 		A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubCopilotDeviceLoginSheet.swift; sourceTree = "<group>"; };
 
@@ -1662,10 +1666,20 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
+		F1L00003 /* Layout */ = {
+			isa = PBXGroup;
+			children = (
+				F1L00001 /* AdaptivePaneLayout.swift */,
+				F1L00002 /* ChatScrollMemory.swift */,
+			);
+			path = Layout;
+			sourceTree = "<group>";
+		};
 		E5D000030 /* Views */ = {
 			isa = PBXGroup;
 			children = (
 				E51000012 /* ContentView.swift */,
+				F1L00003 /* Layout */,
 				F1V00014 /* Alarms */,
 				F1V00015 /* Backup */,
 				F1V00010 /* Chat */,
@@ -2754,6 +2768,8 @@
 				E5VMC0007 /* AIChatViewModel+ConcurrentTools.swift in Sources */,
 				E5LD00001 /* ToolLoopDetector.swift in Sources */,
 				E53000002 /* AIChatView.swift in Sources */,
+				F1L00005 /* AdaptivePaneLayout.swift in Sources */,
+				F1L00006 /* ChatScrollMemory.swift in Sources */,
 				ZESA0002 /* ZeSubAgentViews.swift in Sources */,
 				E5CAL0001 /* CookieAuditLogger.swift in Sources */,
 				E5F200001 /* MarkdownPrepRegex.swift in Sources */,
