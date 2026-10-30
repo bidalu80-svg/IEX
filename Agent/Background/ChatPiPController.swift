@@ -240,7 +240,10 @@ final class ChatPiPController: NSObject, ObservableObject {
     /// Presentation timestamps must advance; a repeated or future timestamp is
     /// dropped by the layer.
     private var frameIndex: Int64 = 0
-    private static let frameTimescale: CMTimeScale = 2
+    /// [T-floating-window-pip] The timestamp carried by the last frame, kept so
+    /// the next one is always strictly later. Two frames with the same stamp
+    /// can make the layer drop one of them.
+    private var lastPresentationTime: CMTime = .invalid
     private var hostView: UIView?
     private var frameTimer: Timer?
     private var silentAudio: SilentAudioKeepAlive?
@@ -431,6 +434,7 @@ final class ChatPiPController: NSObject, ObservableObject {
         // fresh layer, and the new window waits for frames that never display.
         timebase = nil
         frameIndex = 0
+        lastPresentationTime = .invalid
         pip = nil
         isPrepared = false
         isFloating = false
@@ -489,22 +493,26 @@ final class ChatPiPController: NSObject, ObservableObject {
             AppLogger(category: "PiP").warning("[PiP] render produced no image")
             return
         }
-        guard let sample = Self.sampleBuffer(from: cgImage, index: frameIndex) else {
-            AppLogger(category: "PiP").warning("[PiP] could not build a sample buffer")
-            return
-        }
-        frameIndex += 1
-        lastFrameAt = Date()
         // [T-floating-window-pip] A failed layer keeps its last image out of the
         // window, which is exactly the grey spinner. Flushing alone does not
-        // help: the clock that fed it is stale too. Rebuild both.
+        // help: the clock that fed it is stale too. Rebuild both — and rebuild
+        // *before* stamping, because a fresh clock starts again at zero and a
+        // timestamp taken from the old one would never be reached.
         if layer.status == .failed || layer.requiresFlushToResumeDecoding {
             AppLogger(category: "PiP").warning(
                 "[PiP] layer \(String(describing: layer.status)) (\(String(describing: layer.error))) — rebuilding")
             layer.flushAndRemoveImage()
             timebase = nil
+            lastPresentationTime = .invalid
             configureTimebaseIfNeeded(on: layer)
         }
+        let stamp = nextPresentationTime()
+        guard let sample = Self.sampleBuffer(from: cgImage, presentationTime: stamp) else {
+            AppLogger(category: "PiP").warning("[PiP] could not build a sample buffer")
+            return
+        }
+        frameIndex += 1
+        lastFrameAt = Date()
         layer.enqueue(sample)
         lastLayerStatus = Self.describe(layer.status)
         updateDiagnostic()
@@ -536,6 +544,30 @@ final class ChatPiPController: NSObject, ObservableObject {
         AppLogger(category: "PiP").info("[PiP] timebase started")
     }
 
+    /// [T-floating-window-pip] The timestamp a frame has to carry to be shown.
+    ///
+    /// It is read from the layer's own clock, not counted per frame. A counter
+    /// only stays in step with real time while nothing slips, and plenty slips:
+    /// a background timer iOS throttles, a main-thread hitch while the window
+    /// animates in, a short suspension. The moment the counter falls behind, the
+    /// clock has already passed every following frame, and the layer discards
+    /// them without an error — the queue drains, Picture in Picture puts its
+    /// grey spinner back, and it never recovers because a counter cannot catch
+    /// up with a clock. Reading the clock makes each frame "now" by
+    /// construction, whatever happened in between.
+    private func nextPresentationTime() -> CMTime {
+        let now = timebase.map { CMTimebaseGetTime($0) }
+            ?? CMClockGetTime(CMClockGetHostTimeClock())
+        guard lastPresentationTime.isValid else {
+            lastPresentationTime = now
+            return now
+        }
+        // Strictly increasing, so two frames never share a stamp.
+        let stamp = CMTimeMaximum(now, CMTimeAdd(lastPresentationTime, CMTime(value: 1, timescale: 600)))
+        lastPresentationTime = stamp
+        return stamp
+    }
+
     /// [T-floating-window-diag] Keeps the settings line current.
     private func updateDiagnostic() {
         let age = lastFrameAt.map { String(format: "%.0fs", Date().timeIntervalSince($0)) } ?? "—"
@@ -553,7 +585,7 @@ final class ChatPiPController: NSObject, ObservableObject {
         }
     }
 
-    private static func sampleBuffer(from image: CGImage, index: Int64) -> CMSampleBuffer? {
+    private static func sampleBuffer(from image: CGImage, presentationTime: CMTime) -> CMSampleBuffer? {
         let width = image.width
         let height = image.height
         var pixelBuffer: CVPixelBuffer?
@@ -586,20 +618,18 @@ final class ChatPiPController: NSObject, ObservableObject {
             formatDescriptionOut: &format
         ) == noErr, let format else { return nil }
 
-        // [T-floating-window-pip] Stamped against the layer's timebase, which
-        // starts at zero: a host-clock timestamp is decades in the future and
-        // the layer silently drops it. One tick per rendered frame keeps the
-        // queue in order at the 2 fps the timer produces.
+        // [T-floating-window-pip] The caller stamps the frame with the layer's
+        // clock reading, so it is always "now" and can never be past due.
         //
         // The duration is deliberately a day, not the 0.5s frame interval. When
         // the queue is starved — the app gets suspended for a moment, or iOS
-        // throttles a background timer — a clock that runs past the last frame
-        // leaves the layer with nothing to present, and Picture in Picture
-        // replaces the card with its grey spinner. A frame that never expires
-        // keeps the last picture on screen until the next one arrives.
+        // throttles a background timer — a frame that expires leaves the layer
+        // with nothing to present, and Picture in Picture replaces the card with
+        // its grey spinner. A frame that never expires keeps the last picture on
+        // screen until the next one arrives.
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 24 * 60 * 60, timescale: 1),
-            presentationTimeStamp: CMTime(value: index, timescale: frameTimescale),
+            presentationTimeStamp: presentationTime,
             decodeTimeStamp: .invalid
         )
         var sample: CMSampleBuffer?

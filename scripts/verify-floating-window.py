@@ -172,10 +172,13 @@ def main():
     # "due": the window opens as a grey card with a spinner.
     check("CMTimebaseCreateWithSourceClock" in pip and "layer.controlTimebase = timebase" in pip,
           "the sample-buffer layer gets a timebase before any frame is queued")
-    check("presentationTimeStamp: CMTime(value: index, timescale: frameTimescale)" in pip,
-          "timestamps advance against that timebase instead of the host clock")
-    check("frameIndex += 1" in pip,
-          "every rendered frame gets its own timestamp")
+    check("CMTimebaseGetTime" in pip and "presentationTimeStamp: presentationTime" in pip,
+          "each frame is stamped with the layer clock reading, so it is always current")
+    check("CMTime(value: index, timescale:" not in pip,
+          "timestamps are no longer counted per frame, which falls behind on any throttled tick")
+    check("CMTimeMaximum(now, CMTimeAdd(lastPresentationTime" in pip,
+          "two frames never share a timestamp, which the layer would drop")
+    check("frameIndex += 1" in pip, "frames are still counted, for the diagnostic line")
     check("kCVPixelBufferMetalCompatibilityKey" in pip,
           "the buffer is displayable by the render path")
     check("kCMSampleAttachmentKey_DisplayImmediately" in pip,
@@ -184,6 +187,8 @@ def main():
           "a frame never expires, so a starved clock keeps the last picture instead of a spinner")
     check("flushAndRemoveImage()" in pip and "requiresFlushToResumeDecoding" in pip,
           "a failed layer is rebuilt with a fresh clock, not merely flushed")
+    check("lastPresentationTime = .invalid" in pip,
+          "a rebuilt clock resets the stamp, since it starts again at zero")
     check("updateDiagnostic()" in pip and "pipController.diagnostic" in content_view,
           "the switch section shows live frame/layer state for device debugging")
     present_body = pip.split("func present(force: Bool = false)", 1)[-1][:2200]
@@ -199,6 +204,8 @@ def main():
           "teardown drops the timebase with the layer, so the next one reconfigures")
     check("frameIndex = 0" in teardown_body,
           "and the frame counter restarts with the new timebase")
+    check("lastPresentationTime = .invalid" in teardown_body,
+          "as does the remembered stamp, so the first frame of the next session is accepted")
 
     # --- The Live Activity is only a fallback now ---------------------
 
