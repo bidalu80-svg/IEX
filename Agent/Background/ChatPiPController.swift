@@ -204,10 +204,11 @@ final class ChatPiPController: NSObject {
         layer.frame = host.bounds
         window.addSubview(host)
 
-        guard let source = AVPictureInPictureController.ContentSource(
+        // ContentSource is non-failable when built from a sample-buffer layer.
+        let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: layer,
             playbackDelegate: self
-        ) else { return }
+        )
 
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
