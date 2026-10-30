@@ -183,8 +183,17 @@ def main():
           "the buffer is displayable by the render path")
     check("kCMSampleAttachmentKey_DisplayImmediately" in pip,
           "frames display on arrival instead of waiting for the timebase")
-    check("CMTime(value: 24 * 60 * 60, timescale: 1)" in pip,
-          "a frame never expires, so a starved clock keeps the last picture instead of a spinner")
+    check("duration: CMTime(value: 1, timescale: 2)" in pip,
+          "a frame lasts half a second, which covers two ticks at 4 fps")
+    check("24 * 60 * 60" not in pip,
+          "the frame duration is not inflated to hours — that reads as 'no video' and pins the "
+          "window on Picture in Picture's spinner")
+    check("timeInterval: 0.25" in pip,
+          "the card is rendered at 4 fps, so the half-second duration always overlaps")
+    check("for delay in [0.2, 0.6, 1.2]" in pip,
+          "frames keep arriving while the window animates in, not just once at the start")
+    check("0.5s/帧" in pip,
+          "the diagnostic line names the frame duration, so a report identifies the build")
     check("flushAndRemoveImage()" in pip and "requiresFlushToResumeDecoding" in pip,
           "a failed layer is rebuilt with a fresh clock, not merely flushed")
     check("lastPresentationTime = .invalid" in pip,

@@ -403,6 +403,15 @@ final class ChatPiPController: NSObject, ObservableObject {
         // is current — the timer may be a whole tick behind.
         renderFrame()
         pip.startPictureInPicture()
+        // [T-floating-window-pip] The window animates in over roughly a second
+        // and the system samples the layer while it settles. A single frame
+        // handed over at the start is not enough: what the window keeps is
+        // whatever arrived during that animation.
+        for delay in [0.2, 0.6, 1.2] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                Task { @MainActor in self?.renderFrame() }
+            }
+        }
         AppLogger(category: "PiP").info("[PiP] start requested")
     }
 
@@ -450,8 +459,10 @@ final class ChatPiPController: NSObject, ObservableObject {
 
     private func startFrameTimer() {
         frameTimer?.invalidate()
-        // 2 fps: the card only carries text plus a seconds clock.
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 4 fps. At 2 fps a late tick left a whole half second with nothing to
+        // show, and the window flashed empty; at 4 fps the 0.5s sample duration
+        // covers two ticks. The card is text only, so this is cheap.
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -572,7 +583,7 @@ final class ChatPiPController: NSObject, ObservableObject {
     private func updateDiagnostic() {
         let age = lastFrameAt.map { String(format: "%.0fs", Date().timeIntervalSince($0)) } ?? "—"
         let state = isFloating ? "浮窗中" : (isPrepared ? "已准备" : "未准备")
-        let next = "\(state) · 帧 \(frameIndex) · 最近 \(age) · 图层 \(lastLayerStatus)"
+        let next = "\(state) · 帧 \(frameIndex) · 最近 \(age) · 图层 \(lastLayerStatus) · 0.5s/帧"
         if next != diagnostic { diagnostic = next }
     }
 
@@ -621,14 +632,19 @@ final class ChatPiPController: NSObject, ObservableObject {
         // [T-floating-window-pip] The caller stamps the frame with the layer's
         // clock reading, so it is always "now" and can never be past due.
         //
-        // The duration is deliberately a day, not the 0.5s frame interval. When
-        // the queue is starved — the app gets suspended for a moment, or iOS
-        // throttles a background timer — a frame that expires leaves the layer
-        // with nothing to present, and Picture in Picture replaces the card with
-        // its grey spinner. A frame that never expires keeps the last picture on
-        // screen until the next one arrives.
+        // The duration stays at one frame interval — 0.5s, which covers two
+        // ticks at the 4 fps the timer produces. It is deliberately *not*
+        // inflated to hours. A day-long duration looks like a safe way to keep
+        // a starved queue on screen, and on a device it does the exact
+        // opposite: the window paints the first frame and then sits on Picture
+        // in Picture's grey spinner forever. The system reads the sample timing
+        // to decide whether there is video to present, and a frame that claims
+        // to last 24 hours reads as "no video". This was a real regression, not
+        // a theory: with a 0.5s duration the card was visible, and the only
+        // change between that build and the one that shows a spinner is this
+        // number.
         var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 24 * 60 * 60, timescale: 1),
+            duration: CMTime(value: 1, timescale: 2),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: .invalid
         )
@@ -886,6 +902,10 @@ extension ChatPiPController: AVPictureInPictureControllerDelegate {
         // floats; started here it also covers the automatic start, which never
         // goes through `present()`.
         startAudioIfNeeded()
+        // [T-floating-window-pip] Hand the window a frame right now. The
+        // automatic start never goes through `present()`, so without this the
+        // window can open on an empty layer while the timer is a tick away.
+        renderFrame()
         updateDiagnostic()
         AppLogger(category: "PiP").info("[PiP] floating")
     }
