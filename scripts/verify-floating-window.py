@@ -130,6 +130,31 @@ def main():
     check("这台设备不支持画中画" in content_view,
           "and explains why instead of doing nothing")
 
+    # --- Shape: a small horizontal strip -------------------------------
+
+    check("static let cardWidth: CGFloat = 480" in pip and "static let cardHeight: CGFloat = 180" in pip,
+          "the card is 480x180 — wide and short, not a portrait card")
+    check("width: FloatingConversationCard.cardWidth" in pip,
+          "the renderer uses that size, so the PiP window inherits the strip shape")
+    check("width: 360, height: 480" not in pip,
+          "the old portrait size is gone")
+    check("design: .monospaced" in pip,
+          "the output is monospaced, like a terminal")
+    check("model.steps.suffix(9)" in pip,
+          "up to nine tool rows fill the strip instead of leaving a void")
+
+    # --- Appearing on the FIRST backgrounding --------------------------
+
+    check("canStartPictureInPictureAutomaticallyFromInline = true" in pip,
+          "the system floats the window as the app leaves the foreground")
+    check("automatic start did not happen" in pip,
+          "a delayed manual request covers the case where it does not")
+    check("isPictureInPictureActive != true" in pip,
+          "and does not race a start that already happened")
+    did_start = pip.split("pictureInPictureControllerDidStartPictureInPicture", 1)[-1][:700]
+    check("silentAudio?.start()" in did_start,
+          "the keep-alive starts with the window, including the automatic path")
+
     # --- The Live Activity is only a fallback now ---------------------
 
     check("static var usesLiveActivityCard: Bool" in manager,

@@ -62,78 +62,101 @@ private struct FloatingConversationCard: View {
         return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
+    /// [T-floating-window-pip] The PiP window inherits the sample buffer's
+    /// aspect ratio, so this size *is* the window's shape. 480x180 is a small
+    /// horizontal terminal strip in a corner; the previous 360x480 portrait made
+    /// the system open a tall card that covered a third of the screen and left
+    /// most of it empty.
+    static let cardWidth: CGFloat = 480
+    static let cardHeight: CGFloat = 180
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
+            // One-line title bar, like a terminal window's chrome.
+            HStack(spacing: 5) {
                 Circle()
                     .fill(model.isCompleted ? Color.green : Color.blue)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 6, height: 6)
                 Text(model.soulName.isEmpty ? "Ze" : model.soulName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                Spacer(minLength: 4)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("·")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.3))
+                Text(model.title.isEmpty ? String(localized: "Agent Task") : model.title)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
                 Text(elapsedText)
-                    .font(.system(size: 15, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.65))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.55))
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
 
-            Text(model.title.isEmpty ? String(localized: "Agent Task") : model.title)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
 
-            // The mini terminal: recent tool calls, newest last. This is what
-            // the window is FOR — watching the run, not staring at empty space.
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
-                    HStack(spacing: 6) {
+            // Terminal output: the turn's tool calls, newest last, plus the
+            // latest thing said. Up to nine rows fill the strip at this size.
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(model.steps.suffix(9).enumerated()), id: \.offset) { _, step in
+                    HStack(spacing: 5) {
                         Image(systemName: step.glyph)
-                            .font(.system(size: 12))
-                            .foregroundStyle(step.isError ? Color.red.opacity(0.9)
-                                             : (step.isRunning ? Color.blue.opacity(0.9)
-                                                : Color.green.opacity(0.75)))
-                            .frame(width: 14)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(step.isError ? Color.red.opacity(0.95)
+                                             : (step.isRunning ? Color.blue.opacity(0.95)
+                                                : Color.green.opacity(0.7)))
+                            .frame(width: 11)
                         Text(step.text)
-                            .font(.system(size: 14, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.82))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(step.isRunning ? 0.95 : 0.72))
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         if !step.seconds.isEmpty {
                             Text(step.seconds)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.4))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.38))
                         }
                     }
                 }
+                if !model.line.isEmpty {
+                    HStack(alignment: .top, spacing: 5) {
+                        Text("›")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.32))
+                        Text(model.line)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            if !model.line.isEmpty {
-                Text(model.line)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 if !model.isCompleted {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.white.opacity(0.7))
-                        .scaleEffect(0.7)
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 5, height: 5)
                 }
                 Text(model.status)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.55))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
         }
-        .padding(20)
-        .frame(width: 360, height: 480, alignment: .topLeading)
+        .frame(width: Self.cardWidth, height: Self.cardHeight, alignment: .topLeading)
         .background(
             LinearGradient(colors: [Color(red: 0.07, green: 0.09, blue: 0.12),
                                     Color(red: 0.03, green: 0.04, blue: 0.06)],
@@ -281,7 +304,11 @@ final class ChatPiPController: NSObject {
         )
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
-        controller.canStartPictureInPictureAutomaticallyFromInline = false
+        // [T-floating-window-pip] Let the system float the strip the moment the
+        // app leaves the foreground. Asking manually inside `willResignActive`
+        // is what made the window appear only on the *second* backgrounding:
+        // by then the app is already transitioning and the request is dropped.
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
 
         hostView = host
         displayLayer = layer
@@ -407,7 +434,10 @@ final class ChatPiPController: NSObject {
         let card = FloatingConversationCard(model: model, elapsed: elapsed)
         let renderer = ImageRenderer(content: card)
         renderer.scale = 2
-        renderer.proposedSize = ProposedViewSize(width: 360, height: 480)
+        renderer.proposedSize = ProposedViewSize(
+            width: FloatingConversationCard.cardWidth,
+            height: FloatingConversationCard.cardHeight
+        )
         guard let cgImage = renderer.cgImage,
               let sample = Self.sampleBuffer(from: cgImage) else { return }
         if layer.status == .failed {
@@ -612,7 +642,21 @@ final class ChatPiPController: NSObject {
             forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.present() }
+            Task { @MainActor in
+                guard let self else { return }
+                // The automatic start covers the normal path; this is only a
+                // fallback for the case where the system declined, so it waits
+                // until the transition is over instead of racing it.
+                self.ensurePrepared()
+                guard !SessionActivityTracker.shared.activeSessions.isEmpty else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                    Task { @MainActor in
+                        guard let self, self.pip?.isPictureInPictureActive != true else { return }
+                        AppLogger(category: "PiP").info("[PiP] automatic start did not happen — asking directly")
+                        self.present()
+                    }
+                }
+            }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
@@ -668,6 +712,13 @@ final class ChatPiPController: NSObject {
 extension ChatPiPController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         isFloating = true
+        // [T-floating-window-pip] The audio session is what keeps the process
+        // alive once the window floats; started here it also covers the
+        // automatic start, which never goes through `present()`.
+        if silentAudio == nil {
+            silentAudio = SilentAudioKeepAlive()
+            silentAudio?.start()
+        }
         AppLogger(category: "PiP").info("[PiP] floating")
     }
 
