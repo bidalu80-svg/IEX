@@ -181,6 +181,9 @@ final class ChatPiPController: NSObject {
     private var startRetries = 0
 
     private var model: FloatingCardModel = .empty
+    /// Set by `preview()`: float the card even with no task running, so the
+    /// window can be proven from Settings instead of after a backgrounding.
+    private var forcedPreview = false
 
     private override init() {
         super.init()
@@ -201,8 +204,13 @@ final class ChatPiPController: NSObject {
 
     /// The "预览" button: float the window right now, no backgrounding needed.
     func preview() {
+        guard Self.isSupported, Self.isEnabled else { return }
+        forcedPreview = true
         ensurePrepared()
-        present()
+        guard isPrepared else { return }
+        model = Self.previewPlaceholderModel()
+        renderFrame()
+        present(force: true)
     }
 
     /// Build the layer and start feeding it frames. Cheap to call repeatedly.
@@ -250,15 +258,17 @@ final class ChatPiPController: NSObject {
     }
 
     /// Ask the system to float the prepared layer.
-    func present() {
+    func present(force: Bool = false) {
         guard Self.isSupported else { return }
         guard Self.isEnabled else { return }
         ensurePrepared()
         guard let pip else { return }
         guard !pip.isPictureInPictureActive else { return }
-        guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
-            AppLogger(category: "PiP").info("[PiP] present skipped — no active task")
-            return
+        if !force {
+            guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
+                AppLogger(category: "PiP").info("[PiP] present skipped — no active task")
+                return
+            }
         }
         guard pip.isPictureInPicturePossible else {
             // The usual cause: the layer has no rendered frame yet. Try again on
@@ -302,6 +312,7 @@ final class ChatPiPController: NSObject {
         isPrepared = false
         isFloating = false
         startRetries = 0
+        forcedPreview = false
         AppLogger(category: "PiP").info("[PiP] torn down")
     }
 
@@ -318,13 +329,16 @@ final class ChatPiPController: NSObject {
     }
 
     private func tick() {
-        // The window exists only while a task runs.
-        guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
+        // The window exists only while a task runs — except in preview, where
+        // the point is precisely to show it without one.
+        if !forcedPreview, SessionActivityTracker.shared.activeSessions.isEmpty {
             AppLogger(category: "PiP").info("[PiP] no active session — closing window")
             teardown()
             return
         }
-        model = Self.currentModel()
+        if !forcedPreview {
+            model = Self.currentModel()
+        }
         renderFrame()
     }
 
@@ -429,6 +443,18 @@ final class ChatPiPController: NSObject {
         )
     }
 
+    /// Placeholder card used by the preview button.
+    private static func previewPlaceholderModel() -> FloatingCardModel {
+        FloatingCardModel(
+            title: String(localized: "悬浮窗预览"),
+            line: String(localized: "任务运行时，这里显示当前对话的最新一句。"),
+            status: String(localized: "预览模式 · 没有任务在跑"),
+            soulName: AgentLiveActivityManager.currentSoulName(),
+            startedAt: Date(),
+            isCompleted: false
+        )
+    }
+
     /// The card's clock counts from the task, not from the moment the window
     /// opened. First sighting of a running session stamps the start.
     private static func taskStartDate(for sessionId: String) -> Date {
@@ -482,6 +508,8 @@ final class ChatPiPController: NSObject {
                     if sessions.isEmpty {
                         self.teardown()
                     } else {
+                        // A real task supersedes the placeholder card.
+                        self.forcedPreview = false
                         self.ensurePrepared()
                     }
                 }

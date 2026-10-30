@@ -103,7 +103,7 @@ def main():
 
     check("func ensurePrepared()" in pip,
           "the layer is built separately from the PiP request")
-    check("func present()" in pip and "startPictureInPicture()" in pip,
+    check("func present(force: Bool = false)" in pip and "startPictureInPicture()" in pip,
           "presenting only asks the system to float an already-rendering layer")
     check("SessionActivityTracker.shared.$activeSessions" in pip,
           "preparation starts as soon as a task starts, while still foreground")
@@ -117,6 +117,10 @@ def main():
           "the host view is not made transparent (that also fails the request)")
     check("func dismiss()" in pip and "func teardown()" in pip,
           "floating and teardown are separate, so re-backgrounding is instant")
+    check("forcedPreview" in pip and "present(force: true)" in pip,
+          "the preview button floats the card with no task running")
+    check("if !forcedPreview, SessionActivityTracker.shared.activeSessions.isEmpty" in pip,
+          "the no-task teardown does not kill the preview")
     check(".disabled(!ChatPiPController.isSupported)" in content_view,
           "the switch is disabled where PiP cannot float")
     check("这台设备不支持画中画" in content_view,
