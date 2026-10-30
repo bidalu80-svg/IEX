@@ -78,8 +78,8 @@ def main():
 
     # --- It must not outlive the task ---------------------------------
 
-    tick = pip.split("private func tick()", 1)[-1][:600]
-    check("SessionActivityTracker.shared.activeSessions.isEmpty" in tick and "stop()" in tick,
+    tick = pip.split("private func tick()", 1)[-1][:700]
+    check("SessionActivityTracker.shared.activeSessions.isEmpty" in tick and "teardown()" in tick,
           "the frame timer closes the window when no task is running")
     check("guard Self.isEnabled" in pip,
           "the controller refuses to run with the switch off")
@@ -92,10 +92,31 @@ def main():
           "Appearance owns the switch, defaulting to off")
     check('static let preferenceKey = "backgroundFloatingWindow"' in pip,
           "the controller reads the same key")
-    check("ChatPiPController.shared.start()" in content_view,
-          "flipping the switch on raises the window")
-    check("ChatPiPController.shared.stop()" in content_view,
-          "flipping it off takes the window down")
+    check("ChatPiPController.shared.setPreference(true)" in content_view,
+          "flipping the switch on prepares the window")
+    check("ChatPiPController.shared.setPreference(false)" in content_view,
+          "flipping it off tears it down")
+    check("ChatPiPController.shared.preview()" in content_view and "预览悬浮窗" in content_view,
+          "there is a preview button so the window can be proven without backgrounding")
+
+    # --- Prepare first, float later (the bug that shipped once) -------
+
+    check("func ensurePrepared()" in pip,
+          "the layer is built separately from the PiP request")
+    check("func present()" in pip and "startPictureInPicture()" in pip,
+          "presenting only asks the system to float an already-rendering layer")
+    check("SessionActivityTracker.shared.$activeSessions" in pip,
+          "preparation starts as soon as a task starts, while still foreground")
+    check("pip.isPictureInPicturePossible" in pip,
+          "the request waits until the layer is actually able to float")
+    check("retry" in pip and "startRetries" in pip,
+          "a not-yet-possible layer is retried instead of failing silently")
+    check("window.addSubview(host)" in pip,
+          "the layer is attached to the window (PiP refuses an off-screen source)")
+    check("host.alpha" not in pip,
+          "the host view is not made transparent (that also fails the request)")
+    check("func dismiss()" in pip and "func teardown()" in pip,
+          "floating and teardown are separate, so re-backgrounding is instant")
     check(".disabled(!ChatPiPController.isSupported)" in content_view,
           "the switch is disabled where PiP cannot float")
     check("这台设备不支持画中画" in content_view,

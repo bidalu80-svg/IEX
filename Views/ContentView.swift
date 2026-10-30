@@ -5033,14 +5033,19 @@ private struct AppearanceSettingsView: View {
                                 return
                             }
                             floatingWindowError = nil
-                            // Show it immediately so the switch has visible
-                            // feedback; it keeps running once the app is
-                            // backgrounded and closes when the task ends.
-                            ChatPiPController.shared.start()
+                            ChatPiPController.shared.setPreference(true)
                         } else {
-                            ChatPiPController.shared.stop()
+                            ChatPiPController.shared.setPreference(false)
                         }
                         BackgroundKeepAliveManager.shared.updateLiveActivityIfNeeded(source: "floatingWindowToggle")
+                    }
+                    if backgroundFloatingWindow, ChatPiPController.isSupported {
+                        Button {
+                            ChatPiPController.shared.preview()
+                        } label: {
+                            Label("预览悬浮窗", systemImage: "pip")
+                        }
+                        .accessibilityIdentifier("settings.appearance.previewFloatingWindow")
                     }
                 } header: {
                     Text("后台悬浮窗")

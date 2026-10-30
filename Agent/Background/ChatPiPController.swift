@@ -2,15 +2,28 @@
 //  ChatPiPController.swift
 //  ZeApp
 //
-//  [T-floating-window-pip] The real floating window: the running conversation
-//  is rasterised into a video stream and handed to Picture in Picture, so the
+//  [T-floating-window-pip] The floating window: the running conversation is
+//  rasterised into a video stream and handed to Picture in Picture, so the
 //  system floats it over every other app — the same mechanism ToDesk uses for
 //  its remote screen. Live Activities cannot do this: they only own the Dynamic
 //  Island and the Lock Screen.
 //
+//  Lifecycle, and why it is split in three:
+//
+//    prepare()  build the layer, attach it to the window, start pushing frames.
+//               This must happen while the app is still in the foreground and
+//               has time to draw, otherwise PiP has nothing to show and the
+//               request fails.
+//    present()  only asks the system to float the already-rendering layer.
+//               Called when the app resigns active.
+//    dismiss()  takes the window down without losing the prepared layer, so
+//               the next backgrounding is instant.
+//    teardown() drops everything (switch off, or the last task finished).
+//
 
 import AVFoundation
 import AVKit
+import Combine
 import SwiftUI
 import UIKit
 
@@ -100,10 +113,10 @@ private struct FloatingConversationCard: View {
 private final class SilentAudioKeepAlive {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private var started = false
+    private(set) var isRunning = false
 
     func start() {
-        guard !started else { return }
+        guard !isRunning else { return }
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -115,7 +128,6 @@ private final class SilentAudioKeepAlive {
             engine.mainMixerNode.outputVolume = 0
             try engine.start()
 
-            // A one-second silent buffer, looped.
             let frames = AVAudioFrameCount(44_100)
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
             buffer.frameLength = frames
@@ -124,17 +136,17 @@ private final class SilentAudioKeepAlive {
             }
             player.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
             player.play()
-            started = true
+            isRunning = true
         } catch {
             AppLogger(category: "PiP").warning("[PiP] silent audio failed: \(error.localizedDescription)")
         }
     }
 
     func stop() {
-        guard started else { return }
+        guard isRunning else { return }
         player.stop()
         engine.stop()
-        started = false
+        isRunning = false
     }
 }
 
@@ -153,7 +165,11 @@ final class ChatPiPController: NSObject {
         AVPictureInPictureController.isPictureInPictureSupported()
     }
 
-    private(set) var isRunning = false
+    /// True once the layer exists and frames are flowing (not necessarily
+    /// floated yet).
+    private(set) var isPrepared = false
+    /// True while the system is floating the window.
+    private(set) var isFloating = false
 
     private var pip: AVPictureInPictureController?
     private var displayLayer: AVSampleBufferDisplayLayer?
@@ -161,55 +177,60 @@ final class ChatPiPController: NSObject {
     private var frameTimer: Timer?
     private var silentAudio: SilentAudioKeepAlive?
     private var observers: [NSObjectProtocol] = []
+    private var sessionCancellable: AnyCancellable?
+    private var startRetries = 0
 
-    /// Latest model handed to the renderer (kept so a timer tick can repaint the
-    /// elapsed clock without rebuilding from the view model).
     private var model: FloatingCardModel = .empty
 
     private override init() {
         super.init()
         observeAppLifecycle()
+        observeSessions()
     }
 
     // MARK: - Public
 
-    /// Called by the appearance toggle and on launch (the preference survives,
-    /// but the window itself must not outlive the app).
-    func syncWithPreference() {
-        guard Self.isEnabled, Self.isSupported else { return }
-        guard !SessionActivityTracker.shared.activeSessions.isEmpty else { return }
-        if UIApplication.shared.applicationState != .active { start() }
+    /// Called by the Appearance switch.
+    func setPreference(_ on: Bool) {
+        if on {
+            ensurePrepared()
+        } else {
+            teardown()
+        }
     }
 
-    func start() {
-        guard !isRunning else { return }
-        guard Self.isSupported else {
-            AppLogger(category: "PiP").warning("[PiP] unsupported on this device")
+    /// The "预览" button: float the window right now, no backgrounding needed.
+    func preview() {
+        ensurePrepared()
+        present()
+    }
+
+    /// Build the layer and start feeding it frames. Cheap to call repeatedly.
+    func ensurePrepared() {
+        guard Self.isEnabled, Self.isSupported else { return }
+        guard !isPrepared else { return }
+        guard let window = Self.keyWindow() else {
+            AppLogger(category: "PiP").warning("[PiP] prepare skipped — no key window")
             return
         }
-        guard Self.isEnabled else { return }
-        // Nothing to float when nothing is running: the window is tied to a task.
-        guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
-            AppLogger(category: "PiP").info("[PiP] start skipped — no active task")
-            return
-        }
-        guard let window = Self.keyWindow() else { return }
 
         let layer = AVSampleBufferDisplayLayer()
         layer.videoGravity = .resizeAspect
-        let host = UIView(frame: CGRect(x: -2, y: -2, width: 2, height: 2))
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 2, height: 2))
         host.isUserInteractionEnabled = false
-        host.alpha = 0.02          // must stay in the hierarchy to be driven
+        host.backgroundColor = .clear
+        host.clipsToBounds = true
         host.layer.addSublayer(layer)
         layer.frame = host.bounds
+        // A PiP source layer has to be on screen: an invisible (alpha 0) or
+        // off-window view makes the start request fail. 2×2 in the corner is
+        // invisible to the eye and visible to the system.
         window.addSubview(host)
 
-        // ContentSource is non-failable when built from a sample-buffer layer.
         let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: layer,
             playbackDelegate: self
         )
-
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = false
@@ -222,17 +243,54 @@ final class ChatPiPController: NSObject {
         silentAudio = SilentAudioKeepAlive()
         silentAudio?.start()
 
+        isPrepared = true
         renderFrame()
         startFrameTimer()
-
-        controller.startPictureInPicture()
-        isRunning = true
-        AppLogger(category: "PiP").info("[PiP] start — floating window requested")
+        AppLogger(category: "PiP").info("[PiP] prepared — layer on screen, frames flowing")
     }
 
-    func stop() {
-        guard isRunning || pip != nil else { return }
-        pip?.stopPictureInPicture()
+    /// Ask the system to float the prepared layer.
+    func present() {
+        guard Self.isSupported else { return }
+        guard Self.isEnabled else { return }
+        ensurePrepared()
+        guard let pip else { return }
+        guard !pip.isPictureInPictureActive else { return }
+        guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
+            AppLogger(category: "PiP").info("[PiP] present skipped — no active task")
+            return
+        }
+        guard pip.isPictureInPicturePossible else {
+            // The usual cause: the layer has no rendered frame yet. Try again on
+            // the next runloop instead of giving up silently.
+            if startRetries < 8 {
+                startRetries += 1
+                AppLogger(category: "PiP").info("[PiP] not possible yet — retry \(startRetries)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    Task { @MainActor in self?.present() }
+                }
+            } else {
+                AppLogger(category: "PiP").warning("[PiP] present gave up — isPictureInPicturePossible stayed false")
+            }
+            return
+        }
+        startRetries = 0
+        pip.startPictureInPicture()
+        AppLogger(category: "PiP").info("[PiP] start requested")
+    }
+
+    /// Take the window down but keep the layer ready for the next backgrounding.
+    func dismiss() {
+        guard let pip else { return }
+        if pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+        }
+        isFloating = false
+    }
+
+    /// Drop the layer, the audio session and the timer.
+    func teardown() {
+        dismiss()
         frameTimer?.invalidate()
         frameTimer = nil
         silentAudio?.stop()
@@ -241,8 +299,10 @@ final class ChatPiPController: NSObject {
         hostView = nil
         displayLayer = nil
         pip = nil
-        isRunning = false
-        AppLogger(category: "PiP").info("[PiP] stop")
+        isPrepared = false
+        isFloating = false
+        startRetries = 0
+        AppLogger(category: "PiP").info("[PiP] torn down")
     }
 
     // MARK: - Frames
@@ -261,7 +321,7 @@ final class ChatPiPController: NSObject {
         // The window exists only while a task runs.
         guard !SessionActivityTracker.shared.activeSessions.isEmpty else {
             AppLogger(category: "PiP").info("[PiP] no active session — closing window")
-            stop()
+            teardown()
             return
         }
         model = Self.currentModel()
@@ -395,17 +455,37 @@ final class ChatPiPController: NSObject {
             forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.syncWithPreference() }
+            Task { @MainActor in self?.present() }
         })
         observers.append(center.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                // Back in the app: the window is redundant and only costs power.
-                self?.stop()
+                // Back in the app: the window is redundant. Keep the layer
+                // prepared so the next backgrounding floats instantly.
+                self?.dismiss()
             }
         })
+    }
+
+    /// Prepare as soon as a task starts, while the app is still in the
+    /// foreground and can draw. By the time the user swipes away, the layer has
+    /// been streaming for a while and the start request is accepted.
+    private func observeSessions() {
+        sessionCancellable = SessionActivityTracker.shared.$activeSessions
+            .receive(on: RunLoop.main)
+            .sink { [weak self] sessions in
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard Self.isEnabled else { return }
+                    if sessions.isEmpty {
+                        self.teardown()
+                    } else {
+                        self.ensurePrepared()
+                    }
+                }
+            }
     }
 
     private static func keyWindow() -> UIWindow? {
@@ -420,18 +500,27 @@ final class ChatPiPController: NSObject {
 
 extension ChatPiPController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-        AppLogger(category: "PiP").info("[PiP] did start")
+        isFloating = true
+        AppLogger(category: "PiP").info("[PiP] floating")
     }
 
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
+        isFloating = false
         AppLogger(category: "PiP").warning("[PiP] failed to start: \(error.localizedDescription)")
-        stop()
+        // The layer may simply not have had a frame yet; one more attempt after
+        // the next draw is cheaper than making the user toggle the switch again.
+        if startRetries < 3 {
+            startRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                Task { @MainActor in self?.present() }
+            }
+        }
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
-        AppLogger(category: "PiP").info("[PiP] did stop")
-        isRunning = false
+        isFloating = false
+        AppLogger(category: "PiP").info("[PiP] stopped")
     }
 }
 
