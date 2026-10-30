@@ -112,6 +112,19 @@ jobs:
             xcrun swiftc -frontend -parse "$file"
           done
 
+      - name: Test background floating window
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-floating-window.py | tee floating-window-structure.log
+          for file in \
+            Shared/AgentActivityAttributes.swift \
+            Agent/Background/AgentLiveActivityManager.swift \
+            Agent/Background/BackgroundKeepAliveManager.swift \
+            AgentWidget/AgentLiveActivityWidget.swift \
+            Views/ContentView.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+
       - name: Test AOJIT status surface
         run: |
           set -euo pipefail

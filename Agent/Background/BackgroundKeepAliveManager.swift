@@ -1550,7 +1550,8 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
                 title: title.isEmpty ? String(localized: "Agent Task") : title,
                 toolIcon: icon,
                 toolStatus: statusText,
-                loopIteration: info?.loopIteration ?? 0
+                loopIteration: info?.loopIteration ?? 0,
+                conversationLine: AgentLiveActivityManager.conversationLine(for: sid) ?? ""
             )
         }
         let scheduled = ScheduledTaskActivityPolicy.visibleDescriptors(scheduledTaskActivities,

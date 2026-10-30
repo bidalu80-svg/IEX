@@ -15,6 +15,12 @@ struct LiveSessionSnapshot: Codable, Hashable {
     var isCompleted: Bool = false
     /// One-line summary of the final assistant reply, shown when `isCompleted`.
     var lastMessage: String = ""
+    /// [T-floating-window] The latest line of the conversation this session
+    /// belongs to, collapsed to a single line. The floating card shows this so
+    /// the user can read the conversation from the Lock Screen / Dynamic Island.
+    /// Empty when no cached view model had a message for the session. Defaulted
+    /// so snapshots encoded before this field existed still decode.
+    var conversationLine: String = ""
 }
 
 @available(iOS 16.2, *)
@@ -76,5 +82,12 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// icon). Defaulted so ContentStates encoded before this field existed
         /// still decode.
         var privacyMode: Bool = false
+        /// [T-floating-window] True when Appearance → 后台悬浮窗 is on, so this
+        /// push renders the conversation card (title + latest line + elapsed)
+        /// instead of the technical task card. Carried in the state rather than
+        /// the attributes because the switch can be flipped while a task runs.
+        /// Defaulted so ContentStates encoded before this field existed still
+        /// decode (and so the end/cleanup states stay unchanged).
+        var floatingWindow: Bool = false
     }
 }

@@ -116,7 +116,43 @@ final class AgentLiveActivityManager {
     /// end/cleanup/finish stay allowed so flipping the switch off (or a stale
     /// activity from before the switch was off) always tears down cleanly.
     private static var isUserEnabled: Bool {
-        (UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool) ?? true
+        if (UserDefaults.standard.object(forKey: "liveActivityEnabled") as? Bool) ?? true {
+            return true
+        }
+        // [T-floating-window] The appearance switch is its own opt-in: asking
+        // for the floating card there is enough, even with the older task-card
+        // switch off. End/cleanup paths do not consult this, so turning the
+        // floating window off still tears everything down.
+        return isFloatingWindowEnabled
+    }
+
+    /// [T-floating-window] Appearance → 后台悬浮窗 (default OFF).
+    ///
+    /// When on and a task is running, the Live Activity renders the current
+    /// conversation — its title, the latest line and the elapsed time — instead
+    /// of the raw tool trail. Nothing is shown when no task is running: this
+    /// only changes the presentation of the activity the manager already starts
+    /// and ends with the task's lifetime.
+    static var isFloatingWindowEnabled: Bool {
+        (UserDefaults.standard.object(forKey: "backgroundFloatingWindow") as? Bool) ?? false
+    }
+
+    /// Latest conversation line for a session, collapsed to one line and
+    /// clipped for the Dynamic Island / Lock Screen card.
+    ///
+    /// Only a cached view model knows the rendered messages, so a session that
+    /// was never opened on this launch (or was evicted under memory pressure)
+    /// yields nil and the card falls back to the tool status.
+    @MainActor
+    static func conversationLine(for sessionId: String) -> String? {
+        guard let vm = ViewModelCache.shared.get(for: sessionId) else { return nil }
+        for message in vm.messages.reversed() {
+            let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return collapseLastMessage(text)
+            }
+        }
+        return nil
     }
 
     func startActivity(sessions: [LiveSessionSnapshot]) {
@@ -515,7 +551,7 @@ final class AgentLiveActivityManager {
         // [T-ios-live-activity-audio-toggle] Stamp audio fields on the initial
         // state so an activity started purely by audio (or with audio alongside a
         // task) renders the play/pause control from the very first frame.
-        let state = withAudioState(AgentActivityAttributes.ContentState(
+        var state = withAudioState(AgentActivityAttributes.ContentState(
             activeSessionCount: liveCount,
             sessions: merged,
             carouselIndex: 0,
@@ -523,6 +559,10 @@ final class AgentLiveActivityManager {
             latestToolIcon: Self.latestToolIcon(),
             minimalShowsTool: minimalShowsTool
         ))
+        // [T-floating-window] Stamp the card style on the very first frame so
+        // the island opens as a conversation card instead of flashing the
+        // technical layout first.
+        state.floatingWindow = Self.isFloatingWindowEnabled
         let attributes = AgentActivityAttributes(startDate: now)
         let content = ActivityContent(state: state, staleDate: nil)
 
@@ -828,7 +868,10 @@ final class AgentLiveActivityManager {
     private func pushState(_ rawState: AgentActivityAttributes.ContentState, activity: Activity<AgentActivityAttributes>) {
         guard Self.isUserEnabled,
               (currentActivity as? Activity<AgentActivityAttributes>)?.id == activity.id else { return }
-        let state = withAudioState(rawState)
+        var state = withAudioState(rawState)
+        // [T-floating-window] Read on every push so flipping the Appearance
+        // switch takes effect on the next refresh rather than the next task.
+        state.floatingWindow = Self.isFloatingWindowEnabled
         lastPushedState = state
         lastPushDate = Date()
         updateCount += 1

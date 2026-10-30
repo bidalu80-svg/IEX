@@ -102,6 +102,17 @@ struct AgentLiveActivityWidget: Widget {
                                         .background(.white.opacity(0.12), in: Capsule())
                                 }
                             }
+                            // [T-floating-window] The floating card answers
+                            // "what is the conversation doing", so the latest
+                            // conversation line sits under the title. Empty
+                            // when no cached view model had a message.
+                            if context.state.floatingWindow, !session.conversationLine.isEmpty {
+                                Text(session.conversationLine)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             if session.isCompleted {
                                 HStack(alignment: .top, spacing: 5) {
                                     Image(systemName: "checkmark.circle.fill")
@@ -141,13 +152,17 @@ struct AgentLiveActivityWidget: Widget {
                 }
             } compactLeading: {
                 HStack(spacing: 3) {
-                    Image(systemName: "list.bullet.circle")
+                    Image(systemName: context.state.floatingWindow
+                          ? "bubble.left.and.text.bubble.right.fill"
+                          : "list.bullet.circle")
                         .font(.callout)
                         .foregroundStyle(.green)
-                    Text("\(context.state.activeSessionCount)")
-                        .font(.callout.bold())
-                        .foregroundStyle(.green)
-                        .contentTransition(.numericText())
+                    if !context.state.floatingWindow {
+                        Text("\(context.state.activeSessionCount)")
+                            .font(.callout.bold())
+                            .foregroundStyle(.green)
+                            .contentTransition(.numericText())
+                    }
                 }
             } compactTrailing: {
                 CompactTrailingView(state: context.state)
@@ -288,6 +303,16 @@ struct AgentLockScreenView: View {
                                 .padding(.vertical, 2)
                                 .background(.white.opacity(0.12), in: Capsule())
                         }
+                    }
+                    // [T-floating-window] Same conversation line as the Dynamic
+                    // Island: on the Lock Screen the card is fully expanded, so
+                    // this is where the user actually reads the reply.
+                    if state.floatingWindow, !session.conversationLine.isEmpty {
+                        Text(session.conversationLine)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if session.isCompleted {
                         HStack(alignment: .top, spacing: 5) {

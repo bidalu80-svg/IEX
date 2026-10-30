@@ -369,3 +369,13 @@ git status --short
 - 滚动：`Views/Layout/ChatScrollMemory.swift` 记录“顶部消息 id + 行内偏移”；`CollectionViewMessageListV3` 浏览时写入、重建后 `restoreScrollIfNeeded()` 恢复，恢复期间 `scrollMode = .browse` 防止被自动吸底覆盖。停在底部时不记录，保持默认行为。
 - 侧栏：`navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 460)`——700pt 刚进入分栏时聊天列仍有约 400pt。
 - 校验：`scripts/FoldableLayoutTests.swift`（纯 Swift）+ `scripts/verify-foldable-layout.py`（结构检查），CI 步骤 “Test foldable pane layout”。
+
+
+## 后台悬浮窗（T-floating-window）
+
+- 开关：`Views/ContentView.swift` 的 `AppearanceSettingsView`，`@AppStorage("backgroundFloatingWindow")`，默认关。改动后立刻 `updateLiveActivityIfNeeded(source: "floatingWindowToggle")`，不用等下一个任务。
+- 平台事实：iOS 没有“在其他 App 之上画一个可拖动小窗”的权限，本功能落在**实时活动**上——运行中显示在灵动岛，锁屏时显示在锁屏卡片。设置页脚注已写明这一点，不要改成承诺真悬浮窗。
+- 内容：`ContentState.floatingWindow` 标记 + `LiveSessionSnapshot.conversationLine`（由 `AgentLiveActivityManager.conversationLine(for:)` 从 `ViewModelCache` 里取最后一条非空消息，折叠成一行）。`pushState` 每次推送都重读偏好，`_startActivity` 首帧也带上，避免先闪一下旧布局。
+- 渲染：`AgentWidget/AgentLiveActivityWidget.swift` 的灵动岛 compactLeading（对话图标、隐藏会话计数）、expanded bottom、锁屏卡三处都按 `floatingWindow` 分支渲染对话行。
+- 生命周期沿用原有逻辑：**任务开始才建活动，任务结束立刻结束**，没有任务时不存在悬浮卡。
+- 校验：`scripts/verify-floating-window.py`（22 项），CI 步骤 “Test background floating window”。

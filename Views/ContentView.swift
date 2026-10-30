@@ -4944,6 +4944,11 @@ private struct SteppedSlider: View {
 
 private struct AppearanceSettingsView: View {
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
+    /// [T-floating-window] Appearance → 后台悬浮窗. Default OFF: turning it on
+    /// swaps the Live Activity's task card for the conversation card, a visible
+    /// change existing installs did not ask for. `@AppStorage` persists the
+    /// choice across relaunches by construction.
+    @AppStorage("backgroundFloatingWindow") private var backgroundFloatingWindow: Bool = false
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
@@ -5002,6 +5007,32 @@ private struct AppearanceSettingsView: View {
                 guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
                 windowScene.windows.forEach { window in
                     window.overrideUserInterfaceStyle = appearanceMode == 1 ? .light : appearanceMode == 2 ? .dark : .unspecified
+                }
+            }
+
+            // [T-floating-window] Background floating conversation card.
+            //
+            // iOS has no general "draw over other apps" window, so the surface
+            // is the Live Activity the system already shows over the Home
+            // Screen: the Dynamic Island while a task runs, and the Lock Screen
+            // when the phone is locked. The switch only changes what that card
+            // shows — the conversation instead of the tool trail — and the card
+            // still disappears the moment no task is running.
+            if AgentLiveActivityManager.isLiveActivitySupported {
+                Section {
+                    Toggle(isOn: $backgroundFloatingWindow) {
+                        Text("后台悬浮窗")
+                    }
+                    .accessibilityIdentifier("settings.appearance.backgroundFloatingWindow")
+                    .onChange(of: backgroundFloatingWindow) { _ in
+                        // Apply immediately to a card that is already on screen
+                        // instead of waiting for the next task.
+                        BackgroundKeepAliveManager.shared.updateLiveActivityIfNeeded(source: "floatingWindowToggle")
+                    }
+                } header: {
+                    Text("后台悬浮窗")
+                } footer: {
+                    Text("任务运行时，在灵动岛和锁屏显示当前对话的悬浮卡片：对话标题、最新一句回复和已用时间。没有任务进行时不显示。\n\n这是 iOS 允许的唯一“悬浮”形式——系统不允许 App 在其他应用之上盖一个可拖动的小窗口。开关会自动保存，重启后保持上次状态。")
                 }
             }
 
