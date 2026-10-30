@@ -361,7 +361,9 @@ git status --short
 
 ## 折叠屏适配（可折叠 iPhone）
 
-- 判定：`Views/Layout/AdaptivePaneLayout.swift` 的 `AdaptivePanePolicy.layout(for:previous:)` 只按窗口尺寸决定单栏/双栏——宽 ≥ 700pt **且**高 ≥ 500pt 才分栏，退出阈值低 24pt（`hysteresis`）防止拖动时抖动。**不要再用 `userInterfaceIdiom` 判断**：可折叠 iPhone 在 400pt 外屏和 ~900pt 内屏上都是 `.phone`，按机型判断会让内屏永远停在单栏。
+- 判定：`Views/Layout/AdaptivePaneLayout.swift` 的 `AdaptivePanePolicy.layout(for:previous:)` 只按窗口尺寸决定单栏/双栏——宽 ≥ 700pt **且**高 ≥ 500pt 才分栏，退出阈值低 24pt（`hysteresis`）防止拖动时抖动。**不要再用 `userInterfaceIdiom` 判断**。
+- iPhone Duo（iOS 27）实测点尺寸（Apple 规格：内屏 1878×2670 @430ppi，外屏 1398×2034 @460ppi，3×）：外屏 **466×678**、内屏竖握 **626×890**、内屏横握 **890×626**、Split View 半窗约 **313×626**。四种状态都是 `.phone`，所以按机型判断会让内屏永远单栏。626 竖握保持单栏是刻意的（两栏各约 310pt 太窄），890 横握才分栏。
+- 排查：`AppLogger` 的 `Foldable` 分类每次布局切换打一行 `[PaneLayout] WxH -> split|stack`，真机上直接看日志就知道当前窗口尺寸与判定结果。
 - 接线：`Views/ContentView.swift` 的 `pageLayout` 调 policy；`carrySelectionAcrossPaneChange(wide:)` 在单栏/双栏切换时把 `selectedSessionId` 与 `navigationPath` 对齐，折叠或旋转后仍停在同一个会话。
 - 草稿：`ViewModelCache.getOrCreateDraft(id:)` 按父级草稿 ID 缓存 VM，`AIChatView` 的 `CachedViewModel(sessionId:draftId:)` 复用它；否则每次布局重建都换一个空 VM，输入框里的字会消失。`cacheDraft(_:sessionId:)` 在草稿转正后清掉草稿键。
 - 滚动：`Views/Layout/ChatScrollMemory.swift` 记录“顶部消息 id + 行内偏移”；`CollectionViewMessageListV3` 浏览时写入、重建后 `restoreScrollIfNeeded()` 恢复，恢复期间 `scrollMode = .browse` 防止被自动吸底覆盖。停在底部时不记录，保持默认行为。

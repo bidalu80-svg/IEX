@@ -362,9 +362,10 @@ struct ContentView: View {
     private var pageLayout: some View {
         GeometryReader { geo in
             // [T-foldable-panes] Size drives the layout; the device family does
-            // not. A foldable iPhone spans ~400pt folded and ~900pt unfolded
-            // while reporting `.phone` throughout, so the old idiom gate kept it
-            // permanently stacked.
+            // not. iPhone Duo reports `.phone` both closed (466x678pt outer) and
+            // unfolded (626x890pt portrait, 890x626pt landscape), so the old
+            // idiom gate could never tell them apart — and left the inner
+            // display in a single column forever.
             let paneLayout = AdaptivePanePolicy.layout(
                 for: geo.size,
                 previous: isWideLayout ? .split : .stack
@@ -388,10 +389,16 @@ struct ContentView: View {
             .onChange(of: wide) { newWide in
                 isWideLayout = newWide
                 carrySelectionAcrossPaneChange(wide: newWide)
+                // One line per transition: enough to confirm on a Duo which
+                // window size produced which layout, without a debug build.
+                AppLogger(category: "Foldable").info(
+                    "[PaneLayout] \(Int(geo.size.width))x\(Int(geo.size.height)) -> \(newWide ? "split" : "stack")")
             }
             .onAppear {
                 isWideLayout = wide
                 wireMenuActions()
+                AppLogger(category: "Foldable").info(
+                    "[PaneLayout] initial \(Int(geo.size.width))x\(Int(geo.size.height)) -> \(wide ? "split" : "stack")")
             }
         }
     }

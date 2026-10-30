@@ -31,14 +31,20 @@ struct FoldableLayoutTests {
     }
 
     static func main() {
-        // --- The two states of a foldable phone -----------------------
+        // --- The four configurations of an iPhone Duo (real measurements) ---
+        //
+        // Apple tech specs: inner 1878x2670 @430ppi, outer 1398x2034 @460ppi,
+        // 3x scale. These four numbers are the whole reason this policy is
+        // size-driven: every one of them reports `userInterfaceIdiom == .phone`.
 
-        check(layout(402, 874) == .stack,
-              "outer display (402x874) stays single column")
-        check(layout(920, 1000) == .split,
-              "inner display (920x1000) splits into two columns")
-        check(layout(1100, 1000) == .split,
-              "a wide inner display splits too")
+        check(layout(466, 678) == .stack,
+              "Duo outer display (466x678) stays single column")
+        check(layout(626, 890) == .stack,
+              "Duo inner display in portrait (626x890) stays single column")
+        check(layout(890, 626) == .split,
+              "Duo inner display in landscape (890x626) splits")
+        check(layout(313, 626) == .stack,
+              "Duo Split View half window (~313x626) stays single column")
 
         // --- Wide but short windows must not split --------------------
 
