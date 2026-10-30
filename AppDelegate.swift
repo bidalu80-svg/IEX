@@ -39,6 +39,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         ShortcutNotificationDelegate.shared.register()
         ScheduledTaskStore.shared.registerBackgroundTask()
 
+        // [T-floating-window-pip] Prepare the PiP layer during launch, while the
+        // app is on screen. Creating it during `willResignActive` is too late:
+        // the system refuses to float a layer that has not rendered yet, which
+        // made the window appear only on the second backgrounding.
+        Task { @MainActor in
+            ChatPiPController.shared.prepareIfEnabled()
+        }
+
         // Refresh the dynamic shortcut list every cold launch. The
         // items themselves are stable, but their localized titles
         // depend on the current `String(localized:)` resolution which

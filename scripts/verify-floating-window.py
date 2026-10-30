@@ -78,9 +78,11 @@ def main():
 
     # --- It must not outlive the task ---------------------------------
 
-    tick = pip.split("private func tick()", 1)[-1][:700]
-    check("SessionActivityTracker.shared.activeSessions.isEmpty" in tick and "teardown()" in tick,
-          "the frame timer closes the window when no task is running")
+    tick = pip.split("private func tick()", 1)[-1][:900]
+    check("sessions.isEmpty" in tick and "teardown()" in tick and "sawActiveSession" in tick,
+          "the frame timer closes the window only once a task has ended")
+    check("if !forcedPreview {" in tick,
+          "the preview keeps the card alive with no task running")
     check("guard Self.isEnabled" in pip,
           "the controller refuses to run with the switch off")
     check("AVPictureInPictureController.isPictureInPictureSupported()" in pip,
@@ -103,6 +105,10 @@ def main():
 
     check("func ensurePrepared()" in pip,
           "the layer is built separately from the PiP request")
+    check("func prepareIfEnabled()" in pip and "prepareIfEnabled()" in read("AppDelegate.swift"),
+          "the layer is prepared during launch, not when the app is leaving")
+    check("sawActiveSession" in pip,
+          "an idle launch is not treated as 'the task ended'")
     check("func present(force: Bool = false)" in pip and "startPictureInPicture()" in pip,
           "presenting only asks the system to float an already-rendering layer")
     check("SessionActivityTracker.shared.$activeSessions" in pip,
@@ -119,8 +125,6 @@ def main():
           "floating and teardown are separate, so re-backgrounding is instant")
     check("forcedPreview" in pip and "present(force: true)" in pip,
           "the preview button floats the card with no task running")
-    check("if !forcedPreview, SessionActivityTracker.shared.activeSessions.isEmpty" in pip,
-          "the no-task teardown does not kill the preview")
     check(".disabled(!ChatPiPController.isSupported)" in content_view,
           "the switch is disabled where PiP cannot float")
     check("这台设备不支持画中画" in content_view,

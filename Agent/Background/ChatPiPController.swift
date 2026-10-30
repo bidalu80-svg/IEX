@@ -27,6 +27,15 @@ import Combine
 import SwiftUI
 import UIKit
 
+/// One row of the mini terminal: a tool call and how it went.
+struct FloatingStep: Equatable {
+    var glyph: String
+    var text: String
+    var seconds: String
+    var isError: Bool
+    var isRunning: Bool
+}
+
 /// One frame's worth of conversation, rendered into the PiP window.
 struct FloatingCardModel: Equatable {
     var title: String
@@ -35,6 +44,7 @@ struct FloatingCardModel: Equatable {
     var soulName: String
     var startedAt: Date
     var isCompleted: Bool
+    var steps: [FloatingStep] = []
 
     static let empty = FloatingCardModel(title: "", line: "", status: "",
                                          soulName: "Ze", startedAt: Date(),
@@ -68,15 +78,41 @@ private struct FloatingConversationCard: View {
             }
 
             Text(model.title.isEmpty ? String(localized: "Agent Task") : model.title)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(.white)
-                .lineLimit(2)
+                .lineLimit(1)
+
+            // The mini terminal: recent tool calls, newest last. This is what
+            // the window is FOR — watching the run, not staring at empty space.
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
+                    HStack(spacing: 6) {
+                        Image(systemName: step.glyph)
+                            .font(.system(size: 12))
+                            .foregroundStyle(step.isError ? Color.red.opacity(0.9)
+                                             : (step.isRunning ? Color.blue.opacity(0.9)
+                                                : Color.green.opacity(0.75)))
+                            .frame(width: 14)
+                        Text(step.text)
+                            .font(.system(size: 14, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        if !step.seconds.isEmpty {
+                            Text(step.seconds)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if !model.line.isEmpty {
                 Text(model.line)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(4)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -90,7 +126,7 @@ private struct FloatingConversationCard: View {
                         .scaleEffect(0.7)
                 }
                 Text(model.status)
-                    .font(.system(size: 14))
+                    .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -184,6 +220,10 @@ final class ChatPiPController: NSObject {
     /// Set by `preview()`: float the card even with no task running, so the
     /// window can be proven from Settings instead of after a backgrounding.
     private var forcedPreview = false
+    /// True once a task has been seen in this prepared session. The layer is
+    /// prepared at launch too, and must not be torn down for the "no task yet"
+    /// state that is normal at launch.
+    private var sawActiveSession = false
 
     private override init() {
         super.init()
@@ -248,13 +288,19 @@ final class ChatPiPController: NSObject {
         pip = controller
         model = Self.currentModel()
 
-        silentAudio = SilentAudioKeepAlive()
-        silentAudio?.start()
-
         isPrepared = true
         renderFrame()
         startFrameTimer()
         AppLogger(category: "PiP").info("[PiP] prepared — layer on screen, frames flowing")
+    }
+
+    /// Prepare from the app's launch path, so the very first backgrounding has a
+    /// layer that has been rendering for a while. Without this, the layer is
+    /// created during `willResignActive` and the system refuses to float it —
+    /// the window only appeared on the *second* backgrounding.
+    func prepareIfEnabled() {
+        guard Self.isEnabled else { return }
+        ensurePrepared()
     }
 
     /// Ask the system to float the prepared layer.
@@ -285,16 +331,23 @@ final class ChatPiPController: NSObject {
             return
         }
         startRetries = 0
+        // Audio only while the window is on screen: it is what keeps the
+        // process (and therefore the stream) alive in the background.
+        if silentAudio == nil {
+            silentAudio = SilentAudioKeepAlive()
+            silentAudio?.start()
+        }
         pip.startPictureInPicture()
         AppLogger(category: "PiP").info("[PiP] start requested")
     }
 
     /// Take the window down but keep the layer ready for the next backgrounding.
     func dismiss() {
-        guard let pip else { return }
-        if pip.isPictureInPictureActive {
+        if let pip, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
+        silentAudio?.stop()
+        silentAudio = nil
         isFloating = false
     }
 
@@ -329,14 +382,20 @@ final class ChatPiPController: NSObject {
     }
 
     private func tick() {
-        // The window exists only while a task runs — except in preview, where
-        // the point is precisely to show it without one.
-        if !forcedPreview, SessionActivityTracker.shared.activeSessions.isEmpty {
-            AppLogger(category: "PiP").info("[PiP] no active session — closing window")
-            teardown()
-            return
-        }
         if !forcedPreview {
+            let sessions = SessionActivityTracker.shared.activeSessions
+            if sessions.isEmpty {
+                // The window exists only while a task runs — but an idle launch
+                // is not "the task ended": keep the layer prepared so the first
+                // backgrounding can float it.
+                if sawActiveSession {
+                    AppLogger(category: "PiP").info("[PiP] no active session — closing window")
+                    teardown()
+                    return
+                }
+                return
+            }
+            sawActiveSession = true
             model = Self.currentModel()
         }
         renderFrame()
@@ -439,8 +498,75 @@ final class ChatPiPController: NSObject {
             status: status,
             soulName: AgentLiveActivityManager.currentSoulName(),
             startedAt: taskStartDate(for: sid),
-            isCompleted: false
+            isCompleted: false,
+            steps: steps(from: vm)
         )
+    }
+
+    /// Recent tool calls of the turn that is running, oldest first.
+    private static func steps(from vm: AIChatViewModel?) -> [FloatingStep] {
+        guard let turn = vm?.messages.last(where: { $0.role == .assistant && !$0.blocks.isEmpty }) else {
+            return []
+        }
+        var rows: [FloatingStep] = []
+        for block in turn.blocks.suffix(9) {
+            if let row = stepRow(block) { rows.append(row) }
+        }
+        return rows
+    }
+
+    private static func stepRow(_ block: AssistantBlock) -> FloatingStep? {
+        let glyph: String
+        let text: String
+        switch block.kind {
+        case .shellTool(let command):
+            glyph = "terminal"; text = command
+        case .fileReadTool(let path):
+            glyph = "doc.text"; text = path
+        case .fileWriteTool(let path):
+            glyph = "square.and.arrow.down"; text = path
+        case .fileEditTool(let path):
+            glyph = "pencil"; text = path
+        case .browserTool(let action):
+            glyph = "globe"; text = action
+        case .readImageTool(let path):
+            glyph = "photo"; text = path
+        case .memoryTool(let action):
+            glyph = "brain"; text = action
+        default:
+            return nil
+        }
+        var isError = false
+        var isRunning = false
+        if let status = block.toolStatus {
+            switch status {
+            case .failed:
+                isError = true
+            case .running, .streaming:
+                isRunning = true
+            default:
+                break
+            }
+        }
+        var seconds = ""
+        if let duration = block.toolDuration, duration > 0 {
+            seconds = duration < 10 ? String(format: "%.1fs", duration)
+                                    : String(format: "%.0fs", duration)
+        }
+        return FloatingStep(glyph: glyph,
+                            text: clip(text, to: 46),
+                            seconds: seconds,
+                            isError: isError,
+                            isRunning: isRunning)
+    }
+
+    private static func clip(_ raw: String, to limit: Int) -> String {
+        let oneLine = raw
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+        return oneLine.count > limit ? String(oneLine.prefix(limit)) + "…" : oneLine
     }
 
     /// Placeholder card used by the preview button.
@@ -451,7 +577,12 @@ final class ChatPiPController: NSObject {
             status: String(localized: "预览模式 · 没有任务在跑"),
             soulName: AgentLiveActivityManager.currentSoulName(),
             startedAt: Date(),
-            isCompleted: false
+            isCompleted: false,
+            steps: [
+                FloatingStep(glyph: "terminal", text: "python3 抓取页面", seconds: "0.8s", isError: false, isRunning: false),
+                FloatingStep(glyph: "globe", text: "浏览器 · 打开油价页面", seconds: "1.6s", isError: false, isRunning: false),
+                FloatingStep(glyph: "magnifyingglass", text: "百度搜索 · 广东油价", seconds: "", isError: false, isRunning: true),
+            ]
         )
     }
 
@@ -491,6 +622,7 @@ final class ChatPiPController: NSObject {
                 // Back in the app: the window is redundant. Keep the layer
                 // prepared so the next backgrounding floats instantly.
                 self?.dismiss()
+                self?.ensurePrepared()
             }
         })
     }
@@ -506,10 +638,17 @@ final class ChatPiPController: NSObject {
                     guard let self else { return }
                     guard Self.isEnabled else { return }
                     if sessions.isEmpty {
-                        self.teardown()
+                        // Only tear down when a task actually ended. At launch
+                        // this fires with an empty set and must keep the
+                        // prepared layer alive.
+                        if self.sawActiveSession {
+                            self.sawActiveSession = false
+                            self.teardown()
+                        }
                     } else {
                         // A real task supersedes the placeholder card.
                         self.forcedPreview = false
+                        self.sawActiveSession = true
                         self.ensurePrepared()
                     }
                 }
