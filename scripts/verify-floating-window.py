@@ -180,6 +180,12 @@ def main():
           "the buffer is displayable by the render path")
     check("kCMSampleAttachmentKey_DisplayImmediately" in pip,
           "frames display on arrival instead of waiting for the timebase")
+    check("CMTime(value: 24 * 60 * 60, timescale: 1)" in pip,
+          "a frame never expires, so a starved clock keeps the last picture instead of a spinner")
+    check("flushAndRemoveImage()" in pip and "requiresFlushToResumeDecoding" in pip,
+          "a failed layer is rebuilt with a fresh clock, not merely flushed")
+    check("updateDiagnostic()" in pip and "pipController.diagnostic" in content_view,
+          "the switch section shows live frame/layer state for device debugging")
     present_body = pip.split("func present(force: Bool = false)", 1)[-1][:2200]
     check(present_body.count("renderFrame()") >= 2,
           "presenting renders a frame first, so the window never opens on an empty layer")

@@ -210,7 +210,7 @@ private final class SilentAudioKeepAlive {
 }
 
 @MainActor
-final class ChatPiPController: NSObject {
+final class ChatPiPController: NSObject, ObservableObject {
     static let shared = ChatPiPController()
 
     /// Preference key shared with the Appearance switch.
@@ -256,6 +256,13 @@ final class ChatPiPController: NSObject {
     /// prepared at launch too, and must not be torn down for the "no task yet"
     /// state that is normal at launch.
     private var sawActiveSession = false
+
+    /// [T-floating-window-diag] One line of live state, shown under the switch.
+    /// The window can only be debugged on a device, and the Console is not
+    /// always at hand, so the answer to "why is it grey" belongs in the app.
+    @Published private(set) var diagnostic = "未准备"
+    private var lastFrameAt: Date?
+    private var lastLayerStatus = "—"
 
     private override init() {
         super.init()
@@ -429,6 +436,9 @@ final class ChatPiPController: NSObject {
         isFloating = false
         startRetries = 0
         forcedPreview = false
+        lastFrameAt = nil
+        lastLayerStatus = "—"
+        updateDiagnostic()
         AppLogger(category: "PiP").info("[PiP] torn down")
     }
 
@@ -484,11 +494,20 @@ final class ChatPiPController: NSObject {
             return
         }
         frameIndex += 1
-        if layer.status == .failed {
-            AppLogger(category: "PiP").warning("[PiP] layer failed (\(String(describing: layer.error))) — flushing")
-            layer.flush()
+        lastFrameAt = Date()
+        // [T-floating-window-pip] A failed layer keeps its last image out of the
+        // window, which is exactly the grey spinner. Flushing alone does not
+        // help: the clock that fed it is stale too. Rebuild both.
+        if layer.status == .failed || layer.requiresFlushToResumeDecoding {
+            AppLogger(category: "PiP").warning(
+                "[PiP] layer \(String(describing: layer.status)) (\(String(describing: layer.error))) — rebuilding")
+            layer.flushAndRemoveImage()
+            timebase = nil
+            configureTimebaseIfNeeded(on: layer)
         }
         layer.enqueue(sample)
+        lastLayerStatus = Self.describe(layer.status)
+        updateDiagnostic()
         // The first frame is the one that proves the pipeline works, so say so
         // once instead of logging every tick.
         if frameIndex == 1 {
@@ -515,6 +534,23 @@ final class ChatPiPController: NSObject {
         layer.controlTimebase = timebase
         self.timebase = timebase
         AppLogger(category: "PiP").info("[PiP] timebase started")
+    }
+
+    /// [T-floating-window-diag] Keeps the settings line current.
+    private func updateDiagnostic() {
+        let age = lastFrameAt.map { String(format: "%.0fs", Date().timeIntervalSince($0)) } ?? "—"
+        let state = isFloating ? "浮窗中" : (isPrepared ? "已准备" : "未准备")
+        let next = "\(state) · 帧 \(frameIndex) · 最近 \(age) · 图层 \(lastLayerStatus)"
+        if next != diagnostic { diagnostic = next }
+    }
+
+    private static func describe(_ status: AVQueuedSampleBufferRenderingStatus) -> String {
+        switch status {
+        case .unknown: return "unknown"
+        case .rendering: return "rendering"
+        case .failed: return "failed"
+        @unknown default: return "?"
+        }
     }
 
     private static func sampleBuffer(from image: CGImage, index: Int64) -> CMSampleBuffer? {
@@ -554,8 +590,15 @@ final class ChatPiPController: NSObject {
         // starts at zero: a host-clock timestamp is decades in the future and
         // the layer silently drops it. One tick per rendered frame keeps the
         // queue in order at the 2 fps the timer produces.
+        //
+        // The duration is deliberately a day, not the 0.5s frame interval. When
+        // the queue is starved — the app gets suspended for a moment, or iOS
+        // throttles a background timer — a clock that runs past the last frame
+        // leaves the layer with nothing to present, and Picture in Picture
+        // replaces the card with its grey spinner. A frame that never expires
+        // keeps the last picture on screen until the next one arrives.
         var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: frameTimescale),
+            duration: CMTime(value: 24 * 60 * 60, timescale: 1),
             presentationTimeStamp: CMTime(value: index, timescale: frameTimescale),
             decodeTimeStamp: .invalid
         )
@@ -813,6 +856,7 @@ extension ChatPiPController: AVPictureInPictureControllerDelegate {
         // floats; started here it also covers the automatic start, which never
         // goes through `present()`.
         startAudioIfNeeded()
+        updateDiagnostic()
         AppLogger(category: "PiP").info("[PiP] floating")
     }
 

@@ -4951,6 +4951,9 @@ private struct AppearanceSettingsView: View {
     @AppStorage("backgroundFloatingWindow") private var backgroundFloatingWindow: Bool = false
     /// Shown under the switch when the device cannot float a PiP window.
     @State private var floatingWindowError: String?
+    /// [T-floating-window-diag] Live state from the controller, so the switch
+    /// section can answer "why is the window grey" without a Console.
+    @ObservedObject private var pipController = ChatPiPController.shared
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
@@ -5054,6 +5057,14 @@ private struct AppearanceSettingsView: View {
                         Text("任务运行时，把当前对话画成一张实时卡片交给系统画中画：退到后台后会浮在其他 App 之上，点一下可回到对话。没有任务进行时自动消失。开关会自动保存，重启后保持上次状态。")
                         if let floatingWindowError {
                             Text(floatingWindowError).foregroundStyle(.red)
+                        }
+                        // [T-floating-window-diag] Device-only evidence: if the
+                        // window goes grey, this line says whether frames are
+                        // still being produced and what the layer thinks.
+                        if backgroundFloatingWindow, ChatPiPController.isSupported {
+                            Text(pipController.diagnostic)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
