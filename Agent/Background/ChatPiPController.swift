@@ -510,8 +510,8 @@ final class ChatPiPController: NSObject {
             AppLogger(category: "PiP").warning("[PiP] could not create a timebase")
             return
         }
-        CMTimebaseSetTime(timebase, .zero)
-        CMTimebaseSetRate(timebase, 1.0)
+        CMTimebaseSetTime(timebase, time: .zero)
+        CMTimebaseSetRate(timebase, rate: 1.0)
         layer.controlTimebase = timebase
         self.timebase = timebase
         AppLogger(category: "PiP").info("[PiP] timebase started")
