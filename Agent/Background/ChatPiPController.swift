@@ -371,8 +371,9 @@ final class ChatPiPController: NSObject {
             }
         }
         guard pip.isPictureInPicturePossible else {
-            // The usual cause: the layer has no rendered frame yet. Try again on
-            // the next runloop instead of giving up silently.
+            // The usual cause: the layer has no rendered frame yet. Push one
+            // out before retrying, then try again on the next runloop.
+            renderFrame()
             if startRetries < 8 {
                 startRetries += 1
                 AppLogger(category: "PiP").info("[PiP] not possible yet — retry \(startRetries)")
@@ -388,6 +389,9 @@ final class ChatPiPController: NSObject {
         // Audio only while the window is on screen: it is what keeps the
         // process (and therefore the stream) alive in the background.
         startAudioIfNeeded()
+        // Make sure the frame that is about to become the window's first image
+        // is current — the timer may be a whole tick behind.
+        renderFrame()
         pip.startPictureInPicture()
         AppLogger(category: "PiP").info("[PiP] start requested")
     }
@@ -560,7 +564,21 @@ final class ChatPiPController: NSObject {
             allocator: nil, imageBuffer: buffer,
             formatDescription: format, sampleTiming: &timing,
             sampleBufferOut: &sample
-        ) == noErr else { return nil }
+        ) == noErr, let sample else { return nil }
+        // [T-floating-window-pip] Show the frame on arrival. Without this the
+        // layer holds each frame until its timebase reaches the presentation
+        // stamp — and PiP pauses the source layer while the window animates in,
+        // so the frame sits in the queue and the window keeps its spinner. This
+        // is the difference between "a frame was handed over" and "a frame is
+        // on screen".
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
+           CFArrayGetCount(attachments) > 0,
+           let raw = CFArrayGetValueAtIndex(attachments, 0) {
+            let dict = unsafeBitCast(raw, to: CFMutableDictionary.self)
+            CFDictionarySetValue(dict,
+                                 Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        }
         return sample
     }
 

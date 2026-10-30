@@ -178,6 +178,11 @@ def main():
           "every rendered frame gets its own timestamp")
     check("kCVPixelBufferMetalCompatibilityKey" in pip,
           "the buffer is displayable by the render path")
+    check("kCMSampleAttachmentKey_DisplayImmediately" in pip,
+          "frames display on arrival instead of waiting for the timebase")
+    present_body = pip.split("func present(force: Bool = false)", 1)[-1][:2200]
+    check(present_body.count("renderFrame()") >= 2,
+          "presenting renders a frame first, so the window never opens on an empty layer")
     check("[PiP] first frame" in pip and "[PiP] render produced no image" in pip,
           "the first frame and a failed render are both logged, so a blank window is diagnosable")
 
