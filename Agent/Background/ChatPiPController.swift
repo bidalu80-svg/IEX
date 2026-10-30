@@ -415,6 +415,11 @@ final class ChatPiPController: NSObject {
         hostView?.removeFromSuperview()
         hostView = nil
         displayLayer = nil
+        // [T-floating-window-pip] The layer is gone, so its clock must go too:
+        // a stale timebase makes the next `ensurePrepared` skip configuring the
+        // fresh layer, and the new window waits for frames that never display.
+        timebase = nil
+        frameIndex = 0
         pip = nil
         isPrepared = false
         isFloating = false

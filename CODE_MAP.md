@@ -378,6 +378,7 @@ git status --short
 - 保活：`SilentAudioKeepAlive` 起一条静音音频会话（`.playback` + `.mixWithOthers`、`outputVolume = 0`），否则 App 退后台被挂起，画面就冻住。`Info.plist` 已有 `audio` 后台模式。**必须随任务开始就启动**，等浮窗出现再启动已经太晚。
 - 卡片尺寸：`FloatingConversationCard.cardWidth/cardHeight = 480×180`。画中画窗口的宽高比取自 sample buffer，改这两个数就是改窗口形状；竖版会变成盖住半屏的大黑卡。内容为等宽字体终端行（最多 9 行工具调用 + 最新一句），180pt 内正好填满。
 - 自动浮窗：`canStartPictureInPictureAutomaticallyFromInline` **跟着任务状态走**——有任务才置 true，`teardown()` 里置 false。恒为 true 会让系统在**没有任务**时也把上一帧浮出来。
+- 时间基准：`AVSampleBufferDisplayLayer` **必须先设 `controlTimebase`**（`CMTimebaseCreateWithSourceClock` + `setTime(.zero)` + `setRate(1.0)`），否则 `enqueue` 的帧永远“未到点”，窗口打开就是一坨灰底加菊花。帧的 `presentationTimeStamp` 也必须**相对这个 timebase 递增**（`CMTime(value: frameIndex, timescale: 2)`），用 `CMClockGetTime` 的主机绝对时间会被直接丢弃。像素缓冲要带 `kCVPixelBufferMetalCompatibilityKey`。
 - 播放时间轴：`pictureInPictureControllerTimeRangeForPlayback` 返回 `CMTimeRange(start: .zero, duration: .zero)`。返回无限区间会被系统当成直播，画出“直播”标签和 ±10 秒按钮。
 - 生命周期：`willResignActive` 里有任务就直接 `present()`（此时音频已起，进程不会被挂起）；`didBecomeActive` 收起但保留图层；帧定时器每 0.5s 重画，会话为空且此前跑过任务就 `teardown()`。
 - 兜底：`AgentLiveActivityManager.usesLiveActivityCard = 开关 && !ChatPiPController.isSupported`——只有画中画浮不起来时才用实时活动卡片（`ContentState.floatingWindow` + `conversationLine`），避免两个面同时显示同一句话。

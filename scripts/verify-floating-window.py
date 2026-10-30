@@ -181,6 +181,14 @@ def main():
     check("[PiP] first frame" in pip and "[PiP] render produced no image" in pip,
           "the first frame and a failed render are both logged, so a blank window is diagnosable")
 
+    # --- A second window is not born without a clock -------------------
+
+    teardown_body = pip.split("func teardown()", 1)[-1][:900]
+    check("timebase = nil" in teardown_body,
+          "teardown drops the timebase with the layer, so the next one reconfigures")
+    check("frameIndex = 0" in teardown_body,
+          "and the frame counter restarts with the new timebase")
+
     # --- The Live Activity is only a fallback now ---------------------
 
     check("static var usesLiveActivityCard: Bool" in manager,
