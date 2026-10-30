@@ -115,7 +115,7 @@ def main():
           "the scroll callback feeds the anchor store")
     check("coord.scheduleScrollRestoreIfNeeded()" in message_list,
           "updateUIViewController triggers the restore")
-    check("scrollMode = .browse" in message_list.split("private func restoreScrollIfNeeded()", 1)[-1][:1200],
+    check("scrollMode = .userBrowsing" in message_list.split("private func restoreScrollIfNeeded()", 1)[-1][:1400],
           "a restore does not get re-pinned to the bottom by auto scrolling")
     check("ChatScrollMemory.shared.clear(sessionId)" in lifecycle,
           "deleting a session forgets its anchor")
