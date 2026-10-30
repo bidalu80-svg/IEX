@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Structural checks for the background floating window (T-floating-window).
+"""Structural checks for the background floating window (T-floating-window-pip).
 
-The feature is a Live Activity presentation: with the switch on and a task
-running, the card shows the conversation; with no task, nothing is shown. These
-checks pin the wiring so a refactor cannot silently drop one half of it (the
-switch, the payload, or the two render surfaces).
+The window is Picture in Picture: the conversation is rasterised into a video
+stream so the system can float it over other apps (the same trick remote-desktop
+apps use). The Live Activity conversation card is only the fallback on devices
+where PiP cannot float.
+
+These checks pin the wiring so a refactor cannot silently leave the switch
+toggling nothing, the stream without a frame source, or the window alive with no
+task running.
 
 Run: python3 scripts/verify-floating-window.py
 """
@@ -38,73 +42,90 @@ def main():
     keep_alive = read("Agent/Background/BackgroundKeepAliveManager.swift")
     attributes = read("Shared/AgentActivityAttributes.swift")
     widget = read("AgentWidget/AgentLiveActivityWidget.swift")
+    pip = read("Agent/Background/ChatPiPController.swift")
+    plist = read("Info.plist")
+    project = read("Ze.xcodeproj/project.pbxproj")
 
     key = '"backgroundFloatingWindow"'
 
-    # --- The switch lives in Appearance and persists -------------------
+    # --- Picture in Picture is the actual window ----------------------
+
+    check("AVPictureInPictureController" in pip,
+          "the window is a real AVPictureInPictureController")
+    check("AVSampleBufferDisplayLayer" in pip,
+          "frames go through a sample-buffer layer (custom content, not a video file)")
+    check("sampleBufferDisplayLayer: layer" in pip,
+          "the controller is built from that layer as its content source")
+    check("CMSampleBufferCreateReadyWithImageBuffer" in pip,
+          "rasterised frames are wrapped into CMSampleBuffers")
+    check("ImageRenderer(content:" in pip,
+          "the card is rendered from SwiftUI into pixels")
+    check("layer.enqueue(sample)" in pip,
+          "frames are pushed into the layer")
+    check("import AVKit" in pip and "import AVFoundation" in pip,
+          "the controller links AVKit/AVFoundation")
+
+    # --- Background survivability -------------------------------------
+
+    check("<string>audio</string>" in plist,
+          "the app declares the audio background mode PiP needs to keep streaming")
+    check("SilentAudioKeepAlive" in pip and "setCategory(.playback" in pip,
+          "a silent audio session keeps the process alive while the window floats")
+    check("willResignActiveNotification" in pip,
+          "the window is raised when the app leaves the foreground")
+    check("didBecomeActiveNotification" in pip,
+          "and torn down when the user comes back")
+
+    # --- It must not outlive the task ---------------------------------
+
+    tick = pip.split("private func tick()", 1)[-1][:600]
+    check("SessionActivityTracker.shared.activeSessions.isEmpty" in tick and "stop()" in tick,
+          "the frame timer closes the window when no task is running")
+    check("guard Self.isEnabled" in pip,
+          "the controller refuses to run with the switch off")
+    check("AVPictureInPictureController.isPictureInPictureSupported()" in pip,
+          "support is checked before claiming the window exists")
+
+    # --- The switch ---------------------------------------------------
 
     check("@AppStorage(%s) private var backgroundFloatingWindow: Bool = false" % key in content_view,
           "Appearance owns the switch, defaulting to off")
-    check("Toggle(isOn: $backgroundFloatingWindow)" in content_view,
-          "the Appearance row is a real toggle bound to that key")
-    check('"settings.appearance.backgroundFloatingWindow"' in content_view,
-          "the toggle has a stable accessibility identifier")
-    check("if AgentLiveActivityManager.isLiveActivitySupported {" in content_view,
-          "the row is hidden where Live Activities do not exist")
-    check('updateLiveActivityIfNeeded(source: "floatingWindowToggle")' in content_view,
-          "flipping the switch refreshes a card that is already on screen")
-    check("@AppStorage" in content_view and "UserDefaults" not in content_view.split("backgroundFloatingWindow")[0][-400:],
-          "persistence is @AppStorage (survives relaunch), not a manual write")
+    check('static let preferenceKey = "backgroundFloatingWindow"' in pip,
+          "the controller reads the same key")
+    check("ChatPiPController.shared.start()" in content_view,
+          "flipping the switch on raises the window")
+    check("ChatPiPController.shared.stop()" in content_view,
+          "flipping it off takes the window down")
+    check(".disabled(!ChatPiPController.isSupported)" in content_view,
+          "the switch is disabled where PiP cannot float")
+    check("这台设备不支持画中画" in content_view,
+          "and explains why instead of doing nothing")
 
-    # --- The manager reads the same key -------------------------------
+    # --- The Live Activity is only a fallback now ---------------------
 
-    check("static var isFloatingWindowEnabled: Bool" in manager,
-          "the manager exposes the floating preference")
-    check(re.search(
-        r'static var isFloatingWindowEnabled: Bool \{\s*\(UserDefaults\.standard\.object\(forKey: "backgroundFloatingWindow"\) as\? Bool\) \?\? false\s*\}',
-        manager) is not None,
-          "the manager reads the same key with a false default")
-    check("return isFloatingWindowEnabled" in manager,
-          "asking for the floating card is enough to create the activity")
-    check("state.floatingWindow = Self.isFloatingWindowEnabled" in manager,
-          "every pushed state carries the current preference")
-    check(manager.count("floatingWindow = Self.isFloatingWindowEnabled") >= 2,
-          "the first frame of a new activity carries it too (no flash of the old layout)")
-
-    # --- Payload ------------------------------------------------------
-
+    check("static var usesLiveActivityCard: Bool" in manager,
+          "the manager decides between PiP and the activity card")
+    check("isFloatingWindowEnabled && !ChatPiPController.isSupported" in manager,
+          "the activity card is used only when PiP is unavailable")
+    check(manager.count("floatingWindow = Self.usesLiveActivityCard") >= 2,
+          "both the first frame and every push use that decision")
+    check("floatingWindow = Self.isFloatingWindowEnabled" not in manager,
+          "the activity card no longer mirrors the raw preference")
     check("var floatingWindow: Bool = false" in attributes,
-          "ContentState carries the flag with a default (old payloads decode)")
+          "ContentState keeps the flag with a default (old payloads decode)")
     check("var conversationLine: String = \"\"" in attributes,
-          "the snapshot carries the conversation line with a default")
-    check("conversationLine" in keep_alive and "AgentLiveActivityManager.conversationLine(for: sid)" in keep_alive,
-          "the snapshot builder fills the conversation line")
-    check("static func conversationLine(for sessionId: String) -> String?" in manager,
-          "the conversation line is resolved from the session's view model")
-    check("ViewModelCache.shared.get(for: sessionId)" in manager,
-          "it reads the cached view model rather than inventing text")
-
-    # --- Both surfaces render it --------------------------------------
-
-    check(widget.count("floatingWindow") >= 4,
-          "the island compact, expanded and the lock screen all branch on the flag")
+          "the fallback card still carries the conversation line")
+    check("conversationLine" in keep_alive,
+          "the snapshot builder fills it")
     check(widget.count("conversationLine") >= 2,
-          "the conversation line is rendered on both surfaces")
-    check("bubble.left.and.text.bubble.right.fill" in widget,
-          "the compact leading slot becomes a conversation glyph")
-    check(widget.count("!context.state.floatingWindow") >= 1,
-          "the session counter is hidden in floating mode")
+          "the fallback renders it on both surfaces")
 
-    # --- Nothing claims a draggable overlay ---------------------------
+    # --- Wiring -------------------------------------------------------
 
-    # iOS cannot draw over other apps; the footer must say so instead of
-    # promising it. (A silent mismatch here would read as a broken feature.)
-    footer_idx = content_view.find('Text("任务运行时')
-    footer = content_view[footer_idx:footer_idx + 900] if footer_idx >= 0 else ""
-    check("灵动岛" in footer and "锁屏" in footer,
-          "the footer names the surfaces the card actually appears on")
-    check("不允许" in footer,
-          "the footer states that iOS has no true overlay window")
+    check("ChatPiPController.swift in Sources" in project,
+          "the new controller is compiled into the app target")
+    check("Agent/MessageList" not in pip,
+          "the controller does not depend on the message list")
 
     print()
     if failures:

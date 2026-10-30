@@ -1,4 +1,4 @@
-import ActivityKit
+﻿import ActivityKit
 import Foundation
 import UIKit
 import os.log
@@ -135,6 +135,14 @@ final class AgentLiveActivityManager {
     /// and ends with the task's lifetime.
     static var isFloatingWindowEnabled: Bool {
         (UserDefaults.standard.object(forKey: "backgroundFloatingWindow") as? Bool) ?? false
+    }
+
+    /// [T-floating-window-pip] The real floating window is Picture in Picture.
+    /// The conversation card in the Live Activity is only the fallback for
+    /// devices where PiP cannot float (older hardware, restriction profiles):
+    /// showing both at once would just duplicate the same sentence on screen.
+    static var usesLiveActivityCard: Bool {
+        isFloatingWindowEnabled && !ChatPiPController.isSupported
     }
 
     /// Latest conversation line for a session, collapsed to one line and
@@ -562,7 +570,7 @@ final class AgentLiveActivityManager {
         // [T-floating-window] Stamp the card style on the very first frame so
         // the island opens as a conversation card instead of flashing the
         // technical layout first.
-        state.floatingWindow = Self.isFloatingWindowEnabled
+        state.floatingWindow = Self.usesLiveActivityCard
         let attributes = AgentActivityAttributes(startDate: now)
         let content = ActivityContent(state: state, staleDate: nil)
 
@@ -871,7 +879,7 @@ final class AgentLiveActivityManager {
         var state = withAudioState(rawState)
         // [T-floating-window] Read on every push so flipping the Appearance
         // switch takes effect on the next refresh rather than the next task.
-        state.floatingWindow = Self.isFloatingWindowEnabled
+        state.floatingWindow = Self.usesLiveActivityCard
         lastPushedState = state
         lastPushDate = Date()
         updateCount += 1

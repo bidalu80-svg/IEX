@@ -120,6 +120,7 @@ jobs:
             Shared/AgentActivityAttributes.swift \
             Agent/Background/AgentLiveActivityManager.swift \
             Agent/Background/BackgroundKeepAliveManager.swift \
+            Agent/Background/ChatPiPController.swift \
             AgentWidget/AgentLiveActivityWidget.swift \
             Views/ContentView.swift; do
             xcrun swiftc -frontend -parse "$file"

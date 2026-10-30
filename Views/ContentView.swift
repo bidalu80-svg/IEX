@@ -4949,6 +4949,8 @@ private struct AppearanceSettingsView: View {
     /// change existing installs did not ask for. `@AppStorage` persists the
     /// choice across relaunches by construction.
     @AppStorage("backgroundFloatingWindow") private var backgroundFloatingWindow: Bool = false
+    /// Shown under the switch when the device cannot float a PiP window.
+    @State private var floatingWindowError: String?
     @AppStorage("appearanceMode") private var appearanceMode: Int = 0
     @AppStorage("appIconMode") private var appIconMode: Int = 0
     @AppStorage("appLanguage") private var appLanguage: String = ""
@@ -5010,29 +5012,45 @@ private struct AppearanceSettingsView: View {
                 }
             }
 
-            // [T-floating-window] Background floating conversation card.
+            // [T-floating-window-pip] Background floating window.
             //
-            // iOS has no general "draw over other apps" window, so the surface
-            // is the Live Activity the system already shows over the Home
-            // Screen: the Dynamic Island while a task runs, and the Lock Screen
-            // when the phone is locked. The switch only changes what that card
-            // shows — the conversation instead of the tool trail — and the card
-            // still disappears the moment no task is running.
-            if AgentLiveActivityManager.isLiveActivitySupported {
+            // The window itself is Picture in Picture: the running conversation
+            // is rasterised into a video stream, so the system floats it over
+            // every other app — the same mechanism remote-desktop apps use.
+            // The Live Activity card is only the fallback on hardware where PiP
+            // cannot float.
+            if AgentLiveActivityManager.isLiveActivitySupported || ChatPiPController.isSupported {
                 Section {
                     Toggle(isOn: $backgroundFloatingWindow) {
                         Text("后台悬浮窗")
                     }
                     .accessibilityIdentifier("settings.appearance.backgroundFloatingWindow")
-                    .onChange(of: backgroundFloatingWindow) { _ in
-                        // Apply immediately to a card that is already on screen
-                        // instead of waiting for the next task.
+                    .disabled(!ChatPiPController.isSupported)
+                    .onChange(of: backgroundFloatingWindow) { on in
+                        if on {
+                            guard ChatPiPController.isSupported else {
+                                floatingWindowError = String(localized: "这台设备不支持画中画，无法显示悬浮窗。")
+                                return
+                            }
+                            floatingWindowError = nil
+                            // Show it immediately so the switch has visible
+                            // feedback; it keeps running once the app is
+                            // backgrounded and closes when the task ends.
+                            ChatPiPController.shared.start()
+                        } else {
+                            ChatPiPController.shared.stop()
+                        }
                         BackgroundKeepAliveManager.shared.updateLiveActivityIfNeeded(source: "floatingWindowToggle")
                     }
                 } header: {
                     Text("后台悬浮窗")
                 } footer: {
-                    Text("任务运行时，在灵动岛和锁屏显示当前对话的悬浮卡片：对话标题、最新一句回复和已用时间。没有任务进行时不显示。\n\n这是 iOS 允许的唯一“悬浮”形式——系统不允许 App 在其他应用之上盖一个可拖动的小窗口。开关会自动保存，重启后保持上次状态。")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("任务运行时，把当前对话画成一张实时卡片交给系统画中画：退到后台后会浮在其他 App 之上，点一下可回到对话。没有任务进行时自动消失。开关会自动保存，重启后保持上次状态。")
+                        if let floatingWindowError {
+                            Text(floatingWindowError).foregroundStyle(.red)
+                        }
+                    }
                 }
             }
 

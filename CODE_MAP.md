@@ -373,9 +373,9 @@ git status --short
 
 ## 后台悬浮窗（T-floating-window）
 
-- 开关：`Views/ContentView.swift` 的 `AppearanceSettingsView`，`@AppStorage("backgroundFloatingWindow")`，默认关。改动后立刻 `updateLiveActivityIfNeeded(source: "floatingWindowToggle")`，不用等下一个任务。
-- 平台事实：iOS 没有“在其他 App 之上画一个可拖动小窗”的权限，本功能落在**实时活动**上——运行中显示在灵动岛，锁屏时显示在锁屏卡片。设置页脚注已写明这一点，不要改成承诺真悬浮窗。
-- 内容：`ContentState.floatingWindow` 标记 + `LiveSessionSnapshot.conversationLine`（由 `AgentLiveActivityManager.conversationLine(for:)` 从 `ViewModelCache` 里取最后一条非空消息，折叠成一行）。`pushState` 每次推送都重读偏好，`_startActivity` 首帧也带上，避免先闪一下旧布局。
-- 渲染：`AgentWidget/AgentLiveActivityWidget.swift` 的灵动岛 compactLeading（对话图标、隐藏会话计数）、expanded bottom、锁屏卡三处都按 `floatingWindow` 分支渲染对话行。
-- 生命周期沿用原有逻辑：**任务开始才建活动，任务结束立刻结束**，没有任务时不存在悬浮卡。
-- 校验：`scripts/verify-floating-window.py`（22 项），CI 步骤 “Test background floating window”。
+- 开关：`Views/ContentView.swift` 的 `AppearanceSettingsView`，`@AppStorage("backgroundFloatingWindow")`，默认关。打开即 `ChatPiPController.shared.start()`，关闭即 `stop()`；设备不支持画中画时开关置灰并给出原因。
+- 窗口本体是**画中画**（`Agent/Background/ChatPiPController.swift`）：SwiftUI 卡片 → `ImageRenderer` → `CVPixelBuffer` → `CMSampleBuffer` → `AVSampleBufferDisplayLayer` → `AVPictureInPictureController`。这就和 ToDesk 一样，系统把窗口浮在其他 App 之上。
+- 保活：`SilentAudioKeepAlive` 起一条静音音频会话（`.playback` + `.mixWithOthers`、`outputVolume = 0`），否则 App 退后台被挂起，画面就冻住。`Info.plist` 已有 `audio` 后台模式。
+- 生命周期：`willResignActive` 时按“有活跃会话”拉起，`didBecomeActive` 收起；帧定时器每 0.5s 重画一次，同时检查 `SessionActivityTracker.activeSessions`，**没有任务立刻关闭**。
+- 兜底：`AgentLiveActivityManager.usesLiveActivityCard = 开关 && !ChatPiPController.isSupported`——只有画中画浮不起来时才用实时活动卡片（`ContentState.floatingWindow` + `conversationLine`），避免两个面同时显示同一句话。
+- 校验：`scripts/verify-floating-window.py`（30 项），CI 步骤 “Test background floating window”。

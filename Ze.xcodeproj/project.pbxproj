@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1P00003 /* ChatPiPController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1P00001 /* ChatPiPController.swift */; };
 		F1L00005 /* AdaptivePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00001 /* AdaptivePaneLayout.swift */; };
 		F1L00006 /* ChatScrollMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00002 /* ChatScrollMemory.swift */; };
 		F9GH00000000000000000001 /* GitHubModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000011 /* GitHubModels.swift */; };
@@ -598,6 +599,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1P00001 /* ChatPiPController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPiPController.swift; sourceTree = "<group>"; };
 		F1L00001 /* AdaptivePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePaneLayout.swift; sourceTree = "<group>"; };
 		F1L00002 /* ChatScrollMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollMemory.swift; sourceTree = "<group>"; };
 		A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubCopilotOAuthManager.swift; sourceTree = "<group>"; };
@@ -2056,6 +2058,7 @@
 			children = (
 				E5G000012 /* AgentLiveActivityManager.swift */,
 				E5G000011 /* BackgroundKeepAliveManager.swift */,
+				F1P00001 /* ChatPiPController.swift */,
 				E53000016 /* CacheKeepAliveManager.swift */,
 			);
 			path = Background;
@@ -2957,6 +2960,7 @@
 				E5E0000A1 /* ExternalFileImporter.swift in Sources */,
 				E5G000001 /* BackgroundKeepAliveManager.swift in Sources */,
 				E5G000002 /* AgentLiveActivityManager.swift in Sources */,
+				F1P00003 /* ChatPiPController.swift in Sources */,
 				E5G000003 /* EnhancedBackgroundSettingsView.swift in Sources */,
 				E5G000004 /* AgentActivityAttributes.swift in Sources */,
 				E5AT00004 /* AudioTogglePlaybackIntent.swift in Sources */,
