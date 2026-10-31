@@ -163,8 +163,15 @@ def main():
     sink = pip.split("private func observeSessions()", 1)[-1][:1600]
     check("self.startAudioIfNeeded()" in sink and "self.enableAutomaticStart(true)" in sink,
           "a task that starts brings up audio and auto-float while still in the foreground")
-    check("CMTimeRange(start: .zero, duration: .zero)" in pip,
-          "a zero-length range keeps the live/skip chrome off the strip")
+    # A playback range with no length is what a grey spinner looks like in
+    # code: Picture in Picture reads it as "nothing to play" and never draws a
+    # single queued frame, while the layer still reports `rendering` and the
+    # timer keeps counting. This assertion used to demand the opposite, which
+    # is why every check passed while the window stayed blank.
+    check("CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)" in pip,
+          "the playback range is indefinite, so the system presents the frames")
+    check("CMTimeRange(start: .zero, duration: .zero)" not in pip,
+          "the playback range never collapses to zero — that turns the window into a spinner")
 
     # --- The frames actually reach the screen -------------------------
 

@@ -937,11 +937,23 @@ extension ChatPiPController: AVPictureInPictureSampleBufferPlaybackDelegate {
     }
 
     func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
-        // [T-floating-window-pip] A zero-length range keeps the system chrome to
-        // a close button. Returning an indefinite one makes iOS treat the strip
-        // as a live broadcast and draw the 直播 label plus 10-second skip
-        // buttons across it.
-        CMTimeRange(start: .zero, duration: .zero)
+        // [T-floating-window-pip] An indefinite range is not a style choice: it
+        // is what makes the system present the layer's frames at all.
+        //
+        // This returned `.zero` for one release, to keep the chrome down to a
+        // close button — an indefinite range makes iOS treat the strip as a
+        // live broadcast and draws the 直播 label plus 10-second skip buttons.
+        // On device the trade was catastrophic: the layer kept reporting
+        // `rendering`, the timer kept enqueuing a frame every 0.25s (the
+        // Settings line counted to 98 with "最近 0s"), and the window sat on
+        // Picture in Picture's grey spinner forever. An empty playback range
+        // reads as "this source has nothing to play", so not one frame was
+        // drawn.
+        //
+        // Any future attempt to hide the badge has to keep a *positive*
+        // duration. `duration: .zero` is not a tidier version of this value;
+        // it is the off switch.
+        CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
     }
 
     func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool {
