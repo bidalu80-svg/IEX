@@ -44,6 +44,11 @@ for path in paths:
     check(project.count(f"/* {name} in Sources */") == 2 and f'path = "{path}";' in project, f"Xcode source membership: {name}")
 workflow = source(".github/workflows/build.yml")
 check('= "1.1.3"' in workflow and '= "1.0.8"' not in workflow, "IPA version audit upgraded")
+# The audit also pins CFBundleVersion. It is a bare `test`, so a stale value
+# fails the build with no output at all — check it here where the message says
+# which number is expected.
+check('Print :CFBundleVersion' in workflow and '"8"' in workflow.split("Print :CFBundleVersion")[1][:80],
+      "IPA build-number audit follows build 8")
 check("scripts/ScheduledTaskTests.swift" in workflow and "scheduled-task-tests.log" in workflow, "Swift tests and uploaded evidence wired into CI")
 check("ScheduledTaskStore.shared.registerBackgroundTask()" in source("AppDelegate.swift"), "register background task during launch")
 check("ScheduledTaskStore.shared.start()" in source("ZeApp.swift"), "scheduler starts with application")
