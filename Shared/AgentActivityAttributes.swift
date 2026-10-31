@@ -82,7 +82,7 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// icon). Defaulted so ContentStates encoded before this field existed
         /// still decode.
         var privacyMode: Bool = false
-        /// [T-floating-window] True when Appearance → 后台悬浮窗 is on, so this
+        /// [T-floating-window] True when Appearance → 后台终端悬浮窗口 is on, so this
         /// push renders the conversation card (title + latest line + elapsed)
         /// instead of the technical task card. Carried in the state rather than
         /// the attributes because the switch can be flipped while a task runs.

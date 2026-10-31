@@ -4944,7 +4944,7 @@ private struct SteppedSlider: View {
 
 private struct AppearanceSettingsView: View {
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
-    /// [T-floating-window] Appearance → 后台悬浮窗. Default OFF: turning it on
+    /// [T-floating-window] Appearance → 后台终端悬浮窗口. Default OFF: turning it on
     /// swaps the Live Activity's task card for the conversation card, a visible
     /// change existing installs did not ask for. `@AppStorage` persists the
     /// choice across relaunches by construction.
@@ -5025,7 +5025,7 @@ private struct AppearanceSettingsView: View {
             if AgentLiveActivityManager.isLiveActivitySupported || ChatPiPController.isSupported {
                 Section {
                     Toggle(isOn: $backgroundFloatingWindow) {
-                        Text("后台悬浮窗")
+                        Text("后台终端悬浮窗口")
                     }
                     .accessibilityIdentifier("settings.appearance.backgroundFloatingWindow")
                     .disabled(!ChatPiPController.isSupported)
@@ -5042,19 +5042,11 @@ private struct AppearanceSettingsView: View {
                         }
                         BackgroundKeepAliveManager.shared.updateLiveActivityIfNeeded(source: "floatingWindowToggle")
                     }
-                    if backgroundFloatingWindow, ChatPiPController.isSupported {
-                        Button {
-                            ChatPiPController.shared.preview()
-                        } label: {
-                            Label("预览悬浮窗", systemImage: "pip")
-                        }
-                        .accessibilityIdentifier("settings.appearance.previewFloatingWindow")
-                    }
                 } header: {
-                    Text("后台悬浮窗")
+                    Text("后台终端悬浮窗口")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("任务运行时，把当前对话画成一张实时卡片交给系统画中画：退到后台后会浮在其他 App 之上，点一下可回到对话。没有任务进行时自动消失。开关会自动保存，重启后保持上次状态。")
+                        Text("任务运行时，把当前会话的终端实况做成一个悬浮窗口，交给系统画中画承载：退到后台后浮在其他 App 之上，随时能看清命令跑到哪一步、有没有报错，点一下回到对话。没有任务进行时自动消失。开关会自动保存，重启后保持上次状态。")
                         if let floatingWindowError {
                             Text(floatingWindowError).foregroundStyle(.red)
                         }

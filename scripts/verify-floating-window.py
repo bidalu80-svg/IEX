@@ -81,8 +81,8 @@ def main():
     tick = pip.split("private func tick()", 1)[-1][:900]
     check("sessions.isEmpty" in tick and "teardown()" in tick and "sawActiveSession" in tick,
           "the frame timer closes the window only once a task has ended")
-    check("if !forcedPreview {" in tick,
-          "the preview keeps the card alive with no task running")
+    check("forcedPreview" not in pip,
+          "there is no preview mode: the window follows tasks and nothing else")
     check("guard Self.isEnabled" in pip,
           "the controller refuses to run with the switch off")
     check("AVPictureInPictureController.isPictureInPictureSupported()" in pip,
@@ -98,8 +98,10 @@ def main():
           "flipping the switch on prepares the window")
     check("ChatPiPController.shared.setPreference(false)" in content_view,
           "flipping it off tears it down")
-    check("ChatPiPController.shared.preview()" in content_view and "预览悬浮窗" in content_view,
-          "there is a preview button so the window can be proven without backgrounding")
+    check("预览悬浮窗" not in content_view and "ChatPiPController.shared.preview()" not in content_view,
+          "the preview button is gone — it floated a placeholder that proved nothing")
+    check('Text("后台终端悬浮窗口")' in content_view,
+          "the section and the switch both use the new name")
 
     # --- Prepare first, float later (the bug that shipped once) -------
 
@@ -109,7 +111,7 @@ def main():
           "the layer is prepared during launch, not when the app is leaving")
     check("sawActiveSession" in pip,
           "an idle launch is not treated as 'the task ended'")
-    check("func present(force: Bool = false)" in pip and "startPictureInPicture()" in pip,
+    check("func present()" in pip and "startPictureInPicture()" in pip,
           "presenting only asks the system to float an already-rendering layer")
     check("SessionActivityTracker.shared.$activeSessions" in pip,
           "preparation starts as soon as a task starts, while still foreground")
@@ -123,8 +125,10 @@ def main():
           "the host view is not made transparent (that also fails the request)")
     check("func dismiss()" in pip and "func teardown()" in pip,
           "floating and teardown are separate, so re-backgrounding is instant")
-    check("forcedPreview" in pip and "present(force: true)" in pip,
-          "the preview button floats the card with no task running")
+    check("present(force:" not in pip and "func present()" in pip,
+          "presenting has one path — no forced start that bypasses the task check")
+    check("forcedPreview" not in pip and "present(force" not in pip,
+          "no code path can float a card with nothing running")
     check(".disabled(!ChatPiPController.isSupported)" in content_view,
           "the switch is disabled where PiP cannot float")
     check("这台设备不支持画中画" in content_view,
@@ -207,7 +211,7 @@ def main():
           "a rebuilt clock resets the stamp, since it starts again at zero")
     check("updateDiagnostic()" in pip and "pipController.diagnostic" in content_view,
           "the switch section shows live frame/layer state for device debugging")
-    present_body = pip.split("func present(force: Bool = false)", 1)[-1][:2200]
+    present_body = pip.split("func present()", 1)[-1][:2200]
     check(present_body.count("renderFrame()") >= 2,
           "presenting renders a frame first, so the window never opens on an empty layer")
     check("[PiP] first frame" in pip and "[PiP] render produced no image" in pip,

@@ -126,7 +126,7 @@ final class AgentLiveActivityManager {
         return isFloatingWindowEnabled
     }
 
-    /// [T-floating-window] Appearance → 后台悬浮窗 (default OFF).
+    /// [T-floating-window] Appearance → 后台终端悬浮窗口 (default OFF).
     ///
     /// When on and a task is running, the Live Activity renders the current
     /// conversation — its title, the latest line and the elapsed time — instead
