@@ -565,6 +565,11 @@ private final class OffscreenHost {
         self.background = background
 
         let host = UIHostingController(rootView: AnyView(EmptyView()))
+        // An export canvas is not a screen: scene safe areas must not add a
+        // status-bar/home-indicator band to each independently measured row.
+        // The CI PDF showed a 900pt fixture hosted in a 962pt root with its
+        // first text shifted down 45pt. Remove those inherited scene insets.
+        if #available(iOS 16.4, *) { host.safeAreaRegions = [] }
         host.view.backgroundColor = background
         self.host = host
 
@@ -582,7 +587,7 @@ private final class OffscreenHost {
 
     /// Returns nil instead of silently cropping a row that exceeds the guard.
     func layout(_ view: AnyView, maxHeight: CGFloat) -> CGFloat? {
-        host.rootView = AnyView(view.id(UUID()))
+        host.rootView = AnyView(view.ignoresSafeArea().id(UUID()))
         let measured = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
         guard measured.height.isFinite, measured.height > 0, measured.height <= maxHeight else { return nil }
         let height = ceil(measured.height)
