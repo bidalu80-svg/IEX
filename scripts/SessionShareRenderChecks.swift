@@ -48,7 +48,13 @@ enum SessionShareRenderChecks {
             if value { checks.append(label) } else { failures.append(label) }
         }
         let vm = AIChatViewModel()
-        let sentinels = ["ZE_BODY_ALPHA", "ZE_BODY_BRAVO", "ZE_BODY_CHARLIE"]
+        // PDFKit evidence from the underscore fixture was "ZE\nBODY\nALPHA\n_\n_",
+        // while pypdf extracted the original token contiguously. This fixture
+        // triggered baseline-based run grouping, not missing/duplicate glyphs.
+        // Use one alphabetic word for the glyph-presence regression; underscore
+        // copy ordering remains an unresolved PDFKit interoperability limitation.
+        // Passing this check does NOT establish identical extraction for all text.
+        let sentinels = ["ZeBodyAlpha", "ZeBodyBravo", "ZeBodyCharlie"]
         vm.fixtureRows = sentinels.enumerated().map { index, text in
             AnyView(FixtureText(text: text, textKit: index != 1).frame(height: 900))
         }
