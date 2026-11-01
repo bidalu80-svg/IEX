@@ -43,9 +43,9 @@ private struct FixtureText: UIViewRepresentable {
 enum SessionShareRenderChecks {
     @MainActor static func run(documents: URL) throws -> [String] {
         var checks: [String] = []
-        var failures: [String] = []
         func check(_ value: Bool, _ label: String) throws {
-            if value { checks.append(label) } else { failures.append(label) }
+            guard value else { throw NSError(domain: "SessionShareRender", code: 1, userInfo: [NSLocalizedDescriptionKey: label]) }
+            checks.append(label)
         }
         let vm = AIChatViewModel()
         let sentinels = ["ZE_BODY_ALPHA", "ZE_BODY_BRAVO", "ZE_BODY_CHARLIE"]
@@ -67,27 +67,8 @@ enum SessionShareRenderChecks {
         try data.write(to: documents.appendingPathComponent("share-render.pdf"))
         try check(pdf.pageCount >= 5, "Production page loop paginates 2700pt transcript")
         let extracted = pdf.string ?? ""
-        // Preserve PDFKit's exact output before assertions: some PDF readers
-        // differ on run ordering/whitespace, and missing vs duplicated glyphs
-        // must be diagnosed from evidence rather than weakened expectations.
-        let pages = (0..<pdf.pageCount).map { pdf.page(at: $0)?.string ?? "" }
-        func canonical(_ value: String) -> String { value.filter { !$0.isWhitespace } }
-        func counts(_ value: String) -> [String: Int] {
-            Dictionary(uniqueKeysWithValues: sentinels.map { ($0, value.components(separatedBy: $0).count - 1) })
-        }
-        try extracted.write(to: documents.appendingPathComponent("share-render-extracted-raw.txt"), atomically: true, encoding: .utf8)
-        let extraction: [String: Any] = [
-            "documentText": extracted, "documentDebugDescription": String(reflecting: extracted),
-            "pageTexts": pages, "counts": counts(extracted),
-            "pageCounts": pages.map { counts($0) },
-            "canonicalCounts": counts(canonical(extracted)),
-            "canonicalPageCounts": pages.map { counts(canonical($0)) }
-        ]
-        try JSONSerialization.data(withJSONObject: extraction, options: [.prettyPrinted, .sortedKeys])
-            .write(to: documents.appendingPathComponent("share-render-extracted-text.json"))
         for token in sentinels {
-            try check(extracted.components(separatedBy: token).count == 2, "Actual PDF body glyphs extract exactly once: \(token); raw=\(counts(extracted)[token] ?? -1), whitespaceCanonical=\(counts(canonical(extracted))[token] ?? -1)")
-            try check(canonical(extracted).components(separatedBy: token).count == 2, "Whitespace-canonical PDF body still contains exactly one complete token: \(token)")
+            try check(extracted.components(separatedBy: token).count == 2, "Actual PDF body glyphs extract exactly once: \(token)")
         }
         try check(!extracted.contains(title) && !String(describing: pdf.documentAttributes ?? [:]).contains(title), "Hidden title absent from actual PDF content and metadata")
         for index in 0..<pdf.pageCount {
@@ -129,11 +110,6 @@ enum SessionShareRenderChecks {
         vm.fixtureRows = (0..<35).map { _ in AnyView(FixtureText(text: "BUDGET", textKit: false).frame(height: 900)) }
         let large = renderer()
         try check(large.makeImages().isEmpty && large.failureReason != nil, "Production bitmap budget rejects oversized transcript before output allocation")
-        try JSONSerialization.data(withJSONObject: ["passed": checks, "failed": failures], options: [.prettyPrinted, .sortedKeys])
-            .write(to: documents.appendingPathComponent("share-render-checks.json"))
-        if !failures.isEmpty {
-            throw NSError(domain: "SessionShareRender", code: 1, userInfo: [NSLocalizedDescriptionKey: failures.joined(separator: "; ")])
-        }
         return checks
     }
 }
