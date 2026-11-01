@@ -383,3 +383,13 @@ git status --short
 - 生命周期：`willResignActive` 里有任务就直接 `present()`（此时音频已起，进程不会被挂起）；`didBecomeActive` 收起但保留图层；帧定时器每 0.5s 重画，会话为空且此前跑过任务就 `teardown()`。
 - 兜底：`AgentLiveActivityManager.usesLiveActivityCard = 开关 && !ChatPiPController.isSupported`——只有画中画浮不起来时才用实时活动卡片（`ContentState.floatingWindow` + `conversationLine`），避免两个面同时显示同一句话。
 - 校验：`scripts/verify-floating-window.py`（56 项），CI 步骤 “Test background floating window”。
+
+
+## 会话分享对齐 OpenMinis 1.15（T-session-share-parity）
+
+- 对照版本固定为 OpenMinis `1.15` / `6eda5523a9c14fa8edc4fd9fb72e643fe47f23be`，不是跟随上游主分支。
+- `Views/Chat/SessionExport/SessionExportModels.swift`：分享专用快照与内容块选择模型。选择和导出均操作脱离实时会话的副本；原消息的折叠状态、工具结果和流式缓冲不应被修改。未选中的正文和错误不得通过整条消息 `content` 回退混入导出。
+- `SessionShareSheet.swift`：先选内容、后看实际成品预览。支持块级勾选、范围选择，预览配置包括格式、页面宽度、主题、标题和表格自适应。预览缓存有内存约束，旧配置的结果不得覆盖新配置。同步 UIKit 渲染期间不能承诺即时中断。
+- `SessionExportNativeRenderer.swift`：按内容块测量和绘制，不再持有整份对话的截图数组再拼接长图。图片有总像素内存预算；PDF 按页绘制可提取的 UIKit/TextKit 正文。SwiftUI 装饰、图片等仍可能栅格化，不能称为整个文档完全矢量。表格调整只作用于临时导出视图，不改聊天视图。
+- 上游矢量绘制代码的许可原文保存在 `docs/licenses/OpenMinis-GPL-3.0.txt`；来源及改动见渲染器文件头。该许可文件不表示重新授权仓库中不相关的第三方代码。
+- 验证：`scripts/test-session-share.sh` 对修改文件执行 iOS 类型检查，并在模拟器上验证快照隔离、选择范围、生产导出算法和 PDF/PNG 产物。测试夹具替代了完整聊天行依赖，真实聊天的图片加载、表格排版和手势交互仍须完整 App 验收；结构脚本通过不等于成品效果通过。

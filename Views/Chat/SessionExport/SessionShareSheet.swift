@@ -1,14 +1,4 @@
-//
-//  SessionShareSheet.swift
-//  ZeApp
-//
-//  [T-session-share-single-screen] One screen for everything. The transcript
-//  below is rendered with the real chat views, so it *is* the live preview;
-//  the export options sit in a chip row at the bottom instead of a separate
-//  configuration form. Selecting messages and choosing the output format no
-//  longer require bouncing between sheets.
-//
-
+// Share selection and rendered preview. Native chat models are detached before use.
 import PDFKit
 import SwiftUI
 import UIKit
@@ -16,84 +6,42 @@ import UIKit
 // MARK: - Persisted options
 
 enum SessionExportOptionsStore {
-    private static let formatKey = "sessionExport.format"
-    private static let widthKey = "sessionExport.width"
-    private static let themeKey = "sessionExport.theme"
-    private static let toolCallsKey = "sessionExport.includeToolCalls"
-    private static let thinkingKey = "sessionExport.includeThinking"
-    private static let headerKey = "sessionExport.includeHeader"
-
     static func load() -> SessionExportOptions {
         let defaults = UserDefaults.standard
         var options = SessionExportOptions()
-
-        if let raw = defaults.string(forKey: formatKey),
-           let value = SessionExportFormat(rawValue: raw) {
-            options.format = value
-        }
-        if let raw = defaults.string(forKey: widthKey),
-           let value = SessionExportWidth(rawValue: raw) {
-            options.width = value
-        }
-        if let raw = defaults.string(forKey: themeKey),
-           let value = SessionExportTheme(rawValue: raw) {
-            options.theme = value
-        }
-
-        // Defaults are the "everything visible" variant; only override when
-        // the user has actually stored a value.
-        if defaults.object(forKey: toolCallsKey) != nil {
-            options.includeToolCalls = defaults.bool(forKey: toolCallsKey)
-        }
-        if defaults.object(forKey: thinkingKey) != nil {
-            options.includeThinking = defaults.bool(forKey: thinkingKey)
-        }
-        if defaults.object(forKey: headerKey) != nil {
-            options.includeHeader = defaults.bool(forKey: headerKey)
-        }
+        if let raw = defaults.string(forKey: "sessionExport.format"), let value = SessionExportFormat(rawValue: raw) { options.format = value }
+        if let raw = defaults.string(forKey: "sessionExport.width"), let value = SessionExportWidth(rawValue: raw) { options.width = value }
+        if let raw = defaults.string(forKey: "sessionExport.theme"), let value = SessionExportTheme(rawValue: raw) { options.theme = value }
+        if defaults.object(forKey: "sessionExport.includeToolCalls") != nil { options.includeToolCalls = defaults.bool(forKey: "sessionExport.includeToolCalls") }
+        if defaults.object(forKey: "sessionExport.includeThinking") != nil { options.includeThinking = defaults.bool(forKey: "sessionExport.includeThinking") }
+        if defaults.object(forKey: "sessionExport.includeHeader") != nil { options.includeHeader = defaults.bool(forKey: "sessionExport.includeHeader") }
+        options.adaptiveTables = defaults.bool(forKey: "sessionExport.adaptiveTables")
         return options
     }
 
     static func save(_ options: SessionExportOptions) {
         let defaults = UserDefaults.standard
-        defaults.set(options.format.rawValue, forKey: formatKey)
-        defaults.set(options.width.rawValue, forKey: widthKey)
-        defaults.set(options.theme.rawValue, forKey: themeKey)
-        defaults.set(options.includeToolCalls, forKey: toolCallsKey)
-        defaults.set(options.includeThinking, forKey: thinkingKey)
-        defaults.set(options.includeHeader, forKey: headerKey)
+        defaults.set(options.format.rawValue, forKey: "sessionExport.format")
+        defaults.set(options.width.rawValue, forKey: "sessionExport.width")
+        defaults.set(options.theme.rawValue, forKey: "sessionExport.theme")
+        defaults.set(options.includeToolCalls, forKey: "sessionExport.includeToolCalls")
+        defaults.set(options.includeThinking, forKey: "sessionExport.includeThinking")
+        defaults.set(options.includeHeader, forKey: "sessionExport.includeHeader")
+        defaults.set(options.adaptiveTables, forKey: "sessionExport.adaptiveTables")
     }
 }
-
-// MARK: - Payload
 
 struct SessionExportPayload: Identifiable {
     let id = UUID()
     let images: [UIImage]
     let pdfURL: URL?
-
-    var shareItems: [Any] {
-        if let pdfURL { return [pdfURL] }
-        return images
-    }
-
+    var shareItems: [Any] { if let pdfURL { return [pdfURL] }; return images }
     var isEmpty: Bool { images.isEmpty && pdfURL == nil }
 }
 
-// MARK: - Share sheet
-
-private enum SessionShareRoute: Identifiable {
-    case share(SessionExportPayload)
-    case preview(SessionExportPayload)
-
-    var id: String {
-        switch self {
-        case .share(let payload):
-            return "share-\(payload.id.uuidString)"
-        case .preview(let payload):
-            return "preview-\(payload.id.uuidString)"
-        }
-    }
+private struct SessionSharePreviewInput: Identifiable {
+    let id = UUID()
+    let messages: [ChatMessage]
 }
 
 @MainActor
@@ -101,515 +49,446 @@ struct SessionShareSheet: View {
     let messages: [ChatMessage]
     let header: SessionExportHeader
     let adaptiveWidth: CGFloat
-    /// [T-session-share-native] The export renders the real chat rows, and
-    /// those rows read the view model from the environment (tool capsule
-    /// menus). The sheet is always presented from the chat, so the live
-    /// instance is available — no dummy model needed.
     let vm: AIChatViewModel
-
     @Environment(\.dismiss) private var dismiss
+    @State private var options = SessionExportOptionsStore.load()
+    @State private var snapshot: [ChatMessage] = []
+    @State private var cells: [SessionShareCell] = []
+    @State private var selection: Set<SessionShareCell.ID> = []
+    @State private var initialized = false
+    @State private var lastTapped: SessionShareCell.ID?
+    @State private var previewInput: SessionSharePreviewInput?
+    @State private var rowFrames: [SessionShareCell.ID: CGRect] = [:]
+    @State private var dragAnchor: SessionShareCell.ID?
+    @State private var dragInitial: Set<SessionShareCell.ID> = []
+    @State private var dragSelecting = true
+    @State private var dragY: CGFloat?
+    @State private var viewportHeight: CGFloat = 0
+    @StateObject private var railScroll = SessionShareScrollReference()
+    private let dragClock = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
 
-    @State private var options: SessionExportOptions = SessionExportOptionsStore.load()
-    @State private var selection: Set<UUID> = []
-    @State private var route: SessionShareRoute?
-    @State private var isRendering = false
-    @State private var errorText: String?
-    /// Anchor for "Select Below": the turn the user touched last.
-    @State private var lastTapped: UUID?
-
-    private var selectableMessages: [ChatMessage] {
-        messages.filter { $0.role == .user || $0.role == .assistant }
-    }
-
-    private var allIDs: Set<UUID> { Set(selectableMessages.map(\.id)) }
-
-    /// `nil` header means the user turned the header off; the transcript then
-    /// starts straight at the first message, exactly like the export does.
-    private var exportHeader: SessionExportHeader? {
-        options.includeHeader ? header : nil
-    }
-
-    private var scope: SessionExportScope {
-        selection.count == selectableMessages.count ? .all : .selected(selection)
-    }
-
-    private var transcriptScheme: ColorScheme {
-        options.theme == .dark ? .dark : .light
-    }
+    private var allIDs: Set<SessionShareCell.ID> { Set(cells.map(\.id)) }
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
-            selectionChips
+            HStack {
+                Button(String(localized: "Cancel")) { dismiss() }
+                Spacer()
+                Text(String(format: String(localized: "%ld selected"), selection.count)).font(.headline)
+                Spacer()
+                Button(selection == allIDs ? String(localized: "Deselect All") : String(localized: "Select All")) {
+                    selection = selection == allIDs ? [] : allIDs
+                }
+            }.padding(16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    Button(String(localized: "Select Below")) { changeBelow(lastTapped ?? cells.first?.id, selecting: true) }
+                    Button(String(localized: "Deselect All Below")) { changeBelow(lastTapped ?? cells.first?.id, selecting: false) }
+                    Button(String(localized: "Clear Selection")) { selection.removeAll() }
+                }.font(.subheadline).padding(.horizontal, 16).padding(.bottom, 12)
+            }
             Divider()
             transcript
             Divider()
-            optionChips
-            shareBar
+            Button {
+                options = SessionExportOptionsStore.load()
+                previewInput = SessionSharePreviewInput(messages: SessionShareSnapshot.selectedMessages(snapshot, selection: selection))
+            } label: {
+                Label(String(format: String(localized: "Share (%ld)"), selection.count), systemImage: "square.and.arrow.up")
+                    .font(.headline).frame(maxWidth: .infinity).padding(14)
+            }
+            .buttonStyle(.borderedProminent).disabled(selection.isEmpty).padding(16)
         }
         .background(Color(UIColor.systemBackground))
-        .overlay {
-            if isRendering {
-                Color.black.opacity(0.06).ignoresSafeArea()
-            }
-        }
-        .sheet(item: $route) { route in
-            routeContent(route)
-        }
         .onAppear {
-            // Everything is selected until the user narrows it down, which
-            // matches the previous default scope (.all).
-            if selection.isEmpty { selection = allIDs }
+            guard !initialized else { return }
+            initialized = true
+            snapshot = SessionShareSnapshot.capture(messages)
+            cells = SessionShareSnapshot.cells(snapshot)
+            // Thinking is selectable individually, but starts excluded unless opted in.
+            selection = Set(cells.filter {
+                ($0.kind != .thinking || options.includeThinking) && ($0.kind != .tool || options.includeToolCalls)
+            }.map(\.id))
         }
-        // [T-share-ios16-onchange] The two-parameter `onChange(of:) { old, new in }`
-        // closure is iOS 17+, and the app target is iOS 16.0.
-        .onChange(of: options) { newValue in
-            SessionExportOptionsStore.save(newValue)
-        }
-    }
-
-    // MARK: Header
-
-    private var headerBar: some View {
-        ZStack {
-            Text(String(format: String(localized: "%ld selected"), selection.count))
-                .font(.headline)
-
-            HStack {
-                Button(String(localized: "Cancel")) { dismiss() }
-                Spacer(minLength: 0)
-                Button(selection.count == selectableMessages.count
-                       ? String(localized: "Deselect All")
-                       : String(localized: "Select All")) {
-                    selection = selection.count == selectableMessages.count ? [] : allIDs
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: Selection chips
-
-    private var selectionChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(String(localized: "Select Below"),
-                     systemImage: "arrow.down.to.line") {
-                    selectBelow()
-                }
-                chip(String(localized: "Clear Selection"),
-                     systemImage: "xmark") {
-                    selection.removeAll()
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 10)
+        .sheet(item: $previewInput) { input in
+            SessionShareRenderedPreview(messages: input.messages, header: header,
+                                        adaptiveWidth: adaptiveWidth, vm: vm, options: options)
         }
     }
-
-    // MARK: Transcript
 
     private var transcript: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                if options.includeHeader {
-                    SessionExportHeaderCard(header: header, scheme: transcriptScheme)
-                }
-                ForEach(selectableMessages, id: \.id) { message in
-                    SessionExportPickerRow(message: message,
-                                           isSelected: selection.contains(message.id),
-                                           showTools: options.includeToolCalls,
-                                           showThinking: options.includeThinking,
-                                           scheme: transcriptScheme,
-                                           vm: vm)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            lastTapped = message.id
-                            if selection.contains(message.id) {
-                                selection.remove(message.id)
-                            } else {
-                                selection.insert(message.id)
-                            }
-                        }
-                }
-            }
-            .padding(.vertical, 6)
-        }
-        // The transcript is the preview: theme changes show up here, not in a
-        // separate thumbnail strip.
-        .background(options.theme == .dark ? Color(UIColor(white: 0.07, alpha: 1)) : Color(UIColor.systemBackground))
-        .environment(\.colorScheme, transcriptScheme)
-    }
-
-    // MARK: Option chips
-
-    /// [T-session-share-single-screen] The former Form sections, flattened
-    /// into the same capsule row the picker already used. Enum options open a
-    /// menu; booleans toggle in place.
-    private var optionChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chipMenu(options.format.title, systemImage: options.format.systemImage) {
-                    Picker(String(localized: "Format"), selection: $options.format) {
-                        ForEach(SessionExportFormat.allCases) { format in
-                            Label(format.title, systemImage: format.systemImage).tag(format)
-                        }
+                ForEach(cells) { cell in
+                    HStack(spacing: 0) {
+                        Image(systemName: selection.contains(cell.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selection.contains(cell.id) ? Color.accentColor : Color.secondary)
+                            .frame(width: 36)
+                            .accessibilityHidden(true)
+                        SessionExportPickerRow(message: cell.message, vm: vm)
+                            .allowsHitTesting(false)
+                            .frame(maxWidth: .infinity)
                     }
-                }
-
-                chipMenu(options.width.title, systemImage: "rectangle.portrait") {
-                    Picker(String(localized: "Page Width"), selection: $options.width) {
-                        ForEach(SessionExportWidth.allCases) { width in
-                            Text(width.title).tag(width)
-                        }
+                    .padding(.vertical, 3)
+                    .background(selection.contains(cell.id) ? Color.accentColor.opacity(0.07) : Color.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture { toggle(cell.id) }
+                    .contextMenu {
+                        Button(String(localized: "Select All Below")) { changeBelow(cell.id, selecting: true) }
+                        Button(String(localized: "Deselect All Below")) { changeBelow(cell.id, selecting: false) }
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(selection.contains(cell.id) ? [.isButton, .isSelected] : [.isButton])
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: SessionShareFramesKey.self,
+                                               value: [cell.id: proxy.frame(in: .named("sharePicker"))])
+                    })
                 }
-
-                chipMenu(options.theme.title, systemImage: "circle.lefthalf.filled") {
-                    Picker(String(localized: "Theme"), selection: $options.theme) {
-                        ForEach(SessionExportTheme.allCases) { theme in
-                            Text(theme.title).tag(theme)
-                        }
+            }
+            .background(SessionShareScrollProbe(reference: railScroll))
+        }
+        .coordinateSpace(name: "sharePicker")
+        .onPreferenceChange(SessionShareFramesKey.self) { frames in
+            rowFrames = frames
+            if let dragY { updateDrag(at: dragY) }
+        }
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear { viewportHeight = geometry.size.height }
+                .onChange(of: geometry.size.height) { viewportHeight = $0 }
+        })
+        .onReceive(dragClock) { _ in
+            guard dragAnchor != nil, let dragY else { return }
+            let edge: CGFloat = 56
+            let step: CGFloat
+            if dragY < edge {
+                step = -min(28, max(0, (edge - dragY) * 0.5))
+            } else if dragY > viewportHeight - edge {
+                step = min(28, max(0, (dragY - viewportHeight + edge) * 0.5))
+            } else { return }
+            railScroll.scroll(by: step)
+            updateDrag(at: dragY)
+        }
+        .onDisappear { endDrag() }
+        .overlay(alignment: .leading) {
+            // Only this narrow rail takes the drag recognizer; the transcript
+            // remains a normal scroll view everywhere else.
+            Color.clear.frame(width: 36).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("sharePicker"))
+                    .onChanged { value in
+                        dragY = min(max(0, value.location.y), viewportHeight)
+                        updateDrag(at: dragY ?? value.location.y)
                     }
-                }
+                    .onEnded { _ in endDrag() })
+        }
+    }
 
-                toggleChip(String(localized: "Tool Calls"),
-                           systemImage: "wrench.and.screwdriver",
-                           isOn: $options.includeToolCalls)
+    private func updateDrag(at y: CGFloat) {
+        guard let hit = rowFrames.first(where: { $0.value.contains(CGPoint(x: 18, y: y)) })?.key else { return }
+        if dragAnchor == nil {
+            dragAnchor = hit
+            dragInitial = selection
+            dragSelecting = !selection.contains(hit)
+        }
+        guard let anchor = dragAnchor else { return }
+        lastTapped = hit
+        selection = SessionShareSelection.dragging(from: anchor, to: hit, ordered: cells.map(\.id),
+                                                   initial: dragInitial, selecting: dragSelecting)
+    }
 
-                toggleChip(String(localized: "Thinking"),
-                           systemImage: "brain",
-                           isOn: $options.includeThinking)
+    private func endDrag() {
+        dragAnchor = nil
+        dragY = nil
+        dragInitial.removeAll()
+    }
 
-                toggleChip(String(localized: "Avatar, Model and Date"),
-                           systemImage: "person.crop.circle",
-                           isOn: $options.includeHeader)
+    private func toggle(_ id: SessionShareCell.ID) {
+        lastTapped = id
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    }
 
-                chip(String(localized: "Preview"), systemImage: "eye") {
-                    preview()
-                }
-                .disabled(isRendering || selection.isEmpty)
+    private func changeBelow(_ id: SessionShareCell.ID?, selecting: Bool) {
+        guard let id else { return }
+        lastTapped = id
+        let range = SessionShareSelection.below(id, ordered: cells.map(\.id))
+        if selecting { selection.formUnion(range) } else { selection.subtract(range) }
+    }
+}
+
+/// A weak reference to the owning SwiftUI scroll view; no global window lookup.
+@MainActor
+private final class SessionShareScrollReference: ObservableObject {
+    weak var scrollView: UIScrollView?
+    func scroll(by delta: CGFloat) {
+        guard let view = scrollView else { return }
+        let minimum = -view.adjustedContentInset.top
+        let maximum = max(minimum, view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
+        let y = min(maximum, max(minimum, view.contentOffset.y + delta))
+        guard abs(y - view.contentOffset.y) > 0.1 else { return }
+        view.setContentOffset(CGPoint(x: view.contentOffset.x, y: y), animated: false)
+    }
+}
+
+private struct SessionShareScrollProbe: UIViewRepresentable {
+    let reference: SessionShareScrollReference
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.reference = reference
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: Probe, context: Context) { view.resolve() }
+    final class Probe: UIView {
+        weak var reference: SessionShareScrollReference?
+        override func didMoveToWindow() { super.didMoveToWindow(); resolve() }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); resolve() }
+        override func layoutSubviews() { super.layoutSubviews(); resolve() }
+        func resolve() {
+            var ancestor = superview
+            while let view = ancestor {
+                if let scroll = view as? UIScrollView { reference?.scrollView = scroll; return }
+                ancestor = view.superview
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private func chip(_ title: String,
-                      systemImage: String,
-                      isOn: Bool = false,
-                      action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            chipLabel(title, systemImage: systemImage, isOn: isOn)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func chipMenu<Content: View>(_ title: String,
-                                         systemImage: String,
-                                         @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            chipLabel(title, systemImage: systemImage, isOn: true, showsChevron: true)
-        }
-    }
-
-    private func toggleChip(_ title: String,
-                            systemImage: String,
-                            isOn: Binding<Bool>,
-                            isEnabled: Bool = true) -> some View {
-        Button {
-            isOn.wrappedValue.toggle()
-        } label: {
-            chipLabel(title,
-                      systemImage: systemImage,
-                      isOn: isOn.wrappedValue && isEnabled)
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.4)
-    }
-
-    private func chipLabel(_ title: String,
-                           systemImage: String,
-                           isOn: Bool,
-                           showsChevron: Bool = false) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-            if showsChevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-        }
-        .foregroundStyle(isOn ? Color.accentColor : Color.primary)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 7)
-        .background(
-            Capsule().fill(isOn
-                           ? Color.accentColor.opacity(0.12)
-                           : Color(UIColor.secondarySystemBackground))
-        )
-    }
-
-    // MARK: Share bar
-
-    private var shareBar: some View {
-        VStack(spacing: 0) {
-            if let errorText {
-                Text(errorText)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-            }
-
-            Button {
-                export()
-            } label: {
-                HStack(spacing: 8) {
-                    if isRendering {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    Text(String(format: String(localized: "Share (%ld)"), selection.count))
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(selection.isEmpty ? Color.secondary.opacity(0.3) : Color.accentColor)
-                )
-                .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .disabled(selection.isEmpty || isRendering)
-            .padding(16)
-        }
-        .background(Color(UIColor.systemBackground))
-    }
-
-    // MARK: Routing
-
-    @ViewBuilder
-    private func routeContent(_ route: SessionShareRoute) -> some View {
-        switch route {
-        case .share(let payload):
-            SessionExportActivityView(items: payload.shareItems)
-                .ignoresSafeArea()
-        case .preview(let payload):
-            SessionExportPreviewSheet(payload: payload, title: header.title)
-        }
-    }
-
-    // MARK: Actions
-
-    private func selectBelow() {
-        let anchor = lastTapped ?? selectableMessages.last?.id
-        guard let anchor,
-              let index = selectableMessages.firstIndex(where: { $0.id == anchor })
-        else { return }
-        selection.formUnion(selectableMessages[index...].map(\.id))
-    }
-
-    private func export() {
-        render { result in
-            switch result {
-            case .success(let payload):
-                self.route = .share(payload)
-            case .failure(let error):
-                self.errorText = error.localizedDescription
-            }
-        }
-    }
-
-    private func preview() {
-        render { result in
-            switch result {
-            case .success(let payload):
-                self.route = .preview(payload)
-            case .failure(let error):
-                self.errorText = error.localizedDescription
-            }
-        }
-    }
-
-    private func render(completion: @escaping (Result<SessionExportPayload, Error>) -> Void) {
-        guard !isRendering else { return }
-        guard !selection.isEmpty else {
-            completion(.failure(SessionExportError.empty))
-            return
-        }
-
-        let options = self.options
-        let scope = self.scope
-        let header = exportHeader
-        isRendering = true
-        errorText = nil
-
-        // [T-session-share-native] Snapshotting the real chat rows has to run
-        // on the main actor (UIKit). Yield once so the progress overlay gets a
-        // chance to paint before the synchronous render pass begins.
-        Task { @MainActor in
-            await Task.yield()
-
-            let renderer = SessionExportNativeRenderer(messages: messages,
-                                                       scope: scope,
-                                                       options: options,
-                                                       header: header,
-                                                       vm: vm,
-                                                       adaptiveWidth: adaptiveWidth)
-
-            let result: Result<SessionExportPayload, Error>
-            switch options.format {
-            case .image:
-                let images = renderer.makeImages()
-                result = images.isEmpty
-                    ? .failure(SessionExportError.empty)
-                    : .success(SessionExportPayload(images: images, pdfURL: nil))
-            case .pdf:
-                if let data = renderer.makePDFData(), let url = Self.writePDF(data) {
-                    result = .success(SessionExportPayload(images: [], pdfURL: url))
-                } else {
-                    result = .failure(SessionExportError.renderFailed)
-                }
-            }
-
-            self.isRendering = false
-            completion(result)
-        }
-    }
-
-    /// `nonisolated` because it runs inside the background render closure;
-    /// without it the call is main-actor isolated and Swift 6 rejects it.
-    nonisolated private static func writePDF(_ data: Data) -> URL? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let name = "Ze-Session-\(formatter.string(from: Date())).pdf"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        do {
-            try data.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
         }
     }
 }
 
-// MARK: - Picker row
+private struct SessionShareFramesKey: PreferenceKey {
+    static var defaultValue: [SessionShareCell.ID: CGRect] = [:]
+    static func reduce(value: inout [SessionShareCell.ID: CGRect], nextValue: () -> [SessionShareCell.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
 
-/// One selectable turn. Assistant replies go through the same
-/// header/block/footer composition the message list uses, so the picker shows
-/// what the export will contain instead of a flattened approximation.
+/// Each block keeps Ze's native bubble/card styling, without actionable chat controls.
 private struct SessionExportPickerRow: View {
     @ObservedObject var message: ChatMessage
-    let isSelected: Bool
-    let showTools: Bool
-    let showThinking: Bool
-    let scheme: ColorScheme
     let vm: AIChatViewModel
-
-    /// Owned here so the bridge's published state survives body re-evaluation
-    /// while the user scrolls and taps.
-    @StateObject private var bridge = CellStateBridgeV2()
-
     var body: some View {
         Group {
             if message.role == .assistant {
-                SessionExportAssistantTurn(message: displayMessage,
-                                           bridge: bridge,
-                                           maxWidth: 0)
+                // A picker cell is one block, not an entire assistant turn.
+                // Avoid repeating avatar/timing/footer chrome for every tool.
+                ForEach(message.blocks) { block in
+                    AssistantBlockView(block: block, message: message, isActiveMessage: false,
+                                       highlightedBlockId: .constant(nil), detailBlock: .constant(nil))
+                        .padding(.horizontal, 12)
+                }
             } else {
-                ChatMessageRow(
-                    message: displayMessage,
-                    isActiveMessage: false,
-                    commandStartTime: nil,
-                    onStop: nil,
-                    onRetry: nil,
-                    onEdit: nil,
-                    onDelete: nil,
-                    onWithdraw: nil,
-                    autoRetryAttempt: 0,
-                    autoRetryCountdown: 0,
-                    canResume: false,
-                    onResume: nil,
-                    onCompact: nil,
-                    onCopyScreenshot: nil,
-                    onReadAloud: nil,
-                    onShowCompactSummary: nil,
-                    onRevertCompact: nil,
-                    onToggleUserMessageExpansion: nil,
-                    browserPool: nil,
-                    toolSnapshots: []
-                )
+                ChatMessageRow(message: message, isActiveMessage: false, commandStartTime: nil,
+                               onStop: nil, onRetry: nil, onEdit: nil, onDelete: nil, onWithdraw: nil,
+                               autoRetryAttempt: 0, autoRetryCountdown: 0, canResume: false, onResume: nil,
+                               onCompact: nil, onCopyScreenshot: nil, onReadAloud: nil, onShowCompactSummary: nil,
+                               onRevertCompact: nil, onToggleUserMessageExpansion: nil, browserPool: nil, toolSnapshots: [])
             }
         }
         .environmentObject(vm)
-        .environment(\.colorScheme, scheme)
-        .padding(.vertical, 2)
-        .opacity(isSelected ? 1 : 0.38)
-        .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear)
-        .overlay(alignment: .topTrailing) {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.55))
-                .padding(.top, 8)
-                .padding(.trailing, 10)
-        }
-        .onAppear(perform: configureBridge)
-    }
-
-    private func configureBridge() {
-        // Static, non-interactive: the picker must not start speech or retry.
-        bridge.isActiveMessage = false
-        bridge.showUsage = message.usage != nil
-        bridge.usageContentVisible = true
-        // Kept off here so a long conversation stays scannable while picking;
-        // the export turns the action bar back on.
-        bridge.showsCompletionActions = false
-    }
-
-    private var displayMessage: ChatMessage {
-        let blocks = message.blocks.filter { block in
-            switch block.kind {
-            case .thinking:
-                return showThinking
-            case .text, .info:
-                return true
-            default:
-                return showTools
-            }
-        }
-
-        let copy = ChatMessage(role: message.role,
-                               content: message.content,
-                               blocks: blocks,
-                               isQueued: false,
-                               timestamp: message.timestamp)
-        copy.attachments = message.attachments
-        copy.inputAttachments = message.inputAttachments
-        copy.firstTokenLatency = message.firstTokenLatency
-        copy.taskDuration = message.taskDuration
-        copy.usage = message.usage
-        copy.streamInterruptCount = message.streamInterruptCount
-        copy.isUserTextExpanded = true
-        return copy
     }
 }
 
-// MARK: - Errors
+// MARK: - Cancellable, bounded rendered-preview cache
+
+@MainActor
+private final class SessionSharePreviewRenderer: ObservableObject {
+    @Published private(set) var payload: SessionExportPayload?
+    @Published private(set) var isRendering = false
+    @Published private(set) var errorText: String?
+    @Published private(set) var imageUnavailable = false
+    private var cache: [SessionExportOptions: SessionExportPayload] = [:]
+    private var recency: [SessionExportOptions] = []
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+    private var files: Set<URL> = []
+
+    func render(messages: [ChatMessage], header: SessionExportHeader, adaptiveWidth: CGFloat,
+                vm: AIChatViewModel, options: SessionExportOptions) {
+        task?.cancel()
+        let request = UUID()
+        generation = request
+        errorText = nil
+        imageUnavailable = false
+        // Do not leave the old theme/format visible or shareable while rendering.
+        payload = nil
+        if let cached = cache[options] {
+            payload = cached
+            touch(options)
+            isRendering = false
+            return
+        }
+        isRendering = true
+        task = Task { @MainActor [weak self] in
+            // Coalesce quick option taps before entering UIKit's synchronous pass.
+            do { try await Task.sleep(nanoseconds: 160_000_000) } catch { return }
+            guard let self, !Task.isCancelled, self.generation == request else { return }
+            let renderer = SessionExportNativeRenderer(messages: messages, scope: .all,
+                                                       options: options, header: options.includeHeader ? header : nil,
+                                                       vm: vm, adaptiveWidth: adaptiveWidth)
+            let result: SessionExportPayload?
+            var writeFailure: String?
+            switch options.format {
+            case .image:
+                let images = renderer.makeImages()
+                result = images.isEmpty ? nil : SessionExportPayload(images: images, pdfURL: nil)
+            case .pdf:
+                if let data = renderer.makePDFData() {
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent("Ze-Session-\(UUID().uuidString).pdf")
+                    do {
+                        try data.write(to: url, options: .atomic)
+                        self.files.insert(url)
+                        result = SessionExportPayload(images: [], pdfURL: url)
+                    } catch {
+                        writeFailure = error.localizedDescription
+                        result = nil
+                    }
+                } else { result = nil }
+            }
+            // The renderer is synchronous. Yield afterwards so a queued option
+            // change can invalidate this result before it is published.
+            await Task.yield()
+            guard !Task.isCancelled, self.generation == request else { return }
+            self.isRendering = false
+            guard let result else {
+                self.errorText = writeFailure ?? renderer.failureReason ?? SessionExportError.renderFailed.localizedDescription
+                self.imageUnavailable = options.format == .image
+                return
+            }
+            self.cache[options] = result
+            self.touch(options)
+            self.trimCache()
+            self.payload = result
+        }
+    }
+
+    private func touch(_ options: SessionExportOptions) {
+        recency.removeAll { $0 == options }
+        recency.append(options)
+    }
+
+    private func trimCache() {
+        // Long-image caches can otherwise multiply a large bitmap by every toggle.
+        func bytes() -> Int {
+            cache.values.reduce(0) { total, entry in
+                total + entry.images.reduce(0) { sum, image in
+                    sum + (image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
+                }
+            }
+        }
+        while recency.count > 1 && (recency.count > 3 || bytes() > 48 * 1024 * 1024) {
+            let oldest = recency.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+        // Keep PDF files until dismissal: a system share extension can still be reading one.
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        generation = UUID()
+        isRendering = false
+    }
+
+    deinit {
+        task?.cancel()
+        for url in files { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+@MainActor
+private struct SessionShareRenderedPreview: View {
+    let messages: [ChatMessage]
+    let header: SessionExportHeader
+    let adaptiveWidth: CGFloat
+    let vm: AIChatViewModel
+    @State var options: SessionExportOptions
+    @StateObject private var renderer = SessionSharePreviewRenderer()
+    @Environment(\.dismiss) private var dismiss
+    @State private var activity: SessionExportPayload?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Group {
+                    if let payload = renderer.payload {
+                        SessionExportPreviewContent(payload: payload)
+                    } else if renderer.isRendering {
+                        VStack(spacing: 12) { ProgressView(); Text(String(localized: "Preparing preview…")) }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 14) {
+                            Text(renderer.errorText ?? String(localized: "Nothing to export."))
+                            if renderer.imageUnavailable {
+                                Button(String(localized: "Use PDF")) { options.format = .pdf }
+                            }
+                            Button(String(localized: "Retry")) { refresh() }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
+                    }
+                }
+                Divider()
+                controls
+            }
+            .background(Color(UIColor.systemGroupedBackground))
+            .navigationTitle(options.includeHeader ? header.title : String(localized: "Preview"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "Back")) { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        activity = renderer.payload
+                    } label: { Image(systemName: "square.and.arrow.up") }
+                        .disabled(renderer.payload == nil || renderer.isRendering)
+                }
+            }
+        }
+        .onAppear(perform: refresh)
+        .onChange(of: options) { value in SessionExportOptionsStore.save(value); refresh() }
+        .onDisappear { renderer.stop() }
+        .sheet(item: $activity) { payload in
+            SessionExportActivityView(items: payload.shareItems).ignoresSafeArea()
+        }
+    }
+
+    private var controls: some View {
+        VStack(spacing: 8) {
+            Picker(String(localized: "Format"), selection: $options.format) {
+                ForEach(SessionExportFormat.allCases) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    Menu {
+                        Picker(String(localized: "Page Width"), selection: $options.width) {
+                            ForEach(SessionExportWidth.allCases) { Text($0.title).tag($0) }
+                        }
+                    } label: { Label(options.width.title, systemImage: "rectangle.portrait") }
+                    Button { options.adaptiveTables.toggle() } label: {
+                        Label(String(localized: "Adaptive Tables"), systemImage: "tablecells")
+                            .foregroundStyle(options.adaptiveTables ? Color.accentColor : Color.secondary)
+                    }
+                    Button { options.theme = options.theme == .light ? .dark : .light } label: {
+                        Label(options.theme.title, systemImage: "circle.lefthalf.filled")
+                    }
+                    Button { options.includeHeader.toggle() } label: {
+                        Label(String(localized: "Title"), systemImage: options.includeHeader ? "textformat" : "textformat.size.smaller")
+                            .foregroundStyle(options.includeHeader ? Color.accentColor : Color.secondary)
+                    }
+                }.buttonStyle(.bordered).font(.subheadline)
+            }
+        }.padding(12)
+    }
+
+    private func refresh() {
+        // The picker already made the exact block selection. Global legacy
+        // switches must not silently discard a thinking/tool cell selected there.
+        var renderingOptions = options
+        renderingOptions.includeThinking = true
+        renderingOptions.includeToolCalls = true
+        renderer.render(messages: messages, header: header, adaptiveWidth: adaptiveWidth,
+                        vm: vm, options: renderingOptions)
+    }
+}
 
 enum SessionExportError: LocalizedError {
-    case empty
-    case renderFailed
-
+    case empty, renderFailed
     var errorDescription: String? {
         switch self {
         case .empty: return String(localized: "Nothing to export.")
@@ -618,57 +497,124 @@ enum SessionExportError: LocalizedError {
     }
 }
 
-// MARK: - Preview
+private struct SessionExportPreviewContent: View {
+    let payload: SessionExportPayload
+    var body: some View {
+        GeometryReader { proxy in
+            if let url = payload.pdfURL {
+                SessionExportPDFView(url: url)
+            } else {
+                SessionExportImageZoomView(images: payload.images, identity: payload.id)
+            }
+        }
+    }
+}
 
+// MARK: - Pinch and double-tap image preview
+
+private struct SessionExportImageZoomView: UIViewRepresentable {
+    let images: [UIImage]
+    let identity: UUID
+
+    func makeUIView(context: Context) -> SessionExportZoomScrollView { SessionExportZoomScrollView() }
+    func updateUIView(_ view: SessionExportZoomScrollView, context: Context) {
+        view.setImages(images, identity: identity)
+    }
+}
+
+private final class SessionExportZoomScrollView: UIScrollView, UIScrollViewDelegate {
+    private let canvas = UIView()
+    private var identity: UUID?
+    private var canvasSize = CGSize.zero
+    private var needsFit = true
+    private var previousWidth: CGFloat = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delegate = self
+        backgroundColor = .secondarySystemBackground
+        addSubview(canvas)
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(zoomTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setImages(_ images: [UIImage], identity: UUID) {
+        guard self.identity != identity else { return }
+        self.identity = identity
+        setZoomScale(1, animated: false)
+        canvas.subviews.forEach { $0.removeFromSuperview() }
+        let width = images.map(\.size.width).max() ?? 1
+        var y: CGFloat = 0
+        for image in images {
+            let height = image.size.height * width / max(1, image.size.width)
+            let view = UIImageView(image: image)
+            view.contentMode = .scaleAspectFit
+            view.frame = CGRect(x: 0, y: y, width: width, height: height)
+            canvas.addSubview(view)
+            y += height
+        }
+        canvasSize = CGSize(width: width, height: max(1, y))
+        canvas.frame = CGRect(origin: .zero, size: canvasSize)
+        contentSize = canvasSize
+        needsFit = true
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, canvasSize.width > 0 else { return }
+        if needsFit || previousWidth != bounds.width {
+            previousWidth = bounds.width
+            minimumZoomScale = min(1, bounds.width / canvasSize.width)
+            maximumZoomScale = max(4, minimumZoomScale * 4)
+            setZoomScale(minimumZoomScale, animated: false)
+            needsFit = false
+        }
+        let x = max(0, (bounds.width - canvasSize.width * zoomScale) / 2)
+        contentInset = UIEdgeInsets(top: 0, left: x, bottom: 0, right: x)
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { canvas }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { setNeedsLayout() }
+
+    @objc private func zoomTapped(_ recognizer: UITapGestureRecognizer) {
+        if zoomScale > minimumZoomScale * 1.05 {
+            setZoomScale(minimumZoomScale, animated: true)
+        } else {
+            let scale = min(maximumZoomScale, minimumZoomScale * 2.5)
+            let point = recognizer.location(in: canvas)
+            let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+            zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                            width: size.width, height: size.height), animated: true)
+        }
+    }
+}
+
+// Kept for callers that already own a completed payload.
 struct SessionExportPreviewSheet: View {
     let payload: SessionExportPayload
     let title: String
-
     @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         NavigationStack {
-            Group {
-                if let pdfURL = payload.pdfURL {
-                    SessionExportPDFView(url: pdfURL)
-                } else {
-                    ScrollView([.vertical, .horizontal]) {
-                        VStack(spacing: 12) {
-                            ForEach(Array(payload.images.enumerated()), id: \.offset) { _, image in
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(maxWidth: .infinity)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    .padding(.horizontal, 16)
-                            }
+            SessionExportPreviewContent(payload: payload)
+                .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button(String(localized: "Done")) { dismiss() } }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { SessionExportActivityPresenter.present(items: payload.shareItems) } label: {
+                            Image(systemName: "square.and.arrow.up")
                         }
-                        .padding(.vertical, 16)
                     }
                 }
-            }
-            .background(Color(UIColor.systemGroupedBackground))
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Done")) { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        SessionExportActivityPresenter.present(items: payload.shareItems)
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                }
-            }
         }
     }
 }
 
 private struct SessionExportPDFView: UIViewRepresentable {
     let url: URL
-
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
@@ -678,42 +624,30 @@ private struct SessionExportPDFView: UIViewRepresentable {
         view.document = PDFDocument(url: url)
         return view
     }
-
-    func updateUIView(_ uiView: PDFView, context: Context) {}
+    func updateUIView(_ uiView: PDFView, context: Context) {
+        if uiView.document?.documentURL != url { uiView.document = PDFDocument(url: url) }
+    }
 }
-
-// MARK: - Activity sheet
 
 struct SessionExportActivityView: UIViewControllerRepresentable {
     let items: [Any]
-
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
-
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-/// Fallback presenter for the preview sheet's share button, where there is
-/// no `UIViewControllerRepresentable` hosting the activity controller.
 enum SessionExportActivityPresenter {
     static func present(items: [Any]) {
-        guard !items.isEmpty else { return }
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }),
+        guard !items.isEmpty,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive }),
               let root = scene.windows.first?.rootViewController else { return }
-
         var presenter = root
         while let next = presenter.presentedViewController { presenter = next }
-
         let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
         if let popover = controller.popoverPresentationController {
             popover.sourceView = presenter.view
-            popover.sourceRect = CGRect(x: presenter.view.bounds.midX,
-                                        y: presenter.view.bounds.midY,
-                                        width: 0,
-                                        height: 0)
+            popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 0, height: 0)
             popover.permittedArrowDirections = []
         }
         presenter.present(controller, animated: true)

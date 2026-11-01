@@ -2,48 +2,80 @@
 //  SessionExportNativeRenderer.swift
 //  ZeApp
 //
-//  [T-session-share-native] Renders the export from the REAL chat views.
-//
-//  The first cut of this feature drew the transcript with CoreText, which
-//  produced a document-looking page: no bubbles, no avatar row, no
-//  "first token / task duration" pills, no collapsed tool steps. That is not
-//  what "copy screenshot" produces, and it is not what users expect from
-//  "share session".
-//
-//  This renderer instead hosts the same `ChatMessageRow` the message list
-//  uses, offscreen, at the requested width / colour scheme, and snapshots it
-//  with `drawHierarchy(afterScreenUpdates:)` — the same technique the
-//  scrolling turn-screenshot uses. Options are applied by filtering the
-//  message's blocks before handing it to the row, so the exported rows stay
-//  pixel-identical to the live UI.
-//
+//  Export-only native layout with a bounded long image and paged vector text.
+//  Vector text-layer separation adapted from OpenMinis 1.15 ChatExportRenderer
+//  License text: docs/licenses/OpenMinis-GPL-3.0.txt
+//  (GPL-3.0): https://github.com/OpenMinis/OpenMinis/blob/
+//  6eda5523a9c14fa8edc4fd9fb72e643fe47f23be/src/ios/Views/Chat/ChatExportRenderer.swift
+//  Ze's MarkdownRenderView uses its own TextKit 1 stack, handled explicitly below.
+//  SwiftUI-only chrome and media remain raster; Markdown, UIKit labels and
+//  TextKit 1 text views are drawn as real PDF glyphs, not an invisible OCR layer.
+
 
 import SwiftUI
 import UIKit
 
+// BEGIN SESSION_SHARE_RENDER_POLICY — extract with `import Foundation` only.
+/// Pure geometry used by the production renderer, not a test-side reimplementation.
+enum SessionShareRenderPolicy {
+    /// One share image up to 16,000 physical pixels at 2x. Larger transcripts
+    /// use PDF instead of silently changing the user's image into an image set.
+    static let sliceHeight: CGFloat = 8_000
+    static let imageScale: CGFloat = 2
+    static let imageBudgetBytes: CGFloat = 128 * 1_024 * 1_024
+    static let maxCanvasWidth: CGFloat = 2_048
+
+    static func fitsImageBudget(width: CGFloat, height: CGFloat) -> Bool {
+        guard width.isFinite, height.isFinite, width > 0, height > 0, height <= sliceHeight else { return false }
+        // Reserve two full surfaces for the renderer/result handoff. Rows are
+        // still hosted one at a time; there is no retained array of row bitmaps.
+        return height * width * imageScale * imageScale * 4 * 2 <= imageBudgetBytes
+    }
+
+    static func pageCount(height: CGFloat, contentHeight: CGFloat) -> Int {
+        guard height.isFinite, contentHeight.isFinite, height > 0, contentHeight > 0 else { return 0 }
+        let count = ceil(height / contentHeight)
+        guard count < CGFloat(Int.max) else { return 0 }
+        return Int(count)
+    }
+
+    static func nextSliceHeight(total: CGFloat, offset: CGFloat) -> CGFloat {
+        guard total.isFinite, offset.isFinite, total > 0, offset >= 0, offset < total else { return 0 }
+        return min(sliceHeight, total - offset)
+    }
+
+    static func overlaps(start: CGFloat, height: CGFloat, pageTop: CGFloat, pageHeight: CGFloat) -> Bool {
+        guard start.isFinite, height.isFinite, pageTop.isFinite, pageHeight.isFinite,
+              height > 0, pageHeight > 0 else { return false }
+        return start < pageTop + pageHeight && start + height > pageTop
+    }
+
+    static func tableCanvasWidth(base: CGFloat, contentWidth: CGFloat, viewportWidth: CGFloat) -> CGFloat {
+        guard base.isFinite, contentWidth.isFinite, viewportWidth.isFinite,
+              base > 0, contentWidth >= 0, viewportWidth > 0 else { return base }
+        return min(maxCanvasWidth, max(base, base + max(0, contentWidth - viewportWidth)))
+    }
+
+    static func tableScale(contentWidth: CGFloat, viewportWidth: CGFloat) -> CGFloat {
+        guard contentWidth.isFinite, viewportWidth.isFinite, contentWidth > 0, viewportWidth > 0 else { return 1 }
+        return min(1, viewportWidth / contentWidth)
+    }
+}
+// END SESSION_SHARE_RENDER_POLICY
+
 @MainActor
 final class SessionExportNativeRenderer {
 
-    /// A single output image is capped so a long session cannot ask for a
-    /// 60 000 px bitmap. Longer transcripts become several images.
-    private static let maxSliceHeight: CGFloat = 8_000
-    /// Sanity cap for one offscreen row. A collapsed tool list keeps rows
-    /// short, so this only guards against pathological text dumps.
     private static let maxRowHeight: CGFloat = 20_000
-
-    /// The appearance switch that folds finished turns, read straight from the
-    /// shared preference so an export cannot drift from the transcript.
-    private static var collapsesFinishedTurns: Bool {
-        (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool)
-            ?? ConsecutiveToolCallsPolicy.defaultEnabled
-    }
+    private static let imageScale = SessionShareRenderPolicy.imageScale
+    private(set) var failureReason: String?
 
     private let messages: [ChatMessage]
     private let scope: SessionExportScope
     private let options: SessionExportOptions
     private let header: SessionExportHeader?
     private let vm: AIChatViewModel
-    private let pageWidth: CGFloat
+    private var pageWidth: CGFloat
 
     private let background: UIColor
     private let scheme: ColorScheme
@@ -63,89 +95,169 @@ final class SessionExportNativeRenderer {
         self.scheme = options.theme == .dark ? .dark : .light
         self.background = options.theme == .dark
             ? UIColor(white: 0.07, alpha: 1)
-            : UIColor.systemBackground
+            : UIColor.white
     }
 
     // MARK: - Public entry points
 
-    /// Long-image output. Returns one or more slices, top to bottom.
+    /// A single bounded long image, painted row-by-row straight into the final
+    /// canvas. No intermediate row bitmaps or full-size stitch copy are retained.
+    /// Beyond the height/memory guard, fail explicitly so the UI can offer PDF.
     func makeImages() -> [UIImage] {
-        let rows = makeRowImages()
-        guard !rows.isEmpty else { return [] }
-        return Self.slice(Self.stitch(rows, background: background, width: pageWidth),
-                          maxHeight: Self.maxSliceHeight,
-                          scale: 2)
+        failureReason = nil
+        guard let layout = prepareLayout() else { return [] }
+        guard SessionShareRenderPolicy.fitsImageBudget(width: pageWidth, height: layout.totalHeight) else {
+            failureReason = "会话超出单张长图的高度或内存上限，请改用 PDF。"
+            return []
+        }
+        return renderImages(layout: layout, height: layout.totalHeight)
     }
 
-    /// A short top-of-document image for the live preview strip.
     func makePreviewImage(maxHeight: CGFloat = 900) -> UIImage? {
-        let rows = Array(makeRowImages(limit: 4).prefix(4))
-        guard !rows.isEmpty else { return nil }
-        let tall = Self.stitch(rows, background: background, width: pageWidth)
-        let height = min(tall.size.height, maxHeight)
-        guard height > 1 else { return nil }
-        let rect = CGRect(x: 0, y: 0,
-                          width: tall.size.width * tall.scale,
-                          height: height * tall.scale)
-        guard let cg = tall.cgImage?.cropping(to: rect) else { return tall }
-        return UIImage(cgImage: cg, scale: tall.scale, orientation: .up)
+        failureReason = nil
+        guard let layout = prepareLayout() else { return nil }
+        return renderImages(layout: layout, height: min(max(1, maxHeight), min(900, layout.totalHeight))).first
     }
 
-    /// Vector PDF: the rendered rows are drawn page by page. Text stays
-    /// raster because the source is a snapshot of the live view hierarchy —
-    /// that is the price of matching the chat UI pixel for pixel.
-    /// Paginated PDF. The rows are already raster (they are snapshots of the
-    /// live view hierarchy), so pages are drawn with `UIGraphicsPDFRenderer`:
-    /// it owns the PDF y-up coordinate flip, which a raw `CGPDFContext` does
-    /// not — drawing straight into `CGContext` produced an upside-down page.
+    /// PDF pages are drawn directly from one hosted row at a time. The glyph
+    /// drawing below is the visible text itself; no raster transcript is made.
     func makePDFData() -> Data? {
-        let rows = makeRowImages()
-        guard !rows.isEmpty else { return nil }
-        let long = Self.stitch(rows, background: background, width: pageWidth)
-
+        failureReason = nil
+        guard let layout = prepareLayout(),
+              let host = OffscreenHost(width: pageWidth, background: background, scheme: scheme)
+        else { return nil }
+        defer { host.tearDown() }
         let pageSize = CGSize(width: pageWidth, height: (pageWidth * 1.4142).rounded())
-        let pageRect = CGRect(origin: .zero, size: pageSize)
-        let scale = long.scale
-        let pixelHeight = long.size.height * scale
-
-        // [T-share-pdf-page-number] Reserve a footer band on every page so the
-        // page number never lands on top of the transcript.
         let footerHeight: CGFloat = 26
         let contentHeight = pageSize.height - footerHeight
-        let pixelPage = contentHeight * scale
-        let pageCount = max(Int((pixelHeight / pixelPage).rounded(.up)), 1)
-
-        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
-        return renderer.pdfData { ctx in
+        let pageCount = SessionShareRenderPolicy.pageCount(height: layout.totalHeight, contentHeight: contentHeight)
+        let format = UIGraphicsPDFRendererFormat()
+        var metadata: [String: Any] = [kCGPDFContextCreator as String: "Ze"]
+        if options.includeHeader, let header { metadata[kCGPDFContextTitle as String] = header.title }
+        format.documentInfo = metadata
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize), format: format)
+        var loadedRow: Int?
+        var failed = false
+        let data = renderer.pdfData { pdf in
             for page in 0..<pageCount {
-                ctx.beginPage()
-                background.setFill()
-                // `UIGraphicsPDFRendererContext` is not a CGContext; the fill
-                // has to go through the context it wraps.
-                ctx.cgContext.fill(pageRect)
-
-                let offset = CGFloat(page) * pixelPage
-                let sliceHeight = min(pixelPage, pixelHeight - offset)
-                if sliceHeight > 0,
-                   let slice = long.cgImage?.cropping(to: CGRect(x: 0,
-                                                                 y: offset,
-                                                                 width: long.size.width * scale,
-                                                                 height: sliceHeight)) {
-                    let image = UIImage(cgImage: slice, scale: scale, orientation: .up)
-                    image.draw(in: CGRect(x: 0, y: 0,
-                                          width: pageWidth,
-                                          height: sliceHeight / scale))
+                autoreleasepool {
+                    pdf.beginPage()
+                    background.setFill()
+                    pdf.cgContext.fill(CGRect(origin: .zero, size: pageSize))
+                    let top = CGFloat(page) * contentHeight
+                    for index in layout.rows.indices where SessionShareRenderPolicy.overlaps(
+                        start: layout.starts[index], height: layout.heights[index], pageTop: top, pageHeight: contentHeight) {
+                        if loadedRow != index {
+                            guard host.layout(layout.rows[index], maxHeight: Self.maxRowHeight) != nil else {
+                                failed = true
+                                continue
+                            }
+                            if options.adaptiveTables { host.fitTables() }
+                            loadedRow = index
+                        }
+                        pdf.cgContext.saveGState()
+                        pdf.cgContext.clip(to: CGRect(x: 0, y: 0, width: pageWidth, height: contentHeight))
+                        pdf.cgContext.translateBy(x: 0, y: layout.starts[index] - top)
+                        drawVector(host.view, in: pdf.cgContext)
+                        pdf.cgContext.restoreGState()
+                    }
+                    drawFooter(page: page + 1, total: pageCount, pageSize: pageSize, footerHeight: footerHeight)
                 }
-
-                drawFooter(page: page + 1,
-                           total: pageCount,
-                           pageSize: pageSize,
-                           footerHeight: footerHeight)
-                // `UIGraphicsPDFRendererContext` has no `endPage()`: the next
-                // `beginPage()` closes the current page and the renderer closes
-                // the last one when the drawing closure returns.
             }
         }
+        if failed {
+            failureReason = "导出布局失败，未生成不完整文件。"
+            return nil
+        }
+        return data
+    }
+
+    private struct Layout {
+        let rows: [AnyView]
+        let heights: [CGFloat]
+        let starts: [CGFloat]
+        let totalHeight: CGFloat
+    }
+
+    /// Measure without retaining any row's bitmap. One host is reused and then
+    /// discarded before output allocation. Over-limit rows fail, never truncate.
+    private func prepareLayout() -> Layout? {
+        var rows = makeRowViews()
+        guard !rows.isEmpty else { failureReason = "没有可分享的内容。"; return nil }
+        if options.adaptiveTables {
+            guard let probe = OffscreenHost(width: pageWidth, background: background, scheme: scheme) else {
+                failureReason = "无法创建导出窗口。"; return nil
+            }
+            var naturalWidth = pageWidth
+            for row in rows {
+                if probe.layout(row, maxHeight: Self.maxRowHeight) != nil {
+                    naturalWidth = max(naturalWidth, probe.requiredTableCanvasWidth)
+                }
+            }
+            probe.tearDown()
+            pageWidth = min(SessionShareRenderPolicy.maxCanvasWidth, naturalWidth)
+            rows = makeRowViews()
+        }
+        guard let host = OffscreenHost(width: pageWidth, background: background, scheme: scheme) else {
+            failureReason = "无法创建导出窗口。"; return nil
+        }
+        defer { host.tearDown() }
+        var heights: [CGFloat] = []
+        var starts: [CGFloat] = []
+        var y: CGFloat = 0
+        for row in rows {
+            guard let height = autoreleasepool(invoking: { host.layout(row, maxHeight: Self.maxRowHeight) }) else {
+                failureReason = "单个内容块过长，无法完整导出；请缩小选择范围。"
+                return nil
+            }
+            starts.append(y)
+            heights.append(height)
+            y += height
+        }
+        return Layout(rows: rows, heights: heights, starts: starts, totalHeight: y)
+    }
+
+    private func renderImages(layout: Layout, height: CGFloat) -> [UIImage] {
+        guard let host = OffscreenHost(width: pageWidth, background: background, scheme: scheme) else {
+            failureReason = "无法创建导出窗口。"; return []
+        }
+        defer { host.tearDown() }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = Self.imageScale
+        format.opaque = true
+        format.preferredRange = .standard
+        var result: [UIImage] = []
+        var top: CGFloat = 0
+        var loadedRow: Int?
+        var failed = false
+        while top < height {
+            let sliceHeight = SessionShareRenderPolicy.nextSliceHeight(total: height, offset: top)
+            let image: UIImage = autoreleasepool {
+                UIGraphicsImageRenderer(size: CGSize(width: pageWidth, height: sliceHeight), format: format).image { output in
+                    background.setFill()
+                    output.fill(CGRect(x: 0, y: 0, width: pageWidth, height: sliceHeight))
+                    for index in layout.rows.indices where SessionShareRenderPolicy.overlaps(
+                        start: layout.starts[index], height: layout.heights[index], pageTop: top, pageHeight: sliceHeight) {
+                        if loadedRow != index {
+                            guard host.layout(layout.rows[index], maxHeight: Self.maxRowHeight) != nil else {
+                                failed = true
+                                continue
+                            }
+                            if options.adaptiveTables { host.fitTables() }
+                            loadedRow = index
+                        }
+                        output.cgContext.saveGState()
+                        output.cgContext.translateBy(x: 0, y: layout.starts[index] - top)
+                        drawVector(host.view, in: output.cgContext)
+                        output.cgContext.restoreGState()
+                    }
+                }
+            }
+            if failed { failureReason = "导出布局失败，未生成不完整文件。"; return [] }
+            result.append(image)
+            top += sliceHeight
+        }
+        return result
     }
 
     /// Rule + "3 / 12" in the reserved band. The number is right-aligned and
@@ -181,44 +293,68 @@ final class SessionExportNativeRenderer {
 
     // MARK: - Row rendering
 
-    private func makeRowImages(limit: Int? = nil) -> [UIImage] {
+    private func makeRowViews() -> [AnyView] {
         var views: [AnyView] = []
 
         if options.includeHeader, let header {
-            views.append(AnyView(SessionExportHeaderCard(header: header, scheme: scheme)))
+            views.append(AnyView(SessionExportHeaderCard(header: header, scheme: scheme)
+                .environment(\.colorScheme, scheme).frame(width: pageWidth)))
         }
 
-        let scoped = messages.filter { scope.contains($0.id) }
-        let picked = limit.map { Array(scoped.prefix($0)) } ?? scoped
-
-        for message in picked {
+        for message in messages where scope.contains(message.id) {
             let copy = exportCopy(of: message)
             guard !copy.blocks.isEmpty || !copy.content.isEmpty else { continue }
 
-            if message.role == .assistant {
-                // The list renders an assistant reply as three separate cells.
-                // Reusing that composition is what keeps the avatar/name row,
-                // the first-token pill, the task duration, the token capsule
-                // and the copy/play/retry bar in the export — exactly what the
-                // copy-screenshot path captures.
-                let bridge = CellStateBridgeV2()
-                bridge.isActiveMessage = false
-                bridge.showUsage = copy.usage != nil
-                bridge.usageContentVisible = true
-                bridge.showsCompletionActions = true
-                // The bar disables these two buttons when their closures are
-                // nil, which would export a greyed-out play/retry pair. The
-                // closures never fire — the turn is rendered offscreen.
-                bridge.onReadAloud = {}
-                bridge.onRetry = {}
-
+            if message.role == .user {
                 views.append(AnyView(
-                    SessionExportAssistantTurn(message: copy, bridge: bridge, maxWidth: 0)
+                    SessionExportUserRow(message: copy)
                         .environmentObject(vm)
                         .environment(\.colorScheme, scheme)
                         .frame(width: pageWidth)
                         .background(Color(background))
                 ))
+                continue
+            }
+
+            if message.role == .assistant {
+                // The existing SessionExportAssistantTurn groups consecutive
+                // tools into a disclosure header. Export each selected block as
+                // its own row so no selected tool silently disappears and one
+                // long reply cannot allocate a transcript-sized backing layer.
+                views.append(AnyView(
+                    SessionExportAssistantHeading(message: copy)
+                        .environment(\.colorScheme, scheme)
+                        .frame(width: pageWidth)
+                ))
+                for block in copy.blocks {
+                    if block.kind == .thinking {
+                        views.append(AnyView(
+                            SessionExportThinkingContent(block: block)
+                                .padding(.horizontal, 16)
+                                .environment(\.colorScheme, scheme)
+                                .frame(width: pageWidth)
+                                .background(Color(background))
+                        ))
+                        continue
+                    }
+                    views.append(AnyView(
+                        AssistantBlockView(block: block, message: copy, isActiveMessage: false,
+                                           highlightedBlockId: .constant(nil), detailBlock: .constant(nil))
+                            .padding(.horizontal, 16)
+                            .environmentObject(vm)
+                            .environment(\.colorScheme, scheme)
+                            .frame(width: pageWidth)
+                            .background(Color(background))
+                    ))
+                }
+                if copy.blocks.isEmpty, !copy.content.isEmpty {
+                    views.append(AnyView(
+                        SelectableMarkdownView(markdown: copy.content)
+                            .padding(.horizontal, 16)
+                            .environment(\.colorScheme, scheme)
+                            .frame(width: pageWidth)
+                    ))
+                }
                 continue
             }
 
@@ -253,25 +389,14 @@ final class SessionExportNativeRenderer {
 
         }
 
-        guard let host = OffscreenHost(width: pageWidth,
-                                       background: background,
-                                       scheme: scheme) else { return [] }
-
-        var images: [UIImage] = []
-        for view in views {
-            if let image = host.snapshot(view, maxHeight: Self.maxRowHeight) {
-                images.append(image)
-            }
-        }
-        host.tearDown()
-        return images
+        return views
     }
 
     /// Builds the copy that gets rendered. Filtering blocks here (instead of
     /// inside the views) keeps the export path free of "screenshot mode"
     /// branches in the live chat UI.
     private func exportCopy(of message: ChatMessage) -> ChatMessage {
-        var filtered = message.blocks.filter { block in
+        let filtered = message.blocks.filter { block in
             switch block.kind {
             case .thinking:
                 return options.includeThinking
@@ -282,16 +407,8 @@ final class SessionExportNativeRenderer {
             }
         }
 
-        // [T-collapse-steps] The export mirrors the transcript: when the
-        // appearance setting folds finished turns, a folded turn exports only
-        // its final reply instead of silently unrolling the whole tool trail.
-        if message.role == .assistant,
-           message.isStepsCollapsed,
-           message.taskDuration != nil,
-           Self.collapsesFinishedTurns,
-           let finalText = filtered.last(where: { $0.kind == .text }) {
-            filtered = [finalText]
-        }
+        // Explicitly selected blocks must not be discarded by the live chat's
+        // finished-turn collapse preference.
 
         let copy = ChatMessage(role: message.role,
                                content: message.content,
@@ -312,47 +429,117 @@ final class SessionExportNativeRenderer {
         return copy
     }
 
-    // MARK: - Stitching
+    // MARK: - Vector text
 
-    private static func stitch(_ images: [UIImage], background: UIColor, width: CGFloat) -> UIImage {
-        let scale: CGFloat = 2
-        let heights = images.map { $0.size.height }
-        let total = heights.reduce(0, +)
-        let size = CGSize(width: width, height: max(total, 1))
+    private func drawVector(_ root: UIView, in context: CGContext) {
+        root.traitCollection.performAsCurrent {
+            var markdown: [MarkdownRenderView] = []
+            var textViews: [UITextView] = []
+            var labels: [UILabel] = []
+            var hidden: [UIView] = []
+            var contents: [(CALayer, Any?)] = []
+            func walk(_ view: UIView) {
+                guard !view.isHidden, view.alpha > 0.01 else { return }
+                if let text = view as? MarkdownRenderView {
+                    markdown.append(text)
+                    // Its backing store contains glyphs and quote bars; preserve
+                    // attachment subviews (tables/code/media) for separate drawing.
+                    contents.append((text.layer, text.layer.contents))
+                    text.layer.contents = nil
+                } else if let text = view as? UITextView, text.textLayoutManager == nil {
+                    textViews.append(text)
+                    for child in text.subviews where NSStringFromClass(type(of: child)).hasPrefix("_") && !child.isHidden {
+                        child.isHidden = true
+                        hidden.append(child)
+                    }
+                } else if let label = view as? UILabel {
+                    labels.append(label)
+                    label.isHidden = true
+                    hidden.append(label)
+                    return
+                }
+                for child in view.subviews { walk(child) }
+            }
+            walk(root)
+            defer {
+                for view in hidden { view.isHidden = false }
+                for (layer, content) in contents { layer.contents = content }
+            }
+            root.layer.render(in: context)
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        format.opaque = true
-        format.preferredRange = .standard
-
-        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
-            background.setFill()
-            ctx.fill(CGRect(origin: .zero, size: size))
-            var y: CGFloat = 0
-            for image in images {
-                image.draw(in: CGRect(x: 0, y: y, width: width, height: image.size.height))
-                y += image.size.height
+            func draw(_ view: UIView, _ body: (CGRect) -> Void) {
+                var clip = view.convert(view.bounds, to: root).intersection(context.boundingBoxOfClipPath)
+                var ancestor = view.superview
+                var opacity = view.alpha
+                while let parent = ancestor {
+                    opacity *= parent.alpha
+                    if parent.clipsToBounds { clip = clip.intersection(parent.convert(parent.bounds, to: root)) }
+                    if parent === root { break }
+                    ancestor = parent.superview
+                }
+                guard !clip.isEmpty else { return }
+                // Three converted points preserve export-only table scaling.
+                let origin = view.convert(.zero, to: root)
+                let x = view.convert(CGPoint(x: 1, y: 0), to: root)
+                let y = view.convert(CGPoint(x: 0, y: 1), to: root)
+                context.saveGState()
+                context.clip(to: clip)
+                context.concatenate(CGAffineTransform(a: x.x - origin.x, b: x.y - origin.y,
+                                                     c: y.x - origin.x, d: y.y - origin.y,
+                                                     tx: origin.x, ty: origin.y))
+                context.setAlpha(opacity)
+                body(view.convert(clip, from: root))
+                context.restoreGState()
+            }
+            for text in markdown {
+                draw(text) { visible in
+                    let manager = text.textLayoutManager
+                    manager.ensureLayout(for: text.textContainer)
+                    let glyphs = manager.glyphRange(forBoundingRect: visible, in: text.textContainer)
+                    manager.drawBackground(forGlyphRange: glyphs, at: .zero)
+                    manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+                }
+            }
+            for text in textViews {
+                draw(text) { visible in
+                    let manager = text.layoutManager
+                    let inset = CGPoint(x: text.textContainerInset.left, y: text.textContainerInset.top)
+                    let glyphs = manager.glyphRange(forBoundingRect: visible.offsetBy(dx: -inset.x, dy: -inset.y), in: text.textContainer)
+                    manager.drawBackground(forGlyphRange: glyphs, at: inset)
+                    manager.drawGlyphs(forGlyphRange: glyphs, at: inset)
+                }
+            }
+            for label in labels {
+                draw(label) { visible in
+                    let rect = label.textRect(forBounds: label.bounds, limitedToNumberOfLines: label.numberOfLines)
+                    guard rect.intersects(visible) else { return }
+                    let paragraph = NSMutableParagraphStyle()
+                    paragraph.alignment = label.textAlignment
+                    paragraph.lineBreakMode = label.lineBreakMode
+                    let attributed = NSMutableAttributedString(string: label.text ?? "", attributes: [
+                        .font: label.font ?? UIFont.systemFont(ofSize: 17),
+                        .foregroundColor: label.textColor ?? UIColor.label, .paragraphStyle: paragraph
+                    ])
+                    if let source = label.attributedText {
+                        source.enumerateAttributes(in: NSRange(location: 0, length: source.length)) { attributes, range, _ in
+                            attributed.addAttributes(attributes, range: range)
+                        }
+                    }
+                    let storage = NSTextStorage(attributedString: attributed)
+                    let manager = NSLayoutManager()
+                    let container = NSTextContainer(size: rect.size)
+                    container.lineFragmentPadding = 0
+                    container.maximumNumberOfLines = label.numberOfLines
+                    container.lineBreakMode = label.lineBreakMode
+                    manager.addTextContainer(container)
+                    storage.addLayoutManager(manager)
+                    manager.ensureLayout(for: container)
+                    let glyphs = manager.glyphRange(forBoundingRect: visible.offsetBy(dx: -rect.minX, dy: -rect.minY), in: container)
+                    manager.drawBackground(forGlyphRange: glyphs, at: rect.origin)
+                    manager.drawGlyphs(forGlyphRange: glyphs, at: rect.origin)
+                }
             }
         }
-    }
-
-    private static func slice(_ image: UIImage, maxHeight: CGFloat, scale: CGFloat) -> [UIImage] {
-        let pixelHeight = image.size.height * image.scale
-        let maxPixel = maxHeight * scale
-        guard pixelHeight > maxPixel, let cg = image.cgImage else { return [image] }
-
-        var slices: [UIImage] = []
-        var offset: CGFloat = 0
-        while offset < pixelHeight {
-            let height = min(maxPixel, pixelHeight - offset)
-            if let crop = cg.cropping(to: CGRect(x: 0, y: offset,
-                                                 width: image.size.width * image.scale,
-                                                 height: height)) {
-                slices.append(UIImage(cgImage: crop, scale: image.scale, orientation: .up))
-            }
-            offset += maxPixel
-        }
-        return slices.isEmpty ? [image] : slices
     }
 }
 
@@ -391,41 +578,177 @@ private final class OffscreenHost {
         self.window = window
     }
 
-    func snapshot(_ view: AnyView, maxHeight: CGFloat) -> UIImage? {
-        host.rootView = view
+    var view: UIView { host.view }
 
-        let measured = host.sizeThatFits(in: CGSize(width: width, height: maxHeight))
-        let height = max(min(ceil(measured.height), maxHeight), 1)
-
-        // The window owns the root view's frame, so it has to be as tall as
-        // the content — a shorter window would clip the row during layout.
+    /// Returns nil instead of silently cropping a row that exceeds the guard.
+    func layout(_ view: AnyView, maxHeight: CGFloat) -> CGFloat? {
+        host.rootView = AnyView(view.id(UUID()))
+        let measured = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+        guard measured.height.isFinite, measured.height > 0, measured.height <= maxHeight else { return nil }
+        let height = ceil(measured.height)
+        // The image output budget alone cannot bound UIKit backing stores. Check
+        // the hosted row too, before giving its window the measured tall frame.
+        let backingScale = max(1, window.screen.scale)
+        guard width * height * backingScale * backingScale * 4 <= 96 * 1_024 * 1_024 else { return nil }
         window.frame = CGRect(x: 0, y: 0, width: width, height: height)
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         CATransaction.flush()
+        return height
+    }
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 2
-        format.opaque = true
-        format.preferredRange = .standard
+    private var tables: [TableScrollView] {
+        var result: [TableScrollView] = []
+        func walk(_ view: UIView) {
+            if let table = view as? TableScrollView { result.append(table) }
+            for child in view.subviews { walk(child) }
+        }
+        walk(host.view)
+        return result
+    }
 
-        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        return UIGraphicsImageRenderer(size: bounds.size, format: format).image { ctx in
-            background.setFill()
-            ctx.fill(bounds)
-            // `drawHierarchy(afterScreenUpdates: true)` only draws for views the
-            // system considers on screen. The host window sits below the app
-            // window, so it produced a blank bitmap — the export and its preview
-            // came out empty. Rendering the layer tree directly does not depend
-            // on window visibility.
-            host.view.layer.render(in: ctx.cgContext)
+    var requiredTableCanvasWidth: CGFloat {
+        tables.reduce(width) { result, table in
+            max(result, SessionShareRenderPolicy.tableCanvasWidth(base: width,
+                contentWidth: table.contentSize.width, viewportWidth: table.bounds.width))
+        }
+    }
+
+    /// Tables wider than the bounded canvas are scaled only inside this disposable
+    /// host. All columns remain visible without changing live-chat attachments.
+    /// The original row height is retained (may leave whitespace below the table).
+    func fitTables() {
+        for table in tables {
+            table.contentOffset = .zero
+            table.showsHorizontalScrollIndicator = false
+            guard table.contentSize.width > table.bounds.width, table.bounds.width > 0 else { continue }
+            let scale = SessionShareRenderPolicy.tableScale(contentWidth: table.contentSize.width,
+                                                           viewportWidth: table.bounds.width)
+            for child in table.subviews where child is UIStackView {
+                let original = child.frame
+                child.transform = CGAffineTransform(scaleX: scale, y: scale)
+                child.frame.origin = CGPoint(x: original.minX * scale, y: original.minY * scale)
+            }
         }
     }
 
     func tearDown() {
         window.isHidden = true
         window.rootViewController = nil
+    }
+}
+
+/// The live ThinkingBlockView deliberately keeps only the last 8,000 characters
+/// in a 300pt scroll viewport and starts a shared hitch monitor. A share must
+/// instead show the complete selected text, without those live-view side effects.
+struct SessionExportThinkingContent: View {
+    let block: AssistantBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("思考", systemImage: "brain")
+                .font(.caption)
+                .foregroundStyle(ChatColors.secondaryText)
+            SessionExportVectorLabel(text: block.content,
+                                     font: .systemFont(ofSize: FontSettings.shared.scaledMessage(14)),
+                                     color: UIColor(ChatColors.secondaryText))
+                .padding(.bottom, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct SessionExportAssistantHeading: View {
+    let message: ChatMessage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                SoulAvatarView(size: 22)
+                let name = SoulStore.cachedMetadata.name
+                SessionExportVectorLabel(text: name.isEmpty ? "Ze" : name,
+                                         font: .preferredFont(forTextStyle: .headline),
+                                         color: UIColor(ChatColors.primaryText))
+                Spacer(minLength: 0)
+            }
+            if let latency = message.firstTokenLatency {
+                Text("首字 \(String(format: "%.1f", latency))秒")
+                    .font(.caption2)
+                    .foregroundStyle(ChatColors.secondaryText)
+            }
+            if let duration = message.taskDuration {
+                AssistantTaskDurationView(duration: duration)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+    }
+}
+
+// MARK: - Vector-compatible user bubble
+
+/// ChatMessageRow's user body is SwiftUI Text (a raster display list). An export
+/// label keeps the same bubble palette/spacing while emitting visible PDF text.
+private struct SessionExportUserRow: View {
+    let message: ChatMessage
+
+    private var text: String {
+        var value = message.content
+        if let start = value.range(of: "<user-attached-files>") {
+            let end = value.range(of: "</user-attached-files>")?.upperBound ?? value.endIndex
+            value = String(value[..<start.lowerBound] + value[end...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
+    }
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 60)
+            VStack(alignment: .trailing, spacing: 6) {
+                if !message.attachments.isEmpty {
+                    UserAttachmentList(attachments: message.attachments)
+                } else if !message.inputAttachments.isEmpty {
+                    QueuedAttachmentPreview(attachments: message.inputAttachments)
+                }
+                if !text.isEmpty {
+                    SessionExportVectorLabel(text: text,
+                                             font: .systemFont(ofSize: FontSettings.shared.scaledMessage(16.5)),
+                                             color: UIColor(ChatColors.userMessageText))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 18).fill(ChatColors.userMessageBubble))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct SessionExportVectorLabel: UIViewRepresentable {
+    let text: String
+    let font: UIFont
+    let color: UIColor
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+        label.text = text
+        label.font = font
+        label.textColor = color
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0 else { return nil }
+        return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 }
 
