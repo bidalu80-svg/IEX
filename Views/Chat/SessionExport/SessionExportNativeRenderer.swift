@@ -479,7 +479,7 @@ final class SessionExportNativeRenderer {
                 }
                 guard !clip.isEmpty else { return }
                 // Three converted points preserve export-only table scaling.
-                let origin = view.convert(CGPoint.zero, to: root)
+                let origin = view.convert(.zero, to: root)
                 let x = view.convert(CGPoint(x: 1, y: 0), to: root)
                 let y = view.convert(CGPoint(x: 0, y: 1), to: root)
                 context.saveGState()
