@@ -1,11 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Adaptive Tables" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Adaptive Tables"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"表格自适应"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"表格自適應"}}}},
-    "Deselect All Below" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Deselect All Below"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"取消选择以下全部"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"取消選取以下全部"}}}},
-    "Preparing preview…" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Preparing preview…"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"正在生成预览…"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"正在產生預覽…"}}}},
-    "Select All Below" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Select All Below"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"选择以下全部"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"選取以下全部"}}}},
-    "Use PDF" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Use PDF"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"改用 PDF"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"改用 PDF"}}}},
     "创建失败：没有可用的当前模型。请先在设置中配置并启用一个支持文本输出的模型。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "创建失败：没有可用的当前模型。请先在设置中配置并启用一个支持文本输出的模型。"}}}} ,
     "当前没有定时任务。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "当前没有定时任务。"}}}} ,
     "操作失败：找不到这个定时任务ID。" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "操作失败：找不到这个定时任务ID。"}}}} ,

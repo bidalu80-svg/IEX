@@ -78,7 +78,7 @@ enum SessionExportTheme: String, CaseIterable, Identifiable {
 /// Everything the share sheet can change. Persisted across presentations
 /// via `SessionExportOptionsStore` so a user who prefers dark + PDF does not
 /// have to re-pick it every time.
-struct SessionExportOptions: Hashable {
+struct SessionExportOptions: Equatable {
     var format: SessionExportFormat = .image
     var width: SessionExportWidth = .phone
     var theme: SessionExportTheme = .light
@@ -88,8 +88,6 @@ struct SessionExportOptions: Hashable {
     var includeThinking: Bool = false
     /// Include the avatar / title / model name / date header.
     var includeHeader: Bool = true
-    /// Widen markdown tables independently of the chosen device width.
-    var adaptiveTables: Bool = false
 }
 
 /// Which messages go into the export.
@@ -400,149 +398,5 @@ enum SessionExportBuilder {
         guard text.count > limit else { return text }
         let head = text.prefix(limit)
         return "\(head)\n…"
-    }
-}
-
-// MARK: - Block selection (presentation-only, never mutates the live chat)
-
-struct SessionShareCell: Identifiable {
-    enum Kind { case user, text, thinking, tool, note, error }
-    struct ID: Hashable {
-        let messageID: UUID
-        let blockID: UUID?
-        let isError: Bool
-    }
-    let id: ID
-    let kind: Kind
-    /// A detached, single-cell message rendered by the existing native rows.
-    let message: ChatMessage
-}
-
-// MARK: - BEGIN SessionShareSelection
-// Foundation-only standalone test boundary.
-/// Range operations use the order of visible cells, never UUID ordering.
-/// Extract through the matching END marker; no app models or UIKit are required.
-enum SessionShareSelection {
-    static func below<ID: Hashable>(_ anchor: ID, ordered: [ID]) -> Set<ID> {
-        guard let index = ordered.firstIndex(of: anchor) else { return [] }
-        return Set(ordered[index...])
-    }
-
-    static func dragging<ID: Hashable>(from anchor: ID, to end: ID,
-                                      ordered: [ID], initial: Set<ID>, selecting: Bool) -> Set<ID> {
-        guard let a = ordered.firstIndex(of: anchor), let b = ordered.firstIndex(of: end) else { return initial }
-        let range = Set(ordered[min(a, b)...max(a, b)])
-        return selecting ? initial.union(range) : initial.subtracting(range)
-    }
-}
-
-// MARK: - END SessionShareSelection
-
-@MainActor
-enum SessionShareSnapshot {
-    /// Freeze once when the picker opens. Streaming updates and disclosure changes
-    /// in the live conversation cannot change the selection or cached export.
-    static func capture(_ messages: [ChatMessage]) -> [ChatMessage] {
-        messages.filter {
-            !$0.isQueued && !$0.isInternalBridge && ($0.role == .user || $0.role == .assistant)
-        }.map {
-            let copy = copyMessage($0, blocks: $0.blocks, includeContent: true, includeError: false)
-            copy.error = $0.error
-            return copy
-        }
-    }
-
-    static func cells(_ messages: [ChatMessage]) -> [SessionShareCell] {
-        var result: [SessionShareCell] = []
-        for message in messages {
-            if message.role == .user || message.blocks.isEmpty {
-                if !message.content.isEmpty || !message.attachments.isEmpty || !message.inputAttachments.isEmpty {
-                    result.append(SessionShareCell(id: .init(messageID: message.id, blockID: nil, isError: false),
-                                                   kind: message.role == .user ? .user : .text,
-                                                   message: copyMessage(message, blocks: [], includeContent: true, includeError: false)))
-                }
-            } else {
-                for block in message.blocks {
-                    let kind: SessionShareCell.Kind
-                    switch block.kind {
-                    case .text: kind = .text
-                    case .thinking: kind = .thinking
-                    case .info: kind = .note
-                    default: kind = .tool
-                    }
-                    result.append(SessionShareCell(id: .init(messageID: message.id, blockID: block.id, isError: false),
-                                                   kind: kind,
-                                                   message: copyMessage(message, blocks: [block], includeContent: false, includeError: false)))
-                }
-            }
-            if let error = message.error, !error.isEmpty {
-                result.append(SessionShareCell(id: .init(messageID: message.id, blockID: nil, isError: true),
-                                               kind: .error,
-                                               message: copyMessage(message, blocks: [], includeContent: false, includeError: true)))
-            }
-        }
-        return result
-    }
-
-    static func selectedMessages(_ messages: [ChatMessage], selection: Set<SessionShareCell.ID>) -> [ChatMessage] {
-        messages.compactMap { message in
-            let selected = selection.filter { $0.messageID == message.id }
-            guard !selected.isEmpty else { return nil }
-            let blocks = message.blocks.filter { block in selected.contains { $0.blockID == block.id } }
-            return copyMessage(message, blocks: blocks,
-                               includeContent: selected.contains { $0.blockID == nil && !$0.isError },
-                               includeError: selected.contains { $0.isError })
-        }
-    }
-
-    private static func copyMessage(_ source: ChatMessage, blocks: [AssistantBlock],
-                                    includeContent: Bool, includeError: Bool) -> ChatMessage {
-        var detachedBlocks = blocks.map(copyBlock)
-        // Native assistant rows render blocks, not ChatMessage.content. Materialize
-        // legacy replies and selected error-only rows rather than exporting blanks.
-        if source.role == .assistant, detachedBlocks.isEmpty, includeContent, !source.content.isEmpty {
-            detachedBlocks.append(AssistantBlock(kind: .text, content: source.content))
-        }
-        if source.role == .assistant, includeError, let error = source.error, !error.isEmpty {
-            detachedBlocks.append(AssistantBlock(kind: .text, content: error))
-        }
-        let copy = ChatMessage(role: source.role, content: includeContent ? source.content : "",
-                               blocks: detachedBlocks, timestamp: source.timestamp)
-        copy.error = nil
-        copy.attachments = source.role == .user && includeContent ? source.attachments : []
-        copy.inputAttachments = source.role == .user && includeContent ? source.inputAttachments : []
-        copy.firstTokenLatency = source.firstTokenLatency
-        copy.taskDuration = source.taskDuration
-        copy.usage = source.usage
-        copy.streamInterruptCount = source.streamInterruptCount
-        copy.isUserTextExpanded = true
-        copy.isStepsCollapsed = false
-        return copy
-    }
-
-    private static func copyBlock(_ source: AssistantBlock) -> AssistantBlock {
-        let content = source.kind == .thinking && source.thinkingContentBuffer.count > source.content.count
-            ? source.thinkingContentBuffer : source.content
-        let copy = AssistantBlock(kind: source.kind, content: content,
-                                  toolStatus: source.toolStatus, toolUseId: source.toolUseId)
-        copy.thinkingContentBuffer = content
-        copy.contentUpdateSeq = source.contentUpdateSeq
-        copy.imageFilePath = source.imageFilePath
-        copy.browserURL = source.browserURL
-        copy.toolSummary = source.toolSummary
-        copy.toolDuration = source.toolDuration
-        copy.toolStartTime = source.toolStartTime
-        copy.wasBackgroundSuspended = source.wasBackgroundSuspended
-        copy.toolInputArgs = source.toolInputArgs
-        copy.questionCard = source.questionCard
-        copy.isQuestionCardExpanded = true
-        copy.streamingFileContent = source.streamingFileContent
-        copy.isThinkingExpanded = true
-        copy.isToolGroupExpanded = true
-        copy.thinkingDuration = source.thinkingDuration
-        copy.thinkingStartTime = source.thinkingStartTime
-        copy.thinkingUserToggled = true
-        // Do not share mutable attributed-string/layout caches across render widths.
-        return copy
     }
 }
