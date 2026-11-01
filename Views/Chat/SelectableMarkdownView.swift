@@ -8,6 +8,19 @@ import UIKit
 private let imgLogger = AppLogger(category: "ZeImage")
 private let attachLogger = AppLogger(category: "AttachDebug")
 
+// MARK: - Selectable Markdown measurement width
+
+/// SwiftUI's unspecified/infinite proposals are valid layout signals but are not
+/// valid integer cache keys or TextKit container widths. Normalize once at the
+/// representable boundary so layout, TextKit and the rounded cache key agree.
+enum SelectableMarkdownMeasurementPolicy {
+    static func finiteWidth(proposed: CGFloat, fallback: CGFloat) -> CGFloat {
+        let safeFallback = fallback.isFinite && fallback > 0 ? fallback : 393
+        guard proposed.isFinite, proposed > 0 else { return safeFallback }
+        return min(max(proposed, 1), 16_384)
+    }
+}
+
 // MARK: - ze:// URL encoding [T-ze-url-fullwidth-pipe-ios]
 
 /// Percent-encode the path of a `ze://` destination that contains raw,
@@ -7317,7 +7330,14 @@ struct SelectableMarkdownView: UIViewRepresentable {
 
     @available(iOS 16.0, *)
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableMarkdownTextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        let width = SelectableMarkdownMeasurementPolicy.finiteWidth(
+            proposed: proposal.width ?? .infinity,
+            fallback: UIScreen.main.bounds.width
+        )
+        // SwiftUI may propose `.infinity` for a child inside a flexible row.
+        // Normalize before the rounded-width cache key below; `Int(.infinity)`
+        // traps the main thread (the session-share picker hit this path).
+        // The same finite width must drive both layout and its integer cache key.
         // Key the size cache on the SwiftUI binding length, not
         // uiView.textStorage.length. Within a single render pass SwiftUI calls
         // sizeThatFits BEFORE updateUIView, so textStorage still reflects the

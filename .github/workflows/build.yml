@@ -40,6 +40,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Test Markdown measurement rejects infinite SwiftUI widths
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          s = Path("Views/Chat/SelectableMarkdownView.swift").read_text()
+          start = s.index("enum SelectableMarkdownMeasurementPolicy {")
+          end = s.index("\n}", start) + 2
+          Path(os.environ["RUNNER_TEMP"], "SelectableMarkdownMeasurementPolicy.swift").write_text("import CoreGraphics\n" + s[start:end])
+          PY
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" "$RUNNER_TEMP/SelectableMarkdownMeasurementPolicy.swift" scripts/SelectableMarkdownMeasurementTests.swift -o "$RUNNER_TEMP/markdown-width-tests"
+          "$RUNNER_TEMP/markdown-width-tests"
+          xcrun swiftc -frontend -parse Views/Chat/SelectableMarkdownView.swift Views/Chat/SessionExport/SessionShareSheet.swift
+
       - name: Test scheduled-task calendar and persistence
         run: |
           set -euo pipefail
