@@ -53,7 +53,7 @@ jobs:
           PY
           xcrun swiftc -target "$(uname -m)-apple-macosx13.0" "$RUNNER_TEMP/SelectableMarkdownMeasurementPolicy.swift" scripts/SelectableMarkdownMeasurementTests.swift -o "$RUNNER_TEMP/markdown-width-tests"
           "$RUNNER_TEMP/markdown-width-tests"
-          xcrun swiftc -frontend -enable-bare-slash-regex -parse Views/Chat/SelectableMarkdownView.swift Views/Chat/SessionExport/SessionShareSheet.swift
+          xcrun swiftc -frontend -parse Views/Chat/SelectableMarkdownView.swift Views/Chat/SessionExport/SessionShareSheet.swift
 
       - name: Test scheduled-task calendar and persistence
         run: |
