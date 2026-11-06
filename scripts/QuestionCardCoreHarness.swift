@@ -11,9 +11,10 @@ import Foundation
         check(!QuestionCardNotificationIdentity.matches(sessionId: "parent", questionIndex: 1, expectedSessionId: "child", expectedIndex: 1), "notification cannot answer another session")
         check(!QuestionCardNotificationIdentity.matches(sessionId: "child", questionIndex: 0, expectedSessionId: "child", expectedIndex: 1), "stale notification question rejected")
         check(!QuestionCardNotificationIdentity.matches(sessionId: "child", questionIndex: nil, expectedSessionId: "child", expectedIndex: 1), "legacy notification without question identity rejected")
-        let rich = #"[{"id":"features","question":"Select features","options":[{"label":"Search","description":"Find notes"},"Export"],"multi_select":true}]"#
+        let rich = #"[{"id":"features","header":"Features","question":"Select features","options":[{"label":"Search","description":"Find notes"},"Export"],"multi_select":true}]"#
         let questions = QuestionCardParser.questions(from: ["questions": rich])
         check(questions.count == 1 && questions[0].multiSelect, "structured multi-select parses")
+        check(questions[0].header == "Features", "structured question header retained")
         check(questions[0].options == ["Search", "Export"], "object and legacy string options both survive")
         check(questions[0].optionDescriptions.first! == "Find notes", "option descriptions retained")
         var draft = QuestionCardDraft(selectedIndices: [1, 0, 1])
@@ -33,6 +34,18 @@ import Foundation
         check(!QuestionCardDraft(delegated: true).isComplete(for: confirm), "confirmation cannot be delegated")
         check(!QuestionCardDraft(otherText: "maybe").isComplete(for: confirm), "confirmation requires an explicit choice")
         check(QuestionCardDraft(selectedIndices: [0]).answer(for: confirm) == "取消", "deny remains a real answer")
+        var decisionState = QuestionCardState(requestId: "decisions", title: "Confirm", questions: [confirm], timeoutAt: .distantFuture)
+        check(decisionState.submit(answer: "取消；补充说明：保留数据", at: 0), "canonical deny with note accepted")
+        check(decisionState.confirmationDecision(at: 0) == "deny", "live confirmation uses explicit decision")
+        decisionState.confirmationDecisions = nil
+        decisionState.answers = ["取消了什么只是普通文本"]
+        check(decisionState.confirmationDecision(at: 0) == nil, "arbitrary localized prefix never becomes denial")
+        decisionState.answers = ["允许"]
+        check(decisionState.confirmationDecision(at: 0) == "allow", "legacy canonical option remains compatible")
+        let wire = "{\"confirmed\":true,\"source\":\"notification\",\"answers\":[{\"id\":\"\(confirm.id)\",\"answer\":\"Denied\",\"decision\":\"deny\"}]}"
+        QuestionCardParser.apply(resultJSON: wire, to: &decisionState)
+        check(decisionState.confirmationDecision(at: 0) == "deny", "structured decision survives translated display answer")
+        check(decisionState.resolutionSource == "notification", "tool result source restored")
         let duplicates: [[String: Any]] = [["id":"same", "question":"A"], ["id":"same", "question":"B"]]
         check(QuestionCardParser.questions(from: ["questions": duplicates]).isEmpty, "duplicate IDs rejected instead of misbinding answers")
         check(QuestionCardParser.questions(from: ["questions": (0..<9).map { "Question \($0)" }.joined(separator:"\n")]).isEmpty, "legacy oversized batch rejected")

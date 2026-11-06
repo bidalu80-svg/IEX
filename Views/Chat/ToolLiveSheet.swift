@@ -509,17 +509,7 @@ struct ToolLiveSheet: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(linkedAgents) { record in
-                            Button {
-                                activeSheet = .subAgent(record.id)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ZeSubAgentBlackCard(record: record, compact: true)
-                                    Label(String(localized: "查看任务、工具记录与操作"), systemImage: "arrow.up.right.square")
-                                        .font(.caption)
-                                        .foregroundStyle(ZeSubAgentTheme.purple)
-                                }
-                            }
-                            .buttonStyle(.plain)
+                            ZeSubAgentDetailContent(recordId: record.id)
                         }
                     }
                     .padding(16)
@@ -603,8 +593,10 @@ struct ToolLiveSheet: View {
             case .linkPreview(let url):
                 ZeLinkPreviewView(url: url, browserPool: browserPool)
             case .subAgent(let id):
-                ZeSubAgentDetailView(recordId: id)
-                    .presentationDetents([.medium, .large])
+                ZeSubAgentTranscriptPage(recordId: id)
+                    .presentationDetents([.fraction(0.35), .medium, .large])
+                    .interactiveDismissDisabled()
+                    .modifier(ZeSubAgentTranscriptScrollStyle())
                     .presentationDragIndicator(.visible)
             }
         }
@@ -641,7 +633,13 @@ struct ToolLiveSheet: View {
 
                 Spacer()
 
-                if isLive, onBrowserTakeover != nil, case .browserTool = block.kind {
+                if let child = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: subAgentCoordinator).first {
+                    Button { activeSheet = .subAgent(child.id) } label: {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 14)).foregroundStyle(ZeSubAgentTheme.purple)
+                            .frame(width: 32, height: 32).background(ChatColors.secondaryBg).clipShape(Circle())
+                    }.accessibilityLabel("打开子代理对话")
+                } else if isLive, onBrowserTakeover != nil, case .browserTool = block.kind {
                     Button {
                         onBrowserTakeover?()
                         activeSheet = .takeoverBrowser
@@ -2227,25 +2225,7 @@ private struct ToolPreviewThumbnail: View {
     var body: some View {
         Group {
             if let active = linkedAgents.first(where: { $0.status.isActive }) ?? linkedAgents.first {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("✦ " + active.nickname)
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(ZeSubAgentTheme.purpleBright)
-                    ForEach(Array((active.steps ?? []).suffix(2))) { step in
-                        Text("› " + step.title)
-                            .font(.system(size: 6))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(2)
-                    }
-                    if active.steps?.isEmpty != false {
-                        Text(active.status.isActive ? "正在执行子代理任务…" : active.status.displayName)
-                            .font(.system(size: 6))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                }
-                .frame(width: 100, height: 65, alignment: .topLeading)
-                .padding(4)
-                .background(ZeSubAgentTheme.blackCard)
+                ZeSubAgentThumbnail(record: active)
             } else {
             // If we have a persisted snapshot, prefer using it for the thumbnail
             if let snapshot, let snapshotImage = loadSnapshotImage(snapshot) {

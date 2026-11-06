@@ -16,7 +16,12 @@ private struct SubAgentScreenshot: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("子代理任务").font(.headline)
-            ZeSubAgentBlackCard(record: record, compact: true)
+            ZeSubAgentCompactCard(record: record, open: {}, stop: {}, resume: {})
+            ZeSubAgentThumbnail(record: record)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    if record.status.isActive { ZeSubAgentAnimatedRim(cornerRadius: 8) }
+                }
             ZeSubAgentRunStats(record: record)
             ZeSubAgentToolHistory(record: record)
             Spacer(minLength: 0)
@@ -61,7 +66,7 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
                 try await capture(window: window, scheme: scheme, status: .running, animationDisabledFixture: true)
             }
             try writeResult(["success": true, "renderer": "UIHostingController + visible UIWindow.drawHierarchy", "screenshots": evidence,
-                             "scope": "Production cards, stats, history, narrow layout and Core Animation lifecycle; static-rim uses a compositor animation-disabled fixture, not OS Reduce Motion; no device FPS assertion"])
+                             "scope": "Production compact card, thumbnail, stats, history, narrow layout and Core Animation lifecycle; static-rim uses a compositor animation-disabled fixture, not OS Reduce Motion; no device FPS assertion"])
         } catch {
             try? writeResult(["success": false, "error": error.localizedDescription, "screenshots": evidence])
         }

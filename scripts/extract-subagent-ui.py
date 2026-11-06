@@ -20,7 +20,7 @@ parts = [
     "import SwiftUI\nimport UIKit\nimport Foundation\n",
     section(models, "enum ZeSubAgentStatus:", "/// Owns a bounded child-agent tree"),
     section(views, "enum ZeSubAgentTheme {", "/// Compact, native iOS dock"),
-    section(views, "struct ZeSubAgentAnimatedRim:", "private struct ZeSubAgentRow:"),
+    section(views, "enum ZeSubAgentPresentation {", "struct ZeSubAgentDetailView:"),
     section(views, "private struct ZeSubAgentSection<", "private struct ZeSubAgentCollapsibleText:"),
     section(views, "private struct ZeSubAgentRunStats:", "private struct ZeSubAgentImagePreview:"),
     (root / "scripts/SubAgentUIHarness.swift").read_text(encoding="utf-8"),

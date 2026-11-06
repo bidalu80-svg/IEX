@@ -160,45 +160,30 @@ private struct ZeSubAgentInlineRow: View {
 
     var body: some View {
         let records = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: coordinator)
-        let running = records.filter { $0.status.isActive }.count
         let record = records.first(where: { $0.status.isActive }) ?? records.first
-        Button {
-            detailBlock = block
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: ZeSubAgentTheme.iconName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(ZeSubAgentTheme.purple)
-                Text(records.count > 1 ? "\(records.count) 个子代理" : record?.nickname ?? block.toolDescription)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                if let step = record?.steps?.last {
-                    Text(step.title)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+        if let record {
+            ZeSubAgentCompactCard(record: record, open: { detailBlock = block },
+                                  stop: { coordinator.cancelRunGroup(id: record.id) },
+                                  resume: { _ = coordinator.resume(id: record.id) })
+        } else {
+            Button { detailBlock = block } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: ZeSubAgentTheme.glyph)
+                        .font(.system(size: 13)).foregroundStyle(ZeSubAgentTheme.purple)
+                        .frame(width: 34, height: 34)
+                        .background(ZeSubAgentTheme.purple.opacity(0.15), in: Circle())
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(block.toolDescription).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(fallbackStatus).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                 }
-                Spacer(minLength: 0)
-                if running > 0 {
-                    ProgressView().controlSize(.mini)
-                }
-                Text(records.count > 1 ? "\(running) 运行中" : record?.status.displayName ?? fallbackStatus)
-                    .font(.system(size: 11))
-                    .foregroundStyle(record?.status == .failed ? Color.orange : ZeSubAgentTheme.purple)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 10)
-            // Match the collection view's tool-row estimate. Streaming child
-            // activity changes labels without changing the row's height.
-            .frame(height: 36)
-            .background(ZeSubAgentTheme.purpleSoft, in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(Rectangle())
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(ZeSubAgentTheme.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(ZeSubAgentTheme.purple.opacity(0.35), lineWidth: 0.8))
+            }.buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
     }
 
     private var fallbackStatus: String {
@@ -873,23 +858,155 @@ struct QuestionCardProgressBar: View {
     }
 }
 
+/// This card uses the same localized labels across chat and tool detail.
+private func QuestionAskLocalized(_ key: String) -> String {
+    guard Locale.current.languageCode == "zh" else { return NSLocalizedString(key, comment: "") }
+    let labels: [String: String] = [
+        "Needs your answer": "需要你的回答", "Needs your approval": "需要你的确认",
+        "High-risk action": "高风险操作", "Recommended": "推荐", "Other…": "其他…",
+        "Type your answer…": "输入你的回答…", "You decide": "由你决定",
+        "Add a note": "添加备注", "Cancel with a reason / do this instead": "取消并说明原因／改为这样做",
+        "Previous": "上一题", "Next": "下一题", "Submit": "提交", "Cancel": "取消", "Allow": "允许",
+        "Show less": "收起", "Show more": "展开更多", "Answered": "已回答", "Skipped": "已跳过",
+        "Cancelled": "已取消", "Timed out": "已超时", "Allowed once": "已允许",
+        "Your answer": "你的回答", "Reason / do this instead": "原因／替代方案",
+        "Stop dictation": "停止听写", "Dictate": "听写", "Done": "完成", "Edit": "编辑",
+        "Time left": "剩余时间", "option": "选项"
+    ]
+    return labels[key] ?? NSLocalizedString(key, comment: "")
+}
+
+struct QuestionAskTypography: Equatable {
+    /// Chat body size at the default scale (ChatMessageViews / markdown).
+    static let bodyReference: CGFloat = 16.5
+    /// Minimum height of every tappable button on the card.
+    static let minTapHeight: CGFloat = 44
+
+    /// The chat body size the card derives from (already scaled).
+    let body: CGFloat
+
+    /// Rounded to half points so a scale change cannot produce 16.005-style
+    /// sizes that re-measure without visibly changing.
+    private func size(_ ratio: CGFloat, floor: CGFloat) -> CGFloat {
+        max(floor, (body * ratio * 2).rounded() / 2)
+    }
+    var question: CGFloat { size(1.0, floor: 13) }
+    var optionTitle: CGFloat { size(0.97, floor: 13) }
+    var optionDetail: CGFloat { size(0.82, floor: 12) }
+    /// Note / cancel-reason rows, impact line, the confirm command.
+    var secondary: CGFloat { size(0.88, floor: 12.5) }
+    var title: CGFloat { size(0.91, floor: 13) }
+    /// Countdown, progress, timeout hint, status lines.
+    var meta: CGFloat { size(0.76, floor: 11) }
+    /// Header tag and "Recommended" badges.
+    var chip: CGFloat { size(0.66, floor: 10) }
+    var button: CGFloat { size(0.97, floor: 14) }
+    /// Radio / checkbox glyphs.
+    var icon: CGFloat { size(1.03, floor: 15) }
+    var resolvedTopic: CGFloat { size(0.88, floor: 13) }
+    var resolvedDetail: CGFloat { size(0.79, floor: 12) }
+    /// [T-user-ask-thumbnail] The mini preview tile above the composer is a
+    /// fixed 100x65pt picture, so its text follows the setting only inside a
+    /// narrow band that still fits the tile: 7 / 5.5 at the default step.
+    var thumbTitle: CGFloat { min(8, size(0.42, floor: 6)) }
+    var thumbLine: CGFloat { min(6.5, size(0.34, floor: 5)) }
+}
+// END QuestionAskTypography
+
+extension QuestionAskTypography {
+    /// The current chat body size (live: views observe FontSettings).
+    @MainActor static var current: QuestionAskTypography {
+        QuestionAskTypography(body: FontSettings.shared.scaledMessage(bodyReference))
+    }
+}
+
+enum QuestionPendingLayoutCache {
+    private static var bodyHeights: [String: CGFloat] = [:]
+    private static var expanded: Set<String> = []
+    /// A pending ask has a handful of questions; this only bounds a long
+    /// session's leftovers.
+    private static let limit = 256
+
+    static func key(_ requestId: String, _ index: Int) -> String { "\(requestId)#\(index)" }
+
+    static func bodyHeight(_ key: String) -> CGFloat { bodyHeights[key] ?? 0 }
+    static func setBodyHeight(_ height: CGFloat, _ key: String) {
+        if bodyHeights.count >= limit { bodyHeights.removeAll() }
+        bodyHeights[key] = height
+    }
+
+    static func isExpanded(_ key: String) -> Bool { expanded.contains(key) }
+    static func setExpanded(_ value: Bool, _ key: String) {
+        if expanded.count >= limit { expanded.removeAll() }
+        if value { expanded.insert(key) } else { expanded.remove(key) }
+    }
+}
+// END QuestionPendingLayoutCache
+
+
+private enum QuestionAskType { case options, confirm }
+private enum QuestionAskRisk { case normal, high }
+private struct QuestionAskOption { let label: String; let description: String? }
+private struct QuestionAskQuestion {
+    let raw: QuestionCardQuestion
+    init(_ raw: QuestionCardQuestion) { self.raw = raw }
+    var type: QuestionAskType { raw.isConfirmation ? .confirm : .options }
+    var question: String { raw.prompt }
+    var header: String? { raw.header }
+    var options: [QuestionAskOption]? {
+        raw.options.enumerated().map { index, label in
+            QuestionAskOption(label: label, description: raw.optionDescriptions.indices.contains(index) ? raw.optionDescriptions[index] : nil)
+        }
+    }
+    var multiSelect: Bool { raw.multiSelect }
+    var impact: String? { raw.impact }
+    var risk: QuestionAskRisk { raw.risk == "high" ? .high : .normal }
+    var isOpenEnded: Bool { !raw.isConfirmation && raw.options.isEmpty }
+}
+private struct QuestionAskAnswer {
+    var selected: [Int] = []
+    var otherText: String?
+    var note: String?
+    var delegated = false
+    init() {}
+    init(_ draft: QuestionCardDraft) {
+        selected = draft.selectedIndices; otherText = draft.otherText
+        note = draft.note; delegated = draft.delegated
+    }
+    var draft: QuestionCardDraft {
+        QuestionCardDraft(selectedIndices: selected, otherText: otherText ?? "", note: note ?? "", delegated: delegated)
+    }
+    func isComplete(for question: QuestionAskQuestion) -> Bool { draft.isComplete(for: question.raw) }
+}
+
 @MainActor
 private struct QuestionCardView: View {
     @ObservedObject var block: AssistantBlock
-    @ObservedObject private var fontSettings = FontSettings.shared
     @State private var draft = QuestionCardDraft()
     @State private var requestIsLive = true
     @State private var isSubmitting = false
-    @State private var inputKind: QuestionInputKind?
-    @State private var contentHeight: CGFloat = 180
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private var coordinator: QuestionCardCoordinator { .shared }
 
     var body: some View {
         Group {
             if let card = block.questionCard {
-                cardContainer(card)
+                if card.status == .pending {
+                    QuestionPendingCard(ask: card, blockId: block.id, draft: $draft,
+                        onDraft: { value in draft = value; saveDraft() },
+                        onSubmit: { submitCurrentAnswer() },
+                        onConfirm: { confirmChoice($0) },
+                        onPrevious: {
+                            saveDraft()
+                            if coordinator.navigate(requestId: card.requestId, index: card.currentIndex - 1) {
+                                synchronizeState(requestId: card.requestId)
+                            }
+                        }, onInput: { QuestionInputPresenter.present(kind: $0, card: card) })
+                        .disabled(!requestIsLive)
+                } else {
+                    QuestionResolvedCard(block: block, card: card, onToggle: {
+                        setExpanded(!block.isQuestionCardExpanded, haptic: true)
+                    })
+                }
             }
         }
         .task(id: block.questionCard?.requestId) {
@@ -897,117 +1014,22 @@ private struct QuestionCardView: View {
             guard let card = block.questionCard else { return }
             await monitorLiveness(card)
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ZeQuestionDraftChanged"))) { event in
+            guard event.object as? String == block.questionCard?.requestId else { return }
+            restoreDraft()
+        }
         .onChange(of: block.questionCard?.currentIndex) { _ in
-            inputKind = nil
             restoreDraft()
         }
         .onChange(of: block.questionCard) { newValue in
             guard let newValue else { return }
             if newValue.status != .pending {
-                inputKind = nil
-                // A refreshed cell may hold a different block from the coordinator.
-                // Resolve its local expansion state as well.
-                setExpanded(false, haptic: false)
+                    setExpanded(false, haptic: false)
             } else if coordinator.isPending(requestId: newValue.requestId) {
                 requestIsLive = true
             }
         }
-        .sheet(item: $inputKind) { kind in
-            if let card = block.questionCard, let question = card.currentQuestion {
-                QuestionAnswerInputSheet(
-                    title: kind == .answer ? "你的回答" : "补充说明",
-                    question: question.prompt,
-                    initialText: kind == .answer ? draft.otherText : draft.note,
-                    onChange: { value in updateText(value, kind: kind, requestId: card.requestId, questionIndex: card.currentIndex) }
-                )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-            }
-        }
     }
-
-    private func cardContainer(_ card: QuestionCardState) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            cardHeader(card)
-            if block.isQuestionCardExpanded {
-                if card.status == .pending {
-                    pendingContent(card)
-                } else {
-                    resolvedContent(card)
-                        .padding(.top, 12)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(cardTint(card).opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius: QuestionCardTheme.radius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: QuestionCardTheme.radius, style: .continuous)
-                .strokeBorder(cardTint(card).opacity(0.22), lineWidth: 0.8)
-        }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.20), value: block.isQuestionCardExpanded)
-    }
-
-    private func cardTint(_ card: QuestionCardState) -> Color {
-        guard let question = card.currentQuestion, question.isConfirmation, card.status == .pending else { return QuestionCardTheme.accent }
-        return question.risk == "high" ? .red : .orange
-    }
-
-    private func cardHeader(_ card: QuestionCardState) -> some View {
-        Button {
-            setExpanded(!block.isQuestionCardExpanded, haptic: true)
-        } label: {
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: card.status == .pending ? "questionmark.circle" : card.status.iconName)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(card.status == .pending ? cardTint(card) : card.status.tint)
-                    .frame(width: 20, height: 22)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(card.status == .pending && block.isQuestionCardExpanded ? (card.currentQuestion?.isConfirmation == true ? "需要你的确认" : "需要你的回答") : card.displayQuestion)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(QuestionCardTheme.primaryText)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if card.status == .pending && requestIsLive && card.timeoutAt > Date() {
-                            Text(timerInterval: Date()...card.timeoutAt, countsDown: true)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(QuestionCardTheme.secondaryText)
-                                .fixedSize()
-                        }
-                    }
-                    Text(headerSubtitle(card))
-                        .font(.caption)
-                        .foregroundStyle(card.status == .pending ? QuestionCardTheme.secondaryText : card.status.tint)
-                        .lineLimit(1)
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .rotationEffect(.degrees(block.isQuestionCardExpanded ? 180 : 0))
-                    .foregroundStyle(QuestionCardTheme.secondaryText)
-                    .frame(width: 22, height: 22)
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(card.displayQuestion))
-        .accessibilityValue(Text(headerSubtitle(card)))
-        .accessibilityHint(Text(block.isQuestionCardExpanded ? "收起问答卡片" : "展开问答卡片"))
-    }
-
-    private func headerSubtitle(_ card: QuestionCardState) -> String {
-        if card.status == .pending {
-            return requestIsLive ? "\(card.progressText) · \(card.statusLabel)" : String(localized: "This question has expired.")
-        }
-        if card.questions.count > 1 {
-            return "\(card.statusLabel) · \(card.answeredCount)/\(card.questions.count)"
-        }
-        return card.answerPreview.map { "\(card.statusLabel) · \($0)" } ?? card.statusLabel
-    }
-
     private func setExpanded(_ expanded: Bool, haptic: Bool) {
         guard block.isQuestionCardExpanded != expanded else { return }
         if haptic { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
@@ -1023,190 +1045,6 @@ private struct QuestionCardView: View {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .questionCardToggled, object: id)
         }
-    }
-
-    private func pendingContent(_ card: QuestionCardState) -> some View {
-        VStack(spacing: 10) {
-            if card.questions.count > 1 { QuestionCardProgressBar(card: card) }
-            if let question = card.currentQuestion {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(question.prompt)
-                            .font(.system(size: fontSettings.scaledMessage(16.5)))
-                            .foregroundStyle(QuestionCardTheme.primaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 8)
-                        if question.multiSelect && !question.options.isEmpty {
-                            Text("可选择多项")
-                                .font(.caption)
-                                .foregroundStyle(QuestionCardTheme.secondaryText)
-                        }
-                        if question.isConfirmation {
-                            if let impact = question.impact, !impact.isEmpty {
-                                Label(impact, systemImage: "exclamationmark.triangle")
-                                    .font(.footnote)
-                                    .foregroundStyle(cardTint(card))
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .padding(.bottom, 8)
-                            }
-                        } else {
-                            optionsList(question)
-                            otherAnswerRow(question)
-                        }
-                        if !question.isConfirmation && !question.options.isEmpty {
-                            choiceRow(icon: draft.delegated ? "checkmark.circle.fill" : "circle",
-                                      title: "由你决定", selected: draft.delegated) {
-                                draft.selectedIndices = []
-                                draft.otherText = ""
-                                draft.delegated.toggle()
-                                saveDraft()
-                            }
-                        }
-                        Button { inputKind = .note } label: {
-                            Label(draft.note.isEmpty ? (question.isConfirmation ? "补充原因或替代方案" : "添加补充说明") : draft.note,
-                                  systemImage: draft.note.isEmpty ? "plus" : "note.text")
-                                .font(.footnote)
-                                .foregroundStyle(QuestionCardTheme.secondaryText)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(GeometryReader { proxy in
-                        Color.clear.preference(key: QuestionBodyHeightKey.self, value: proxy.size.height)
-                    })
-                }
-                .frame(height: min(max(contentHeight, 44), UIScreen.main.bounds.height * 0.45))
-                .onPreferenceChange(QuestionBodyHeightKey.self) { height in
-                    guard height > 0, abs(height - contentHeight) > 1 else { return }
-                    contentHeight = height
-                    notifyLayout()
-                }
-                .disabled(!requestIsLive)
-                .opacity(requestIsLive ? 1 : 0.65)
-                if requestIsLive {
-                    actionBar(card, question: question)
-                } else {
-                    Text("这次提问已结束。已填写的内容保留在卡片中，尚未提交的内容不会作为确认结果。")
-                        .font(.footnote)
-                        .foregroundStyle(QuestionCardTheme.warning)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .padding(.top, 10)
-    }
-
-    private func optionsList(_ question: QuestionCardQuestion) -> some View {
-        ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
-            let selected = draft.selectedIndices.contains(index) && !draft.delegated
-            choiceRow(icon: question.multiSelect
-                      ? (selected ? "checkmark.square.fill" : "square")
-                      : (selected ? "largecircle.fill.circle" : "circle"),
-                      title: option, selected: selected,
-                      detail: question.optionDescriptions.indices.contains(index) ? question.optionDescriptions[index] : nil) {
-                chooseOption(option, index: index)
-            }
-        }
-    }
-
-    private func choiceRow(icon: String, title: String, selected: Bool, detail: String? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 17))
-                    .foregroundStyle(selected ? QuestionCardTheme.accent : QuestionCardTheme.secondaryText)
-                    .frame(width: 21)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: fontSettings.scaledMessage(16), weight: selected ? .semibold : .regular))
-                        .foregroundStyle(QuestionCardTheme.primaryText)
-                    if let detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(size: fontSettings.scaledMessage(13)))
-                            .foregroundStyle(QuestionCardTheme.secondaryText)
-                    }
-                }
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.vertical, 8)
-            .frame(minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
-    }
-
-    private func otherAnswerRow(_ question: QuestionCardQuestion) -> some View {
-        choiceRow(icon: draft.otherText.isEmpty ? "text.cursor" : "text.bubble.fill",
-                  title: draft.otherText.isEmpty ? (question.options.isEmpty ? "输入你的回答…" : "其他…") : draft.otherText,
-                  selected: !draft.otherText.isEmpty && !draft.delegated) {
-            inputKind = .answer
-        }
-    }
-
-    private func chooseOption(_ option: String, index: Int) {
-        guard requestIsLive, !isSubmitting, let question = block.questionCard?.currentQuestion else { return }
-        draft.delegated = false
-        if question.multiSelect {
-            if draft.selectedIndices.contains(index) { draft.selectedIndices.removeAll { $0 == index } }
-            else { draft.selectedIndices.append(index) }
-        } else {
-            draft.selectedIndices = [index]
-            draft.otherText = ""
-        }
-        UISelectionFeedbackGenerator().selectionChanged()
-        saveDraft()
-        // Selection is a draft. Only Next / Submit sends it to the agent.
-    }
-
-    private func actionBar(_ card: QuestionCardState, question: QuestionCardQuestion) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 10) {
-                if card.currentIndex > 0 {
-                    Button("上一题") {
-                        saveDraft()
-                        guard coordinator.navigate(requestId: card.requestId, index: card.currentIndex - 1) else { return }
-                        synchronizeState(requestId: card.requestId)
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                if question.isConfirmation {
-                    Button("取消") { confirmChoice(0) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.gray)
-                        .frame(minHeight: 44)
-                    Button("允许") { confirmChoice(1) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(cardTint(card))
-                        .frame(minHeight: 44)
-                } else {
-                    Button(isFinalAnswer(card) ? "提交" : "下一题") { submitCurrentAnswer() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(QuestionCardTheme.accent)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .disabled(!draft.isComplete(for: question) || isSubmitting)
-                }
-            }
-            Button("暂不回答") {
-                coordinator.submitUnconfirmed(requestId: card.requestId)
-                synchronizeState(requestId: card.requestId)
-            }
-            .font(.footnote)
-            .foregroundStyle(QuestionCardTheme.secondaryText)
-            .frame(minHeight: 44)
-            .buttonStyle(.plain)
-        }
-    }
-
-    private func isFinalAnswer(_ card: QuestionCardState) -> Bool {
-        card.currentIndex + 1 >= card.questions.count
     }
 
     private func confirmChoice(_ index: Int) {
@@ -1255,19 +1093,6 @@ private struct QuestionCardView: View {
         coordinator.saveDraft(requestId: card.requestId, questionIndex: card.currentIndex, draft: draft)
     }
 
-    private func updateText(_ text: String, kind: QuestionInputKind, requestId: String, questionIndex: Int) {
-        // A sheet can close after a notification advanced the card. Its stale
-        // draft belongs only to the question it opened for.
-        guard let card = block.questionCard, card.status == .pending,
-              card.requestId == requestId, card.currentIndex == questionIndex else { return }
-        if kind == .answer {
-            draft.otherText = text
-            draft.delegated = false
-            if block.questionCard?.currentQuestion?.multiSelect != true { draft.selectedIndices = [] }
-        } else { draft.note = text }
-        saveDraft()
-    }
-
     private func monitorLiveness(_ card: QuestionCardState) async {
         guard card.status == .pending else { return }
         for delay in [200_000_000, 600_000_000, 1_500_000_000] as [UInt64] {
@@ -1275,6 +1100,7 @@ private struct QuestionCardView: View {
             requestIsLive = coordinator.isPending(requestId: card.requestId)
             if requestIsLive { break }
         }
+        if !requestIsLive { synchronizeState(requestId: card.requestId) }
         while requestIsLive && !Task.isCancelled {
             do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
             guard block.questionCard?.status == .pending else { return }
@@ -1282,48 +1108,489 @@ private struct QuestionCardView: View {
             if let latest = coordinator.currentState(requestId: card.requestId), latest != block.questionCard {
                 synchronizeState(requestId: card.requestId)
             }
-        }
-    }
-
-    private func resolvedContent(_ card: QuestionCardState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if card.status == .unconfirmed {
-                Text("未提交的选择不会作为确认结果。")
-                    .font(.footnote)
-                    .foregroundStyle(QuestionCardTheme.warning)
+            if let index = block.questionCard?.currentIndex {
+                let latestDraft = coordinator.draft(requestId: card.requestId, questionIndex: index)
+                if latestDraft != draft { draft = latestDraft }
             }
-            answerSheet(card)
         }
     }
 
-    private func answerSheet(_ card: QuestionCardState) -> some View {
+}
+@MainActor
+private struct QuestionPendingCard: View {
+    let ask: QuestionCardState
+    @Binding var draft: QuestionCardDraft
+    let onDraft: (QuestionCardDraft) -> Void
+    let onSubmit: () -> Void
+    let onConfirm: (Int) -> Void
+    let onPrevious: () -> Void
+    let onInput: (QuestionInputKind) -> Void
+    let blockId: UUID
+    @ObservedObject private var fonts = FontSettings.shared
+    private var t: QuestionAskTypography { .current }
+    @State private var bodyHeight: CGFloat
+    @State private var questionExpanded: Bool
+    /// [T-user-ask-expand-measured] Heights of the question laid out with the
+    /// 3-line limit and without it (hidden probes, see `questionText`). The
+    /// Show more / Show less toggle exists only when the full text is taller,
+    /// i.e. when the collapsed text really is truncated.
+    @State private var questionClampedHeight: CGFloat = 0
+    @State private var questionFullHeight: CGFloat = 0
+
+    init(ask: QuestionCardState, blockId: UUID, draft: Binding<QuestionCardDraft>,
+         onDraft: @escaping (QuestionCardDraft) -> Void, onSubmit: @escaping () -> Void,
+         onConfirm: @escaping (Int) -> Void, onPrevious: @escaping () -> Void,
+         onInput: @escaping (QuestionInputKind) -> Void) {
+        _draft = draft
+        self.onDraft = onDraft; self.onSubmit = onSubmit; self.onConfirm = onConfirm
+        self.onPrevious = onPrevious; self.onInput = onInput
+        self.ask = ask
+        self.blockId = blockId
+        // [T-user-ask-pending-reuse] Start from what this question last
+        // measured, so a recycled cell does not render a 1pt body first.
+        let key = QuestionPendingLayoutCache.key(ask.requestId, min(ask.currentIndex, ask.questions.count - 1))
+        _bodyHeight = State(initialValue: QuestionPendingLayoutCache.bodyHeight(key))
+        _questionExpanded = State(initialValue: QuestionPendingLayoutCache.isExpanded(key))
+    }
+
+    private var layoutKey: String { QuestionPendingLayoutCache.key(ask.requestId, index) }
+
+    private var index: Int { min(ask.currentIndex, ask.questions.count - 1) }
+    private var q: QuestionAskQuestion { QuestionAskQuestion(ask.questions[index]) }
+    private var answer: QuestionAskAnswer { QuestionAskAnswer(draft) }
+    private var tint: Color { q.type == .confirm ? (q.risk == .high ? .red : .orange) : .accentColor }
+    /// ~50% of the screen for the whole card; header and action bar are
+    /// outside the scroll area, so the body gets that minus ~120pt.
+    private var bodyCap: CGFloat { max(160, UIScreen.main.bounds.height * 0.5 - 120) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            ScrollView(.vertical, showsIndicators: bodyHeight > bodyCap) {
+                content
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: QuestionBodyHeightKey.self, value: g.size.height)
+                    })
+            }
+            .frame(height: min(max(bodyHeight, 1), bodyCap))
+            .onPreferenceChange(QuestionBodyHeightKey.self) { h in
+                guard abs(h - bodyHeight) > 0.5 else { return }
+                bodyHeight = h
+                QuestionPendingLayoutCache.setBodyHeight(h, layoutKey)
+                DispatchQueue.main.async { NotificationCenter.default.post(name: .questionCardToggled, object: blockId) }
+            }
+            actionBar
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(tint.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint.opacity(0.45), lineWidth: 1))
+        .onChange(of: ask.currentIndex) { _ in
+            // The new question starts from its own remembered state (collapsed
+            // unless the user opened it earlier in this card).
+            questionExpanded = QuestionPendingLayoutCache.isExpanded(layoutKey)
+            bodyHeight = QuestionPendingLayoutCache.bodyHeight(layoutKey)
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .questionCardToggled, object: blockId) }
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle().fill(tint.opacity(0.15)).frame(width: 28, height: 28)
+                Image(systemName: q.type == .confirm ? "exclamationmark.shield.fill" : "questionmark.bubble.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            Text(title)
+                .font(.system(size: t.title, weight: .semibold))
+                .foregroundStyle(ChatColors.primaryText)
+                .lineLimit(1)
+            if let h = q.header, !h.isEmpty {
+                Text(h)
+                    .font(.system(size: t.chip, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(tint.opacity(0.15), in: Capsule())
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if ask.questions.count > 1 {
+                Text("\(index + 1)/\(ask.questions.count)")
+                    .font(.system(size: t.meta, weight: .medium).monospacedDigit())
+                    .foregroundStyle(ChatColors.secondaryText)
+            }
+            if ask.timeoutAt > Date() {
+                let expires = ask.timeoutAt
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let left = max(0, Int(expires.timeIntervalSince(ctx.date)))
+                    Label(String(format: "%d:%02d", left / 60, left % 60), systemImage: "timer")
+                        .font(.system(size: t.meta, weight: .medium).monospacedDigit())
+                        .foregroundStyle(left <= 30 ? Color.orange : ChatColors.secondaryText)
+                        .accessibilityLabel(left <= 30 ? QuestionAskLocalized("\(left) seconds left") : QuestionAskLocalized("Time left"))
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        switch q.type {
+        case .options: return QuestionAskLocalized("Needs your answer")
+        case .confirm: return q.risk == .high ? QuestionAskLocalized("High-risk action") : QuestionAskLocalized("Needs your approval")
+        }
+    }
+
+    // MARK: Body
+
+    /// The question with its type's font - one definition for the visible
+    /// text and both measuring probes, so they always wrap identically.
+    private var questionText: Text {
+        Text(q.question)
+            .font(q.type == .confirm ? .system(size: t.secondary, design: .monospaced) : .system(size: t.question, weight: .medium))
+    }
+
+    /// [T-user-ask-expand-measured] True when the 3-line layout cuts the
+    /// question off. Independent of `questionExpanded`, so an expanded
+    /// question keeps its Show less.
+    private var questionOverflows: Bool {
+        questionFullHeight > questionClampedHeight + 1
+    }
+
+    @ViewBuilder
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(card.questions.indices, id: \.self) { index in
-                if index > 0 { Divider().padding(.vertical, 9) }
-                resolvedQuestionRow(card, index: index)
+            questionText
+                .foregroundStyle(ChatColors.primaryText)
+                .lineLimit(questionExpanded ? nil : 3)
+                .fixedSize(horizontal: false, vertical: true)
+                // [T-user-ask-expand-measured] Two hidden copies at the same
+                // width and font - capped at 3 lines and uncapped - measure
+                // whether the collapsed text is cut off. They sit in the
+                // background, so they never change the card's layout.
+                .background(alignment: .topLeading) {
+                    ZStack(alignment: .topLeading) {
+                        questionText
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: QuestionClampedHeightKey.self, value: g.size.height)
+                            })
+                        questionText
+                            .fixedSize(horizontal: false, vertical: true)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: QuestionFullHeightKey.self, value: g.size.height)
+                            })
+                    }
+                    .hidden()
+                    .accessibilityHidden(true)
+                }
+                .onPreferenceChange(QuestionClampedHeightKey.self) { h in
+                    if abs(h - questionClampedHeight) > 0.5 { questionClampedHeight = h }
+                }
+                .onPreferenceChange(QuestionFullHeightKey.self) { h in
+                    if abs(h - questionFullHeight) > 0.5 { questionFullHeight = h }
+                }
+                .padding(q.type == .confirm ? 8 : 0)
+                .background(q.type == .confirm ? AnyShapeStyle(Color(UIColor.tertiarySystemFill)) : AnyShapeStyle(Color.clear),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .textSelection(.enabled)
+                .padding(.bottom, 6)
+            // [T-user-ask-expand-measured] Shown when the collapsed question
+            // is actually truncated. It used to be `question.count > 140`,
+            // which missed the common confirm case: monospaced text in a
+            // padded box fits ~60 mixed CJK/Latin characters in 3 lines, so a
+            // 61-140 character question was cut to "…" with no way to open it
+            // (and a long one that fit got a useless toggle).
+            if questionOverflows {
+                Button {
+                    questionExpanded.toggle()
+                    QuestionPendingLayoutCache.setExpanded(questionExpanded, layoutKey)
+                    // Expanding the text does not submit an answer.
+                } label: {
+                    Text(questionExpanded ? QuestionAskLocalized("Show less") : QuestionAskLocalized("Show more"))
+                        .font(.system(size: t.secondary, weight: .medium))
+                        .foregroundStyle(tint)
+                        // A full-height row like every other control on this
+                        // card; it was a bare ~26x15pt label.
+                        .padding(.trailing, 16)
+                        .frame(minHeight: QuestionAskTypography.minTapHeight, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            switch q.type {
+            case .options: optionsBody
+            case .confirm: confirmBody
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var optionsBody: some View {
+        if let options = q.options, !options.isEmpty {
+            ForEach(Array(options.enumerated()), id: \.offset) { i, o in
+                optionRow(i, o)
+            }
+        }
+        otherRow
+        if !q.isOpenEnded {
+            choiceRow(icon: answer.delegated ? "checkmark.circle.fill" : "circle",
+                      label: QuestionAskLocalized("You decide"), selected: answer.delegated) {
+                var a = QuestionAskAnswer(); a.delegated = true; a.note = answer.note
+                draft = a.draft
+                onDraft(a.draft)
+                haptic()
+            }
+        }
+        noteRow
+    }
+
+    private func optionRow(_ i: Int, _ o: QuestionAskOption) -> some View {
+        let selected = answer.selected.contains(i) && !answer.delegated
+        let icon = q.multiSelect ? (selected ? "checkmark.square.fill" : "square") : (selected ? "largecircle.fill.circle" : "circle")
+        return Button {
+            var a = answer
+            a.delegated = false
+            if q.multiSelect {
+                if let pos = a.selected.firstIndex(of: i) { a.selected.remove(at: pos) } else { a.selected.append(i) }
+            } else {
+                a.selected = [i]
+                a.otherText = nil
+            }
+            draft = a.draft
+            onDraft(a.draft)
+            haptic()
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: t.icon))
+                    .foregroundStyle(selected ? tint : ChatColors.tertiaryText)
+                    .frame(width: t.icon + 4)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(o.label)
+                            .font(.system(size: t.optionTitle, weight: selected ? .semibold : .regular))
+                            .foregroundStyle(ChatColors.primaryText)
+                        if i == 0 {
+                            Text(QuestionAskLocalized("Recommended"))
+                                .font(.system(size: t.chip, weight: .semibold))
+                                .foregroundStyle(tint)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(tint.opacity(0.14), in: Capsule())
+                        }
+                    }
+                    if let d = o.description, !d.isEmpty {
+                        Text(d)
+                            .font(.system(size: t.optionDetail))
+                            .foregroundStyle(ChatColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 7)
+            .frame(minHeight: QuestionAskTypography.minTapHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("\(o.label), \(QuestionAskLocalized("option")) \(i + 1)/\(q.options?.count ?? 0)\(i == 0 ? ", " + QuestionAskLocalized("Recommended") : "")"))
+    }
+
+    private var otherRow: some View {
+        let text = answer.otherText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let selected = !text.isEmpty && !answer.delegated
+        return choiceRow(icon: q.isOpenEnded ? "text.cursor" : (selected ? "largecircle.fill.circle" : "circle"),
+                         label: selected ? text : (q.isOpenEnded ? QuestionAskLocalized("Type your answer…") : QuestionAskLocalized("Other…")),
+                         selected: selected, trailingIcon: "mic") {
+            onInput(.answer)
+        }
+    }
+
+    private var noteRow: some View {
+        let note = answer.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return Button {
+            onInput(.note)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: note.isEmpty ? "plus" : "note.text")
+                Text(note.isEmpty ? QuestionAskLocalized("Add a note") : note)
+                    .lineLimit(1)
+            }
+            .font(.system(size: t.secondary))
+            .foregroundStyle(note.isEmpty ? ChatColors.secondaryText : ChatColors.primaryText)
+            .padding(.vertical, 7)
+            .frame(minHeight: QuestionAskTypography.minTapHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func choiceRow(icon: String, label: String, selected: Bool, trailingIcon: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: t.icon))
+                    .foregroundStyle(selected ? tint : ChatColors.tertiaryText)
+                    .frame(width: t.icon + 4)
+                Text(label)
+                    .font(.system(size: t.optionTitle, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? ChatColors.primaryText : ChatColors.secondaryText)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                if let trailingIcon {
+                    Image(systemName: trailingIcon)
+                        .font(.system(size: t.secondary))
+                        .foregroundStyle(ChatColors.tertiaryText)
+                }
+            }
+            .padding(.vertical, 7)
+            .frame(minHeight: QuestionAskTypography.minTapHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var confirmBody: some View {
+        if let impact = q.impact, !impact.isEmpty {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: t.meta))
+                    .foregroundStyle(tint)
+                Text(impact)
+                    .font(.system(size: t.secondary))
+                    .foregroundStyle(ChatColors.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+        }
+        let reason = answer.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        Button {
+            onInput(.denyReason)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: reason.isEmpty ? "plus" : "arrow.uturn.backward")
+                Text(reason.isEmpty ? QuestionAskLocalized("Cancel with a reason / do this instead") : reason)
+                    .lineLimit(2)
+            }
+            .font(.system(size: t.secondary))
+            .foregroundStyle(ChatColors.secondaryText)
+            .padding(.vertical, 7)
+            .frame(minHeight: QuestionAskTypography.minTapHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Action bar
+
+    @ViewBuilder
+    private var actionBar: some View {
+        switch q.type {
+        case .options:
+            // Previous and Next/Submit share the row equally; alone, the
+            // primary button spans it.
+            HStack(spacing: 10) {
+                if index > 0 {
+                    previousButton(fill: true)
+                }
+                let last = !(0..<ask.questions.count).contains { $0 != index && !(ask.answers.indices.contains($0) && ask.answers[$0] != nil) }
+                Button(last ? QuestionAskLocalized("Submit") : QuestionAskLocalized("Next")) {
+                    onSubmit()
+                    haptic()
+                }
+                .buttonStyle(QuestionAskButtonStyle(kind: .primary, tint: tint, fill: true, fontSize: t.button))
+                .disabled(!answer.isComplete(for: q))
+            }
+        case .confirm:
+            // [T-user-ask-confirm-row] One row: Previous on the left, Cancel and
+            // Allow together on the right. A confirm button acts on one tap,
+            // so Previous is kept apart from them by the flexible gap rather than
+            // sitting next to one; without Previous the pair is still right-aligned.
+            // [T-user-ask-no-policy] Two choices only - Cancel and Allow;
+            // the app records no "always" rule.
+            // A long locale at a large font falls back to the pair on its own
+            // right-aligned row with Previous below on the left, then to a stack.
+            let showsPrevious = index > 0
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    if showsPrevious {
+                        previousButton(fill: false)
+                    }
+                    Spacer(minLength: 12)
+                    cancelButton
+                    allowOnceButton
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        cancelButton
+                        allowOnceButton
+                    }
+                    if showsPrevious {
+                        previousButton(fill: false)
+                    }
+                }
+                VStack(alignment: .trailing, spacing: 8) {
+                    cancelButton
+                    allowOnceButton
+                    if showsPrevious {
+                        previousButton(fill: false)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
         }
     }
 
-    private func resolvedQuestionRow(_ card: QuestionCardState, index: Int) -> some View {
-        let answer = (index < card.answers.count ? card.answers[index] : nil) ?? ""
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(card.questions[index].prompt)
-                .font(.footnote)
-                .foregroundStyle(QuestionCardTheme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Label(answer.isEmpty ? "未回答" : answer, systemImage: answer.isEmpty ? "minus" : "checkmark")
-                .font(.callout)
-                .foregroundStyle(answer.isEmpty ? QuestionCardTheme.secondaryText : QuestionCardTheme.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+    /// Back to the previous question - the same string and secondary style as
+    /// on an options card. Only shows it; submits and changes nothing.
+    private func previousButton(fill: Bool) -> some View {
+        Button(QuestionAskLocalized("Previous")) {
+            onPrevious()
         }
+        .buttonStyle(QuestionAskButtonStyle(kind: .secondary, tint: tint, fill: fill, fontSize: t.button))
+    }
+
+    private var cancelButton: some View {
+        // Cancel first: the safe choice sits where the thumb lands.
+        Button(QuestionAskLocalized("Cancel")) {
+            onConfirm(0)
+            haptic()
+        }
+        .buttonStyle(QuestionAskButtonStyle(kind: .primary, tint: .gray, fontSize: t.button))
+        .accessibilitySortPriority(2)
+    }
+
+    private var allowOnceButton: some View {
+        // [T-user-ask-allow-label] "Allow", not "Allow once": the app keeps no
+        // "always" rule ([T-user-ask-no-policy]), so there is nothing to contrast with.
+        Button(QuestionAskLocalized("Allow")) {
+            onConfirm(1)
+            haptic(heavy: q.risk == .high)
+        }
+        .buttonStyle(QuestionAskButtonStyle(kind: .secondary, tint: tint, fontSize: t.button))
+    }
+
+    // MARK: Helpers
+
+    private func haptic(heavy: Bool = false) {
+        UIImpactFeedbackGenerator(style: heavy ? .medium : .light).impactOccurred()
     }
 }
 
-private enum QuestionInputKind: String, Identifiable {
-    case answer, note
-    var id: String { rawValue }
+/// [T-user-ask-expand-measured] Hidden question probes (3-line and full).
+private struct QuestionClampedHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct QuestionFullHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 private struct QuestionBodyHeightKey: PreferenceKey {
@@ -1331,79 +1598,345 @@ private struct QuestionBodyHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+private struct QuestionAskButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary }
+    let kind: Kind
+    let tint: Color
+    /// Stretch to the width the row offers (shared equally with siblings).
+    var fill: Bool = false
+    /// QuestionAskTypography.button of the view using the style.
+    var fontSize: CGFloat = QuestionAskTypography(body: QuestionAskTypography.bodyReference).button
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: fontSize, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 16)
+            .frame(minWidth: 72, maxWidth: fill ? .infinity : nil, minHeight: QuestionAskTypography.minTapHeight)
+            .foregroundStyle(kind == .primary ? Color.white : tint)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(kind == .primary ? tint : tint.opacity(0.14))
+            )
+            .contentShape(Capsule(style: .continuous))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+}
+
+
+@MainActor
+private struct QuestionResolvedCard: View {
+    @ObservedObject var block: AssistantBlock
+    let card: QuestionCardState
+    let onToggle: () -> Void
+    @ObservedObject private var fonts = FontSettings.shared
+    private var t: QuestionAskTypography { .current }
+    private var first: QuestionCardQuestion? { card.questions.first }
+    private var isConfirm: Bool { first?.isConfirmation == true }
+    private var tint: Color {
+        if card.status == .unconfirmed { return .gray }
+        return isConfirm ? (first?.risk == "high" ? .red : .orange) : .accentColor
+    }
+    private var denied: Bool { card.questions.indices.contains { card.confirmationDecision(at: $0) == "deny" } }
+    private var glyph: String {
+        if card.resolutionSource == "timeout" { return "timer" }
+        return card.status == .unconfirmed || denied ? "xmark" : "checkmark"
+    }
+    private var statusColor: Color { card.status == .unconfirmed || denied ? ChatColors.secondaryText : tint }
+    private var badge: String? { card.questions.count == 1 ? first?.header : nil }
+    private var topic: String {
+        if card.questions.count == 1 { return first?.prompt ?? card.displayQuestion }
+        return card.questions.map { ($0.header?.isEmpty == false ? $0.header : nil) ?? $0.prompt }.joined(separator: " / ")
+    }
+    private var status: String {
+        if card.questions.count > 1 { return "\(card.answeredCount)/\(card.questions.count) " + QuestionAskLocalized("Answered") }
+        if card.status == .unconfirmed {
+            return QuestionAskLocalized(card.resolutionSource == "timeout" ? "Timed out" : "Skipped")
+        }
+        if isConfirm {
+            guard let decision = card.confirmationDecision(at: 0) else { return QuestionAskLocalized("Skipped") }
+            return QuestionAskLocalized(decision == "deny" ? "Cancelled" : "Allowed once")
+        }
+        return QuestionAskLocalized("Answered")
+    }
+    private var digest: String { card.answerPreview ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onToggle) {
+                HStack(alignment: .center, spacing: 12) {
+                    ZStack {
+                        Circle().fill(tint.opacity(0.15)).frame(width: 34, height: 34)
+                        Image(systemName: glyph)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(tint)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 6) {
+                            if let badge, !badge.isEmpty {
+                                Text(badge)
+                                    .font(.system(size: t.chip, weight: .semibold))
+                                    .foregroundStyle(tint)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(tint.opacity(0.15))
+                                    .clipShape(Capsule())
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
+                            Text(topic)
+                                .font(isConfirm ? .system(size: t.resolvedTopic - 1, weight: .medium, design: .monospaced)
+                                                : .system(size: t.resolvedTopic, weight: .medium))
+                                .foregroundStyle(ChatColors.primaryText)
+                                .lineLimit(1)
+                        }
+                        HStack(spacing: 6) {
+                            Text(status)
+                                .font(.system(size: t.meta, weight: .semibold))
+                                .foregroundStyle(statusColor)
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                            if !digest.isEmpty {
+                                Text(digest)
+                                    .font(.system(size: t.meta))
+                                    .foregroundStyle(ChatColors.secondaryText)
+                                    .lineLimit(1)
+                                    .frame(minWidth: 60, alignment: .leading)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: block.isQuestionCardExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ChatColors.tertiaryText)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if block.isQuestionCardExpanded {
+                answerSheet(card)
+                    .padding(.leading, 46)
+                    .textSelection(.enabled)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(tint.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint.opacity(0.35), lineWidth: 0.8))
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func answerSheet(_ card: QuestionCardState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(card.questions.indices, id: \.self) { index in
+                resolvedQuestionRow(card, index: index)
+            }
+        }
+    }
+
+    private func resolvedQuestionRow(_ card: QuestionCardState, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(card.questions[index].prompt)
+                .font(.system(size: t.resolvedDetail))
+                .foregroundStyle(ChatColors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            if card.answers.indices.contains(index) {
+                Text(card.answers[index] ?? QuestionAskLocalized("Skipped"))
+                    .font(.system(size: t.secondary, weight: .medium))
+                    .foregroundStyle(ChatColors.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private enum QuestionInputKind: String, Identifiable {
+    case answer, note, denyReason
+    var id: String { rawValue }
+}
+
+@MainActor
+private enum QuestionInputPresenter {
+    static func present(kind: QuestionInputKind, card: QuestionCardState) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        guard let top, let question = card.currentQuestion else { return }
+        let requestId = card.requestId
+        let index = card.currentIndex
+        let draft = QuestionCardCoordinator.shared.draft(requestId: requestId, questionIndex: index)
+        weak var hostRef: UIViewController?
+        let close = {
+            guard let host = hostRef, host.presentingViewController != nil, !host.isBeingDismissed else { return }
+            host.presentingViewController?.dismiss(animated: true)
+        }
+        let host = UIHostingController(rootView: QuestionAnswerInputSheet(
+            title: kind == .answer ? "Your answer" : (kind == .note ? "Add a note" : "Reason / do this instead"),
+            question: question.prompt,
+            initialText: kind == .answer ? draft.otherText : draft.note,
+            onChange: { save($0, kind: kind, requestId: requestId, index: index, commit: false) },
+            onDone: { text in save(text, kind: kind, requestId: requestId, index: index, commit: true); close() },
+            onCancel: close, requestId: requestId, questionIndex: index))
+        hostRef = host
+        if let sheet = host.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        top.present(host, animated: true)
+    }
+
+    private static func save(_ text: String, kind: QuestionInputKind, requestId: String, index: Int, commit: Bool) {
+        let center = QuestionCardCoordinator.shared
+        guard let state = center.currentState(requestId: requestId), state.status == .pending,
+              state.currentIndex == index, let question = state.currentQuestion else { return }
+        var draft = center.draft(requestId: requestId, questionIndex: index)
+        let clipped = String(text.prefix(1000))
+        if kind == .answer {
+            draft.otherText = clipped
+            if commit, !clipped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !question.multiSelect { draft.selectedIndices = [] }
+                draft.delegated = false
+            }
+        } else { draft.note = clipped }
+        center.saveDraft(requestId: requestId, questionIndex: index, draft: draft)
+        NotificationCenter.default.post(name: Notification.Name("ZeQuestionDraftChanged"), object: requestId)
+    }
+}
+
 @MainActor
 private struct QuestionAnswerInputSheet: View {
     let title: String
     let question: String
     let onChange: (String) -> Void
+    let onDone: ((String) -> Void)?
+    let onCancel: (() -> Void)?
+    let requestId: String?
+    let questionIndex: Int?
     @State private var text: String
-    @State private var ownsRecording = false
-    @State private var voiceError: String?
-    @ObservedObject private var speech = SpeechRecognitionManager.shared
-    @Environment(\.dismiss) private var dismiss
     @FocusState private var focused: Bool
+    @ObservedObject private var fonts = FontSettings.shared
+    private var t: QuestionAskTypography { .current }
+    @StateObject private var voiceVM = VoiceInputViewModel()
+    @State private var voiceActive = false
+    @State private var savedVoiceExpanded: Bool?
+    @Environment(\.dismiss) private var dismiss
 
-    init(title: String, question: String, initialText: String, onChange: @escaping (String) -> Void) {
-        self.title = title
-        self.question = question
-        self.onChange = onChange
+    init(title: String, question: String, initialText: String, onChange: @escaping (String) -> Void, onDone: ((String) -> Void)? = nil,
+         onCancel: (() -> Void)? = nil, requestId: String? = nil, questionIndex: Int? = nil) {
+        self.title = title; self.question = question; self.onChange = onChange; self.onDone = onDone
+        self.onCancel = onCancel; self.requestId = requestId; self.questionIndex = questionIndex
         _text = State(initialValue: initialText)
     }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text(question).font(.subheadline).foregroundStyle(.secondary)
+                Text(question)
+                    .font(.system(size: t.resolvedDetail))
+                    .foregroundStyle(.secondary)
                     .lineLimit(3)
-                TextEditor(text: $text)
-                    .font(.body)
+                TextField("", text: $text, axis: .vertical)
+                    .lineLimit(3...8)
+                    .font(.system(size: t.question))
                     .focused($focused)
-                    .accessibilityLabel(Text(title))
-                if let voiceError { Text(voiceError).font(.caption).foregroundStyle(.orange) }
-                HStack {
-                    Text("草稿自动保存，返回卡片后点击提交。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button { toggleRecording() } label: {
-                        Image(systemName: ownsRecording ? "stop.circle.fill" : "mic.circle.fill")
-                            .font(.system(size: 30))
-                            .foregroundStyle(ownsRecording ? Color.red : QuestionCardTheme.accent)
-                            .frame(width: 44, height: 44)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color(UIColor.separator), lineWidth: 0.5))
+                    .allowsHitTesting(!voiceActive)
+                    .overlay {
+                        if voiceActive {
+                            Color.clear.contentShape(Rectangle())
+                                .onTapGesture(count: 2) { editFromVoice() }
+                                .accessibilityElement()
+                                .accessibilityLabel(Text(text.isEmpty ? title : text))
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityAction(named: Text(QuestionAskLocalized("Edit"))) { editFromVoice() }
+                        }
                     }
-                    .accessibilityLabel(ownsRecording ? "停止语音输入" : "语音输入")
+                HStack {
+                    Button { voiceActive ? leaveVoice() : enterVoice() } label: {
+                        Label(voiceActive ? QuestionAskLocalized("Stop dictation") : QuestionAskLocalized("Dictate"),
+                              systemImage: voiceActive ? "keyboard" : "mic.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                    Text("\(text.count)/1000")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
+                if voiceActive {
+                    InlineVoiceInputView(viewModel: voiceVM, inputText: $text)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color(UIColor.separator), lineWidth: 0.5))
+                        .transition(.opacity)
+                }
+                Spacer(minLength: 0)
             }
             .padding(16)
-            .navigationTitle(title)
+            .animation(.easeOut(duration: 0.2), value: voiceActive)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(UIColor.systemBackground).ignoresSafeArea())
+            .onChange(of: text) { value in
+                let clipped = String(value.prefix(1000))
+                if text != clipped { text = clipped }
+                onChange(clipped)
+            }
+            .navigationTitle(QuestionAskLocalized(title))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(QuestionAskLocalized("Cancel")) { leaveVoice(); if let onCancel { onCancel() } else { dismiss() } }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { stopRecording(); dismiss() }
+                    Button(QuestionAskLocalized("Done")) { leaveVoice(); onChange(text); if let onDone { onDone(text) } else { dismiss() } }
                 }
             }
         }
-        .onChange(of: text) { value in onChange(value) }
-        .onChange(of: speech.recognizedText) { value in
-            if ownsRecording { text = value }
+        .onAppear { focused = true }
+        .onDisappear { leaveVoice() }
+        .task {
+            guard let requestId, let questionIndex else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+                let state = QuestionCardCoordinator.shared.currentState(requestId: requestId)
+                if state?.status != .pending || state?.currentIndex != questionIndex {
+                    leaveVoice()
+                    if let onCancel { onCancel() } else { dismiss() }
+                    return
+                }
+            }
         }
-        .onDisappear { stopRecording(); onChange(text) }
     }
 
-    private func stopRecording() {
-        guard ownsRecording else { return }
-        speech.stopRecording()
-        ownsRecording = false
+    private func enterVoice() {
+        focused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        let mode = VoiceModePreference.shared
+        if savedVoiceExpanded == nil { savedVoiceExpanded = mode.expanded }
+        mode.enteredFromText = false
+        mode.expanded = false
+        voiceActive = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard voiceActive, voiceVM.state == .waiting else { return }
+            voiceVM.handleMainButtonTap()
+        }
     }
 
-    private func toggleRecording() {
-        if ownsRecording { stopRecording(); return }
-        Task { @MainActor in
-            if !speech.permissionsAlreadyGranted, !(await speech.requestPermissions()) { return }
-            focused = false
-            voiceError = nil
-            do { try speech.startRecording(); ownsRecording = true }
-            catch { voiceError = error.localizedDescription }
-        }
+    private func leaveVoice() {
+        guard voiceActive else { return }
+        voiceVM.stopListening()
+        voiceActive = false
+        if let saved = savedVoiceExpanded { VoiceModePreference.shared.expanded = saved; savedVoiceExpanded = nil }
+    }
+
+    private func editFromVoice() {
+        leaveVoice()
+        DispatchQueue.main.async { focused = true }
     }
 }
 

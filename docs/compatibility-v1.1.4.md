@@ -33,7 +33,8 @@ Implemented in Ze's existing runtime and message renderer:
 - Replacements await the previous task's actual completion; Stop invalidates delayed replacements and clears queued corrections.
 - User Stop targets the selected delegation's sibling group and descendants, determined by parent ID and recorded parent-turn ID. Older records without turn identity do not guess sibling ownership.
 - Resume reloads the original child session and preserves prior work; process interruption is not shown as completion.
-- Detail cards show task, real token/cache/turn counters, recent tool states/durations, expandable history, asynchronously downsampled latest screenshot, output, correction and Stop controls. The transcript opens the actual `CollectionViewMessageListV3` renderer with a Stop control.
+- Inline presentation follows the reference two-line 58pt treatment: a 34pt state circle, name chip and task, current activity, and direct Stop/Resume controls. Floating previews use a separate 100x65pt black surface; the former shared black card was removed.
+- Tool sheets embed the detail content directly. Sections use the reference 10pt corner radius, separate gray header, divider and 0.5pt outline. Recent tools show the latest eight calls without an expanding output log. Completed output uses Markdown; the latest screenshot is asynchronously downsampled. Transcript opens the actual `CollectionViewMessageListV3` renderer with Stop and 0.35/medium/large detents.
 - Active rim uses Core Animation instead of per-frame SwiftUI updates; animations stop off-window, in background and for Reduce Motion. Output previews are bounded, historic tool snapshots cached, writes throttled on a serial background queue, list order stable, and live expanded output avoids Markdown reparse.
 
 This is adaptation to Ze's tool/runtime architecture. Device-level visual equivalence, scrolling/frame-time measurements, image-preview visual parity and live provider calls still require an installed build; source changes and CI alone do not establish those results.
@@ -44,7 +45,9 @@ Reference iOS files: `Views/Chat/UserAskCardView.swift` (blob `a25b5871a124a0f63
 
 Ze keeps its existing `ask_user` tool name and supports both legacy single-line questions and JSON-encoded structured questions. New structured fields include multiple selection, option descriptions, explicit confirmation, impact and risk. Selection remains a draft until Next/Submit; there is no timed auto-submit. Confirmation cards require an explicit allow/deny action and do not offer delegation or an arbitrary replacement answer.
 
-The compact card has a 12pt radius, lightly tinted background, progress/countdown, a bounded scrolling question body and fixed action area. Other answers and notes open an independent input sheet; drafts survive view changes and navigating to the previous question. Completed cards collapse and can be expanded; inline and tool-sheet surfaces share the same card.
+The corrected pending card uses the reference single-line 28pt icon header, exact typography ratios, first-option recommendation badge, 44pt capsule controls and body cap `max(160, screenHeight * 0.5 - 120)`. Resolved cards use the 34pt icon and two-line summary with 46pt expanded-content inset. Other answers and notes open a large-only independent input sheet using a 3...8-line bordered TextField, dictation, Cancel and Done. Drafts survive view changes and previous-question navigation. Inline and tool-sheet surfaces share the same card.
+
+The earlier self-rendered screenshots were rejected: they proved rendering, not reference parity. The new comparison harness fetches unmodified view declarations and localization from the pinned reference commit, renders the same question states and dimensions, and produces side-by-side PNGs. Its source manifest records Git blob and SHA256 hashes. Successful image generation is explicitly not a visual-parity verdict; the comparison images still require review.
 
 Notification replies are bound to the originating session and exact question index. Registering question actions preserves unrelated notification categories. Saved pending state includes a process identity: a process restart marks an orphaned request expired while preserving partial answers and drafts, rather than claiming the suspended continuation is still alive.
 
@@ -56,6 +59,8 @@ The existing push-triggered `.github/workflows/build.yml` now also executes:
 - `scripts/SubAgentLifecycleHarness.swift`: production coordinator with fixture dependencies, exercising queue, cancellation, sibling grouping, restoration and legacy decoding.
 - `scripts/SubAgentBlockLinkTests.swift`: compiled production task identity parser, including persisted and malformed results.
 - `scripts/test-question-core.py`: compiled production question schema/state, notification identity and persistence contracts.
+- `scripts/test-question-layout.py`: compiled production typography and per-question layout cache.
+- `scripts/test-question-reference-ui.sh` and `scripts/compare-question-ui.py`: pinned upstream declarations rendered separately and paired with Ze at identical dimensions.
 - `scripts/test-subagent-ui.sh` and `scripts/test-question-ui.sh`: real production views hosted in a simulator window, with PNGs and result JSON. Fixtures supply record data and app integration dependencies; microphone capture is not exercised. These are component rendering checks, not full-app device performance measurements.
 
 The normal unsigned iOS build and IPA audit assert version 1.1.4 (build 8). Local Windows checks can validate catalogs, source structure and diffs; Swift and iOS compilation require the macOS workflow. See the delivery's exact commit and workflow URL for the actual result.

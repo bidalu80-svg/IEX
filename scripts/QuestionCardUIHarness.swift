@@ -12,6 +12,24 @@ private final class FontSettings: ObservableObject {
     static let shared = FontSettings()
     func scaledMessage(_ size: CGFloat) -> CGFloat { size }
 }
+final class VoiceInputViewModel: ObservableObject {
+    enum State { case waiting }
+    var state = State.waiting
+    func stopListening() {}
+    func handleMainButtonTap() { preconditionFailure("Screenshot harness does not exercise microphone input") }
+}
+final class VoiceModePreference {
+    static let shared = VoiceModePreference()
+    var expanded = false
+    var enteredFromText = false
+}
+struct InlineVoiceInputView: View {
+    let viewModel: VoiceInputViewModel
+    @Binding var inputText: String
+    var body: some View {
+        Color.clear.onAppear { preconditionFailure("Voice UI fixture must not appear in screenshots") }
+    }
+}
 // The screenshot harness never starts microphone recording. Keep the native
 // exception-bridge dependency explicit and fail if a future scenario tries it.
 func noff_try_objc(_ block: () -> Void) -> Bool {
@@ -60,7 +78,7 @@ private struct QuestionScreenshot: View {
                 draft.otherText = value
                 QuestionCardCoordinator.shared.saveDraft(requestId: card.requestId, questionIndex: card.currentIndex, draft: draft)
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -100,6 +118,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
     @MainActor private func capture(window: UIWindow, scheme: ColorScheme, scenario: String) async throws {
         let card = fixture(scenario: scenario)
         let block = AssistantBlock(card: card)
+        block.isQuestionCardExpanded = card.status == .pending
         var requestTask: Task<QuestionCardResponse, Never>?
         if card.status == .pending {
             requestTask = Task { @MainActor in

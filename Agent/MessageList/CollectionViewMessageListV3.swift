@@ -3773,7 +3773,7 @@ extension CollectionViewMessageListV3 {
                 // collapsed THINKING blocks (handled above with headerH = 40).
                 case .readImageTool: return 36
                 case .memoryTool:
-                    guard let card = block.questionCard else { return 36 }
+                    guard let card = block.questionCard else { return block.kind.isSubAgentTool ? 58 : 36 }
                     return Self.estimateQuestionCardHeight(
                         card,
                         expanded: block.isQuestionCardExpanded,
@@ -3790,52 +3790,54 @@ extension CollectionViewMessageListV3 {
         }
 
         static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool, width: CGFloat) -> CGFloat {
-            // Match the compact card's 14pt content inset and fixed action bar.
-            // Only its question body scrolls; a long option list must not seed a
-            // multi-screen collection cell and jump when self-sizing catches up.
+            let t = QuestionAskTypography.current
             let textWidth = max(width - 32 - 28, 80)
-            let bodyFont = UIFont.preferredFont(forTextStyle: .body)
-            let optionFont = UIFont.preferredFont(forTextStyle: .callout)
-            let captionFont = UIFont.preferredFont(forTextStyle: .caption1)
-            let subFont = UIFont.preferredFont(forTextStyle: .subheadline)
-            let headerHeight = max(44, subFont.lineHeight + 3 + captionFont.lineHeight)
-            var total: CGFloat = 24 + 8 + headerHeight
-            guard expanded else { return total }
-
             if card.status == .pending, let question = card.currentQuestion {
-                var body = questionTextHeight(question.prompt, font: bodyFont, width: textWidth) + 8
-                if question.multiSelect { body += captionFont.lineHeight + 4 }
-                for detail in [question.impact, question.risk].compactMap({ $0 }) where !detail.isEmpty {
-                    body += questionTextHeight(detail, font: optionFont, width: textWidth) + 12
-                }
-                for (index, option) in question.options.enumerated() {
-                    var row = questionTextHeight(option, font: optionFont, width: max(textWidth - 31, 40))
+                let key = QuestionPendingLayoutCache.key(card.requestId, card.currentIndex)
+                let cap = max(160, UIScreen.main.bounds.height * 0.5 - 120)
+                let cached = QuestionPendingLayoutCache.bodyHeight(key)
+                let chrome: CGFloat = 24 + 28 + 20 + 44
+                if cached > 0 { return chrome + min(cached, cap) }
+                let font = question.isConfirmation
+                    ? UIFont.monospacedSystemFont(ofSize: t.secondary, weight: .medium)
+                    : UIFont.systemFont(ofSize: t.question, weight: .medium)
+                let fullQuestion = questionTextHeight(question.prompt, font: font, width: textWidth - (question.isConfirmation ? 16 : 0))
+                let isExpanded = QuestionPendingLayoutCache.isExpanded(key)
+                var body = (isExpanded ? fullQuestion : min(fullQuestion, font.lineHeight * 3)) + 6
+                if question.isConfirmation { body += 16 }
+                if fullQuestion > font.lineHeight * 3 { body += 44 + 6 }
+                let optionFont = UIFont.systemFont(ofSize: t.optionTitle)
+                let detailFont = UIFont.systemFont(ofSize: t.optionDetail)
+                for (index, option) in question.options.enumerated() where !question.isConfirmation {
+                    var row = questionTextHeight(option, font: optionFont, width: max(textWidth - t.icon - 24, 40))
                     if index < question.optionDescriptions.count, let description = question.optionDescriptions[index] {
-                        row += 3 + questionTextHeight(description, font: captionFont, width: max(textWidth - 31, 40))
+                        row += 2 + questionTextHeight(description, font: detailFont, width: max(textWidth - t.icon - 24, 40))
                     }
-                    body += max(44, row + 16) + 4
+                    body += max(44, row + 14) + 6
                 }
-                // Other answer and delegation are absent on confirmation cards.
                 if !question.isConfirmation {
-                    body += 48
-                    if !question.options.isEmpty { body += 48 }
+                    body += 50 // Other answer.
+                    if !question.options.isEmpty { body += 50 } // Delegate.
                 }
-                body += 48 // Optional note entry.
-                total += 10 + min(body, UIScreen.main.bounds.height * 0.45) + 10 + 92
-                if card.questions.count > 1 { total += 3 + 10 }
-            } else {
-                total += 12
-                for (index, question) in card.questions.enumerated() {
-                    total += 12
-                    if card.questions.count > 1 {
-                        total += questionTextHeight(question.prompt, font: captionFont, width: textWidth)
-                    }
-                    let answer = index < card.answers.count ? card.answers[index] : nil
-                    total += 8 + questionTextHeight(answer ?? String(localized: "No answer"), font: subFont, width: textWidth)
-                    total += 12
+                for detail in [question.impact, question.risk].compactMap({ $0 }) where !detail.isEmpty {
+                    body += questionTextHeight(detail, font: detailFont, width: textWidth) + 6
                 }
+                body += 50 // Note / cancellation reason.
+                return chrome + min(body, cap)
             }
-            return min(total * 1.10 + 4, 5_000)
+            var total: CGFloat = 24 + max(34, t.resolvedTopic + t.meta + 9)
+            guard expanded else { return total }
+            let detailWidth = max(40, textWidth - 46)
+            let font = UIFont.systemFont(ofSize: t.resolvedDetail)
+            total += 10
+            for (index, question) in card.questions.enumerated() {
+                if card.questions.count > 1 {
+                    total += questionTextHeight(question.prompt, font: font, width: detailWidth) + 4
+                }
+                let answer = index < card.answers.count ? card.answers[index] : nil
+                total += questionTextHeight(answer ?? String(localized: "No answer"), font: font, width: detailWidth) + 8
+            }
+            return total
         }
 
         private static func questionTextHeight(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {

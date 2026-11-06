@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/test-question-core.py | tee question-core-tests.log
+          python3 scripts/test-question-layout.py | tee question-layout-tests.log
 
       - name: Test child agent lifecycle and card identity
         run: |
@@ -67,11 +68,14 @@ jobs:
           xcrun swiftc -frontend -parse Views/Chat/ZeSubAgentViews.swift Views/Chat/ToolLiveSheet.swift Views/Chat/AssistantBlockView.swift
 
       - name: Typecheck production card rendering fixtures
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 scripts/extract-question-ui.py "$RUNNER_TEMP/QuestionUIProduction.swift"
           python3 scripts/extract-subagent-ui.py "$RUNNER_TEMP/SubAgentUIProduction.swift"
-          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift"; do
+          python3 scripts/extract-question-reference.py "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/ZeQuestionReferenceHarness.app" question-reference-evidence
+          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift"; do
             xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library \
               -target "$(uname -m)-apple-ios16.0-simulator" \
               -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$source"
@@ -194,6 +198,15 @@ jobs:
       - name: Test rendered question cards and answer sheets
         timeout-minutes: 4
         run: bash scripts/test-question-ui.sh
+
+      - name: Render pinned reference question cards and comparison images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/test-question-reference-ui.sh
+          python3 -m pip install --break-system-packages Pillow
+          python3 scripts/compare-question-ui.py
 
       - name: Test rendered child agent cards and animation lifecycle
         timeout-minutes: 4
@@ -802,6 +815,9 @@ jobs:
             favorites-ui-evidence/
             model-picker-structure.log
             question-core-tests.log
+            question-layout-tests.log
             question-ui-evidence/
+            question-reference-evidence/
+            question-comparison-evidence/
             subagent-ui-evidence/
             model-picker-evidence/

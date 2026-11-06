@@ -11,12 +11,16 @@ state_path = root / "Agent/Chat/ChatLifecycleSupport.swift"
 speech_path = root / "Agent/Speech/SpeechRecognitionManager.swift"
 views = views_path.read_text(encoding="utf-8")
 state = state_path.read_text(encoding="utf-8")
+palette = (root / "Views/Chat/AIChatView.swift").read_text(encoding="utf-8")
+palette_begin = palette.index("enum ChatColors {")
+palette_end = palette.index("\n}", palette_begin) + 2
 begin = views.index("enum QuestionCardTheme {")
 end = views.index("// MARK: - Thinking Block View", begin)
 models_begin = state.index("struct QuestionCardQuestion:")
 parts = [
     "import SwiftUI\nimport UIKit\nimport Foundation\nimport Combine\nimport UserNotifications\n",
     state[models_begin:],
+    palette[palette_begin:palette_end],
     views[begin:end],
     speech_path.read_text(encoding="utf-8"),
     (root / "scripts/QuestionCardUIHarness.swift").read_text(encoding="utf-8"),

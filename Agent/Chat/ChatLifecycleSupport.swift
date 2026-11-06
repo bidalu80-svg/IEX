@@ -631,17 +631,18 @@ struct QuestionCardQuestion: Codable, Equatable, Identifiable {
     var isConfirmation: Bool
     var impact: String?
     var risk: String?
+    var header: String?
 
     init(id: String, prompt: String, options: [String] = [], multiSelect: Bool = false,
          optionDescriptions: [String?] = [], isConfirmation: Bool = false,
-         impact: String? = nil, risk: String? = nil) {
+         impact: String? = nil, risk: String? = nil, header: String? = nil) {
         self.id = id; self.prompt = prompt; self.options = options
         self.multiSelect = multiSelect; self.optionDescriptions = optionDescriptions
-        self.isConfirmation = isConfirmation; self.impact = impact; self.risk = risk
+        self.isConfirmation = isConfirmation; self.impact = impact; self.risk = risk; self.header = header
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, prompt, options, multiSelect, optionDescriptions, isConfirmation, impact, risk
+        case id, prompt, options, multiSelect, optionDescriptions, isConfirmation, impact, risk, header
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -653,6 +654,7 @@ struct QuestionCardQuestion: Codable, Equatable, Identifiable {
         isConfirmation = try c.decodeIfPresent(Bool.self, forKey: .isConfirmation) ?? false
         impact = try c.decodeIfPresent(String.self, forKey: .impact)
         risk = try c.decodeIfPresent(String.self, forKey: .risk)
+        header = try c.decodeIfPresent(String.self, forKey: .header)
     }
 }
 
@@ -702,6 +704,8 @@ struct QuestionCardState: Codable, Equatable {
     var answers: [String?]
     var status: QuestionCardStatus
     var resolutionSource: String? = nil
+    /// Explicit tool-result decisions; absent in older saved sessions.
+    var confirmationDecisions: [String: String]? = nil
 
     init(requestId: String, title: String, questions: [QuestionCardQuestion], timeoutAt: Date, status: QuestionCardStatus = .pending) {
         self.requestId = requestId
@@ -734,12 +738,30 @@ struct QuestionCardState: Codable, Equatable {
         }
         if answers.count < questions.count { answers += Array(repeating: nil, count: questions.count - answers.count) }
         answers[index] = cleaned
-        if index + 1 < questions.count {
-            currentIndex = index + 1
-        } else if let unanswered = questions.indices.first(where: { answers[$0] == nil }) {
-            currentIndex = unanswered
+        confirmationDecisions?.removeValue(forKey: question.id)
+        if let decision = confirmationDecision(at: index) {
+            if confirmationDecisions == nil { confirmationDecisions = [:] }
+            confirmationDecisions?[question.id] = decision
+        }
+        if let unanswered = questions.indices.first(where: { answers[$0] == nil }) {
+            currentIndex = questions.indices.contains(index + 1) ? index + 1 : unanswered
         } else { status = .confirmed }
         return true
+    }
+
+    /// Prefer the structured wire decision. Older results used the canonical
+    /// two option labels plus an optional note; only those exact forms qualify.
+    func confirmationDecision(at index: Int) -> String? {
+        guard questions.indices.contains(index), questions[index].isConfirmation else { return nil }
+        let question = questions[index]
+        if let value = confirmationDecisions?[question.id], value == "allow" || value == "deny" { return value }
+        guard answers.indices.contains(index), let answer = answers[index], question.options.count == 2 else { return nil }
+        for (optionIndex, option) in question.options.enumerated() {
+            if answer == option || answer.hasPrefix(option + "；补充说明：") {
+                return optionIndex == 1 ? "allow" : "deny"
+            }
+        }
+        return nil
     }
 
     /// The question currently on screen. Clamped so a stale `currentIndex`
@@ -985,6 +1007,9 @@ enum QuestionCardPersistence {
     static func draft(requestId: String, questionIndex: Int) -> QuestionCardDraft {
         drafts(requestId)[String(questionIndex)] ?? QuestionCardDraft()
     }
+    static func savedDraft(requestId: String, questionIndex: Int) -> QuestionCardDraft? {
+        drafts(requestId)[String(questionIndex)]
+    }
     static func saveDraft(requestId: String, questionIndex: Int, draft: QuestionCardDraft) {
         var values = drafts(requestId)
         values[String(questionIndex)] = draft
@@ -1061,10 +1086,17 @@ enum QuestionCardParser {
         } else {
             state.status = .unconfirmed
         }
+        state.resolutionSource = object["source"] as? String
+        state.confirmationDecisions = nil
         if let answers = object["answers"] as? [[String: Any]] {
             for (index, question) in state.questions.enumerated() {
                 if let match = answers.first(where: { ($0["id"] as? String) == question.id }) {
                     state.answers[index] = match["answer"] as? String
+                    if question.isConfirmation, let decision = match["decision"] as? String,
+                       decision == "allow" || decision == "deny" {
+                        if state.confirmationDecisions == nil { state.confirmationDecisions = [:] }
+                        state.confirmationDecisions?[question.id] = decision
+                    }
                 }
             }
             state.currentIndex = min(answers.count, max(0, state.questions.count - 1))
@@ -1166,7 +1198,8 @@ enum QuestionCardParser {
                                     options: confirmation ? ["取消", "允许"] : options,
                                     multiSelect: !confirmation && (dictionary["multi_select"] as? Bool ?? false),
                                     optionDescriptions: confirmation ? [] : descriptions, isConfirmation: confirmation,
-                                    impact: dictionary["impact"] as? String, risk: dictionary["risk"] as? String)
+                                    impact: dictionary["impact"] as? String, risk: dictionary["risk"] as? String,
+                                    header: dictionary["header"] as? String)
     }
 }
 
@@ -1269,7 +1302,15 @@ final class QuestionCardCoordinator {
     }
 
     func draft(requestId: String, questionIndex: Int) -> QuestionCardDraft {
-        QuestionCardPersistence.draft(requestId: requestId, questionIndex: questionIndex)
+        if let saved = QuestionCardPersistence.savedDraft(requestId: requestId, questionIndex: questionIndex) { return saved }
+        guard let state = currentState(requestId: requestId), state.status == .pending,
+              state.questions.indices.contains(questionIndex) else { return QuestionCardDraft() }
+        let question = state.questions[questionIndex]
+        // A visual recommendation only. It never enters state.answers until
+        // the user explicitly taps Next/Submit; confirm and multi-select stay blank.
+        let initial = QuestionCardDraft(selectedIndices: !question.isConfirmation && !question.multiSelect && !question.options.isEmpty ? [0] : [])
+        QuestionCardPersistence.saveDraft(requestId: requestId, questionIndex: questionIndex, draft: initial)
+        return initial
     }
 
     func saveDraft(requestId: String, questionIndex: Int, draft: QuestionCardDraft) {
@@ -1372,7 +1413,7 @@ final class QuestionCardCoordinator {
                 id: question.id,
                 question: question.prompt,
                 answer: index < request.state.answers.count ? request.state.answers[index] : nil,
-                decision: question.isConfirmation ? confirmationDecision(question: question, answer: index < request.state.answers.count ? request.state.answers[index] : nil) : nil
+                decision: request.state.confirmationDecision(at: index)
             )
         }
         let response = QuestionCardResponse(
@@ -1385,11 +1426,6 @@ final class QuestionCardCoordinator {
         request.continuation = nil
         persist(request.state)
         logger.info("[QuestionCard] RESOLVED id=\(requestId.prefix(20)) status=\(status.rawValue) source=\(source)")
-    }
-
-    private func confirmationDecision(question: QuestionCardQuestion, answer: String?) -> String? {
-        guard let answer else { return nil }
-        return answer == "允许" || answer.hasPrefix("允许；补充说明：") ? "allow" : "deny"
     }
 
     private func persist(_ state: QuestionCardState) {

@@ -4,12 +4,17 @@ import UIKit
 /// Child-agent visual language: purple identity, compact live
 /// status treatment, and a black terminal-like preview surface.
 enum ZeSubAgentTheme {
-    static let purple = Color(red: 0.55, green: 0.28, blue: 0.95)
+    static let purple = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.64, green: 0.52, blue: 1, alpha: 1)
+            : UIColor(red: 0.45, green: 0.30, blue: 0.93, alpha: 1)
+    })
     static let purpleBright = Color(red: 0.68, green: 0.42, blue: 1.0)
     static let purpleSoft = Color(red: 0.55, green: 0.28, blue: 0.95).opacity(0.14)
     static let blackCard = Color(red: 0.035, green: 0.028, blue: 0.055)
     static let blackCardBorder = Color(red: 0.55, green: 0.28, blue: 0.95).opacity(0.42)
-    static let iconName = "person.3.fill"
+    static let iconName = "person.2.circle.fill"
+    static let glyph = "person.2.fill"
 }
 
 /// Compact, native iOS dock for child agents. It stays hidden until a session
@@ -119,12 +124,9 @@ private struct ZeSubAgentPanelView: View {
                 } else {
                     Section {
                         ForEach(records) { record in
-                            Button {
-                                selectedId = record.id
-                            } label: {
-                                ZeSubAgentRow(record: record)
-                            }
-                            .buttonStyle(.plain)
+                            ZeSubAgentCompactCard(record: record, open: { selectedId = record.id },
+                                                  stop: { coordinator.cancelRunGroup(id: record.id) },
+                                                  resume: { _ = coordinator.resume(id: record.id) })
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                         }
@@ -207,6 +209,130 @@ private struct ZeSubAgentComposerView: View {
                 }
             }
         }
+    }
+}
+
+/// Presentation derived from persisted lifecycle facts, shared by both compact surfaces.
+enum ZeSubAgentPresentation {
+    static func elapsed(_ record: ZeSubAgentRecord) -> String {
+        let seconds = max(0, Int(record.updatedAt.timeIntervalSince(record.createdAt)))
+        return seconds < 60 ? "\(seconds)s" : "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
+    }
+    static func color(_ status: ZeSubAgentStatus) -> Color {
+        switch status {
+        case .completed: return .green
+        case .failed: return .red
+        case .cancelled, .interrupted: return .orange
+        default: return ZeSubAgentTheme.purple
+        }
+    }
+    static func glyph(_ status: ZeSubAgentStatus) -> String {
+        switch status {
+        case .completed: return "checkmark"
+        case .queued: return "pause.fill"
+        case .idle: return ZeSubAgentTheme.glyph
+        default: return "exclamationmark"
+        }
+    }
+}
+
+struct ZeSubAgentCompactCard: View {
+    let record: ZeSubAgentRecord
+    var open: () -> Void
+    var stop: () -> Void
+    var resume: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle().fill(ZeSubAgentTheme.purple.opacity(0.15)).frame(width: 34, height: 34)
+                if record.status.isActive && record.status != .queued {
+                    ProgressView().controlSize(.mini).tint(ZeSubAgentTheme.purple).frame(width: 15, height: 15)
+                } else {
+                    Image(systemName: ZeSubAgentPresentation.glyph(record.status))
+                        .font(.system(size: 13, weight: .bold)).foregroundStyle(ZeSubAgentPresentation.color(record.status))
+                }
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(record.nickname).font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ZeSubAgentTheme.purple)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(ZeSubAgentTheme.purple.opacity(0.15)).clipShape(Capsule())
+                        .lineLimit(1)
+                    Text(record.shortPrompt).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                }
+                HStack(spacing: 6) {
+                    if record.status.isActive, let step = record.steps?.last(where: { $0.state == "running" }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: step.icon).font(.system(size: 10, weight: .semibold))
+                            Text(step.title).font(.system(size: 11, weight: .semibold))
+                        }.foregroundStyle(ZeSubAgentTheme.purple).lineLimit(1).fixedSize()
+                        Text(step.content).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        Text(record.status.displayName).font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(ZeSubAgentPresentation.color(record.status)).fixedSize()
+                    }
+                    Text(ZeSubAgentPresentation.elapsed(record)).font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary).fixedSize()
+                }
+            }
+            Spacer(minLength: 4)
+            if record.status.isActive {
+                Button(action: stop) {
+                    ZStack {
+                        Circle().fill(Color.red).frame(width: 24, height: 24)
+                        RoundedRectangle(cornerRadius: 2).fill(Color.white).frame(width: 9, height: 9)
+                    }.contentShape(Circle())
+                }.buttonStyle(.plain).accessibilityLabel("停止任务")
+            } else if record.status == .interrupted {
+                Button(action: resume) {
+                    ZStack {
+                        Circle().fill(ZeSubAgentTheme.purple).frame(width: 24, height: 24)
+                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                    }.contentShape(Circle())
+                }.buttonStyle(.plain).accessibilityLabel("继续任务")
+            }
+            Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(ZeSubAgentTheme.purple.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(ZeSubAgentTheme.purple.opacity(0.35), lineWidth: 0.8))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture(perform: open)
+    }
+}
+
+struct ZeSubAgentThumbnail: View {
+    let record: ZeSubAgentRecord
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: ZeSubAgentTheme.glyph).font(.system(size: 7, weight: .bold))
+                Text("Agent").font(.system(size: 6, weight: .bold))
+            }.foregroundStyle(ZeSubAgentTheme.purple)
+            Text(record.shortPrompt).font(.system(size: 7, weight: .semibold)).foregroundStyle(.white).lineLimit(2)
+            Spacer(minLength: 0)
+            if record.status.isActive {
+                if let step = record.steps?.last(where: { $0.state == "running" }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: step.icon).font(.system(size: 6, weight: .bold))
+                        Text(step.title).font(.system(size: 6, weight: .semibold))
+                    }.foregroundStyle(ZeSubAgentTheme.purple).lineLimit(1)
+                    Text([step.content, ZeSubAgentPresentation.elapsed(record)].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 6)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                } else {
+                    Text(record.status.displayName).font(.system(size: 6)).foregroundStyle(.white.opacity(0.7))
+                }
+            } else {
+                Text("\(record.status.displayName) · \(ZeSubAgentPresentation.elapsed(record))")
+                    .font(.system(size: 6, weight: .semibold)).foregroundStyle(ZeSubAgentPresentation.color(record.status)).lineLimit(1)
+            }
+        }
+        .padding(5)
+        .frame(width: 100, height: 65, alignment: .topLeading)
+        .background(Color(white: 0.12))
     }
 }
 
@@ -296,162 +422,72 @@ private final class ZeSubAgentRimLayerView: UIView {
     }
 }
 
-/// Shared live black-card treatment for both the panel preview and full details.
-/// The animated border is driven by wall clock time, not by coordinator updates,
-/// so a tool that runs for a long time still has a visibly moving purple rim.
-struct ZeSubAgentBlackCard: View {
-    let record: ZeSubAgentRecord
-    var compact = false
-
-    private var visibleSteps: [ZeSubAgentStep] {
-        // Filter persisted records too, so agents created before this fix do
-        // not reintroduce the high-frequency reasoning card after reload.
-        let steps = (record.steps ?? []).filter {
-            $0.icon != "brain.head.profile" && $0.title != "正在思考"
-        }
-        return Array(steps.suffix(compact ? 3 : 8))
-    }
-
-    private var cardHeader: some View {
-        HStack(spacing: 9) {
-            Image(systemName: ZeSubAgentTheme.iconName)
-                .font(.system(size: compact ? 15 : 18, weight: .semibold))
-                .foregroundStyle(ZeSubAgentTheme.purpleBright)
-            Text(record.nickname)
-                .font(.system(size: compact ? 15 : 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-            Spacer(minLength: 2)
-            if record.status.isActive { ProgressView().tint(ZeSubAgentTheme.purpleBright) }
-            Text(record.status.displayName)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(ZeSubAgentTheme.purpleBright)
-        }
-    }
-
-    @ViewBuilder
-    private var cardSteps: some View {
-        let steps = visibleSteps
-        if steps.isEmpty {
-            Text(record.status.isActive ? String(localized: "正在准备子代理任务…") : record.shortPrompt)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.63))
-                .lineLimit(compact ? 2 : 5)
-        } else {
-            ForEach(steps) { step in
-                ZeSubAgentStepRow(step: step, compact: compact)
-                if step.id != steps.last?.id {
-                    Rectangle().fill(.white.opacity(0.10)).frame(height: 0.5)
-                }
-            }
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 9 : 13) {
-            cardHeader
-            cardSteps
-            if !compact, let error = record.error, !error.isEmpty {
-                Text(error).font(.caption).foregroundStyle(.orange)
-            }
-        }
-        .padding(compact ? 13 : 17)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ZeSubAgentTheme.blackCard, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .overlay {
-            if record.status.isActive {
-                ZeSubAgentAnimatedRim(cornerRadius: 17)
-            } else {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .strokeBorder(ZeSubAgentTheme.blackCardBorder, lineWidth: 1)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct ZeSubAgentStepRow: View {
-    let step: ZeSubAgentStep
-    let compact: Bool
-
-    private var stateIcon: String {
-        switch step.state {
-        case "failed": return "exclamationmark.circle.fill"
-        case "success": return "checkmark.circle.fill"
-        default: return step.icon
-        }
-    }
-
-    private var stateLabel: String {
-        switch step.state {
-        case "running": return "进行中"
-        case "failed": return "失败"
-        case "success": return "完成"
-        case "cancelled": return "已停止"
-        default: return ""
-        }
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: stateIcon)
-                .font(.system(size: 13))
-                .foregroundStyle(step.state == "failed" ? Color.orange : ZeSubAgentTheme.purpleBright)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(step.title)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text(stateLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.55))
-                }
-                if !step.content.isEmpty {
-                    Text(step.content)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.64))
-                        .lineLimit(compact ? 2 : 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-}
-
-private struct ZeSubAgentRow: View {
-    let record: ZeSubAgentRecord
-
-    var body: some View {
-        ZeSubAgentBlackCard(record: record, compact: true)
-            .contentShape(RoundedRectangle(cornerRadius: 17))
-    }
-}
-
 struct ZeSubAgentDetailView: View {
     let recordId: String
     @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var followUp = ""
-    @State private var sent = false
-    @State private var confirmStop = false
     @State private var showTranscript = false
-
-    private var record: ZeSubAgentRecord? { coordinator.record(id: recordId) }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-                if let record {
-                    ScrollView {
+            ScrollView { ZeSubAgentDetailContent(recordId: recordId).padding(12) }
+                .background(Color(uiColor: .systemGroupedBackground))
+                .navigationTitle(coordinator.record(id: recordId)?.nickname ?? String(localized: "子代理"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showTranscript = true } label: { Image(systemName: "bubble.left.and.bubble.right") }
+                            .accessibilityLabel("打开子代理对话")
+                    }
+                }
+                .sheet(isPresented: $showTranscript) {
+                    ZeSubAgentTranscriptPage(recordId: recordId)
+                        .presentationDetents([.fraction(0.35), .medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .interactiveDismissDisabled()
+                        .modifier(ZeSubAgentTranscriptScrollStyle())
+                }
+        }
+    }
+}
+
+/// Embedded directly in the tool sheet; the transcript is a separate destination.
+struct ZeSubAgentDetailContent: View {
+    let recordId: String
+    @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
+    @State private var followUp = ""
+    @State private var sent = false
+    @State private var confirmStop = false
+
+    var body: some View {
+        Group {
+            if let record = coordinator.record(id: recordId) {
                         LazyVStack(alignment: .leading, spacing: 12) {
-                            ZeSubAgentBlackCard(record: record, compact: true)
+                            ZeSubAgentSection(title: LocalizedStringKey(record.shortPrompt), icon: ZeSubAgentTheme.iconName, status: record.status.displayName) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    metadata("代理", record.nickname)
+                                    metadata("状态", record.status.displayName)
+                                    if let reference = record.modelEntryReference,
+                                       let entry = ProviderConfigStore.shared.entry(for: reference) {
+                                        metadata("配置模型", entry.model.displayName)
+                                    }
+                                    metadata("用时", ZeSubAgentPresentation.elapsed(record))
+                                }
+                            }
                             ZeSubAgentRunStats(record: record)
                             ZeSubAgentSection(title: "任务", icon: "text.alignleft") {
                                 ZeSubAgentCollapsibleText(text: record.prompt)
+                            }
+                            if record.status.isActive, let step = record.steps?.last(where: { $0.state == "running" }) {
+                                ZeSubAgentSection(title: "当前工具", icon: step.icon) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(step.title).font(.system(size: 13, weight: .medium))
+                                        if !step.content.isEmpty {
+                                            Text(step.content).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3)
+                                        }
+                                    }
+                                }
                             }
                             ZeSubAgentToolHistory(record: record)
                             if let path = record.steps?.last(where: { $0.imageFilePath != nil })?.imageFilePath {
@@ -464,61 +500,33 @@ struct ZeSubAgentDetailView: View {
                             }
                             if !record.output.isEmpty {
                                 ZeSubAgentSection(title: record.status.isActive ? "最新输出" : "结果", icon: "text.bubble") {
-                                    ZeSubAgentCollapsibleText(text: record.output, markdown: !record.status.isActive)
+                                    if record.status.isActive {
+                                        ZeSubAgentCollapsibleText(text: record.output)
+                                    } else {
+                                        SelectableMarkdownView(markdown: record.output)
+                                    }
                                 }
                             }
                             if record.status != .closed { actions(record) }
                         }
-                        .padding(12)
-                    }
-                } else {
-                    Label("子代理不存在", systemImage: "questionmark.circle")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle(record?.nickname ?? String(localized: "子代理"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("完成") { dismiss() }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if record?.childSessionId != nil {
-                        Button { showTranscript = true } label: {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                        }
-                        .accessibilityLabel("打开子代理对话")
-                    }
-                    if let record, record.status != .closed {
-                        Menu {
-                            if record.status.isActive {
-                                Button("停止任务", role: .destructive) { confirmStop = true }
-                            } else if record.status != .completed {
-                                Button("继续任务") { _ = coordinator.resume(id: recordId) }
-                            }
-                            Button("关闭代理", role: .destructive) {
-                                coordinator.close(id: recordId)
-                                dismiss()
-                            }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                        .accessibilityLabel("子代理操作")
-                    }
-                }
-            }
-            .confirmationDialog("停止这个子代理？", isPresented: $confirmStop, titleVisibility: .visible) {
-                Button("停止任务", role: .destructive) { coordinator.cancelRunGroup(id: recordId) }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("同一轮创建的子代理也会停止，已完成的工作和工具记录会保留。")
-            }
-            .sheet(isPresented: $showTranscript) {
-                ZeSubAgentTranscriptPage(recordId: recordId)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .interactiveDismissDisabled()
-                    .modifier(ZeSubAgentTranscriptScrollStyle())
+
+            } else {
+                Label("子代理不存在", systemImage: "questionmark.circle").foregroundStyle(.secondary)
             }
         }
+        .confirmationDialog("停止这个子代理？", isPresented: $confirmStop, titleVisibility: .visible) {
+            Button("停止任务", role: .destructive) { coordinator.cancelRunGroup(id: recordId) }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("同一轮创建的子代理也会停止，已完成的工作和工具记录会保留。")
+        }
+    }
+
+    private func metadata(_ title: LocalizedStringKey, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(title).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+            Text(value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        }.font(.system(size: 12))
     }
 
     private func actions(_ record: ZeSubAgentRecord) -> some View {
@@ -528,7 +536,7 @@ struct ZeSubAgentDetailView: View {
                     TextField(record.status.isActive ? "补充指令或调整方向…" : "给子代理补充任务…", text: $followUp, axis: .vertical)
                         .font(.system(size: 13))
                         .lineLimit(1...4)
-                        .padding(10)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))
                     Button {
                         guard coordinator.sendInput(id: recordId, message: followUp) != nil else { return }
@@ -536,9 +544,8 @@ struct ZeSubAgentDetailView: View {
                         sent = true
                     } label: {
                         Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 28))
+                            .font(.system(size: 26))
                             .foregroundStyle(ZeSubAgentTheme.purple)
-                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || record.status == .cancelling)
@@ -554,8 +561,8 @@ struct ZeSubAgentDetailView: View {
                         Label("停止任务", systemImage: "stop.circle.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 9)
-                            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.red)
@@ -570,18 +577,27 @@ struct ZeSubAgentDetailView: View {
 private struct ZeSubAgentSection<Content: View>: View {
     let title: LocalizedStringKey
     let icon: String
+    var status: String? = nil
     @ViewBuilder let content: () -> Content
+    private static var barBg: Color { Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.13, alpha: 1) : UIColor(white: 0.92, alpha: 1) }) }
+    private static var cardBg: Color { Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.10, alpha: 1) : UIColor(white: 0.94, alpha: 1) }) }
+    private static var stroke: Color { Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.25, alpha: 1) : UIColor(white: 0.82, alpha: 1) }) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                Spacer(minLength: 6)
+                if let status { Text(status).font(.system(size: 11)).foregroundStyle(ZeSubAgentTheme.purple) }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10).background(Self.barBg)
+            Divider()
+            content().frame(maxWidth: .infinity, alignment: .leading).padding(12)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Self.cardBg)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Self.stroke, lineWidth: 0.5))
     }
 }
 
@@ -646,7 +662,7 @@ private struct ZeSubAgentRunStats: View {
             .font(.system(size: 11, weight: .medium)).monospacedDigit()
             .lineLimit(1)
             .foregroundStyle(tint)
-            .padding(.horizontal, 8).padding(.vertical, 5)
+            .padding(.horizontal, 8).padding(.vertical, 4)
             .background(Color(uiColor: .secondarySystemFill), in: Capsule())
     }
 }
@@ -677,19 +693,25 @@ private struct ZeSubAgentChipLayout: Layout {
 
 private struct ZeSubAgentToolHistory: View {
     let record: ZeSubAgentRecord
-    @State private var expanded = false
 
     var body: some View {
         let calls = (record.steps ?? []).filter { $0.state != "info" && $0.icon != "brain.head.profile" }
         if !calls.isEmpty {
             ZeSubAgentSection(title: "工具调用", icon: "list.bullet.rectangle") {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array((expanded ? calls : Array(calls.suffix(8))).reversed())) { step in
-                        ZeSubAgentToolHistoryRow(step: step)
+                VStack(alignment: .leading, spacing: 10) {
+                    let grouped = Dictionary(grouping: calls, by: \.icon)
+                    if grouped.count > 1 {
+                        ZeSubAgentChipLayout {
+                            ForEach(grouped.keys.sorted(), id: \.self) { icon in
+                                Label("\(grouped[icon]?.count ?? 0)", systemImage: icon)
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(Color(uiColor: .secondarySystemFill), in: Capsule())
+                            }
+                        }
                     }
-                    if calls.count > 8 {
-                        Button(expanded ? "收起" : "查看全部 \(calls.count) 次调用") { expanded.toggle() }
-                            .font(.caption).foregroundStyle(ZeSubAgentTheme.purple)
+                    ForEach(Array(calls.suffix(8).reversed())) { step in
+                        ZeSubAgentToolHistoryRow(step: step)
                     }
                 }
             }
@@ -699,7 +721,6 @@ private struct ZeSubAgentToolHistory: View {
 
 private struct ZeSubAgentToolHistoryRow: View {
     let step: ZeSubAgentStep
-    @State private var expanded = false
     private var glyph: String {
         switch step.state {
         case "success": return "checkmark.circle.fill"
@@ -709,28 +730,14 @@ private struct ZeSubAgentToolHistoryRow: View {
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { expanded.toggle() } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: glyph)
-                        .foregroundStyle(step.state == "failed" ? Color.red : step.state == "success" ? Color.green : ZeSubAgentTheme.purple)
-                    Label(step.title, systemImage: step.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary).lineLimit(2)
-                    Spacer(minLength: 4)
-                    if let duration = step.duration {
-                        Text(String(format: "%.1fs", duration)).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            if !step.content.isEmpty {
-                Text(step.content)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(expanded ? nil : 2)
-                    .textSelection(.enabled)
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: glyph).font(.system(size: 11))
+                .foregroundStyle(step.state == "failed" ? Color.red : step.state == "success" ? Color.green : ZeSubAgentTheme.purple)
+            Image(systemName: step.icon).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(step.title).font(.system(size: 12)).foregroundStyle(.primary).lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let duration = step.duration {
+                Text(String(format: "%.1fs", duration)).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             }
         }
     }
@@ -761,18 +768,19 @@ private struct ZeSubAgentImagePreview: View {
     }
 }
 
-private struct ZeSubAgentTranscriptScrollStyle: ViewModifier {
+struct ZeSubAgentTranscriptScrollStyle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.4, *) { content.presentationContentInteraction(.scrolls) }
         else { content }
     }
 }
 
-private struct ZeSubAgentTranscriptPage: View {
+struct ZeSubAgentTranscriptPage: View {
     let recordId: String
     @Environment(\.dismiss) private var dismiss
     @State private var child: AIChatViewModel?
     @State private var loading = true
+    @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
 
     var body: some View {
         NavigationStack {
@@ -787,9 +795,20 @@ private struct ZeSubAgentTranscriptPage: View {
                     Text("暂未找到子代理对话记录").foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("子代理对话")
+            .navigationTitle(coordinator.record(id: recordId)?.shortPrompt ?? String(localized: "子代理对话"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
+                ToolbarItem(placement: .principal) {
+                    if let record = coordinator.record(id: recordId) {
+                        VStack(spacing: 3) {
+                            Text(record.shortPrompt).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                            Text("\(record.status.displayName) · \(ZeSubAgentPresentation.elapsed(record))")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
         .task {
             child = await ZeSubAgentCoordinator.shared.transcriptViewModel(id: recordId)
@@ -908,12 +927,9 @@ struct SubAgentSettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(records) { record in
-                        Button {
-                            selectedRecordId = record.id
-                        } label: {
-                            ZeSubAgentRow(record: record)
-                        }
-                        .buttonStyle(.plain)
+                        ZeSubAgentCompactCard(record: record, open: { selectedRecordId = record.id },
+                                              stop: { coordinator.cancelRunGroup(id: record.id) },
+                                              resume: { _ = coordinator.resume(id: record.id) })
                     }
                 }
             } header: {

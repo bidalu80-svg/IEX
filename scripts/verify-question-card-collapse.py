@@ -38,18 +38,24 @@ assert "var summaryText" in lifecycle
 
 # 4. Choices are staged. Single/multiple selections require the explicit
 #    primary action; the previous auto-submit timer could confirm a mis-tap.
-assert "private func chooseOption" in view
+assert "private func optionRow" in view
 assert "submitCurrentAnswer()" in view
-choice = view[view.index("private func chooseOption"):view.index("private func actionBar")]
+choice = view[view.index("private func optionRow"):view.index("private var otherRow")]
 assert "submitCurrentAnswer()" not in choice
-assert "saveDraft()" in choice
-assert "question.multiSelect" in choice
+assert "onDraft(a.draft)" in choice
+assert "q.multiSelect" in choice
 assert "QuestionAnswerInputSheet" in view
 assert "coordinator.navigate(requestId:" in view
 assert "questionIndex: card.currentIndex" in view
-assert "if question.isConfirmation" in view
-assert '!question.isConfirmation && !question.options.isEmpty' in view
-assert "question.optionDescriptions" in view
+assert "case .options: optionsBody" in view
+assert "case .confirm: confirmBody" in view
+assert "raw.optionDescriptions" in view
+assert "max(160, UIScreen.main.bounds.height * 0.5 - 120)" in view
+assert "QuestionPendingLayoutCache.bodyHeight(key)" in view
+assert "QuestionAskLocalized(\"Recommended\")" in view
+assert "questionFullHeight > questionClampedHeight + 1" in view
+assert "ViewThatFits(in: .horizontal)" in view
+assert "Capsule(style: .continuous)" in view
 
 # 5. Wrapped text is measured for the height estimate; no fixed 42pt row.
 estimate = layout[
@@ -57,7 +63,8 @@ estimate = layout[
     layout.index("static func estimateTextBlockHeight")
 ]
 assert "questionTextHeight" in estimate
-assert "min(total * 1.10" in estimate
+assert "QuestionPendingLayoutCache.bodyHeight" in estimate
+assert "chrome + min(" in estimate
 assert "CGFloat(question.options.count) * 42" not in estimate
 
 # 6. The host sheet renders the full card, not `block.content`.
@@ -74,13 +81,14 @@ assert '.split(whereSeparator: { $0 == "|" || $0 == "、" || $0 == "," || $0 == 
 assert '"（", "(", "【", "[", "「"' in lifecycle
 assert '"）", ")", "】", "]", "」"' in lifecycle
 
-# 8. The resolved card is one answer sheet with hairline dividers, not a stack
-#    of nested cards each carrying a 3pt accent bar.
+# 8. The resolved card follows one summary row with an aligned answer sheet,
+#    not a stack of nested panels. Only the resolved face has a collapse control.
 assert "private func answerSheet" in view
 assert "resolvedQuestionRow(card, index: index)" in view
 assert ".frame(width: 3)" not in view
 # Multi-question summaries count answers instead of joining every answer into
 # one truncated subtitle line.
-assert 'return "\\(card.statusLabel) · \\(card.answeredCount)/\\(card.questions.count)"' in view
+assert '\\(card.answeredCount)/\\(card.questions.count)' in view
+assert ".padding(.leading, 46)" in view
 
 print("question-card checks passed")
