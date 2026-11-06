@@ -132,7 +132,30 @@ import PDFKit
                     count: all.count, messages: request.messages, title: "分享验证 Share Verification", vm: vm,
                     initialOptions: imageOptions, onRendered: { finished = $0 })
                     .environment(\.colorScheme, scheme))
-                window.rootViewController = preview
+                // Reproduce the modal ownership of the real flow: an application
+                // root presents the selection sheet, which presents the preview.
+                // The preview must present its activity controller from this nested
+                // context, not from a convenient replacement root controller.
+                let shareRoot = UIHostingController(rootView: Text("Share presentation verification"))
+                let modalPicker = UIHostingController(rootView: ChatShareSelectionView(request: selectedRequest)
+                    .environment(\.colorScheme, scheme))
+                modalPicker.modalPresentationStyle = .pageSheet
+                preview.modalPresentationStyle = .pageSheet
+                window.rootViewController = shareRoot
+                window.layoutIfNeeded()
+                try await waitUntil("\(name) application root is visible") { shareRoot.viewIfLoaded?.window === window }
+                shareRoot.present(modalPicker, animated: false)
+                try await waitUntil("\(name) selection sheet is visible") {
+                    modalPicker.presentingViewController != nil && modalPicker.viewIfLoaded?.window === window
+                        && !modalPicker.isBeingPresented
+                }
+                modalPicker.present(preview, animated: false)
+                try await waitUntil("\(name) preview is presented above the selection sheet") {
+                    preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
+                        && !preview.isBeingPresented
+                }
+                try require(shareRoot.presentedViewController != nil && modalPicker.presentedViewController != nil,
+                            "\(name) production preview has two real modal presentation levels")
                 for _ in 0..<400 {
                     if finished != nil { break }
                     try await Task.sleep(nanoseconds: 100_000_000)
@@ -141,6 +164,9 @@ import PDFKit
                 let cachedImageURL = finished
                 try await Task.sleep(nanoseconds: 250_000_000)
                 try capture(window, name: "preview-\(name).png")
+                guard let renderedImage = finished else { throw ChatExportError.writeFailed }
+                try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
+                    url: renderedImage, format: "png", name: "\(name)-png")
                 finished = nil
                 UserDefaults.standard.set("pdf", forKey: "chatShare.format")
                 for _ in 0..<400 {
@@ -150,6 +176,9 @@ import PDFKit
                 try require(finished?.pathExtension == "pdf", "\(name) format change produces current PDF preview")
                 try await Task.sleep(nanoseconds: 250_000_000)
                 try capture(window, name: "preview-pdf-\(name).png")
+                guard let renderedPDF = finished else { throw ChatExportError.writeFailed }
+                try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
+                    url: renderedPDF, format: "pdf", name: "\(name)-pdf")
                 finished = nil
                 UserDefaults.standard.set("image", forKey: "chatShare.format")
                 for _ in 0..<30 {
@@ -157,6 +186,8 @@ import PDFKit
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
                 try require(finished == cachedImageURL, "\(name) switching back reuses the exact finished render")
+                shareRoot.dismiss(animated: false)
+                try await waitUntil("\(name) nested share flow closes cleanly") { shareRoot.presentedViewController == nil }
             }
 
             let cancelled = Task { @MainActor in
@@ -183,6 +214,114 @@ import PDFKit
         } catch {
             try? result(success: false, error: error.localizedDescription)
         }
+    }
+
+    /// A bounded public-API UI oracle. A successful accessibility dispatch alone
+    /// is never a pass: the actual activity controller must become visible.
+    private static func verifyActivityPresentation(window: UIWindow, root: UIViewController,
+                                                   preview: UIViewController, url: URL,
+                                                   format: String, name: String) async throws {
+        try require(url.isFileURL && url.pathExtension.lowercased() == format,
+                    "\(name) current preview supplies a \(format.uppercased()) file URL")
+        let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
+        try require(!bytes.isEmpty, "\(name) current preview file is readable and nonempty")
+        if format == "pdf" {
+            try require((PDFDocument(data: bytes)?.pageCount ?? 0) > 0, "\(name) current share file is a valid PDF")
+        } else {
+            try require(UIImage(data: bytes) != nil, "\(name) current share file is a valid PNG")
+        }
+        try saveText(url.lastPathComponent, name: "activity-file-\(name).txt")
+
+        for attempt in 1...2 {
+            try require(activityController(in: root) == nil, "\(name) attempt \(attempt) starts without an activity sheet")
+            let inspector = DebugViewInspector()
+            var target: DebugViewInspector.TapTarget?
+            for _ in 0..<8 {
+                target = inspector.findTarget(identifier: "chatShare.export")
+                if target != nil { break }
+                try await Task.sleep(nanoseconds: 150_000_000)
+            }
+            guard let target else {
+                throw verificationError("\(name) share button is absent from the public accessibility tree")
+            }
+            let action = inspector.resolveActionable(target)
+            checkpoint("\(name) attempt \(attempt): public action \(action.description)")
+            switch action {
+            case .control(let control):
+                try require(control.isEnabled && control.window === window,
+                            "\(name) attempt \(attempt) share control is enabled and visible")
+                control.sendActions(for: .touchUpInside)
+            case .buttonElement(let element):
+                let accepted = element.accessibilityActivate()
+                checkpoint("\(name) accessibilityActivate returned \(accepted)")
+            case .activatableView(let view):
+                try require(view.window === window && !view.isHidden,
+                            "\(name) attempt \(attempt) share accessibility view is visible")
+                let accepted = view.accessibilityActivate()
+                checkpoint("\(name) accessibilityActivate returned \(accepted)")
+            case .collectionCell, .tableCell, .coordinate:
+                throw verificationError("\(name) share button has no supported public accessibility activation; no synthetic/private tap fallback was used")
+            }
+            try await waitUntil("\(name) attempt \(attempt) production button presents a visible UIActivityViewController") {
+                guard let activity = activityController(in: root), let view = activity.viewIfLoaded else { return false }
+                return view.window === window && !view.isHidden && view.alpha > 0
+                    && view.bounds.width > 0 && view.bounds.height > 0 && !activity.isBeingPresented
+            }
+            guard let activity = activityController(in: root) else {
+                throw verificationError("\(name) activity controller disappeared before inspection")
+            }
+            try require(preview.presentedViewController != nil,
+                        "\(name) attempt \(attempt) activity presentation is owned by the existing preview")
+            try await Task.sleep(nanoseconds: 350_000_000)
+            try capture(window, name: "activity-\(name)-\(attempt).png")
+            // Programmatic UIKit dismissal alone does not consistently notify the
+            // SwiftUI sheet binding. Deliver the public adaptive-presentation
+            // dismissal notification as an interactive cancellation would. Invoke
+            // the installed delegate, never mutate the preview's private state.
+            // This remains a simulator lifecycle test, not a system Cancel tap.
+            let presentation = preview.presentedViewController?.presentationController
+            let presentationDelegate = presentation?.delegate
+            activity.dismiss(animated: true)
+            try await waitUntil("\(name) attempt \(attempt) dismissal returns to the same preview") {
+                activityController(in: root) == nil && preview.presentedViewController == nil
+                    && preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
+            }
+            if let presentation, let presentationDelegate {
+                presentationDelegate.presentationControllerDidDismiss?(presentation)
+                checkpoint("\(name) public adaptive-presentation dismissal notification delivered")
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        try capture(window, name: "activity-dismissed-\(name).png")
+    }
+
+    private static func activityController(in root: UIViewController) -> UIActivityViewController? {
+        var visited = Set<ObjectIdentifier>()
+        func find(_ controller: UIViewController, depth: Int) -> UIActivityViewController? {
+            guard depth < 32, visited.insert(ObjectIdentifier(controller)).inserted else { return nil }
+            if let activity = controller as? UIActivityViewController { return activity }
+            if let presented = controller.presentedViewController,
+               let activity = find(presented, depth: depth + 1) { return activity }
+            for child in controller.children {
+                if let activity = find(child, depth: depth + 1) { return activity }
+            }
+            return nil
+        }
+        return find(root, depth: 0)
+    }
+
+    private static func waitUntil(_ label: String, condition: () -> Bool) async throws {
+        for _ in 0..<100 {
+            try Task.checkCancellation()
+            if condition() { try require(true, label); return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw verificationError(label + " (timed out; no success assumed)")
+    }
+
+    private static func verificationError(_ label: String) -> NSError {
+        NSError(domain: "ConversationShareVerification", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: label])
     }
 
     private static func fixture() throws -> [ChatMessage] {
@@ -266,7 +405,7 @@ import PDFKit
 
     private static func result(success: Bool, error: String? = nil) throws {
         let output: [String: Any] = ["success": success, "error": error ?? "", "checks": checks, "files": files,
-            "scope": "Full production app: native Markdown, table, code, local asynchronous image and tools; actual PNG/PDF, text extraction, snapshot isolation, cancellation, picker/preview screenshots. No credentialed tool actions or device FPS assertion."]
+            "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button invoked only through public accessibilityActivate or UIControl.sendActions; visible UIActivityViewController, programmatic UIKit dismissal with installed public presentation-delegate notification and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, physical system-Cancel tap, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
         try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("result.json"), options: .atomic)
     }

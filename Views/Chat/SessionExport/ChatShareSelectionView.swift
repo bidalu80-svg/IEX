@@ -430,9 +430,14 @@ struct ChatSharePreviewSheet: View {
     /// [T-share-link-anchor-crash] The app appearance being followed, updated only while
     /// the scene is active (ChatShareAppearance) - not by background snapshot passes.
     @State private var followedDark: Bool?
-    /// [T-share-link-anchor-crash] The last finished render the ShareLink offered; keeps
-    /// the ShareLink (a presented share sheet's anchor) in place while a new one is made.
-    @State private var lastShareURL: URL?
+    /// Freeze the selected file while the activity sheet is open. Its presentation
+    /// belongs to this preview, including when the preview is itself a nested sheet.
+    private struct ShareFile: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+    @State private var shareFile: ShareFile?
+    @State private var shareError: String?
     @State private var rendered: [RenderKey: Rendered] = [:]
     @State private var progress: (done: Int, total: Int)?
     @State private var errorText: String?
@@ -621,13 +626,12 @@ struct ChatSharePreviewSheet: View {
                     Button(ShareLocalized("Cancel")) { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    // [T-share-link-anchor-crash] One ShareLink for the sheet's lifetime once
-                    // anything is rendered: removing it under a presented share sheet traps
-                    // in SwiftUI when the sheet re-anchors.
-                    if let target = ChatShareLinkTarget.resolve(current: rendered[key]?.url, last: lastShareURL) {
-                        ShareLink(item: target.url) { Image(systemName: "square.and.arrow.up") }
-                            .disabled(!target.enabled)
+                    Button(action: shareCurrentFile) {
+                        Image(systemName: "square.and.arrow.up")
                     }
+                    .accessibilityLabel(ShareLocalized("Share"))
+                    .accessibilityIdentifier("chatShare.export")
+                    .disabled(rendered[key] == nil || shareFile != nil)
                 }
             }
             .task(id: key) { await render(key) }
@@ -638,6 +642,35 @@ struct ChatSharePreviewSheet: View {
             }
             .onChange(of: appScheme) { _ in followAppAppearance() }
             .onChange(of: scenePhase) { _ in followAppAppearance() }
+        }
+        .sheet(item: $shareFile) { file in
+            ZeShareSheet(url: file.url)
+        }
+        .alert(ShareLocalized("Share"), isPresented: Binding(
+            get: { shareError != nil },
+            set: { if !$0 { shareError = nil } }
+        )) {
+            Button(ShareLocalized("OK"), role: .cancel) { shareError = nil }
+        } message: {
+            Text(shareError ?? "").accessibilityIdentifier("chatShare.exportError")
+        }
+    }
+
+    private func shareCurrentFile() {
+        guard shareFile == nil, let file = rendered[key]?.url else { return }
+        do {
+            // Report a missing/unreadable export instead of silently presenting an
+            // empty share item. Do not load a potentially very long image into RAM.
+            guard file.isFileURL,
+                  try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+            else { throw ChatExportError.writeFailed }
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            guard try handle.seekToEnd() > 0 else { throw ChatExportError.writeFailed }
+            shareFile = ShareFile(url: file)
+        } catch {
+            logger.error("[ChatExport] share failed: \(error.localizedDescription)")
+            shareError = error.localizedDescription
         }
     }
 
@@ -662,7 +695,6 @@ struct ChatSharePreviewSheet: View {
             try Task.checkCancellation()
             rendered[key] = Rendered(url: result.url, scale: result.scale)
             if activeKey == key {
-                lastShareURL = result.url
                 onRendered?(result.url)
             }
         } catch is CancellationError {
