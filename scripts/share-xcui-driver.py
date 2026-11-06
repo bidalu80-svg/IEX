@@ -9,11 +9,13 @@ for activity-controller presentation, cancellation, current files and screenshot
 from __future__ import annotations
 
 import argparse
+import base64
 import http.server
 import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import secrets
 import subprocess
 import threading
@@ -36,6 +38,46 @@ final class ShareDriver: XCTestCase {
         let endY: Double?
         let success: Bool?
         let error: String?
+    }
+
+    @MainActor
+    private func dismissSystemShareSheet(_ app: XCUIApplication) throws -> String {
+        let dismissNames = NSPredicate(format: "label IN %@ OR identifier IN %@",
+            ["Close", "关闭", "Cancel", "取消"], ["Close", "关闭", "Cancel", "取消"])
+        let sheets = app.sheets.allElementsBoundByIndex
+        let activity = app.otherElements["ActivityListView"].firstMatch
+        let scopes = activity.exists ? [activity] + sheets : sheets
+        for scope in scopes where scope.exists {
+            let candidates = scope.buttons.matching(dismissNames).allElementsBoundByIndex.filter { $0.isHittable }
+            if candidates.count == 1 {
+                candidates[0].tap()
+                return "system-sheet-dismiss-button"
+            }
+        }
+        // Some OS versions expose the activity view without a Sheet ancestor.
+        // Only Close is safe globally: Cancel also belongs to the underlying preview.
+        let close = NSPredicate(format: "label IN %@ OR identifier IN %@", ["Close", "关闭"], ["Close", "关闭"])
+        let closeButtons = app.buttons.matching(close).allElementsBoundByIndex.filter { $0.isHittable }
+        let export = app.buttons["chatShare.export"].firstMatch
+        if closeButtons.count == 1 && (!export.exists || !export.isHittable) {
+            closeButtons[0].tap()
+            return "unique-system-close-button"
+        }
+        // Bounds must come from an actual XCUI sheet, never the application's
+        // full-screen presentation wrapper. Refuse a status-bar-origin drag.
+        let screen = app.frame.size
+        for sheet in sheets where sheet.exists {
+            let frame = sheet.frame
+            guard frame.width > screen.width * 0.5, frame.height > 150,
+                  frame.minY > 44, frame.minY < screen.height - 180,
+                  frame.maxY <= screen.height + 2 else { continue }
+            let start = sheet.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.width / 2, dy: 12))
+            let end = start.withOffset(CGVector(dx: 0, dy: screen.height - frame.minY - 30))
+            start.press(forDuration: 0.1, thenDragTo: end)
+            return "xcui-sheet-bounds-drag"
+        }
+        throw NSError(domain: "ShareDriver", code: 6, userInfo: [NSLocalizedDescriptionKey:
+            "No unambiguous system-share Close/Cancel control or actual sheet bounds; AX tree and screen recorded, no blind gesture used"])
     }
 
     private func exchange(_ path: String, body: [String: Any]? = nil) throws -> Data {
@@ -101,6 +143,9 @@ final class ShareDriver: XCTestCase {
                 Thread.sleep(forTimeInterval: 0.15)
                 continue
             }
+            var beforePNG: String?
+            var hierarchy: String?
+            var strategy = request.action
             do {
                 switch request.action {
                 case "open":
@@ -111,27 +156,30 @@ final class ShareDriver: XCTestCase {
                     }
                     button.tap()
                 case "dismiss":
-                    guard let startX = request.startX, let startY = request.startY,
-                          let endX = request.endX, let endY = request.endY,
-                          [startX, startY, endX, endY].allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }),
-                          endY > startY else {
-                        throw NSError(domain: "ShareDriver", code: 6, userInfo: [NSLocalizedDescriptionKey: "Invalid activity-sheet swipe coordinates"])
-                    }
-                    let origin = app.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: startY))
-                    let destination = app.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: endY))
-                    origin.press(forDuration: 0.1, thenDragTo: destination)
+                    beforePNG = XCUIScreen.main.screenshot().pngRepresentation.base64EncodedString()
+                    hierarchy = app.debugDescription
+                    strategy = try dismissSystemShareSheet(app)
                 default:
                     throw NSError(domain: "ShareDriver", code: 7, userInfo: [NSLocalizedDescriptionKey: "Unknown UI action"])
                 }
-                let capture = XCTAttachment(screenshot: app.screenshot())
+                let screen = XCUIScreen.main.screenshot()
+                let capture = XCTAttachment(screenshot: screen)
                 capture.name = "share-\(sequence)-\(request.action)"
                 capture.lifetime = .keepAlways
                 add(capture)
-                _ = try exchange("/ack", body: ["sequence": sequence, "success": true, "action": request.action])
+                var acknowledgment: [String: Any] = ["sequence": sequence, "success": true, "action": request.action,
+                    "strategy": strategy, "screenPNG": screen.pngRepresentation.base64EncodedString()]
+                acknowledgment["beforeScreenPNG"] = beforePNG
+                acknowledgment["hierarchy"] = hierarchy
+                _ = try exchange("/ack", body: acknowledgment)
                 handled.insert(sequence)
                 actions += 1
             } catch {
-                _ = try? exchange("/ack", body: ["sequence": sequence, "success": false, "error": error.localizedDescription])
+                var failure: [String: Any] = ["sequence": sequence, "success": false, "error": error.localizedDescription,
+                    "screenPNG": XCUIScreen.main.screenshot().pngRepresentation.base64EncodedString(),
+                    "hierarchy": hierarchy ?? app.debugDescription]
+                failure["beforeScreenPNG"] = beforePNG
+                _ = try? exchange("/ack", body: failure)
                 throw error
             }
         }
@@ -288,12 +336,12 @@ def run_driver(args: argparse.Namespace) -> int:
                 self.reply({"error": "unauthorized"}, 403)
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 16384:
+            if length <= 0 or length > 24 * 1024 * 1024:
                 self.reply({"error": "invalid body"}, 400)
                 return
             try:
                 payload = json.loads(self.rfile.read(length))
-                if not isinstance(payload.get("sequence"), str) or not isinstance(payload.get("success"), bool):
+                if not isinstance(payload.get("sequence"), str) or not re.fullmatch(r"[A-Za-z0-9-]{1,80}", payload["sequence"]) or not isinstance(payload.get("success"), bool):
                     raise ValueError("invalid acknowledgment")
                 with lock:
                     pending = verification / "ui-request.json"
@@ -301,6 +349,22 @@ def run_driver(args: argparse.Namespace) -> int:
                     if payload["sequence"] != current.get("sequence") or (verification / "result.json").exists():
                         self.reply({"error": "stale acknowledgment"}, 409)
                         return
+                    # Persist real screen output outside xcresult so CI reviewers
+                    # can inspect remote system-share UI on any host platform.
+                    for field, suffix in [("screenPNG", "after"), ("beforeScreenPNG", "before")]:
+                        encoded = payload.pop(field, None)
+                        if encoded is not None:
+                            png = base64.b64decode(encoded, validate=True)
+                            if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+                                raise ValueError("invalid screenshot PNG")
+                            name = f"screen-{payload['sequence']}-{suffix}.png"
+                            (args.evidence / name).write_bytes(png)
+                            payload[field + "File"] = name
+                    hierarchy = payload.pop("hierarchy", None)
+                    if isinstance(hierarchy, str):
+                        name = f"hierarchy-{payload['sequence']}.txt"
+                        (args.evidence / name).write_text(hierarchy, encoding="utf-8")
+                        payload["hierarchyFile"] = name
                     temporary = verification / "ui-ack.pending"
                     temporary.write_text(json.dumps(payload), encoding="utf-8")
                     temporary.replace(verification / "ui-ack.json")

@@ -240,25 +240,17 @@ import PDFKit
                 return view.window === window && !view.isHidden && view.alpha > 0
                     && view.bounds.width > 0 && view.bounds.height > 0 && !activity.isBeingPresented
             }
-            guard let activity = activityController(in: root) else {
+            guard activityController(in: root) != nil else {
                 throw verificationError("\(name) activity controller disappeared before inspection")
             }
             try require(preview.presentedViewController != nil,
                         "\(name) attempt \(attempt) activity presentation is owned by the existing preview")
             try await Task.sleep(nanoseconds: 350_000_000)
             try capture(window, name: "activity-\(name)-\(attempt).png")
-            // XCTest swipes the presented sheet's grabber area. Do not dismiss
-            // from UIKit or synthesize a presentation delegate notification: the
-            // system must restore SwiftUI's binding after a real gesture.
-            guard let presented = preview.presentedViewController,
-                  let sheetView = presented.presentationController?.presentedView
-            else { throw verificationError("Missing activity sheet presentation geometry") }
-            let frame = sheetView.convert(sheetView.bounds, to: window)
-            let startY = min(frame.minY + 12, window.bounds.maxY - 100)
-            try await requestUIAction("dismiss", details: [
-                "startX": 0.5, "startY": max(0.01, startY / window.bounds.height),
-                "endX": 0.5, "endY": (window.bounds.maxY - 12) / window.bounds.height
-            ])
+            // The SwiftUI wrapper can cover the entire window even when the
+            // remote activity UI is a bottom sheet. Let XCTest locate the actual
+            // system Close button/sheet; wrapper geometry is not a touch target.
+            try await requestUIAction("dismiss", details: [:])
             try await waitUntil("\(name) attempt \(attempt) dismissal returns to the same preview") {
                 activityController(in: root) == nil && preview.presentedViewController == nil
                     && preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
@@ -405,7 +397,7 @@ import PDFKit
 
     private static func result(success: Bool, error: String? = nil) throws {
         let output: [String: Any] = ["success": success, "error": error ?? "", "checks": checks, "files": files,
-            "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button tapped through external XCTest UI automation; visible UIActivityViewController, real interactive swipe dismissal and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
+            "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button tapped through external XCTest UI automation; visible UIActivityViewController, real system close action and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
         try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("result.json"), options: .atomic)
     }
