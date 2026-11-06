@@ -39,7 +39,7 @@ check("parseWorkbuddyPool" in quota and '"accounts"' in quota, "识别账号池 
 check("parseDeepSeek" in quota and '"balance_infos"' in quota, "识别 DeepSeek 余额")
 check("parseNewAPI" in quota and "500_000" in quota, "识别 New API 额度单位")
 check("probeBilling" in quota and "/dashboard/billing/usage" in quota, "账单接口同时读取用量")
-check('case .anthropic, .gemini, .antigravity, .githubCopilot, .unsupported: return nil' in quota, "没有额度接口的内置服务商直接返回不支持")
+check('case .anthropic, .gemini, .antigravity, .githubCopilot, .workBuddy, .unsupported: return nil' in quota, "没有额度接口的内置服务商直接返回不支持")
 for field in ("balance", "remaining", "total_available", "total_used"):
     check(field in quota, f"识别额度字段 {field}")
 check("Bearer \\(apiKey)" in quota and "print(" not in quota, "密钥仅用于请求且未写入日志")

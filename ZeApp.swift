@@ -447,8 +447,9 @@ struct ZeApp: App {
                         switch inst.type {
                         case .anthropic: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: ClaudeTokenStorage.self) != nil
                         case .gemini: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: GeminiTokenStorage.self) != nil
-                        case .openAI: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: CodexTokenStorage.self) != nil
+                        case .openAI: hasOAuthTok = inst.cred == "chatGPTWeb" ? ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: ChatGPTWebTokenStorage.self) != nil : ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: CodexTokenStorage.self) != nil
                         case .xAI: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: XAITokenStorage.self) != nil
+                        case .workBuddy: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: WorkBuddyTokenStorage.self) != nil
                         case .kimiCode: hasOAuthTok = ProviderKeychainHelper.loadOAuthToken(instanceId: inst.id, as: KimiTokenStorage.self) != nil
                         default: hasOAuthTok = false
                         }

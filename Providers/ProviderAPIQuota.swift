@@ -318,7 +318,7 @@ enum ProviderAPIQuotaClient {
         case .openRouter: return "https://openrouter.ai/api"
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.moonshot.cn"
-        case .anthropic, .gemini, .antigravity, .githubCopilot, .unsupported: return nil
+        case .anthropic, .gemini, .antigravity, .githubCopilot, .workBuddy, .unsupported: return nil
         }
     }
 

@@ -88,6 +88,8 @@ enum ProviderMigration {
             case .kimiCode:
                 // Kimi is a new provider; no legacy singleton tokens to migrate.
                 break
+            case .workBuddy:
+                break // No legacy singleton credentials.
             case .githubCopilot:
                 // Copilot credentials are stored as an API key or manual token.
                 break

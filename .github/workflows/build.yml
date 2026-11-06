@@ -45,6 +45,16 @@ jobs:
           set -euo pipefail
           python3 scripts/test-model-compatibility.py | tee model-compatibility-tests.log
 
+      - name: Test browser authorization and provider wire protocols
+        run: |
+          set -euo pipefail
+          python3 scripts/test-web-oauth.py | tee web-oauth-tests.log
+          python3 scripts/test-chatgpt-web.py | tee chatgpt-web-tests.log
+          python3 scripts/test-workbuddy.py | tee workbuddy-tests.log
+          xcrun swiftc -parse-as-library Providers/AgentProvider.swift scripts/ProviderToolCapabilityTests.swift -o "$RUNNER_TEMP/provider-tool-capability-tests"
+          "$RUNNER_TEMP/provider-tool-capability-tests"
+          xcrun swiftc -frontend -parse Providers/OpenAI/ChatGPTWeb/*.swift Providers/WorkBuddy/*.swift
+
       - name: Test question card state and answer validation
         run: |
           set -euo pipefail

@@ -35,19 +35,20 @@ enum DebugRPCProvider {
         let allTypes = ProviderType.allCases.map { type -> [String: Any] in
             let supportedCreds: [String]
             switch type {
-            case .openAI, .anthropic: supportedCreds = ["apiKey", "oauth"]
+            case .openAI: supportedCreds = ["apiKey", "oauth", "chatGPTWeb"]
+            case .anthropic: supportedCreds = ["apiKey", "oauth"]
             case .gemini, .antigravity: supportedCreds = ["oauth"]
             case .openRouter: supportedCreds = ["apiKey", "oauth"]
             case .openAIResponses: supportedCreds = ["apiKey"]
             case .xAI: supportedCreds = ["apiKey", "oauth"]
             case .kimiCode: supportedCreds = ["oauth"]
-            case .githubCopilot: supportedCreds = ["apiKey"]
+            case .githubCopilot, .workBuddy: supportedCreds = ["oauth"]
             case .unsupported: supportedCreds = []
             }
             let customBaseSupported: Bool
             switch type {
             case .openAI, .openRouter, .openAIResponses, .gemini, .xAI, .kimiCode, .githubCopilot: customBaseSupported = true
-            case .anthropic, .antigravity, .unsupported: customBaseSupported = false
+            case .anthropic, .antigravity, .workBuddy, .unsupported: customBaseSupported = false
             }
             return [
                 "id": type.rawValue,

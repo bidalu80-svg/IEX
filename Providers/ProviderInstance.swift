@@ -144,11 +144,11 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     /// custom base URL (proxy/relay) — official direct connections (no customBaseURL)
     /// and native Gemini/Antigravity are excluded.
     var supportsCustomUserAgent: Bool {
-        guard effectiveCustomBaseURL != nil else { return false }
+        guard credentialType != .chatGPTWeb, effectiveCustomBaseURL != nil else { return false }
         switch providerType {
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot, .anthropic:
             return true
-        case .gemini, .antigravity, .unsupported:
+        case .gemini, .antigravity, .workBuddy, .unsupported:
             return false
         }
     }
@@ -210,6 +210,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     /// Anthropic / Gemini / Antigravity have their own native image paths and aren't
     /// affected by `imageEndpointMode`.
     var supportsImageEndpointSetting: Bool {
+        guard credentialType != .chatGPTWeb else { return false }
         switch providerType {
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode:
             return true
@@ -255,6 +256,13 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     /// The uncached credential probe. Kept separate so the cache wraps it and
     /// tests / diagnostics can force a fresh read.
     func computeHasAnyCredential() -> Bool {
+        if credentialType == .chatGPTWeb {
+            guard providerType == .openAI else { return false }
+            return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: ChatGPTWebTokenStorage.self)?.accessToken.isEmpty == false
+        }
+        if providerType == .workBuddy {
+            return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: WorkBuddyTokenStorage.self)?.accessToken.isEmpty == false
+        }
         // API-key path is identical across providers — query first.
         if ProviderKeychainHelper.loadAPIKey(instanceId: id, caller: "hasAnyCredential")?.isEmpty == false {
             return true
@@ -294,7 +302,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthToken(
                 instanceId: id, as: GitHubCopilotOAuthTokenStorage.self, caller: "hasAnyCredential"
             ) != nil
-        case .antigravity, .openRouter, .unsupported:
+        case .antigravity, .openRouter, .workBuddy, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no
             // standalone Codable used by the diagnostic); OpenRouter is

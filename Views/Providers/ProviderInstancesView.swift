@@ -258,12 +258,13 @@ private struct InstanceRow: View {
                   let scheme = url.scheme?.lowercased(),
                   ["http", "https"].contains(scheme), url.host != nil else { return false }
             return true
-        case .oauth:
+        case .oauth, .chatGPTWeb:
             return oauthIsAuthenticated
         }
     }
 
     private var oauthIsAuthenticated: Bool {
+        if instance.credentialType == .chatGPTWeb { return ChatGPTWebOAuthManager.shared.isAuthenticated(instanceId: instance.id) }
         // Manual OAuth token is always considered authenticated
         if ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil {
             return true
@@ -277,6 +278,7 @@ private struct InstanceRow: View {
         case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .workBuddy: return WorkBuddyOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot:
             return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
@@ -292,7 +294,7 @@ private struct InstanceRow: View {
             return instance.customBaseURL == nil
                 ? String(localized: "No API key")
                 : String(localized: "Endpoint configured · key not set")
-        case .oauth:
+        case .oauth, .chatGPTWeb:
             return oauthIsAuthenticated ? String(localized: "Authenticated") : String(localized: "Not authenticated")
         }
     }
@@ -304,7 +306,9 @@ private struct InstanceRow: View {
     var body: some View {
         let _ = store.authRevision  // subscribe to OAuth state changes
         HStack(spacing: 12) {
-            if instance.providerType == .githubCopilot {
+            if instance.providerType == .workBuddy {
+                Image("WorkBuddy").resizable().scaledToFit().frame(width: 25, height: 25)
+            } else if instance.providerType == .githubCopilot {
                 GitHubCopilotIcon()
                     .frame(width: 25, height: 25)
             } else {
@@ -317,7 +321,7 @@ private struct InstanceRow: View {
                 Text(instance.label)
                     .font(.body.weight(.medium))
                 HStack(spacing: 6) {
-                    Text(instance.credentialType == .apiKey ? "API Key" : "OAuth")
+                    Text(instance.credentialType.displayName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("·")

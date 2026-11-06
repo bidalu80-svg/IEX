@@ -21,6 +21,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     case kimiCode
     /// GitHub Copilot Chat API. Uses a Copilot session token or a GitHub token that can be exchanged for one.
     case githubCopilot
+    case workBuddy
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -46,6 +47,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return String(localized: "Kimi Code")
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddy: return "WorkBuddy"
         case .unsupported: return "Unsupported"
         }
     }
@@ -62,6 +64,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return XAIModelsAPI.allModels
         case .kimiCode: return KimiModelsAPI.allModels
         case .githubCopilot: return GitHubCopilotModelsAPI.allModels
+        case .workBuddy: return [] // Discover the account catalog after login.
         case .unsupported: return []
         }
     }
@@ -86,6 +89,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return String(localized: "Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
             return String(localized: "使用 GitHub 账号通过 OAuth 登录")
+        case .workBuddy:
+            return "使用 WorkBuddy 账号登录，自动获取可用模型"
         case .antigravity:
             return String(localized: "\(builtInModels.count) built-in models")
         case .unsupported:
@@ -105,6 +110,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return .vision
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
+        case .workBuddy: return [.textInput, .textOutput]
         case .unsupported: return .vision
         }
     }
@@ -119,6 +125,16 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
 enum ProviderCredential: String, Codable, Hashable, Sendable {
     case apiKey
     case oauth
+    /// ChatGPT website session; deliberately distinct from legacy Codex OAuth.
+    case chatGPTWeb
+
+    var displayName: String {
+        switch self {
+        case .apiKey: return "API Key"
+        case .oauth: return "OAuth"
+        case .chatGPTWeb: return "ChatGPT 网页登录（实验）"
+        }
+    }
 }
 
 

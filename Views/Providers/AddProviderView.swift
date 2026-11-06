@@ -204,6 +204,8 @@ struct AddProviderView: View {
     // verification URL + polling) for Kimi's RFC 8628 flow.
     @State private var showKimiLogin = false
     @State private var showCopilotLogin = false
+    @State private var showWorkBuddyLogin = false
+    @State private var isOAuthLoggingIn = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -287,6 +289,22 @@ struct AddProviderView: View {
                     oauthMaskedToken = loadMaskedToken(type: .githubCopilot)
                     pendingOAuthDone = true
                 }
+            }
+        }
+        .sheet(isPresented: $showWorkBuddyLogin) {
+            WorkBuddyLoginSheet(instanceId: pendingInstanceId) { success in
+                if success {
+                    oauthAuthTime = Date()
+                    oauthMaskedToken = loadMaskedToken(type: .workBuddy)
+                    pendingOAuthDone = true
+                }
+            }
+        }
+        .onDisappear {
+            // Presenting a login controller may hide this page on compact devices.
+            // Login sheets own their cancellation while presented.
+            if !isOAuthLoggingIn && !showWorkBuddyLogin && store.instance(for: pendingInstanceId) == nil {
+                cancelPendingLogin()
             }
         }
         .sheet(isPresented: $showImportFile) {
@@ -505,7 +523,7 @@ struct AddProviderView: View {
                                     .foregroundStyle(Color(UIColor.label))
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(cred == .apiKey ? "API Key" : "OAuth")
+                                    Text(cred.displayName)
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(Color(UIColor.label))
                                     Text(credentialDescription(type: type, credential: cred))
@@ -668,13 +686,15 @@ struct AddProviderView: View {
                         showKimiLogin = true
                     } else if selectedType == .githubCopilot {
                         showCopilotLogin = true
+                    } else if selectedType == .workBuddy {
+                        showWorkBuddyLogin = true
                     } else {
                         Task { await startOAuth() }
                     }
                 } label: {
                     HStack {
                         Spacer()
-                        Text(oauthSignInLabel)
+                        Text(isOAuthLoggingIn ? "等待登录完成…" : oauthSignInLabel)
                             .font(.body.weight(.semibold))
                         Spacer()
                     }
@@ -684,8 +704,15 @@ struct AddProviderView: View {
             Text("OAuth")
         }
 
+        if selectedCredential == .chatGPTWeb {
+            Section {
+                Text("实验功能：直接连接 ChatGPT 网页会话，仅限新建文字对话。当前不提供附件、工具调用或子代理；网页服务变更时可能需要重新登录。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+
         // Manual OAuth entry — available for all providers (supports proxy services, Coding Plan tokens, etc.)
-        if selectedType != .antigravity && selectedType != .githubCopilot && !pendingOAuthDone {
+        if selectedCredential != .chatGPTWeb && selectedType != .workBuddy && selectedType != .antigravity && selectedType != .githubCopilot && !pendingOAuthDone {
             Section {
                 TextField(defaultBaseURL, text: $customBaseURLInput)
                     .font(.system(.body, design: .monospaced))
@@ -788,6 +815,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "https://api.openai.com"
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
+        case .workBuddy: return ""
         case .githubCopilot: return "https://api.githubcopilot.com"
         default: return "https://api.example.com"
         }
@@ -838,7 +866,7 @@ struct AddProviderView: View {
             id: pendingInstanceId,
             label: trimmedLabel.isEmpty ? defaultLabel(for: type) : trimmedLabel,
             providerType: type,
-            credentialType: .oauth
+            credentialType: selectedCredential ?? .oauth
         )
         store.addInstance(instance)
         dismiss()
@@ -867,8 +895,16 @@ struct AddProviderView: View {
     @MainActor
     private func startOAuth() async {
         guard let type = selectedType else { return }
+        guard !isOAuthLoggingIn else { return }
+        let attemptInstanceId = pendingInstanceId
+        let attemptCredential = selectedCredential
+        isOAuthLoggingIn = true
+        defer { isOAuthLoggingIn = false }
         errorMessage = nil
         do {
+            if selectedCredential == .chatGPTWeb {
+                try await ChatGPTWebOAuthManager.shared.login(instanceId: pendingInstanceId)
+            } else {
             switch type {
             case .anthropic: try await ClaudeOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .gemini: try await GeminiOAuthManager.shared.login(instanceId: pendingInstanceId)
@@ -878,19 +914,29 @@ struct AddProviderView: View {
             case .openAIResponses: break // API key only, no OAuth
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet, not here
-            case .githubCopilot: break // handled by the device-login sheet
+            case .githubCopilot, .workBuddy: break // handled by the login sheet
             case .unsupported: break // free / unsupported — no OAuth
             }
+            }
+            guard pendingInstanceId == attemptInstanceId, selectedType == type,
+                  selectedCredential == attemptCredential else { return }
             oauthAuthTime = Date()
             oauthMaskedToken = loadMaskedToken(type: type)
             pendingOAuthDone = true
+        } catch is CancellationError {
+            // Back/cancel must not leave a stale error on the next credential page.
         } catch {
+            guard pendingInstanceId == attemptInstanceId, selectedType == type,
+                  selectedCredential == attemptCredential else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     /// Loads the access token from Keychain and masks the middle third.
     private func loadMaskedToken(type: ProviderType) -> String? {
+        if selectedCredential == .chatGPTWeb {
+            return ChatGPTWebOAuthManager.shared.maskedToken(instanceId: pendingInstanceId)
+        }
         let token: String?
         switch type {
         case .anthropic:
@@ -910,6 +956,8 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
+        case .workBuddy:
+            return WorkBuddyOAuthManager.shared.maskedToken(instanceId: pendingInstanceId)
         case .githubCopilot:
             token = GitHubCopilotOAuthManager.shared.maskedToken(instanceId: pendingInstanceId)
         case .unsupported:
@@ -919,7 +967,16 @@ struct AddProviderView: View {
         return ClaudeOAuthManager.maskToken(t)
     }
 
+    private func cancelPendingLogin() {
+        if selectedCredential == .chatGPTWeb {
+            ChatGPTWebOAuthManager.shared.logout(instanceId: pendingInstanceId)
+        } else if selectedType == .workBuddy {
+            WorkBuddyOAuthManager.shared.logout(instanceId: pendingInstanceId)
+        }
+    }
+
     private func goBack() {
+        cancelPendingLogin()
         // Voice-template entry skipped the credential step, so Back returns
         // all the way to the type list (and clears the prefilled fields) rather
         // than dropping the user onto a credential picker they never saw.
@@ -937,7 +994,7 @@ struct AddProviderView: View {
         }
         if selectedCredential != nil {
             // If we started OAuth but haven't saved, clean up the pending token
-            if selectedCredential == .oauth && pendingOAuthDone {
+            if selectedCredential != .apiKey && pendingOAuthDone {
                 ProviderKeychainHelper.deleteOAuthToken(instanceId: pendingInstanceId)
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-email")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-gcp-project")
@@ -964,6 +1021,7 @@ struct AddProviderView: View {
     }
 
     private func cleanupAndDismiss() {
+        cancelPendingLogin()
         // If we started OAuth but never saved, clean up
         if pendingOAuthDone {
             ProviderKeychainHelper.deleteOAuthToken(instanceId: pendingInstanceId)
@@ -980,6 +1038,7 @@ struct AddProviderView: View {
     // MARK: - Helpers
 
     private var oauthSignInLabel: String {
+        if selectedCredential == .chatGPTWeb { return "使用 ChatGPT 网页登录" }
         guard let type = selectedType else { return String(localized: "Sign In") }
         switch type {
         case .anthropic: return String(localized: "Sign in with Claude")
@@ -990,6 +1049,7 @@ struct AddProviderView: View {
         case .openAIResponses: return String(localized: "Sign In") // Not reachable — API key only
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
+        case .workBuddy: return "使用 WorkBuddy 登录"
         case .githubCopilot: return "使用 GitHub 登录"
         case .unsupported: return String(localized: "Sign In")
         }
@@ -1006,6 +1066,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
+        case .workBuddy: return "使用 WorkBuddy 账号登录"
         case .githubCopilot: return "使用 GitHub 账号登录"
         case .unsupported: return ""
         }
@@ -1021,6 +1082,7 @@ struct AddProviderView: View {
         case .openAIResponses: return "Responses API"
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return String(localized: "Kimi Code")
+        case .workBuddy: return "WorkBuddy"
         case .githubCopilot: return "GitHub Copilot"
         case .unsupported: return String(localized: "Unsupported")
         }
@@ -1038,8 +1100,10 @@ struct AddProviderView: View {
         switch type {
         case .antigravity:
             return [.oauth]
-        case .githubCopilot:
+        case .githubCopilot, .workBuddy:
             return [.oauth]
+        case .openAI:
+            return [.apiKey, .oauth, .chatGPTWeb]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1049,6 +1113,10 @@ struct AddProviderView: View {
 
     private func credentialDescription(type: ProviderType, credential: ProviderCredential) -> String {
         switch (type, credential) {
+        case (_, .chatGPTWeb):
+            return "登录 ChatGPT 网页账号进行文字聊天，与 Codex OAuth 独立保存（实验）。"
+        case (.workBuddy, .oauth):
+            return "选择中国或海外账号区域，浏览器授权后自动获取模型。"
         case (.openAI, .apiKey):
             return String(localized: "Supports OpenAI official API and third-party services like OpenRouter, MiniMax, etc.")
         case (.openAIResponses, .apiKey):
@@ -1107,6 +1175,8 @@ struct AddProviderView: View {
         case .kimiCode:
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
+        case .workBuddy:
+            Image("WorkBuddy").resizable().scaledToFit().frame(width: 25, height: 25)
         case .githubCopilot:
             GitHubCopilotIcon()
                 .frame(width: 25, height: 25)
@@ -1126,6 +1196,7 @@ struct AddProviderView: View {
         case .openAIResponses: return .mint
         case .xAI: return .gray
         case .kimiCode: return .indigo
+        case .workBuddy: return .blue
         case .githubCopilot: return .pink
         case .unsupported: return .gray
         }

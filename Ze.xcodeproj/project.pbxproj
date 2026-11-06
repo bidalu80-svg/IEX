@@ -529,6 +529,14 @@
 		E5SSB005 /* ConversationSearchVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR005 /* ConversationSearchVerification.swift */; };
 		E5SSB006 /* ConversationChatVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR006 /* ConversationChatVerification.swift */; };
 		F9GH00000000000000000005 /* GitHubRepositoryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000015 /* GitHubRepositoryClient.swift */; };
+		21EAB6DEFC66132C63D75667 /* ChatGPTWebOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */; };
+		A5320A5E89F1FE62A60EF845 /* ChatGPTWebProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */; };
+		37435B2FDA467070F6EFFFB4 /* ChatGPTWebProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */; };
+		890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */; };
+		9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */; };
+		619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */; };
+		5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */; };
+		7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1198,6 +1206,14 @@
 		E5SSR005 /* ConversationSearchVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSearchVerification.swift; sourceTree = "<group>"; };
 		E5SSR006 /* ConversationChatVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChatVerification.swift; sourceTree = "<group>"; };
 		F9GH00000000000000000015 /* GitHubRepositoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubRepositoryClient.swift"; sourceTree = SOURCE_ROOT; };
+		D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebOAuthManager.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebOAuthManager.swift; sourceTree = SOURCE_ROOT; };
+		1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebProvider.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebProvider.swift; sourceTree = SOURCE_ROOT; };
+		028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebProtocol.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebProtocol.swift; sourceTree = SOURCE_ROOT; };
+		8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyOAuthManager.swift; path = Providers/WorkBuddy/WorkBuddyOAuthManager.swift; sourceTree = SOURCE_ROOT; };
+		E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyModelsAPI.swift; path = Providers/WorkBuddy/WorkBuddyModelsAPI.swift; sourceTree = SOURCE_ROOT; };
+		44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyRequestAdapter.swift; path = Providers/WorkBuddy/WorkBuddyRequestAdapter.swift; sourceTree = SOURCE_ROOT; };
+		BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyProvider.swift; path = Providers/WorkBuddy/WorkBuddyProvider.swift; sourceTree = SOURCE_ROOT; };
+		73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyLoginSheet.swift; path = Views/Providers/WorkBuddyLoginSheet.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1459,6 +1475,14 @@
 				E52000011 /* LLMTypes.swift */,
 				E52000012 /* LLMError.swift */,
 				E5OARC030 /* OAuthRefreshCoordinator.swift */,
+				73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */,
+				BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */,
+				44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */,
+				E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */,
+				8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */,
+				028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */,
+				1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */,
+				D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */,
 				E5OARC031 /* OAuthRefreshSingleFlight.swift */,
 				E52000013 /* LLMProvider.swift */,
 				E5F00002 /* LLMProviderFactory.swift */,
@@ -2938,6 +2962,14 @@
 				E59000003 /* GeminiAgentProvider.swift in Sources */,
 				E5GWF0003 /* GeminiWireFormat.swift in Sources */,
 				E5C000001 /* OpenAIProvider.swift in Sources */,
+				7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */,
+				5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */,
+				619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */,
+				9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */,
+				890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */,
+				37435B2FDA467070F6EFFFB4 /* ChatGPTWebProtocol.swift in Sources */,
+				A5320A5E89F1FE62A60EF845 /* ChatGPTWebProvider.swift in Sources */,
+				21EAB6DEFC66132C63D75667 /* ChatGPTWebOAuthManager.swift in Sources */,
 				E5C000002 /* OpenAIAgentProvider.swift in Sources */,
 				E5C000003 /* OpenAIModelsAPI.swift in Sources */,
 				E5C000004 /* CodexOAuthManager.swift in Sources */,

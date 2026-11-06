@@ -11,6 +11,8 @@ struct ProviderInstanceDetailView: View {
     @State private var editingLabel = ""
     @State private var showKimiLogin = false
     @State private var showCopilotLogin = false
+    @State private var showWorkBuddyLogin = false
+    @State private var isWebLoggingIn = false
     @State private var keyInputText = ""
     @State private var isFetchingModels = false
     @State private var fetchError: String?
@@ -69,6 +71,14 @@ struct ProviderInstanceDetailView: View {
         .task(id: instance?.id) {
             if let instance {
                 await quotaStore.refreshIfNeeded(instance)
+            }
+        }
+        .sheet(isPresented: $showWorkBuddyLogin) {
+            WorkBuddyLoginSheet(instanceId: instanceId) { success in
+                if success {
+                    oauthRefreshTrigger.toggle()
+                    if let instance { Task { await store.refreshModels(for: instance) } }
+                }
             }
         }
         .sheet(isPresented: $showAddCustomModel) {
@@ -193,7 +203,9 @@ struct ProviderInstanceDetailView: View {
             }
 
             // MARK: Custom Base URL
-            customBaseURLSection(instance)
+            if instance.credentialType != .chatGPTWeb && instance.providerType != .workBuddy {
+                customBaseURLSection(instance)
+            }
 
             // [T-mimo-shadow-voice] These LLM-config fields are gated by their own
             // providerType/capability checks (supportsCustomUserAgent, API-format
@@ -289,7 +301,7 @@ struct ProviderInstanceDetailView: View {
             }
 
             // MARK: Manual OAuth Token (for OAuth instances with manual token)
-            if instance.credentialType == .oauth && instance.providerType != .antigravity && instance.providerType != .githubCopilot {
+            if instance.credentialType == .oauth && instance.providerType != .antigravity && instance.providerType != .githubCopilot && instance.providerType != .workBuddy {
                 manualOAuthTokenSection(instance)
             }
 
@@ -430,7 +442,7 @@ struct ProviderInstanceDetailView: View {
         switch instance.credentialType {
         case .apiKey:
             apiKeyCredentialView(instance)
-        case .oauth:
+        case .oauth, .chatGPTWeb:
             oauthCredentialView(instance)
         }
     }
@@ -502,7 +514,7 @@ struct ProviderInstanceDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("OAuth")
+                    Text(instance.credentialType.displayName)
                         .font(.body)
                     Text(detail)
                         .font(.caption)
@@ -534,6 +546,8 @@ struct ProviderInstanceDetailView: View {
                             showKimiLogin = true
                         } else if instance.providerType == .githubCopilot {
                             showCopilotLogin = true
+                        } else if instance.providerType == .workBuddy {
+                            showWorkBuddyLogin = true
                         } else {
                             Task {
                                 await oauthLogin(instance)
@@ -564,6 +578,7 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return "https://api.openai.com/v1"
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
+        case .workBuddy: return ""
         case .githubCopilot: return "https://api.githubcopilot.com"
         case .unsupported: return "—"
         }
@@ -1169,6 +1184,7 @@ struct ProviderInstanceDetailView: View {
     // MARK: - OAuth Helpers
 
     private func oauthIsAuthenticated(_ instance: ProviderInstance) -> Bool {
+        if instance.credentialType == .chatGPTWeb { return ChatGPTWebOAuthManager.shared.isAuthenticated(instanceId: instance.id) }
         if ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil {
             return true
         }
@@ -1181,6 +1197,8 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .workBuddy:
+            return WorkBuddyOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot:
             return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
@@ -1188,6 +1206,9 @@ struct ProviderInstanceDetailView: View {
     }
 
     private func oauthDetail(_ instance: ProviderInstance) -> String {
+        if instance.credentialType == .chatGPTWeb {
+            return ChatGPTWebOAuthManager.shared.isAuthenticated(instanceId: instance.id) ? "ChatGPT 网页已登录 · 实验性文字聊天" : "尚未登录 ChatGPT 网页"
+        }
         // Manual OAuth token — show masked token
         if ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil {
             return String(localized: "Authenticated (manual token)")
@@ -1244,6 +1265,8 @@ struct ProviderInstanceDetailView: View {
         case .kimiCode:
             return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? String(localized: "Authenticated") : String(localized: "Not authenticated")
+        case .workBuddy:
+            return WorkBuddyOAuthManager.shared.accountName(instanceId: instance.id) ?? (WorkBuddyOAuthManager.shared.isAuthenticated(instanceId: instance.id) ? "已登录 WorkBuddy" : "尚未登录 WorkBuddy")
         case .githubCopilot:
             return GitHubCopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? String(localized: "Authenticated") : String(localized: "Not authenticated")
@@ -1253,6 +1276,7 @@ struct ProviderInstanceDetailView: View {
     }
 
     private func oauthSignInLabel(_ instance: ProviderInstance) -> String {
+        if instance.credentialType == .chatGPTWeb { return "使用 ChatGPT 网页登录" }
         switch instance.providerType {
         case .anthropic: return String(localized: "Sign in with Claude")
         case .gemini: return String(localized: "Sign in with Google")
@@ -1262,13 +1286,22 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: return String(localized: "Sign In")
         case .xAI: return String(localized: "Sign in with xAI")
         case .kimiCode: return String(localized: "Sign in with Kimi Code")
+        case .workBuddy: return "使用 WorkBuddy 登录"
         case .githubCopilot: return "使用 GitHub 登录"
         case .unsupported: return String(localized: "Sign In")
         }
     }
 
     private func oauthLogin(_ instance: ProviderInstance) async {
+        guard !isWebLoggingIn else { return }
+        isWebLoggingIn = true
+        defer { isWebLoggingIn = false }
         do {
+            if instance.credentialType == .chatGPTWeb {
+                try await ChatGPTWebOAuthManager.shared.login(instanceId: instance.id)
+                await store.refreshModels(for: instance)
+                return
+            }
             switch instance.providerType {
             case .anthropic: try await ClaudeOAuthManager.shared.login(instanceId: instance.id)
             case .gemini: try await GeminiOAuthManager.shared.login(instanceId: instance.id)
@@ -1278,7 +1311,7 @@ struct ProviderInstanceDetailView: View {
             case .openAIResponses: break
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
-            case .githubCopilot: break
+            case .workBuddy, .githubCopilot: break
             case .unsupported: break
             }
         } catch {
@@ -1289,6 +1322,10 @@ struct ProviderInstanceDetailView: View {
     }
 
     private func oauthLogout(_ instance: ProviderInstance) {
+        if instance.credentialType == .chatGPTWeb {
+            ChatGPTWebOAuthManager.shared.logout(instanceId: instance.id)
+            return
+        }
         switch instance.providerType {
         case .anthropic: ClaudeOAuthManager.shared.logout(instanceId: instance.id)
         case .gemini: GeminiOAuthManager.shared.logout(instanceId: instance.id)
@@ -1298,12 +1335,17 @@ struct ProviderInstanceDetailView: View {
         case .openAIResponses: break // API key only
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
+        case .workBuddy: WorkBuddyOAuthManager.shared.logout(instanceId: instance.id)
         case .githubCopilot: GitHubCopilotOAuthManager.shared.logout(instanceId: instance.id)
         case .unsupported: break
         }
     }
 
     private func oauthCopyToken(_ instance: ProviderInstance) async {
+        if instance.credentialType == .chatGPTWeb {
+            if let token = try? await ChatGPTWebOAuthManager.shared.validAccessToken(instanceId: instance.id) { UIPasteboard.general.string = token }
+            return
+        }
         let token: String?
         switch instance.providerType {
         case .anthropic:
@@ -1323,6 +1365,8 @@ struct ProviderInstanceDetailView: View {
             token = try? await XAIOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .kimiCode:
             token = try? await KimiOAuthManager.shared.validAccessToken(instanceId: instance.id)
+        case .workBuddy:
+            token = ProviderKeychainHelper.loadOAuthToken(instanceId: instance.id, as: WorkBuddyTokenStorage.self)?.accessToken
         case .githubCopilot:
             token = try? await GitHubCopilotOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .unsupported:
@@ -1341,6 +1385,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: return "sk-..."
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
+        case .workBuddy: return "使用 WorkBuddy 账号登录"
         case .githubCopilot: return "使用 GitHub 账号登录"
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."

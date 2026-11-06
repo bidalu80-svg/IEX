@@ -702,7 +702,12 @@ final class ProviderConfigStore: ObservableObject {
 
     func addInstance(_ instance: ProviderInstance) {
         config.instances.append(instance)
-        if instance.credentialType == .oauth {
+        if instance.credentialType == .chatGPTWeb || instance.providerType == .workBuddy {
+            if instance.credentialType == .chatGPTWeb {
+                config.modelEntries.append(contentsOf: ChatGPTWebProvider.builtInModels.map { ModelEntry(providerInstanceId: instance.id, model: $0) })
+            }
+            Task { await refreshModels(for: instance) }
+        } else if instance.credentialType == .oauth {
             // OAuth instances: pre-populate with static built-in list, enriched with models.dev data.
             let builtIn: [LLMModel]
             let hasManualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
@@ -872,6 +877,8 @@ final class ProviderConfigStore: ObservableObject {
     }
 
     func removeInstance(_ instanceId: String) {
+        ChatGPTWebOAuthManager.shared.logout(instanceId: instanceId)
+        WorkBuddyOAuthManager.shared.logout(instanceId: instanceId)
         // Collect entry UUIDs to remove from groups before deleting entries
         let removedEntryIds = Set(config.modelEntries.filter { $0.providerInstanceId == instanceId }.map(\.id))
         // Capture groups that go empty as a side effect of this removal so we
@@ -1021,6 +1028,9 @@ final class ProviderConfigStore: ObservableObject {
         // hasCredential=false. We JSON-encode the typed token blob and base64 it
         // (matching the apiKey / manualOAuthToken encoding) under "oauthToken".
         let oauthTokenBlob: Data? = {
+            if instance.credentialType == .chatGPTWeb {
+                return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: ChatGPTWebTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
+            }
             switch instance.providerType {
             case .anthropic:
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: ClaudeTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
@@ -1032,6 +1042,8 @@ final class ProviderConfigStore: ObservableObject {
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: XAITokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
             case .kimiCode:
                 return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: KimiTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
+            case .workBuddy:
+                return ProviderKeychainHelper.loadOAuthToken(instanceId: instanceId, as: WorkBuddyTokenStorage.self).flatMap { try? JSONEncoder().encode($0) }
             case .githubCopilot:
                 return nil
             default:
@@ -1089,6 +1101,9 @@ final class ProviderConfigStore: ObservableObject {
             credentialType = .apiKey
         }
 
+        guard credentialType != .chatGPTWeb || providerType == .openAI else { return nil }
+        guard providerType != .workBuddy || credentialType == .oauth else { return nil }
+
         // Resolve label conflict
         let existingLabels = Set(config.instances.map(\.label))
         var resolvedLabel = label
@@ -1144,6 +1159,11 @@ final class ProviderConfigStore: ObservableObject {
         // (bumps authRevision), so the auth UI refreshes without extra work.
         if let oauthB64 = dict["oauthToken"] as? String, !oauthB64.isEmpty,
            let blob = Data(base64Encoded: oauthB64) {
+            if credentialType == .chatGPTWeb {
+                if providerType == .openAI, let token = try? JSONDecoder().decode(ChatGPTWebTokenStorage.self, from: blob) {
+                    ProviderKeychainHelper.saveOAuthToken(token, instanceId: instance.id)
+                }
+            } else {
             switch providerType {
             case .anthropic:
                 if let t = (try? JSONDecoder().decode(ClaudeTokenStorage.self, from: blob))
@@ -1169,10 +1189,15 @@ final class ProviderConfigStore: ObservableObject {
                 if let t = try? JSONDecoder().decode(KimiTokenStorage.self, from: blob) {
                     ProviderKeychainHelper.saveOAuthToken(t, instanceId: instance.id)
                 }
+            case .workBuddy:
+                if let token = try? JSONDecoder().decode(WorkBuddyTokenStorage.self, from: blob) {
+                    ProviderKeychainHelper.saveOAuthToken(token, instanceId: instance.id)
+                }
             case .githubCopilot:
                 break
             default:
                 break
+            }
             }
         }
         // Gemini account email + GCP project (base64-encoded OAuth strings).
@@ -2436,6 +2461,15 @@ final class ProviderConfigStore: ObservableObject {
         // OAuth-login paths keep their required client UA, so we never pass it there.
         let ua = instance.supportsCustomUserAgent ? instance.effectiveCustomUserAgent : nil
         switch (instance.providerType, instance.credentialType) {
+        case (.openAI, .chatGPTWeb):
+            let id = instance.id
+            return try await ChatGPTWebProvider.fetchModels(instanceId: id, tokenProvider: {
+                try await ChatGPTWebOAuthManager.shared.validAccessToken(instanceId: id)
+            })
+        case (_, .chatGPTWeb):
+            throw ModelRefreshError.noCredential
+        case (.workBuddy, _):
+            return try await WorkBuddyModelsAPI.fetchModels(instanceId: instance.id)
         case (.anthropic, .apiKey):
             guard let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) else {
                 throw ModelRefreshError.noCredential
@@ -2636,6 +2670,12 @@ final class ProviderConfigStore: ObservableObject {
     /// Fetch models from the provider API, falling back to models.dev when the API
     /// returns an empty list or fails (e.g. custom base URL without /v1/models support).
     static func fetchModelsWithFallback(_ instance: ProviderInstance, forceRefresh: Bool = false) async throws -> ModelFetchResult {
+        // Native account catalogs must never fall back to public OpenAI models.
+        if instance.credentialType == .chatGPTWeb || instance.providerType == .workBuddy {
+            let models = try await fetchModelsForInstance(instance, forceRefresh: forceRefresh)
+            guard !models.isEmpty else { throw ModelRefreshError.modelsDevNoMatch(warnings: ["账号模型目录为空；保留现有模型。"]) }
+            return ModelFetchResult(models: models, source: "api", warnings: [])
+        }
         var warnings: [String] = []
         let isThirdParty = isThirdPartyOpenAICompat(instance)
 
@@ -2725,7 +2765,7 @@ final class ProviderConfigStore: ObservableObject {
         case .githubCopilot: return "https://api.githubcopilot.com"
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
-        case .antigravity: return nil // No public base URL
+        case .workBuddy, .antigravity: return nil // No public compatible base URL
         case .unsupported: return nil // synced from newer build
         }
     }

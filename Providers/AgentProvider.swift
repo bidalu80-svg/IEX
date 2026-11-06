@@ -187,6 +187,7 @@ struct ToolCallMetadata: @unchecked Sendable {
 
 /// Protocol for providers that support the agent loop (streaming + tool use).
 protocol AgentProvider {
+    var supportsNativeTools: Bool { get }
     var name: String { get }
     var model: LLMModel { get }
     /// Default max output tokens for this provider.
@@ -269,6 +270,7 @@ enum ResponseIdleTimeoutSetting {
 // END ResponseIdleTimeoutSetting
 
 extension AgentProvider {
+    var supportsNativeTools: Bool { true }
     /// [T-sse-idle-timeout] Default for a provider that is not bound to a
     /// ProviderInstance.
     var providerInstanceId: String? { nil }
@@ -289,8 +291,8 @@ extension AgentProvider {
     ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
         let clamped = min(thinkingLevel, model.catalogMaxThinkingLevel)
         return try await streamAgentMessageClamped(
-            messages: messages, systemPrompt: systemPrompt,
-            tools: tools, maxTokens: maxTokens, thinkingLevel: clamped
+            messages: messages, systemPrompt: supportsNativeTools ? systemPrompt : "You are a helpful conversational assistant. Reply directly to the user. This connection provides text conversation only; no external tools are available.",
+            tools: supportsNativeTools ? tools : [], maxTokens: maxTokens, thinkingLevel: clamped
         )
     }
 

@@ -94,6 +94,10 @@ struct ProvidersCollection: ConfigCollection {
             throw ConfigError.invalidValue("A provider labelled \"\(label)\" already exists")
         }
 
+        guard providerType != .workBuddy else {
+            throw ConfigError.invalidValue("WorkBuddy 需要在服务商界面完成账号登录。")
+        }
+
         // Resolve the credential (literal or $$ENV) BEFORE creating the
         // instance, so a bad $$ reference fails the add atomically.
         var resolvedKey: String? = nil

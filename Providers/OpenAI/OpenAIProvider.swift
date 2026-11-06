@@ -69,6 +69,15 @@ final class OpenAIProvider: LLMProvider {
     /// Extra HTTP headers to include in every request (e.g. OpenRouter attribution).
     var extraHeaders: [String: String] = [:]
 
+    /// Optional service-specific adaptation of a Chat Completions request.
+    /// Defaults to nil; existing providers keep their original wire format.
+    /// Runs after encoding and before transport, so rotating credentials are
+    /// resolved for every request, including every agent tool round.
+    var requestAdapter: ((URLRequest) async throws -> URLRequest)?
+    /// Optional validation of raw lines for services that use HTTP 200 for
+    /// business errors. A fresh validator is created for each response.
+    var streamValidatorFactory: (() -> (String?) throws -> Void)?
+
     /// [T-model-use-image-passthrough GH#62] Arbitrary extra fields merged into the
     /// /images/generations JSON body, so `ze-model-use` can pass provider-specific
     /// params our fixed schema never modeled (e.g. Volcengine Seedream's `image` for
@@ -431,8 +440,10 @@ final class OpenAIProvider: LLMProvider {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let validateLine = self.streamValidatorFactory?()
                     continuation.yield(.started)
                     for try await line in byteStream.lines {
+                        try validateLine?(line)
                         // Tolerate `data:` with or without the optional space
                         // — see OpenAIAgentProvider.ssePayload for context
                         // (China Telecom's deepseek-v4-oc endpoint omits it).
@@ -464,6 +475,7 @@ final class OpenAIProvider: LLMProvider {
                             }
                         }
                     }
+                    try validateLine?(nil)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: self.mapError(error))
@@ -535,6 +547,9 @@ final class OpenAIProvider: LLMProvider {
         // Without this, Swift's dictionary iteration order randomizes top-level /
         // nested key order across calls and the cache misses on every request.
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        if !isResponsesAPI, let requestAdapter {
+            request = try await requestAdapter(request)
+        }
 
         #if DEBUG
         // Capture the actual on-wire body bytes for debug.llmRequests, so parity
@@ -572,9 +587,12 @@ final class OpenAIProvider: LLMProvider {
         let lineStream = AsyncThrowingStream<String, Error> { continuation in
             let task = Task {
                 do {
+                    let validateLine = self.streamValidatorFactory?()
                     for try await line in byteStream.lines {
+                        try validateLine?(line)
                         continuation.yield(line)
                     }
+                    try validateLine?(nil)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -680,6 +698,9 @@ final class OpenAIProvider: LLMProvider {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        if let requestAdapter {
+            request = try await requestAdapter(request)
+        }
 
         #if DEBUG
         logOutgoingRequest(url: url, headers: request.allHTTPHeaderFields, body: body)

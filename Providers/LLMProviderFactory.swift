@@ -17,6 +17,10 @@ enum LLMProviderFactory {
         guard let instance = store.instance(for: entry.providerInstanceId) else {
             throw FactoryError.noInstance
         }
+        if instance.credentialType == .chatGPTWeb {
+            guard instance.providerType == .openAI else { throw FactoryError.noCredentials }
+            return makeChatGPTWebProvider(instance: instance, model: entry.model)
+        }
         switch instance.providerType {
         case .anthropic:
             return makeAnthropicProvider(instance: instance, model: entry.model)
@@ -36,9 +40,24 @@ enum LLMProviderFactory {
             return makeKimiProvider(instance: instance, model: entry.model)
         case .githubCopilot:
             return makeGitHubCopilotProvider(instance: instance, model: entry.model)
+        case .workBuddy:
+            return WorkBuddyProvider(instanceId: instance.id, model: entry.model)
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
+    }
+
+    private static func invalidWebCredentialProvider(model: LLMModel) -> OpenAIProvider {
+        OpenAIProvider(oauthTokenProvider: {
+            throw LLMProviderError.providerError("ChatGPT 网页凭据仅用于独立网页连接。")
+        }, model: model)
+    }
+
+    static func makeChatGPTWebProvider(instance: ProviderInstance, model: LLMModel) -> ChatGPTWebProvider {
+        let id = instance.id
+        return ChatGPTWebProvider(model: model, instanceId: id, tokenProvider: {
+            try await ChatGPTWebOAuthManager.shared.validAccessToken(instanceId: id)
+        })
     }
 
     /// Inject the instance's custom `User-Agent` into an OpenAI-family provider's
@@ -101,6 +120,9 @@ enum LLMProviderFactory {
             // build-number default. OAuth branches below keep nil so the
             // claude-cli UA set in OAuthURLProtocol is preserved.
             provider = AnthropicProvider(apiKey: key, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua ?? ZeUserAgent.default, instanceId: instance.id)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            provider = AnthropicProvider(apiKey: "", model: model)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                 provider = AnthropicProvider(manualToken: manualToken, model: model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua, instanceId: instance.id)
@@ -127,6 +149,9 @@ enum LLMProviderFactory {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
             provider = GeminiProvider(apiKey: key, model: model, customBasePath: customBase)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            provider = GeminiProvider(apiKey: "", model: model)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                 provider = GeminiProvider(apiKey: manualToken, model: model, customBasePath: customBase)
@@ -171,6 +196,9 @@ enum LLMProviderFactory {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
             return applyAzure(applyCustomUserAgent(configure(OpenAIProvider(apiKey: key, model: model, customBaseURL: customBase, appendV1Suffix: appendV1)), instance: instance), instance: instance)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            return invalidWebCredentialProvider(model: model)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                 return applyCustomUserAgent(configure(OpenAIProvider(apiKey: manualToken, model: model, customBaseURL: customBase, appendV1Suffix: appendV1)), instance: instance)
@@ -221,6 +249,9 @@ enum LLMProviderFactory {
             let provider = OpenAIProvider(apiKey: key, model: model, customBaseURL: customBase, appendV1Suffix: appendV1)
             provider.forceResponsesAPI = true
             return applyAzure(applyCustomUserAgent(provider, instance: instance), instance: instance)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            return invalidWebCredentialProvider(model: model)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                 let provider = OpenAIProvider(apiKey: manualToken, model: model, customBaseURL: customBase, appendV1Suffix: appendV1)
@@ -255,6 +286,9 @@ enum LLMProviderFactory {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
             return applyCustomUserAgent(OpenAIProvider(apiKey: key, model: model, customBaseURL: customBase, appendV1Suffix: appendV1), instance: instance)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            return invalidWebCredentialProvider(model: model)
         case .oauth:
             let iid = instance.id
             let provider = OpenAIProvider(
@@ -300,6 +334,9 @@ enum LLMProviderFactory {
         case .apiKey:
             let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
             return applyCustomUserAgent(OpenAIProvider(apiKey: key, model: model, customBaseURL: customBase, appendV1Suffix: appendV1), instance: instance)
+        case .chatGPTWeb:
+            // This concrete compatibility builder must never send web credentials.
+            return invalidWebCredentialProvider(model: model)
         case .oauth:
             if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                 return applyCustomUserAgent(OpenAIProvider(apiKey: manualToken, model: model, customBaseURL: customBase, appendV1Suffix: appendV1), instance: instance)

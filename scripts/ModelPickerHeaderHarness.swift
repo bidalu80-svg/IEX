@@ -9,7 +9,7 @@ import Foundation
 // before the app build runs.
 enum ProviderType {
     case openAI, openAIResponses, openRouter, xAI, kimiCode
-    case anthropic, gemini, antigravity, githubCopilot, unsupported
+    case anthropic, gemini, antigravity, githubCopilot, workBuddy, unsupported
 }
 enum ProviderCredential { case apiKey, oauth }
 struct ProviderInstance {

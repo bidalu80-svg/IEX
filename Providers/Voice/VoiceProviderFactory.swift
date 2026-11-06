@@ -31,6 +31,7 @@ enum VoiceProviderFactory {
             return SystemVoiceProvider.shared
         }
 
+        guard instance.credentialType != .chatGPTWeb else { return nil }
         let apiKey = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id, caller: "VoiceFactory")
         let custom = instance.effectiveCustomBaseURL
         let normalizedBase = (custom ?? "").lowercased()
@@ -125,7 +126,7 @@ enum VoiceProviderFactory {
 
         // Antigravity has no OpenAI-compatible voice path; unsupported = synced
         // from a newer build this version can't service.
-        case .antigravity, .kimiCode, .githubCopilot, .unsupported:
+        case .antigravity, .kimiCode, .githubCopilot, .workBuddy, .unsupported:
             return nil
         }
     }

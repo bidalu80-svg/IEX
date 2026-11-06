@@ -270,7 +270,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
                "extra_body":{"image":"<url-or-data-uri>","seed":42},
                "extra_headers":{"X-Custom":"1"},"endpoint_path":"/api/v3/images/generations"}
             """
-        case .githubCopilot:
+        case .workBuddy, .githubCopilot:
             return ""
         case .anthropic, .none:
             return ""

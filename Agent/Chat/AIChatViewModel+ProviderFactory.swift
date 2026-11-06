@@ -23,6 +23,14 @@ extension AIChatViewModel {
             logger.error("No ProviderInstance found for entry \(entry.id)")
             return AnthropicAgentProvider(provider: AnthropicProvider(apiKey: "", model: entry.model))
         }
+        if instance.credentialType == .chatGPTWeb {
+            guard instance.providerType == .openAI else {
+                return OpenAIAgentProvider(provider: OpenAIProvider(oauthTokenProvider: {
+                    throw LLMProviderError.providerError("ChatGPT 网页凭据仅用于 OpenAI 网页连接。")
+                }, model: entry.model))
+            }
+            return LLMProviderFactory.makeChatGPTWebProvider(instance: instance, model: entry.model)
+        }
         switch instance.providerType {
         case .anthropic:
             return AnthropicAgentProvider(provider: LLMProviderFactory.makeAnthropicProvider(instance: instance, model: entry.model))
@@ -42,6 +50,8 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: LLMProviderFactory.makeKimiProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             return OpenAIAgentProvider(provider: LLMProviderFactory.makeGitHubCopilotProvider(instance: instance, model: entry.model))
+        case .workBuddy:
+            return WorkBuddyAgentProvider(instanceId: instance.id, model: entry.model)
         case .unsupported:
             logger.error("\(instance.providerType) has no agent provider; returning placeholder")
             return AnthropicAgentProvider(provider: AnthropicProvider(apiKey: "", model: entry.model))
@@ -71,6 +81,10 @@ extension AIChatViewModel {
         // Custom UA only for custom-base OpenAI/Anthropic-compat (proxy/relay) instances;
         // OAuth-login paths keep their required client UA (nil here). Mirrors LLMProviderFactory.
         let ua = instance.supportsCustomUserAgent ? instance.effectiveCustomUserAgent : nil
+        if instance.credentialType == .chatGPTWeb {
+            guard instance.providerType == .openAI else { throw LLMProviderError.noCredentials }
+            return LLMProviderFactory.makeChatGPTWebProvider(instance: instance, model: entry.model)
+        }
         switch instance.providerType {
         case .anthropic:
             switch instance.credentialType {
@@ -79,6 +93,8 @@ extension AIChatViewModel {
                     throw LLMProviderError.noCredentials
                 }
                 return AnthropicProvider(apiKey: key, model: entry.model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                     return AnthropicProvider(manualToken: manualToken, model: entry.model, basePath: customBase, appendV1Suffix: appendV1, customUserAgent: ua)
@@ -98,6 +114,8 @@ extension AIChatViewModel {
                     throw LLMProviderError.noCredentials
                 }
                 return GeminiProvider(apiKey: key, model: entry.model, customBasePath: customBase)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                     return GeminiProvider(apiKey: manualToken, model: entry.model, customBasePath: customBase)
@@ -123,6 +141,8 @@ extension AIChatViewModel {
                 let provider = OpenAIProvider(apiKey: key, model: entry.model, customBaseURL: customBase, appendV1Suffix: appendV1)
                 if isMistral { provider.useOpenRouterCompat = true; provider.isMistral = true }
                 return LLMProviderFactory.applyCustomUserAgent(provider, instance: instance)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                     let provider = OpenAIProvider(apiKey: manualToken, model: entry.model, customBaseURL: customBase, appendV1Suffix: appendV1)
@@ -181,6 +201,8 @@ extension AIChatViewModel {
                 let respProvider = OpenAIProvider(apiKey: key, model: entry.model, customBaseURL: customBase, appendV1Suffix: appendV1)
                 respProvider.forceResponsesAPI = true
                 return LLMProviderFactory.applyCustomUserAgent(respProvider, instance: instance)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                     let respProvider = OpenAIProvider(apiKey: manualToken, model: entry.model, customBaseURL: customBase, appendV1Suffix: appendV1)
@@ -207,6 +229,8 @@ extension AIChatViewModel {
                     throw LLMProviderError.noCredentials
                 }
                 return LLMProviderFactory.applyCustomUserAgent(OpenAIProvider(apiKey: key, model: entry.model, customBaseURL: xaiBase, appendV1Suffix: xaiAppendV1), instance: instance)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 if let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
                     return LLMProviderFactory.applyCustomUserAgent(OpenAIProvider(apiKey: manualToken, model: entry.model, customBaseURL: xaiBase, appendV1Suffix: xaiAppendV1), instance: instance)
@@ -229,6 +253,8 @@ extension AIChatViewModel {
                     throw LLMProviderError.noCredentials
                 }
                 return LLMProviderFactory.applyCustomUserAgent(OpenAIProvider(apiKey: key, model: entry.model, customBaseURL: kimiBase, appendV1Suffix: kimiAppendV1), instance: instance)
+            case .chatGPTWeb:
+                throw LLMProviderError.noCredentials
             case .oauth:
                 let iid = instance.id
                 let provider = OpenAIProvider(
@@ -241,6 +267,8 @@ extension AIChatViewModel {
             }
         case .githubCopilot:
             return LLMProviderFactory.makeGitHubCopilotProvider(instance: instance, model: entry.model)
+        case .workBuddy:
+            return WorkBuddyProvider(instanceId: instance.id, model: entry.model)
         case .unsupported:
             throw LLMProviderError.noCredentials
         }
