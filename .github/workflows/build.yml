@@ -76,11 +76,15 @@ jobs:
           python3 scripts/extract-subagent-ui.py "$RUNNER_TEMP/SubAgentUIProduction.swift"
           python3 scripts/extract-question-reference.py "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/ZeQuestionReferenceHarness.app" question-reference-evidence
           python3 scripts/extract-subagent-reference.py "$RUNNER_TEMP/SubAgentReferenceProduction.swift" "$RUNNER_TEMP/ZeSubAgentReferenceHarness.app" subagent-reference-evidence
-          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/SubAgentReferenceProduction.swift"; do
+          python3 scripts/extract-subagent-full-detail.py "$RUNNER_TEMP/SubAgentFullDetailReference.swift" "$RUNNER_TEMP/ZeFullDetailReference.app" subagent-full-detail-evidence
+          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/SubAgentReferenceProduction.swift" "$RUNNER_TEMP/SubAgentFullDetailReference.swift"; do
             xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library \
               -target "$(uname -m)-apple-ios16.0-simulator" \
               -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$source"
           done
+          xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library -D ZE_DETAIL \
+            -target "$(uname -m)-apple-ios16.0-simulator" \
+            -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$RUNNER_TEMP/ZeSubAgentFullDetailProduction.swift"
 
       - name: Test consecutive tool grouping and screenshot preservation
         run: |
@@ -221,6 +225,11 @@ jobs:
           bash scripts/test-subagent-reference-ui.sh
           python3 scripts/compare-subagent-ui.py
 
+      - name: Render complete child detail reference comparisons
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/test-subagent-full-detail.sh
+
       - name: Upload rendered card review evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -233,6 +242,7 @@ jobs:
             subagent-ui-evidence/
             subagent-reference-evidence/
             subagent-comparison-evidence/
+            subagent-full-detail-evidence/
           if-no-files-found: warn
           retention-days: 7
 
@@ -846,4 +856,5 @@ jobs:
             subagent-ui-evidence/
             subagent-reference-evidence/
             subagent-comparison-evidence/
+            subagent-full-detail-evidence/
             model-picker-evidence/
