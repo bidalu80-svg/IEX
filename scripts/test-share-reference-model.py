@@ -30,6 +30,12 @@ upstream = fetch("src/ios/Views/Chat/ChatShareModel.swift")
 test = fetch("src/ios/MinisTests/Standalone/ChatShareModelTests.swift")
 planner = fetch("src/ios/Agent/MessageList/ToolFoldPlanner.swift").split("// END ToolFoldPlanner", 1)[0]
 cases = test.split('let tests = #"""', 1)[1].split('"""#', 1)[0]
+# Swift 6.0 exhausts its type-check budget on this upstream mixed numeric
+# expression. Type its numeric terms without changing the assertion; both
+# reference and production execute the same adapted cases.
+cases = cases.replace("8 * 2 + (60 + 100 + 200) + 18 * CGFloat(max(3 - 2, 0)) + 8",
+                      "CGFloat(16) + CGFloat(360) + CGFloat(18) * CGFloat(max(3 - 2, 0)) + CGFloat(8)")
+manifest["testCompatibility"] = "Explicit CGFloat terms in one unchanged layout arithmetic assertion for Swift 6.0 type checking; same cases on both models."
 assert "exit(fails == 0 ? 0 : 1)" in cases
 production = (ROOT / "Views/Chat/SessionExport/ChatShareModel.swift").read_text(encoding="utf-8")
 manifest["productionSHA256"] = hashlib.sha256((ROOT / "Views/Chat/SessionExport/ChatShareModel.swift").read_bytes()).hexdigest()

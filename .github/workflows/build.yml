@@ -896,7 +896,7 @@ jobs:
 
   conversation-application:
     name: Verify conversation sharing and search in application
-    runs-on: macos-15-arm64
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
