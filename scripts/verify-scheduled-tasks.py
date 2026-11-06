@@ -37,13 +37,13 @@ check("com.ze.app.scheduled-tasks" in plist["BGTaskSchedulerPermittedIdentifiers
 check("processing" in plist["UIBackgroundModes"], "processing background mode declared")
 project = source("Ze.xcodeproj/project.pbxproj")
 versions = re.findall(r"MARKETING_VERSION = ([^;]+);", project)
-check(len(versions) == 12 and set(versions) == {"1.1.3"}, "all 12 app/extension/test configurations use v1.1.3")
+check(len(versions) == 12 and set(versions) == {"1.1.4"}, "all 12 app/extension/test configurations use v1.1.4")
 check(set(re.findall(r"CURRENT_PROJECT_VERSION = ([^;]+);", project)) == {"8"}, "all build numbers are 8")
 for path in paths:
     name = Path(path).name
     check(project.count(f"/* {name} in Sources */") == 2 and f'path = "{path}";' in project, f"Xcode source membership: {name}")
 workflow = source(".github/workflows/build.yml")
-check('= "1.1.3"' in workflow and '= "1.0.8"' not in workflow, "IPA version audit upgraded")
+check('= "1.1.4"' in workflow and '= "1.0.8"' not in workflow, "IPA version audit upgraded")
 # The audit also pins CFBundleVersion. It is a bare `test`, so a stale value
 # fails the build with no output at all — check it here where the message says
 # which number is expected.
