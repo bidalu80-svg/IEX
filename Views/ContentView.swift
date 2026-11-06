@@ -410,6 +410,19 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .newChatRequested)) { _ in
             handleNewChatRequest()
         }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ZeChatLifecycleReturnHome"))) { _ in
+            guard ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") else { return }
+            navigationPath = NavigationPath()
+            selectedSessionId = nil
+            currentStackSessionId = nil
+        }
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+                UserDefaults.standard.set(true, forKey: "ZeChatLifecycleReady")
+            }
+        }
+        #endif
         // Cold-launch belt-and-braces: a Home Screen Quick Action that
         // fires before `.onReceive(.newChatRequested)` is attached
         // (WindowGroup still mounting) would otherwise be lost. The

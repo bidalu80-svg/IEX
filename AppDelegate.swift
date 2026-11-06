@@ -27,6 +27,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+            UserDefaults.standard.removeObject(forKey: "ZeChatLifecycleReady")
+            Task { @MainActor in await ConversationChatVerification.run() }
+        }
         if ProcessInfo.processInfo.arguments.contains("--verify-conversation-share") {
             Task { @MainActor in await ConversationShareVerification.run() }
         }

@@ -17,7 +17,7 @@ if [ -n "$swift_fallback" ]; then
 fi
 collect() {
     local kind
-    for kind in share search; do
+    for kind in chat share search; do
         if [ -d "$container/Documents/$kind-verification" ]; then
             mkdir -p "$evidence/$kind-verification"
             cp -R "$container/Documents/$kind-verification/." "$evidence/$kind-verification/"
@@ -45,11 +45,11 @@ PY
 }
 trap diagnostics EXIT
 verification_failed=0
-for kind in share search; do
+for kind in chat share search; do
     xcrun simctl terminate "$device" "$bundle_id" >/dev/null 2>&1 || true
     # Delete only this generated result marker; retain earlier artifacts if a
     # fresh run fails, and rely on the fresh success manifest for validation.
-    rm -f "$container/Documents/$kind-verification/result.json"
+    rm -f "$container/Documents/$kind-verification/result.json" "$evidence/$kind-verification/result.json"
     if ! launch_output=$(xcrun simctl launch --stdout="$container/Documents/verification-$kind-stdout.log" --stderr="$container/Documents/verification-$kind-stderr.log" "$device" "$bundle_id" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN "--verify-conversation-$kind"); then
         verification_failed=1
         collect
@@ -66,13 +66,21 @@ for kind in share search; do
         sleep 2
     done
     collect
-    if ! python3 - "$evidence/$kind-verification/result.json" <<'PY'
+    if ! python3 - "$evidence/$kind-verification/result.json" "$kind" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1])
 assert p.exists(),f'Actual application did not produce fresh result: {p}'
 result=json.loads(p.read_text())
 print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['success'],result
+if sys.argv[2] == 'chat':
+    assert result['lastStage'] == 'complete', result
+    assert len(result['checks']) >= 19, result
+    assert len(result['screenshots']) >= 10, result
+    assert result['systemVersion'], result
+    for stage in ('open-first-new-chat', 'open-persisted-history', 'open-second-new-chat',
+                  'return-home-3', 'reopen-history-3'):
+        assert stage in result['stages'], (stage, result)
 PY
     then
         verification_failed=1

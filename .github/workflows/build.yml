@@ -212,10 +212,6 @@ jobs:
           xcrun swiftc -frontend -parse Views/Settings/MediaFavoritesView.swift
           xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift
 
-      - name: Test searchable PDF glyphs and page boundaries
-        timeout-minutes: 5
-        run: python3 scripts/test-pdf-vector-rendering.py
-
       - name: Test favorites success feedback and square layout on simulator
         # Simulator-only UI check; CoreSimulator occasionally never boots
         # ("Waiting on System App" for the full 8 minutes) on the macOS runner.
@@ -820,6 +816,10 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Test searchable PDF glyphs and page boundaries
+        timeout-minutes: 5
+        run: python3 scripts/test-pdf-vector-rendering.py
+
       - name: Package unsigned IPA
         run: |
           APP_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path '*/Build/Products/Debug-iphoneos/Ze.app' -print -quit)"
@@ -844,6 +844,16 @@ jobs:
           test -d "$APP_AUDIT"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.4"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "8"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_AUDIT/Info.plist")" = "16.0"
+          xcrun vtool -show-build "$APP_AUDIT/Ze" | tee ios-deployment-audit.log
+          python3 - "$APP_AUDIT/Info.plist" ios-deployment-audit.log <<'PYIOS'
+          import pathlib, plistlib, re, sys
+          info = plistlib.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          assert info['MinimumOSVersion'] == '16.0', info['MinimumOSVersion']
+          targets = re.findall(r'\bminos\s+(\S+)', pathlib.Path(sys.argv[2]).read_text())
+          assert targets and all(x in ('16.0', '16.0.0') for x in targets), targets
+          print('Ze Info.plist and Mach-O deployment target: iOS 16.0')
+          PYIOS
           test -f "$APP_AUDIT/Assets.car"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
@@ -876,6 +886,34 @@ jobs:
             test "$actual_install_name" = "$expected_install_name"
           done
 
+      - name: Require application runtime verification before upload
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PYGATE'
+          import json, os, pathlib, subprocess, time
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs?filter=latest&per_page=100"
+          expected = 'Verify chat lifecycle, sharing and search in application'
+          for attempt in range(110):
+              response = subprocess.run(['gh', 'api', endpoint], check=True, capture_output=True, text=True, timeout=30)
+              jobs = json.loads(response.stdout)['jobs']
+              matches = [job for job in jobs if job['name'] == expected]
+              assert len(matches) == 1, f'Expected one application verification job, found {len(matches)}'
+              job = matches[0]
+              if job['status'] == 'completed':
+                  evidence = {key: job[key] for key in ('id', 'name', 'status', 'conclusion', 'html_url')}
+                  pathlib.Path('ipa-runtime-gate.json').write_text(json.dumps(evidence, indent=2))
+                  print(json.dumps(evidence, indent=2), flush=True)
+                  assert job['conclusion'] == 'success', 'IPA upload requires full chat, sharing and search runtime checks to pass'
+                  break
+              if attempt % 6 == 0:
+                  print(f"Waiting for application runtime checks: {job['status']}", flush=True)
+              time.sleep(10)
+          else:
+              raise SystemExit('Application runtime verification did not finish; IPA upload blocked')
+          PYGATE
+
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
@@ -889,6 +927,8 @@ jobs:
           name: build-log
           path: |
             build.log
+            ios-deployment-audit.log
+            ipa-runtime-gate.json
             github-client-tests.log
             kernel-runtime-tests.log
             native-cancellation-tests.log
@@ -928,15 +968,15 @@ jobs:
 
 
   conversation-application:
-    name: Verify conversation sharing and search in application
+    name: Verify chat lifecycle, sharing and search in application
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build complete application for simulator
         run: bash scripts/build-share-search-simulator.sh
-      - name: Verify actual exports and search navigation
-        timeout-minutes: 12
+      - name: Verify full chat lifecycle, exports and search navigation
+        timeout-minutes: 16
         run: bash scripts/test-share-search-application.sh
       - name: Upload application verification evidence
         if: always()

@@ -13,7 +13,7 @@
         return true
     }
 
-    private func fixture() -> UIView {
+    private func fixture(variant: String = "original") -> UIView {
         let root = UIView(frame: CGRect(x: 0, y: 0, width: 680, height: 1200))
         root.backgroundColor = .white
         root.overrideUserInterfaceStyle = .light
@@ -24,7 +24,7 @@
             view.backgroundColor = .clear
             view.textContainerInset = .zero
             view.textContainer.lineFragmentPadding = 0
-            view.attributedText = NSAttributedString(string: value, attributes: [.font: font, .foregroundColor: UIColor.black])
+            view.attributedText = diagnosticText(value, font: font, variant: variant)
             view.frame = CGRect(x: 20, y: y, width: 640, height: 150)
             view.layoutManager.ensureLayout(for: view.textContainer)
             root.addSubview(view)
@@ -33,7 +33,7 @@
         let label = UILabel(frame: CGRect(x: 20, y: 200, width: 500, height: 30))
         label.font = .systemFont(ofSize: 16.5)
         label.textColor = .black
-        label.text = "TABLE_LAST"
+        label.attributedText = diagnosticText("TABLE_LAST", font: label.font, variant: variant)
         root.addSubview(label)
         text("let CODE_MARKER = 42", y: 250, font: .monospacedSystemFont(ofSize: 16.5, weight: .regular))
         text("SHARE_END", y: 720, font: .systemFont(ofSize: 16.5))
@@ -41,8 +41,39 @@
         return root
     }
 
-    private func render(_ root: UIView, fixed: Bool) throws -> PDFDocument {
-        let name = fixed ? "fixed" : "baseline"
+    /// Diagnostic-only variants; production fonts and content stay untouched.
+    private func diagnosticText(_ value: String, font: UIFont, variant: String) -> NSAttributedString {
+        let attributed = NSMutableAttributedString(string: value, attributes: [.font: font, .foregroundColor: UIColor.black])
+        let range = NSRange(location: 0, length: attributed.length)
+        var underscores: [NSRange] = []
+        let raw = value as NSString
+        for index in 0..<raw.length where raw.character(at: index) == 95 {
+            underscores.append(NSRange(location: index, length: 1))
+        }
+        if variant.hasPrefix("offset:") {
+            let amount = Double(variant.dropFirst("offset:".count))!
+            for underscore in underscores {
+                attributed.addAttribute(.baselineOffset, value: amount, range: underscore)
+            }
+        }
+        if variant.hasPrefix("underscore:") || variant.hasPrefix("font:") {
+            let name = String(variant.split(separator: ":")[1])
+            let replacement = name == "mono"
+                ? UIFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                : UIFont(name: name, size: font.pointSize)!
+            if variant.hasPrefix("font:") {
+                attributed.addAttribute(.font, value: replacement, range: range)
+            } else {
+                for underscore in underscores {
+                    attributed.addAttribute(.font, value: replacement, range: underscore)
+                }
+            }
+        }
+        return attributed
+    }
+
+    private func render(_ root: UIView, fixed: Bool, outputName: String? = nil) throws -> PDFDocument {
+        let name = outputName ?? (fixed ? "fixed" : "baseline")
         let url = directory.appendingPathComponent(name + ".pdf")
         var box = CGRect(x: 0, y: 0, width: 680, height: 600)
         guard let ctx = CGContext(url as CFURL, mediaBox: &box, nil) else { throw error("PDF context") }
@@ -88,6 +119,34 @@
                 ($0, fixed.findString($0, withOptions: []).count)
             })
             report["fixedSearch"] = hits
+            // Run every candidate before enforcing the unchanged acceptance check,
+            // so one simulator launch diagnoses both punctuation and pagination.
+            var matrix: [[String: Any]] = []
+            let variants = ["original", "offset:1", "offset:2", "offset:-1", "offset:-2",
+                            "underscore:Helvetica", "underscore:ArialMT", "underscore:mono",
+                            "font:Helvetica", "font:ArialMT", "font:mono"]
+            for variant in variants {
+                for coreText in [false, true] {
+                    let name = "matrix-" + variant.replacingOccurrences(of: ":", with: "-") + (coreText ? "-coretext" : "-textkit")
+                    let pdf = try render(fixture(variant: variant), fixed: coreText, outputName: name)
+                    let counts = Dictionary(uniqueKeysWithValues: markers.map {
+                        ($0, pdf.findString($0, withOptions: []).count)
+                    })
+                    let pageText = (0..<pdf.pageCount).map { pdf.page(at: $0)?.string ?? "<nil>" }
+                    // The words themselves remain searchable even when PDFKit
+                    // places the underscore in a separate text line.
+                    let pageIsolation = pageText[0].contains("BEGIN") && !pageText[0].contains("END")
+                        && pageText[1].contains("END") && !pageText[1].contains("BEGIN")
+                        && !pageText[1].contains("TABLE") && !pageText[1].contains("CODE")
+                    matrix.append(["variant": variant, "renderer": coreText ? "CoreText" : "TextKit",
+                                   "search": counts, "allMarkersSearchable": markers.allSatisfy { counts[$0] == 1 },
+                                   "pageIsolation": pageIsolation, "pageText": pageText])
+                }
+            }
+            report["diagnosticMatrix"] = matrix
+            try JSONSerialization.data(withJSONObject: matrix, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("diagnostic-matrix.json"), options: .atomic)
+            report["pageText"] = (0..<fixed.pageCount).map { fixed.page(at: $0)?.string ?? "<nil>" }
             guard markers.allSatisfy({ hits[$0] == 1 }) else {
                 throw error("PDFKit must find each complete underscore marker exactly once")
             }

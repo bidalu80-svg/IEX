@@ -82,6 +82,7 @@ xcodebuild build -project Ze.xcodeproj -scheme Ze -configuration Debug \
 sim_app="$sim_root/DerivedData/Build/Products/Debug-iphonesimulator/Ze.app"
 test -s "$sim_app/Ze"
 test -f "$sim_app/Info.plist"
+test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$sim_app/Info.plist")" = "16.0"
 if [ -n "${GITHUB_ENV:-}" ]; then
     printf 'ZE_SHARE_SEARCH_SIM_APP=%s\n' "$sim_app" >> "$GITHUB_ENV"
 fi

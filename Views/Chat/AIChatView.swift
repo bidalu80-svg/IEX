@@ -505,7 +505,14 @@ struct AIChatView: View {
         }
     }
 
-    var body: some View {
+    // Keep real type-erasure boundaries between layout and modifier groups.
+    // The iOS 18.1 device report (2026-11-06) exhausts the main-thread stack
+    // decoding composer metadata while this entire body is being constructed.
+    // Erasing only the finished tree leaves that construction just as deep.
+    var body: some View { chatLifecycle }
+
+    private var chatLayout: AnyView {
+        AnyView(
         ZStack {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
@@ -712,6 +719,12 @@ struct AIChatView: View {
             // Full-screen kernel boot overlay
             kernelBootOverlay
         }
+        )
+    }
+
+    private var chatNavigation: AnyView {
+        AnyView(
+        chatLayout
         .background(ChatColors.background)
         .background(alignment: .topLeading) {
             compactNavigationGestureSupport
@@ -782,6 +795,12 @@ struct AIChatView: View {
             })
             .equatable()
         )
+        )
+    }
+
+    private var chatPresentations: AnyView {
+        AnyView(
+        chatNavigation
         .sheet(item: $titlePillEditSession) { session in
             SessionEditSheet(session: session) { newTitle, newCategory in
                 Task {
@@ -969,6 +988,12 @@ struct AIChatView: View {
         } message: { name in
             Text(String(localized: "\(name) is unavailable. It may have been deleted or not yet synced from iCloud."))
         }
+        )
+    }
+
+    private var chatMediaPresentation: AnyView {
+        AnyView(
+        chatPresentations
         .fullScreenCover(item: $imageGallery) { presentation in
             MessageImageGallery(items: presentation.items, startIndex: presentation.startIndex)
         }
@@ -1260,6 +1285,12 @@ struct AIChatView: View {
                 showDocumentPicker = false
             }
         }
+        )
+    }
+
+    private var chatLifecycle: AnyView {
+        AnyView(
+        chatMediaPresentation
         .onAppear {
             let sinceInit = (CFAbsoluteTimeGetCurrent() - AIChatViewModel.onAppearTimestamp) * 1000
             zeLogger.info("[SessionLoad] onAppear T+\(String(format: "%.0f", sinceInit))ms isNew=\(cached.isNew) msgs=\(vm.messages.count)")
@@ -1545,6 +1576,7 @@ struct AIChatView: View {
         // descendants (e.g. ToolCapsuleView's long-press menu) can react to
         // `vm.isProcessing` without threading the vm through every level.
         .environmentObject(vm)
+        )
     }
 
     // MARK: - Home Screen Quick Actions
@@ -3041,21 +3073,26 @@ struct AIChatView: View {
     /// Returns AnyView to keep `inputBar`'s generic type compact; SwiftUI
     /// runtime demangle chokes on deep nested types otherwise.
     private var inputBottomRow: AnyView {
+        // Erase each opaque leaf BEFORE HStack builds its tuple metadata.
+        // AnyView(row) alone runs too late to protect this builder.
+        let attachment = AnyView(attachmentMenuButton)
+        let commands = AnyView(slashMenuButton)
+        let send = AnyView(sendButton)
         let row = HStack(spacing: 6) {
             HStack(spacing: 0) {
-                attachmentMenuButton
-                slashMenuButton
+                attachment
+                commands
             }
-            if vm.editingMessageIndex != nil { editExitButton }
+            if vm.editingMessageIndex != nil { AnyView(editExitButton) }
             inputFieldOrWaveform
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Mutually exclusive with editExitButton: while editing a past
             // message the exit capsule owns this row — showing both capsules
             // overflows the row and they render overlapped.
             if voiceInputActive, vm.editingMessageIndex == nil {
-                readAloudToolbarToggle
+                AnyView(readAloudToolbarToggle)
             }
-            sendButton
+            send
         }
         return AnyView(row)
     }
@@ -3364,21 +3401,8 @@ struct AIChatView: View {
         }
     }
 
-    private var inputBar: some View {
-        VStack(spacing: 0) {
-            if vm.isSuspended {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .tint(.yellow)
-                    Text("正在等待其他任务完成…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity)
-                .background(Color.yellow.opacity(0.08))
-            }
-
+    private var inputComposerChrome: AnyView {
+        AnyView(
             VStack(spacing: 8) {
                 VStack(spacing: 0) {
                     inputBottomRow
@@ -3437,6 +3461,26 @@ struct AIChatView: View {
                 .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             }
+        )
+    }
+
+    private var inputBar: AnyView {
+        AnyView(
+        VStack(spacing: 0) {
+            if vm.isSuspended {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .tint(.yellow)
+                    Text("正在等待其他任务完成…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color.yellow.opacity(0.08))
+            }
+
+            inputComposerChrome
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, composerHorizontalPadding)
             // The attachment tray is the preceding sibling in the bottom
@@ -3744,6 +3788,7 @@ struct AIChatView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+        )
         )
     }
 

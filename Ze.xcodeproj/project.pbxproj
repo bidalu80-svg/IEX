@@ -527,6 +527,7 @@
 		E5SSB003 /* ChatExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR003 /* ChatExportRenderer.swift */; };
 		E5SSB004 /* ConversationShareVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR004 /* ConversationShareVerification.swift */; };
 		E5SSB005 /* ConversationSearchVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR005 /* ConversationSearchVerification.swift */; };
+		E5SSB006 /* ConversationChatVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR006 /* ConversationChatVerification.swift */; };
 		F9GH00000000000000000005 /* GitHubRepositoryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000015 /* GitHubRepositoryClient.swift */; };
 /* End PBXBuildFile section */
 
@@ -1195,6 +1196,7 @@
 		E5SSR003 /* ChatExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExportRenderer.swift; sourceTree = "<group>"; };
 		E5SSR004 /* ConversationShareVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationShareVerification.swift; sourceTree = "<group>"; };
 		E5SSR005 /* ConversationSearchVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSearchVerification.swift; sourceTree = "<group>"; };
+		E5SSR006 /* ConversationChatVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChatVerification.swift; sourceTree = "<group>"; };
 		F9GH00000000000000000015 /* GitHubRepositoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubRepositoryClient.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -2186,6 +2188,7 @@
 				E5SER003 /* SessionExportRenderer.swift */,
 				E5SER004 /* SessionShareSheet.swift */,
 				E5SSR005 /* ConversationSearchVerification.swift */,
+				E5SSR006 /* ConversationChatVerification.swift */,
 				E5SSR004 /* ConversationShareVerification.swift */,
 				E5SSR003 /* ChatExportRenderer.swift */,
 				E5SSR002 /* ChatShareSelectionView.swift */,
@@ -2998,6 +3001,7 @@
 				E5SEB003 /* SessionExportRenderer.swift in Sources */,
 				E5SEB004 /* SessionShareSheet.swift in Sources */,
 				E5SSB005 /* ConversationSearchVerification.swift in Sources */,
+				E5SSB006 /* ConversationChatVerification.swift in Sources */,
 				E5SSB004 /* ConversationShareVerification.swift in Sources */,
 				E5SSB003 /* ChatExportRenderer.swift in Sources */,
 				E5SSB002 /* ChatShareSelectionView.swift in Sources */,
