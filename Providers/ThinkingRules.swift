@@ -281,7 +281,7 @@ enum ThinkingRuleResolver {
         } else if isOpenRouter {
             candidates.append(rule("openrouter-default", "OpenRouter 默认规则", .allModels, .nestedReasoningEffort, "发送 reasoning.effort"))
         } else {
-            let openAIModels = ["o1*", "o3*", "o4*", "gpt-6*", "gpt-5*", "gpt-4*"]
+            let openAIModels = ["o1*", "o3*", "o4*", "gpt-6*", "gpt6*", "*/gpt-6*", "*/gpt6*", "gpt-5*", "gpt-4*"]
             for pattern in openAIModels {
                 candidates.append(rule("openai-\(pattern)", "OpenAI \(pattern)", .modelPattern(pattern), .reasoningEffort, "发送 reasoning_effort"))
             }

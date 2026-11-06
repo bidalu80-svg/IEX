@@ -66,8 +66,23 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     static let gpt56CompatibleContextWindow = 1_050_000
     static let gpt56CompatibleMaxOutputTokens = 128_000
 
+    /// Match gateway namespaces without rewriting the actual wire model ID.
+    static func modelIdentifierWithoutNamespace(_ modelId: String) -> String {
+        String(modelId.lowercased().split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+    }
+
+    /// Compatibility for model IDs returned by a gateway, not an official catalog.
+    /// A numeric version and a bounded suffix avoid matching arbitrary chat IDs.
+    static func isGPTImageFamily(_ modelId: String) -> Bool {
+        let identifier = modelIdentifierWithoutNamespace(modelId)
+        return identifier.range(of: #"^gpt-image-[0-9]+(?:\.[0-9]+)*(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$"#,
+                                options: .regularExpression) != nil
+    }
+
+    static let gptImageModalities: ModelModality = [.textInput, .imageInput, .imageOutput]
+
     static func isGPT56CompatibleFamily(_ modelId: String) -> Bool {
-        let lowerId = modelId.lowercased()
+        let lowerId = modelIdentifierWithoutNamespace(modelId)
         return lowerId.hasPrefix("gpt-5.6")
             || lowerId.hasPrefix("gpt-6")
             || lowerId.hasPrefix("gpt6")
@@ -546,6 +561,11 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
 
         // If models.dev already set the modality, we're done
         if enriched.modalityOverride != nil { return enriched }
+
+        if Self.isGPTImageFamily(id) {
+            enriched.modalityOverride = Self.gptImageModalities
+            return enriched
+        }
 
         // [T-mimo-shadow-voice] Dedicated ASR/TTS models get their EXACT
         // voice-model modality (audio-only-input / audio-only-output), which the

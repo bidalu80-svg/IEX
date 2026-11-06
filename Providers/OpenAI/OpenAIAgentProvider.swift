@@ -457,42 +457,10 @@ final class OpenAIAgentProvider: AgentProvider {
         // Applies to every Responses flavor (Codex OAuth + forceResponsesAPI +
         // custom-base). Previously only Codex honored the user's level, so
         // Responses-API provider types silently ignored thinking settings.
-        var reasoningRequested = false
-        if thinkingLevel.isEnabled, let effort = Self.reasoningEffort(for: model, level: thinkingLevel, allowUnknownGPT6: true) {
-            // `summary: "auto"` opts in to streaming the human-readable
-            // reasoning summary (delivered as `response.reasoning_summary_text.delta`
-            // SSE events). Without it the Responses API only returns
-            // `encrypted_content`, so the UI has nothing to show except a
-            // token count. Safe to send to every Responses-flavor endpoint:
-            // OpenAI ignores unknown variants and falls back to "auto"-equiv.
-            body["reasoning"] = ["effort": effort, "summary": "auto"]
-            reasoningRequested = true
-        } else if isCodexOAuth {
-            // Codex requires a `reasoning` object on every request — fall back
-            // to "low" when the user has thinking off.
-            body["reasoning"] = ["effort": "low", "summary": "auto"]
-            reasoningRequested = true
-        } else if model.supportsReasoning ?? false,
-                  let offEffort = Self.explicitOffEffort(for: provider, model: model, level: thinkingLevel) {
-            // [T-thinking-off-explicit] Thinking OFF on a reasoning-capable
-            // model: send the explicit off tier instead of omitting the
-            // `reasoning` key — omission lets the vendor default kick in.
-            // Same ALLOWLIST as the Chat path (official OpenAI → "none",
-            // Volcano Ark → "minimal"); vendors with undocumented off
-            // semantics keep the historical omission. No summary/include:
-            // nothing should stream back.
-            body["reasoning"] = ["effort": offEffort]
-        }
-        // Request the encrypted reasoning payload whenever reasoning is
-        // requested. The `encrypted_content` is opaque + model-specific; we
-        // capture it on each turn and echo back to the SAME model id on
-        // subsequent requests (see ReasoningEcho + convertMessagesResponsesAPI
-        // for the model-id-gated round-trip). Applies to every Responses-API
-        // model that supports reasoning — Codex OAuth, gpt-5.x, o-series,
-        // and any future model the server recognizes. Not model-name-gated.
-        if reasoningRequested {
-            body["include"] = ["reasoning.encrypted_content"]
-        }
+        Self.injectResponsesThinkingParams(
+            into: &body, model: model, level: thinkingLevel, isCodexOAuth: isCodexOAuth,
+            offEffort: Self.explicitOffEffort(for: provider, model: model, level: thinkingLevel)
+        )
         // [T-responses-max-output-tokens] The function always RECEIVED
         // maxTokens (dynamicMaxTokens result: model override + context-window
         // aware) but never wrote it into the body — so Responses-API vendors
@@ -868,7 +836,7 @@ final class OpenAIAgentProvider: AgentProvider {
     /// low/medium/high for reasoning_effort and reject "xhigh" outright
     /// (MiMo-2.5/Pro → 400 literal_error; Agnes → 422 unknown variant).
     static func isGPT6Family(_ modelId: String) -> Bool {
-        let id = modelId.lowercased()
+        let id = LLMModel.modelIdentifierWithoutNamespace(modelId)
         return id.hasPrefix("gpt-6") || id.hasPrefix("gpt6")
     }
 
@@ -892,6 +860,26 @@ final class OpenAIAgentProvider: AgentProvider {
         // stays a local behavior; the effort string never becomes "ultra".
         case .max, .ultra: "max"
         }
+    }
+
+    /// Shared by the real Responses request builder and wire fixtures. A gateway
+    /// namespace changes matching only; the request's original model ID is retained.
+    static func injectResponsesThinkingParams(into body: inout [String: Any], model: LLMModel,
+                                              level: ThinkingLevel, isCodexOAuth: Bool,
+                                              offEffort: String?) {
+        guard model.supportsReasoning != false else { return }
+        var requested = false
+        if level.isEnabled, let effort = reasoningEffort(for: model, level: level, allowUnknownGPT6: true) {
+            body["reasoning"] = ["effort": effort, "summary": "auto"]
+            requested = true
+        } else if isCodexOAuth {
+            // Preserve Codex's required low fallback when thinking is disabled.
+            body["reasoning"] = ["effort": "low", "summary": "auto"]
+            requested = true
+        } else if model.supportsReasoning == true, let offEffort {
+            body["reasoning"] = ["effort": offEffort]
+        }
+        if requested { body["include"] = ["reasoning.encrypted_content"] }
     }
 
     /// Inject provider-specific thinking parameters into the Chat Completions request body.
@@ -935,6 +923,10 @@ final class OpenAIAgentProvider: AgentProvider {
         let strictEffortEnum = lid.contains("mimo") || lid.contains("agnes")
         let offEffort = strictEffortEnum ? nil : offEffort
 
+        // A declared negative capability wins over GPT-6 family compatibility,
+        // including the OpenRouter wire branch. Explicit user rules above retain priority.
+        if isGPT6Family(model.id), model.supportsReasoning == false { return }
+
         // OpenRouter: unified `reasoning` parameter — auto-adapts to backend provider.
         // When thinking is off, omit the parameter entirely so forced-reasoning models
         // (DeepSeek R1, Kimi K2.5, etc.) use their default behavior instead of rejecting
@@ -961,7 +953,7 @@ final class OpenAIAgentProvider: AgentProvider {
         // family is nevertheless reasoning-capable, so allow the explicit
         // user toggle to send the standard field when metadata is unknown.
         if lid.hasPrefix("o1") || lid.hasPrefix("o3") || lid.hasPrefix("o4")
-            || lid.hasPrefix("gpt-5") || lid.hasPrefix("gpt-6") || lid.hasPrefix("gpt6") || lid.hasPrefix("gpt-4") {
+            || lid.hasPrefix("gpt-5") || isGPT6Family(model.id) || lid.hasPrefix("gpt-4") {
             if let effort = reasoningEffort(for: model, level: level, allowUnknownGPT6: true) {
                 body["reasoning_effort"] = effort
             } else if !level.isEnabled, let offEffort, model.supportsReasoning ?? false {

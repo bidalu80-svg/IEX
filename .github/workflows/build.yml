@@ -41,9 +41,14 @@ jobs:
           xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Settings/ScheduledTasksView.swift
 
       - name: Test model catalog and thinking request compatibility
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: |
           set -euo pipefail
           python3 scripts/test-model-compatibility.py | tee model-compatibility-tests.log
+          python3 scripts/test-image-model-capabilities.py | tee image-model-tests.log
+          python3 scripts/test-image-wire.py | tee image-wire-tests.log
+          python3 scripts/test-openai-reasoning-wire.py | tee reasoning-wire-tests.log
 
       - name: Test browser authorization and provider wire protocols
         env:
@@ -955,6 +960,12 @@ jobs:
             browser-parity-evidence/
             pdf-vector-evidence/
             model-compatibility-tests.log
+            image-model-tests.log
+            image-wire-tests.log
+            reasoning-wire-tests.log
+            web-oauth-tests.log
+            chatgpt-web-tests.log
+            workbuddy-tests.log
             subagent-lifecycle-tests.log
             subagent-delivery-tests.log
             subagent-card-tests.log

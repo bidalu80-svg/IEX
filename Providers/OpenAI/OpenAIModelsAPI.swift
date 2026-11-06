@@ -60,6 +60,11 @@ enum OpenAIModelsAPI {
             throw LLMError.providerError(message: "Failed to fetch OpenAI models (HTTP \(statusCode)): \(body.prefix(500))")
         }
 
+        return try parseModels(data, filterOpenAIOnly: filterOpenAIOnly)
+    }
+
+    /// Pure response decoding, shared by production fetching and regression fixtures.
+    static func parseModels(_ data: Data, filterOpenAIOnly: Bool = true) throws -> [LLMModel] {
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         guard let modelsArray = json["data"] as? [[String: Any]] else {
             throw LLMError.decodingError(underlying: NSError(domain: "OpenAIModelsAPI", code: -1,
@@ -123,10 +128,9 @@ enum OpenAIModelsAPI {
             // contract. Some compatible gateways omit modality arrays from
             // /models, so preserve that known family capability instead of
             // collapsing it to text-only. Explicit API metadata still wins.
-            let lowerId = id.lowercased()
-            let familyDefault: ModelModality =
-                (lowerId.hasPrefix("gpt-5.6") || lowerId.hasPrefix("gpt-6") || lowerId.hasPrefix("gpt6"))
-                ? .vision : [.textInput, .textOutput]
+            let familyDefault: ModelModality = LLMModel.isGPTImageFamily(id)
+                ? LLMModel.gptImageModalities
+                : (isGPT56Compatible ? .vision : .textOnly)
             var modality: ModelModality = (inputArr == nil && outputArr == nil) ? familyDefault : []
             if let inputs = inputArr {
                 let bare = Set(inputs.map(Self.normalizeModality))

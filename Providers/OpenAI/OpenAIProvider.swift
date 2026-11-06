@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import os.log
 
 private let logger = AppLogger(category: "OpenAIProvider")
@@ -1226,30 +1227,14 @@ final class OpenAIProvider: LLMProvider {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let tokenPrefix = String(token.prefix(12))
-        let tokenSuffix = String(token.suffix(4))
-        logger.info("🖼️ /images/generations auth: \(tokenPrefix)...\(tokenSuffix) (len=\(token.count)) isOAuth=\(isOAuth)")
-
-        var body: [String: Any] = [
-            "model": model.id,
-            "prompt": prompt,
-            "n": n,
-        ]
-        if let size { body["size"] = size }
-        if let quality { body["quality"] = quality }
-
-        // [T-model-use-image-passthrough GH#62] Merge user-supplied passthrough
-        // fields. User keys WIN over our defaults (e.g. they can override prompt/
-        // size or add Seedream's `image`/`watermark`), but `model` is force-kept
-        // to the resolved model id afterward so a stray override can't misroute.
-        for (k, v) in imageExtraBody { body[k] = v }
-        body["model"] = model.id
+        var body = try Self.imageRequestFields(modelID: model.id, prompt: prompt, n: n,
+                                               size: size, quality: quality, extraBody: imageExtraBody)
         // If the user explicitly set response_format, respect it and don't run
         // the b64_json probe/retry below.
         let userSetResponseFormat = imageExtraBody["response_format"] != nil
 
         // Try b64_json first; if the provider rejects it, retry without response_format
-        var triedWithoutFormat = userSetResponseFormat
+        var triedWithoutFormat = userSetResponseFormat || Self.usesGPTImageWire(model.id)
         while true {
             if !triedWithoutFormat {
                 body["response_format"] = "b64_json"
@@ -1344,6 +1329,7 @@ final class OpenAIProvider: LLMProvider {
             if let b64 = item["b64_json"] as? String,
                let imageData = Data(base64Encoded: b64) {
                 let mime = hintMime ?? Self.detectImageMime(imageData)
+                try Self.validateImageResultMime(mime)
                 attachments.append(LLMMediaAttachment(type: .image, mimeType: mime, data: imageData))
             } else if let urlStr = item["url"] as? String, let url = URL(string: urlStr) {
                 // Download image from URL. [T-image-gen-timeout] Use
@@ -1355,8 +1341,11 @@ final class OpenAIProvider: LLMProvider {
                     let contentType = (urlResponse as? HTTPURLResponse)?
                         .value(forHTTPHeaderField: "Content-Type")
                     let mime = hintMime ?? contentType ?? Self.detectImageMime(imageData)
+                    try Self.validateImageResultMime(mime)
                     attachments.append(LLMMediaAttachment(type: .image, mimeType: mime, data: imageData))
                     logger.info("🖼️ Downloaded image from URL (\(imageData.count) bytes)")
+                } catch let error as LLMError {
+                    throw error
                 } catch {
                     logger.warning("🖼️ Failed to download image from \(urlStr): \(error.localizedDescription)")
                 }
@@ -1431,17 +1420,19 @@ final class OpenAIProvider: LLMProvider {
             body.append("\r\n".data(using: .utf8)!)
         }
 
-        appendField("model", model.id)
-        appendField("prompt", prompt)
-        appendField("n", "\(n)")
-        appendField("response_format", "b64_json")
-        if let size { appendField("size", size) }
-        if let quality { appendField("quality", quality) }
+        var fields = try Self.imageRequestFields(modelID: model.id, prompt: prompt, n: n,
+                                                size: size, quality: quality, extraBody: imageExtraBody)
+        if !Self.usesGPTImageWire(model.id), fields["response_format"] == nil {
+            fields["response_format"] = "b64_json"
+        }
+        for (name, value) in try Self.imageMultipartFields(fields) {
+            appendField(name, value)
+        }
 
-        // Attach images — first image as "image", additional as "image[]"
+        // A multi-file request uses the same array field for every input.
         for (idx, img) in images.enumerated() {
             let ext = img.mimeType.split(separator: "/").last.map(String.init) ?? "png"
-            let fieldName = idx == 0 ? "image" : "image[]"
+            let fieldName = images.count == 1 ? "image" : "image[]"
             appendFile(fieldName, filename: "image\(idx).\(ext)", mimeType: img.mimeType, data: img.data)
         }
 
@@ -1503,8 +1494,74 @@ final class OpenAIProvider: LLMProvider {
         return try await parseImageGenerationsResult(json)
     }
 
+    // BEGIN GPTImageWireCompatibility
+    /// Family detection only controls parameter compatibility. The original
+    /// gateway model ID (including namespace and alias) is always sent verbatim.
+    static func usesGPTImageWire(_ modelID: String) -> Bool {
+        LLMModel.isGPTImageFamily(modelID)
+            || LLMModel.modelIdentifierWithoutNamespace(modelID) == "chatgpt-image-latest"
+    }
+
+    static func imageRequestFields(modelID: String, prompt: String, n: Int, size: String?,
+                                   quality: String?, extraBody: [String: Any]) throws -> [String: Any] {
+        var fields: [String: Any] = ["model": modelID, "prompt": prompt, "n": n]
+        if let size { fields["size"] = size }
+        if let quality { fields["quality"] = quality }
+        for (key, value) in extraBody { fields[key] = value }
+        fields["model"] = modelID
+        if usesGPTImageWire(modelID) {
+            // Official Images API returns base64 for GPT Image. This legacy
+            // field is rejected for both generations and multipart edits.
+            fields.removeValue(forKey: "response_format")
+            if let format = fields["output_format"] as? String,
+               ["svg", "gif"].contains(format.lowercased()) {
+                throw LLMError.providerError(message: "Ze 当前图片结果预览尚未适配 SVG / GIF 输出，请选择 png、jpeg 或 webp。")
+            }
+            if fields["stream"] as? Bool == true || fields["partial_images"] != nil {
+                throw LLMError.providerError(message: "当前图片生成入口使用完整图片响应，请移除 stream 和 partial_images 参数。")
+            }
+        }
+        return fields
+    }
+
+    /// Multipart edits carry the same scalar/provider parameters as generation.
+    /// Upload fields remain owned by the typed image argument, not JSON strings.
+    static func imageMultipartFields(_ fields: [String: Any]) throws -> [(String, String)] {
+        try fields.keys.sorted().compactMap { key in
+            guard !["image", "image[]", "mask", "markup"].contains(key) else {
+                throw LLMError.providerError(message: "图片编辑的 \(key) 参数需要文件上传；当前入口只接收 images 附件。")
+            }
+            guard !key.contains("\r"), !key.contains("\n"), !key.contains("\"") else {
+                throw LLMError.providerError(message: "图片编辑参数名称无效。")
+            }
+            guard let value = fields[key], !(value is NSNull) else { return nil }
+            if let text = value as? String { return (key, text) }
+            if let number = value as? NSNumber {
+                let text = CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? "true" : "false") : number.stringValue
+                return (key, text)
+            }
+            if JSONSerialization.isValidJSONObject(value) {
+                let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                return (key, String(decoding: data, as: UTF8.self))
+            }
+            throw LLMError.providerError(message: "图片编辑参数 \(key) 的值格式无效。")
+        }
+    }
+
+    static func validateImageResultMime(_ mime: String) throws {
+        let base = mime.split(separator: ";").first.map(String.init)?.trimmingCharacters(in: .whitespaces).lowercased()
+        if base == "image/svg+xml" {
+            throw LLMError.providerError(message: "服务返回了 SVG 图片，当前结果预览尚未适配，请改用 png、jpeg 或 webp 输出。")
+        }
+    }
+    // END GPTImageWireCompatibility
+
     /// Detect image MIME type from magic bytes.
     private static func detectImageMime(_ data: Data) -> String {
+        let textPrefix = String(decoding: data.prefix(1024), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if textPrefix.hasPrefix("<svg") || (textPrefix.hasPrefix("<?xml") && textPrefix.contains("<svg")) {
+            return "image/svg+xml"
+        }
         guard data.count >= 4 else { return "image/png" }
         let bytes = [UInt8](data.prefix(4))
         if bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {

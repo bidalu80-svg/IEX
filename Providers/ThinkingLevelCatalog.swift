@@ -23,7 +23,10 @@ enum ThinkingLevelCatalog {
         // GPT-6 Astra and compatible gateway aliases expose the standard
         // reasoning_effort ladder. The actual capability flag is still taken
         // from /models when available; this rule only sets the UI ceiling.
-        ({ $0.hasPrefix("gpt-6") || $0.hasPrefix("gpt6") }, .max),
+        ({
+            let id = LLMModel.modelIdentifierWithoutNamespace($0)
+            return id.hasPrefix("gpt-6") || id.hasPrefix("gpt6")
+        }, .max),
         // MiMo ships BOTH id spellings in the wild: catalog docs say
         // "MiMo-2.5" but the live API (api.xiaomimimo.com /v1/models) returns
         // "mimo-v2.5" / "mimo-v2.5-pro" — the old "mimo-2.5" substring missed

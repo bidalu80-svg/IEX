@@ -503,6 +503,10 @@ private let logger = AppLogger(category: "ModelUseOffload")
                 && openAI.isOAuth
                 && openAI.customBaseURL == nil
                 && !openAI.forceResponsesAPI
+            if !isCodexImage, LLMModel.isGPTImageFamily(entry.model.id), openAI.isOAuth,
+               openAI.customBaseURL == nil, !openAI.forceResponsesAPI {
+                throw ModelUseError.invalidInput("当前 Codex 图片工具没有指定此图片模型版本的已验证参数。请使用 API Key 图片服务商调用所选型号，避免生成时被替换为默认图片模型。")
+            }
             if isCodexImage {
                 let topModel = await Self.resolveCodexTopLevelModel(
                     forInstance: entry.providerInstanceId, inputJSON: inputJSON)

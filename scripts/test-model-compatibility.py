@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate the bundled catalog and compile production thinking rules on macOS."""
 import json
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -43,7 +44,10 @@ anthropic = "enum AnthropicProvider {\n" + anthropic[start:end] + "\n}\ntypealia
 openai = (ROOT / "Providers/OpenAI/OpenAIAgentProvider.swift").read_text(encoding="utf-8")
 start = openai.index("    static func isGPT6Family")
 end = openai.index("    /// Inject provider-specific thinking parameters", start)
-openai = ("struct LLMModel { let id: String; let supportsReasoning: Bool? }\n"
+namespace_start = types.index("    static func modelIdentifierWithoutNamespace")
+namespace_end = types.index("    /// Compatibility", namespace_start)
+namespace_helper = types[namespace_start:namespace_end]
+openai = ("struct LLMModel { let id: String; let supportsReasoning: Bool?\n" + namespace_helper + "}\n"
           + "enum OpenAIContract {\n" + openai[start:end] + "\n}\n")
 patcher = (ROOT / "Providers/Anthropic/OAuthHTTPClient.swift").read_text(encoding="utf-8")
 config_start = patcher.index("    private static let thinkingLock")
@@ -92,7 +96,7 @@ for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "anthropi
     precondition(AnthropicContract.modelRejectsTemperature(id))
 }
 precondition(!AnthropicContract.modelUsesAdaptiveThinking("claude-haiku-4-5"))
-for id in ["gpt-6.1-sol", "gpt-6.1-terra"] {
+for id in ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2", "openai/gpt-6.2", "vendor/gpt6.2"] {
     let model = LLMModel(id: id, supportsReasoning: true)
     precondition(OpenAIContract.reasoningEffort(for: model, level: .high) == "high")
     precondition(OpenAIContract.reasoningEffort(for: model, level: .ultra) == "max")
@@ -107,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix="ze-model-compat-") as directory:
     source.write_text(rules + "\n" + levels + "\n" + anthropic + openai + patcher + agent + levels_catalog + checks + wire_checks, encoding="utf-8")
     if compiler:
         binary = Path(directory) / "model-tests"
-        subprocess.run([compiler, str(source), "-o", str(binary)], check=True)
+        subprocess.run([compiler, "-target", f"{platform.machine()}-apple-macosx13.0", str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     else:
         print("SKIP: swiftc is absent; production Swift execution requires the macOS CI runner")

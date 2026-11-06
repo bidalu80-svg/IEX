@@ -133,7 +133,12 @@ struct ModelEntry: Identifiable, Codable, Hashable {
     /// New override fields: add them to the memberwise rebuild below.
     var model: LLMModel {
         let isGPT56Compatible = LLMModel.isGPT56CompatibleFamily(baseModel.id)
-        guard !overrides.isEmpty || isGPT56Compatible else { return baseModel }
+        // Legacy /models imports persisted a text-only fallback without recording
+        // whether the server supplied it. Repair that exact shape for image IDs;
+        // explicit user overrides below always win, and richer API shapes stay intact.
+        let repairsImageDefault = LLMModel.isGPTImageFamily(baseModel.id)
+            && (baseModel.modalityOverride == nil || baseModel.modalityOverride == .textOnly)
+        guard !overrides.isEmpty || isGPT56Compatible || repairsImageDefault else { return baseModel }
         // Provider/API metadata is authoritative when present. The GPT-5.6
         // compatible values are fallbacks only for gateways that omit a field;
         // user overrides below remain the highest-priority layer.
@@ -143,7 +148,9 @@ struct ModelEntry: Identifiable, Codable, Hashable {
             ?? (isGPT56Compatible ? LLMModel.gpt56CompatibleMaxOutputTokens : nil)
         let inferredReasoning = baseModel.supportsReasoning
             ?? (isGPT56Compatible ? true : nil)
-        let inferredModality: ModelModality? = if isGPT56Compatible {
+        let inferredModality: ModelModality? = if repairsImageDefault {
+            LLMModel.gptImageModalities
+        } else if isGPT56Compatible {
             // Older cached Astra entries were stored as text-only when the
             // gateway omitted modality metadata. Restore the GPT-5.6 Sol
             // image/PDF defaults while retaining any real audio/video bits
