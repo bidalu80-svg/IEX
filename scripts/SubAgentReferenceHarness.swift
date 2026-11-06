@@ -138,7 +138,7 @@ private final class SubAgentReferenceHarness: UIResponder, UIApplicationDelegate
         model.effectiveSource = "request"
         block.helperModel = model
         if running {
-            block.content = "◐ Helper · 检查请求兼容性并报告验证结果 · shell_execute · 正在检查模型请求参数… · 0:01"
+            block.content = "◐ Helper · 检查请求兼容性并报告验证结果 · shell_execute · 执行回归验证 · 0:01"
         } else {
             block.content = "{\"status\":\"completed\",\"elapsed_s\":1,\"result\":\"\",\"child_session_id\":\"fixture-child\",\"agent\":\"兼容性验证\"}"
         }

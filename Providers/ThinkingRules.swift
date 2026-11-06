@@ -130,6 +130,63 @@ final class ThinkingRuleCache: @unchecked Sendable {
 
 enum ThinkingRuleResolver {
 
+    /// Verified against anthropics/skills ca45fc496a3436251f191354091d557da31c15b5,
+    /// shared/model-migration.md. Keep exact released IDs; do not infer future versions.
+    static func claude55Family(_ modelId: String) -> String? {
+        let id = String(modelId.lowercased().split(separator: "/").last ?? "")
+            .replacingOccurrences(of: ".", with: "-")
+        for family in ["opus", "sonnet", "haiku"] {
+            if id == "claude-\(family)-5-5" { return family }
+        }
+        return nil
+    }
+
+    /// Last-mile Messages API normalization, also applied when no UI thinking
+    /// intent was set (short requests and raw inherited SDK bodies).
+    static func applyClaude55RequestRules(to body: inout [String: Any]) {
+        guard let family = claude55Family(body["model"] as? String ?? "") else { return }
+        for key in ["temperature", "top_p", "top_k"] { body.removeValue(forKey: key) }
+        var thinking = body["thinking"] as? [String: Any] ?? [:]
+        var output = body["output_config"] as? [String: Any] ?? [:]
+        let type = thinking["type"] as? String
+        if type == "disabled" || type == "between_tools" {
+            switch family {
+            case "opus":
+                thinking = ["type": "adaptive", "display": "summarized"]
+                output["effort"] = "low"
+            case "sonnet":
+                // No display/budget/block_binding fields are allowed here.
+                thinking = ["type": "between_tools"]
+                let effort = output["effort"] as? String ?? "low"
+                output["effort"] = ["low", "medium", "high"].contains(effort) ? effort : "high"
+            default:
+                // between_tools is Sonnet-only, including when retrying another model.
+                thinking = ["type": "disabled"]
+                let effort = output["effort"] as? String ?? "low"
+                output["effort"] = ["low", "medium", "high"].contains(effort) ? effort : "high"
+            }
+        } else if type != nil {
+            thinking["type"] = "adaptive"
+            thinking.removeValue(forKey: "budget_tokens")
+            if output["effort"] == nil, type == "enabled" { output["effort"] = "medium" }
+        }
+        if !thinking.isEmpty { body["thinking"] = thinking }
+        if !output.isEmpty { body["output_config"] = output }
+        if family != "haiku", var choice = body["tool_choice"] as? [String: Any],
+           ["any", "tool"].contains(choice["type"] as? String ?? "") {
+            choice["type"] = "auto"
+            choice.removeValue(forKey: "name")
+            body["tool_choice"] = choice
+        }
+        // Preserve the previous assistant answer as history rather than sending
+        // it as an unsupported prefill. Normal user/tool-result endings are intact.
+        if var messages = body["messages"] as? [[String: Any]],
+           messages.last?["role"] as? String == "assistant" {
+            messages.append(["role": "user", "content": [["type": "text", "text": "Continue from the previous response."]]])
+            body["messages"] = messages
+        }
+    }
+
     /// Build Gemini's native generationConfig.thinkingConfig shape. Gemini
     /// uses model-family-specific fields rather than OpenAI's reasoning_effort.
     /// Specialized output models are checked first because their IDs can also

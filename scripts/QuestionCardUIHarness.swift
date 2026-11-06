@@ -58,12 +58,13 @@ extension Notification.Name {
 private struct QuestionScreenshot: View {
     @ObservedObject var block: AssistantBlock
     let showOther: Bool
+    let thumbnail: Bool
     @State private var sheetPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("问答交互").font(.headline)
-            QuestionCardView(block: block)
+            if thumbnail { QuestionCardThumbnail(block: block) } else { QuestionCardView(block: block) }
             Spacer(minLength: 0)
         }
         .padding(12)
@@ -104,7 +105,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
         do {
             guard let window else { throw failure("Missing UIWindow") }
             for scheme in [ColorScheme.light, .dark] {
-                for scenario in ["pending-single", "pending-multi", "pending-confirm", "resolved", "unconfirmed", "other-sheet"] {
+                for scenario in ["pending-single", "pending-multi", "pending-confirm", "resolved", "unconfirmed", "other-sheet", "thumbnail-pending", "thumbnail-resolved"] {
                     try await capture(window: window, scheme: scheme, scenario: scenario)
                 }
             }
@@ -129,7 +130,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
             try require(QuestionCardCoordinator.shared.isPending(requestId: card.requestId), "Production coordinator did not register request")
-            if scenario == "pending-multi" {
+            if scenario == "pending-multi" || scenario == "thumbnail-pending" {
                 QuestionCardCoordinator.shared.saveDraft(requestId: card.requestId, questionIndex: 0,
                                                          draft: QuestionCardDraft(selectedIndices: [0, 2], otherText: "", note: "优先执行回归检查", delegated: false))
             }
@@ -140,7 +141,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
         }
         let width: CGFloat = 320
         let height = min(UIScreen.main.bounds.height, 844)
-        let sample = QuestionScreenshot(block: block, showOther: scenario == "other-sheet")
+        let sample = QuestionScreenshot(block: block, showOther: scenario == "other-sheet", thumbnail: scenario.hasPrefix("thumbnail-"))
             .environment(\.colorScheme, scheme)
         let host = UIHostingController(rootView: sample)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
@@ -178,7 +179,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
     }
 
     private func fixture(scenario: String) -> QuestionCardState {
-        let multi = scenario == "pending-multi" || scenario == "resolved"
+        let multi = scenario == "pending-multi" || scenario == "resolved" || scenario.hasPrefix("thumbnail-")
         let confirmation = scenario == "pending-confirm"
         let question = QuestionCardQuestion(id: "q1", prompt: confirmation ? "是否开始本次发布？" : multi ? "本次更新需要验证哪些内容？" : "完成更新后，采用哪种验证方式？",
                                            options: confirmation ? ["取消", "允许"] : multi ? ["请求参数兼容", "任务停止与继续", "工具卡片与滚动"] : ["自动构建与回归检查", "先查看改动记录"],
@@ -188,7 +189,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
                                            impact: confirmation ? "构建成功后生成待安装的软件包。" : nil,
                                            risk: confirmation ? "high" : nil)
         var card = QuestionCardState(requestId: UUID().uuidString, title: "更新验证", questions: [question], timeoutAt: Date().addingTimeInterval(600))
-        if scenario == "resolved" {
+        if scenario == "resolved" || scenario == "thumbnail-resolved" {
             card.status = .confirmed
             let draft = QuestionCardDraft(selectedIndices: [0, 2], note: "优先执行回归检查")
             card.answers = [draft.answer(for: question)]

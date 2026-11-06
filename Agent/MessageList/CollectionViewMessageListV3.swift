@@ -1613,7 +1613,10 @@ extension CollectionViewMessageListV3 {
                             block: block,
                             toolBlocks: toolBlocks,
                             toolSnapshots: bridge.toolSnapshots,
-                            browserPool: bridge.browserPool
+                            browserPool: bridge.browserPool,
+                            sessionId: self.vm?.sessionId,
+                            onBrowserTakeover: { [weak self] in self?.vm?.browserTakeoverActive = true },
+                            onTakeoverDone: { [weak self] in self?.vm?.resumeFromBrowserTakeover() }
                         )
                     }
                     // Dismiss is handled by sheetPresenter.onDismiss (set in attach)
@@ -5524,6 +5527,9 @@ private final class ToolSheetPresenter: ObservableObject {
         let toolBlocks: [AssistantBlock]
         let toolSnapshots: [ToolSnapshotItem]
         let browserPool: BrowserTabPool?
+        let sessionId: String?
+        let onBrowserTakeover: () -> Void
+        let onTakeoverDone: () -> Void
     }
 
     @Published var sheetData: SheetData?
@@ -5557,8 +5563,11 @@ private struct SheetOverlayView: View {
                     toolBlocks: data.toolBlocks,
                     initialIdx: data.toolBlocks.firstIndex(where: { $0.id == data.block.id }) ?? 0,
                     toolSnapshots: data.toolSnapshots,
-                    browserPool: data.browserPool
+                    browserPool: data.browserPool,
+                    onBrowserTakeover: data.onBrowserTakeover,
+                    onTakeoverDone: data.onTakeoverDone
                 )
+                .environment(\.chatSessionId, data.sessionId)
             }
             .onChange(of: toolPresenter.sheetData?.id) { newVal in
                 if newVal == nil {

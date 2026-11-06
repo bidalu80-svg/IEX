@@ -1,12 +1,9 @@
 // Only integration facts are supplied here; both complete detail Views and
 // all visible subviews are extracted unchanged from their real source files.
 private let detailTask = "检查请求兼容性并报告验证结果"
-private let detailStartedAt: Date = {
-    let args = ProcessInfo.processInfo.arguments
-    guard let index = args.firstIndex(of: "--fixture-start"), index + 1 < args.count, let epoch = Double(args[index + 1]) else { preconditionFailure("Missing shared fixture clock") }
-    return Date(timeIntervalSince1970: epoch)
-}()
-private let detailFinishedAt = detailStartedAt.addingTimeInterval(1)
+private var detailStartedAt = Date()
+private var detailFinishedAt = Date()
+
 
 // These optional branches are absent from the scenario. Fail if rendered, so
 // no screenshot can silently substitute a fake Markdown/image/badge renderer.
@@ -214,6 +211,8 @@ private final class SubAgentFullDetailHarness: UIResponder, UIApplicationDelegat
         } catch { try? writeResult(["success": false, "error": error.localizedDescription, "screenshots": evidence]) }
     }
     @MainActor private func capture(window: UIWindow, scheme: ColorScheme, running: Bool) async throws {
+        detailFinishedAt = Date()
+        detailStartedAt = detailFinishedAt.addingTimeInterval(-1)
         configureDetailFixture(running: running)
         let width: CGFloat = 320
         let height: CGFloat = min(UIScreen.main.bounds.height, 800)

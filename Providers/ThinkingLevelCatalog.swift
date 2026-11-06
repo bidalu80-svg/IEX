@@ -1,6 +1,18 @@
 import Foundation
 
 enum ThinkingLevelCatalog {
+    /// Opus 5.5 always reasons; its lowest request setting is adaptive + low.
+    /// Unknown families retain the existing UI behavior until verified.
+    static func supportsThinkingOff(for modelId: String) -> Bool {
+        ThinkingRuleResolver.claude55Family(modelId) != "opus"
+    }
+
+    static func normalizedLevel(_ level: ThinkingLevel, for modelId: String,
+                                maximum: ThinkingLevel) -> ThinkingLevel {
+        let capped = level == .off ? level : min(level, maximum)
+        return supportsThinkingOff(for: modelId) ? capped : max(.low, capped)
+    }
+
     private static let rules: [(match: (String) -> Bool, max: ThinkingLevel)] = [
         // GPT-5.6 sol/terra/luna all reach .max. (.ultra is a client-side
         // "Max + orchestration" concept — the wire effort tops out at "max",
@@ -24,7 +36,7 @@ enum ThinkingLevelCatalog {
         // xhigh" — the field report behind T-fallback-thinking-preclamp. Ark's
         // ladder tops out at high.
         ({ $0.contains("seed-") || $0.contains("bytedance-seed") }, .high),
-        ({ ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"].contains($0.replacingOccurrences(of: ".", with: "-")) }, .max),
+        ({ ThinkingRuleResolver.claude55Family($0) != nil }, .max),
         ({ $0.split(separator: "/").last == "deepseek-flash" || $0.contains("deepseek-v4") }, .max),
         // Claude Opus 4.x — model IDs use hyphens (claude-opus-4-8) in the
         // built-in catalog but third-party proxies may return dots

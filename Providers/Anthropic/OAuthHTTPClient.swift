@@ -1003,6 +1003,8 @@ enum RequestBodyPatcher {
     static func setThinkingBudget(_ budget: Int) {
         thinkingLock.lock()
         _thinkingBudget = budget
+        _thinkingEffort = nil
+        _thinkingDisabled = false
         thinkingLock.unlock()
     }
 
@@ -1013,6 +1015,8 @@ enum RequestBodyPatcher {
     static func setThinkingEffort(_ effort: String?) {
         thinkingLock.lock()
         _thinkingEffort = effort
+        _thinkingBudget = 0
+        _thinkingDisabled = false
         thinkingLock.unlock()
     }
 
@@ -1022,6 +1026,8 @@ enum RequestBodyPatcher {
     static func setThinkingDisabled() {
         thinkingLock.lock()
         _thinkingDisabled = true
+        _thinkingBudget = 0
+        _thinkingEffort = nil
         thinkingLock.unlock()
     }
 
@@ -1161,6 +1167,7 @@ enum RequestBodyPatcher {
     /// In both cases temperature handling follows AnthropicProvider.modelRejectsTemperature
     /// — Claude 4.6+ rejects temperature entirely, so we drop it.
     static func injectThinkingConfig(into request: NSMutableURLRequest) {
+        defer { applyModelRequestRules(into: request) }
         let budget = takeThinkingBudget()
         let effort = takeThinkingEffort()
         let disabled = takeThinkingDisabled()
@@ -1246,6 +1253,25 @@ enum RequestBodyPatcher {
 
         if let newBody = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) {
             request.httpBody = newBody
+        }
+    }
+
+    static func applyModelRequestRules(into request: NSMutableURLRequest) {
+        guard request.url?.path.split(separator: "/").last == "messages",
+              let body = request.httpBody,
+              var json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              ThinkingRuleResolver.claude55Family(json["model"] as? String ?? "") != nil else { return }
+        ThinkingRuleResolver.applyClaude55RequestRules(to: &json)
+        if let encoded = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) {
+            request.httpBody = encoded
+        }
+        // Adaptive thinking and effort are GA; stale budget-era betas are not
+        // required by any of these three models. Preserve unrelated OAuth betas.
+        if let value = request.value(forHTTPHeaderField: "anthropic-beta") {
+            let retired: Set<String> = ["effort-2025-11-24", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14"]
+            let kept = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !retired.contains($0) }
+            request.setValue(kept.isEmpty ? nil : kept.joined(separator: ","), forHTTPHeaderField: "anthropic-beta")
         }
     }
 

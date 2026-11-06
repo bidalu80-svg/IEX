@@ -106,6 +106,13 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
             }
             CATransaction.flush()
         }
+        let spinners = allViews(host.view).compactMap { $0 as? ZeSubAgentSpinnerLayerView }
+        if status.isActive {
+            try require(!spinners.isEmpty, "Running cards have no compositor arc spinner")
+            try require(spinners.allSatisfy { $0.arc.animation(forKey: "spinnerRotation") != nil }, "Active spinner is not rotating")
+        } else {
+            try require(spinners.isEmpty, "Completed cards retained a spinner")
+        }
         let rotations = rims.filter { $0.animation(forKey: "rimRotation") != nil }.count
         if status.isActive {
             try require(!rims.isEmpty, "Running card has no UIKit conic rim")
@@ -129,6 +136,7 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
         host.view.removeFromSuperview()
         window.rootViewController = UIViewController()
         try require(rims.allSatisfy { $0.animation(forKey: "rimRotation") == nil }, "Detached card retained animation")
+        try require(spinners.allSatisfy { $0.arc.animation(forKey: "spinnerRotation") == nil }, "Detached card retained spinner animation")
         evidence.append(["file": name, "width": Double(width), "height": Double(height), "pngBytes": png.count,
                          "statsWidth": Double(fitting.width), "statsHeight": Double(fitting.height),
                          "conicRims": rims.count, "runningAnimations": rotations, "animationDisabledFixture": animationDisabledFixture,

@@ -871,7 +871,8 @@ private func QuestionAskLocalized(_ key: String) -> String {
         "Cancelled": "已取消", "Timed out": "已超时", "Allowed once": "已允许一次",
         "Your answer": "你的回答", "Reason / do this instead": "原因 / 改成这样做",
         "Stop dictation": "停止听写", "Dictate": "听写", "Done": "完成", "Edit": "编辑",
-        "Time left": "剩余时间", "option": "选项"
+        "Time left": "剩余时间", "option": "选项",
+        "Question for you": "向你提问", "Waiting for your answer…": "等待你的回答…", "Could not ask": "无法提问"
     ]
     return labels[key] ?? NSLocalizedString(key, comment: "")
 }
@@ -1101,6 +1102,7 @@ private struct QuestionCardView: View {
     private func saveDraft() {
         guard let card = block.questionCard, card.status == .pending else { return }
         coordinator.saveDraft(requestId: card.requestId, questionIndex: card.currentIndex, draft: draft)
+        NotificationCenter.default.post(name: Notification.Name("ZeQuestionDraftChanged"), object: card.requestId)
     }
 
     private func monitorLiveness(_ card: QuestionCardState) async {
@@ -2032,6 +2034,308 @@ struct QuestionCardDetailView: View {
             block.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(for: card.requestId, status: card.status)
         }
     }
+}
+
+
+private enum QuestionTileResultStatus { case answered, other, delegated, approved, denied, timeout, dismissed, unavailable }
+private struct QuestionTileSummaryRow: Equatable {
+    var topic: String
+    var value: String
+    /// Not the user's own choice (timed out, skipped, cancelled, …): drawn
+    /// in a neutral colour instead of the accent.
+    var muted: Bool
+}
+
+private enum QuestionTileSummary {
+    /// The tile is 100pt wide: a topic longer than a header chip (max 12)
+    /// pushes the answer off the line. The sheet has room for more.
+    static let tileTopicLimit = 14
+    static let sheetTopicLimit = 80
+
+    static func topic(_ q: QuestionAskQuestion, limit: Int = tileTopicLimit) -> String {
+        if let h = q.header?.trimmingCharacters(in: .whitespacesAndNewlines), !h.isEmpty { return h }
+        let flat = q.question.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flat.count > limit else { return flat }
+        return String(flat.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    static func value(_ status: QuestionTileResultStatus, answer: [String]) -> (text: String, muted: Bool) {
+        let given = answer.filter { !$0.isEmpty }.joined(separator: ", ")
+        switch status {
+        case .answered, .other: return (given.isEmpty ? QuestionAskLocalized("Answered") : given, false)
+        case .delegated: return (QuestionAskLocalized("You decide"), false)
+        case .approved: return (QuestionAskLocalized("Allow"), false)
+        case .denied: return (QuestionAskLocalized("Cancel"), true)
+        case .timeout: return (QuestionAskLocalized("Timed out"), true)
+        case .dismissed: return (QuestionAskLocalized("Skipped"), true)
+        case .unavailable: return (QuestionAskLocalized("Could not ask"), true)
+        }
+    }
+
+    /// Still waiting: the waiting line, then each question's topic.
+    static func pendingRows(_ questions: [QuestionAskQuestion], topicLimit: Int = tileTopicLimit) -> [QuestionTileSummaryRow] {
+        [QuestionTileSummaryRow(topic: QuestionAskLocalized("Waiting for your answer…"), value: "", muted: false)]
+            + questions.map { QuestionTileSummaryRow(topic: topic($0, limit: topicLimit), value: "", muted: true) }
+    }
+
+    /// Resolved: one row per question, in order. A question with no result
+    /// entry (a dismissal that recorded none) reads as skipped.
+    static func resolvedRows(_ questions: [QuestionAskQuestion],
+                             results: [(status: QuestionTileResultStatus, answer: [String])],
+                             topicLimit: Int = tileTopicLimit) -> [QuestionTileSummaryRow] {
+        questions.enumerated().map { i, q in
+            let v = i < results.count ? value(results[i].status, answer: results[i].answer)
+                                      : value(.dismissed, answer: [])
+            return QuestionTileSummaryRow(topic: topic(q, limit: topicLimit), value: v.text, muted: v.muted)
+        }
+    }
+
+    /// One muted row titled `title` (QuestionTileSummary.notSentTitle).
+    static func notAskedRows(title: String) -> [QuestionTileSummaryRow] {
+        [QuestionTileSummaryRow(topic: title, value: "", muted: true)]
+    }
+
+    /// How many rows fit under the title on the fixed tile, from the two
+    /// derived sizes; line height ≈ 1.25 × size plus 1pt row spacing.
+    static func capacity(tileHeight: Double, titleSize: Double, lineSize: Double) -> Int {
+        let usable = tileHeight - 4 - 3 - (titleSize * 1.25 + 1)
+        return max(1, Int(usable / (lineSize * 1.25 + 1)))
+    }
+
+    /// Rows that fit; when they do not all fit the last slot becomes "+N".
+    static func fit(_ rows: [QuestionTileSummaryRow], capacity: Int) -> (rows: [QuestionTileSummaryRow], more: Int) {
+        guard rows.count > capacity else { return (rows, 0) }
+        let shown = max(0, capacity - 1)
+        return (Array(rows.prefix(shown)), rows.count - shown)
+    }
+}
+
+/// [T-user-ask-tile-rich] What the 100x65pt mini preview tile shows: a
+/// miniature of the card, not just a list of header chips. Pending: the
+/// question the user is on - card title with its header chip and progress,
+/// the question (the command, for a confirm), the impact line or the
+/// options with what is picked so far. Resolved: each question's text with
+/// its answer under it.
+private struct QuestionTileLine: Equatable {
+    enum Kind: Equatable {
+        case question, command, impact, topic
+        case option(marker: String, selected: Bool)
+        case answer(muted: Bool)
+    }
+    var kind: Kind
+    var text: String
+    /// Lines this entry may wrap to (and what it costs in the line budget).
+    var maxLines: Int
+}
+
+private struct QuestionTileContent: Equatable {
+    var title: String
+    /// "1/3" on a multi-question ask, else empty.
+    var trailing: String
+    var lines: [QuestionTileLine]
+}
+
+private extension QuestionTileSummary {
+    /// The card's own title for question `q` ([T-user-ask-card] wording).
+    static func cardTitle(_ q: QuestionAskQuestion) -> String {
+        switch q.type {
+        case .options: return QuestionAskLocalized("Needs your answer")
+        case .confirm: return q.risk == .high ? QuestionAskLocalized("High-risk action") : QuestionAskLocalized("Needs your approval")
+        }
+    }
+
+    private static func flat(_ s: String) -> String {
+        s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Waiting for an answer: question `current` as a miniature card.
+    static func pendingTile(questions: [QuestionAskQuestion], current: Int,
+                            answer: QuestionAskAnswer?) -> QuestionTileContent {
+        guard questions.indices.contains(current) else {
+            return QuestionTileContent(title: QuestionAskLocalized("Question for you"), trailing: "", lines: [])
+        }
+        let q = questions[current]
+        var title = cardTitle(q)
+        if let h = q.header?.trimmingCharacters(in: .whitespacesAndNewlines), !h.isEmpty { title += " · " + h }
+        let trailing = questions.count > 1 ? "\(current + 1)/\(questions.count)" : ""
+        var lines: [QuestionTileLine] = []
+        let text = flat(q.question)
+        if !text.isEmpty {
+            lines.append(QuestionTileLine(kind: q.type == .confirm ? .command : .question, text: text, maxLines: 2))
+        }
+        switch q.type {
+        case .confirm:
+            if let impact = q.impact.map(flat), !impact.isEmpty {
+                lines.append(QuestionTileLine(kind: .impact, text: impact, maxLines: 2))
+            }
+        case .options:
+            let picked = Set(answer?.selected ?? [])
+            for (i, option) in (q.options ?? []).enumerated() {
+                let on = picked.contains(i)
+                let marker = q.multiSelect ? (on ? "☑" : "☐") : (on ? "●" : "○")
+                lines.append(QuestionTileLine(kind: .option(marker: marker, selected: on), text: flat(option.label), maxLines: 1))
+            }
+            if let other = answer?.otherText.map(flat), !other.isEmpty {
+                lines.append(QuestionTileLine(kind: .option(marker: q.multiSelect ? "☑" : "●", selected: true),
+                                             text: other, maxLines: 1))
+            }
+        }
+        return QuestionTileContent(title: title, trailing: trailing, lines: lines)
+    }
+
+    /// Answered (or otherwise settled): each question's text, then its answer.
+    static func resolvedTile(_ questions: [QuestionAskQuestion],
+                             results: [(status: QuestionTileResultStatus, answer: [String])]) -> QuestionTileContent {
+        var lines: [QuestionTileLine] = []
+        for (i, q) in questions.enumerated() {
+            let text = flat(q.question)
+            let header = q.header?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let topicText = text.isEmpty ? header : text
+            if !topicText.isEmpty {
+                lines.append(QuestionTileLine(kind: .topic, text: topicText, maxLines: questions.count == 1 ? 2 : 1))
+            }
+            let v = i < results.count ? value(results[i].status, answer: results[i].answer) : value(.dismissed, answer: [])
+            lines.append(QuestionTileLine(kind: .answer(muted: v.muted), text: v.text, maxLines: 1))
+        }
+        return QuestionTileContent(title: QuestionAskLocalized("Question for you"), trailing: "", lines: lines)
+    }
+
+    /// Entries that fit `capacity` lines (each costs its maxLines; a
+    /// two-line entry squeezed into the last free line keeps one). What
+    /// does not fit becomes "+N", which needs a line of its own.
+    static func fitTile(_ lines: [QuestionTileLine], capacity: Int) -> (lines: [QuestionTileLine], more: Int) {
+        let total = lines.reduce(0) { $0 + $1.maxLines }
+        guard total > capacity else { return (lines, 0) }
+        var budget = max(0, capacity - 1)
+        var shown: [QuestionTileLine] = []
+        for line in lines {
+            guard budget > 0 else { break }
+            var l = line
+            l.maxLines = min(l.maxLines, budget)
+            budget -= l.maxLines
+            shown.append(l)
+        }
+        return (shown, lines.count - shown.count)
+    }
+}
+
+/// A miniature of the actual question, inside the existing floating tool shell.
+@MainActor
+struct QuestionCardThumbnail: View {
+    @ObservedObject var block: AssistantBlock
+    @ObservedObject private var fonts = FontSettings.shared
+    @State private var revision = 0
+    private var t: QuestionAskTypography { .current }
+    static let tileSize = CGSize(width: 100, height: 65)
+
+    private var card: QuestionCardState? {
+        _ = revision
+        guard let stored = block.questionCard else { return nil }
+        return QuestionCardCoordinator.shared.currentState(requestId: stored.requestId) ?? stored
+    }
+
+    var body: some View {
+        Group {
+            if let card {
+                let questions = card.questions.map(QuestionAskQuestion.init)
+                if card.status == .pending, let question = card.currentQuestion {
+                    let draft = QuestionCardCoordinator.shared.draft(requestId: card.requestId, questionIndex: card.currentIndex)
+                    richTile(QuestionTileSummary.pendingTile(questions: questions, current: card.currentIndex, answer: QuestionAskAnswer(draft)),
+                             tint: question.isConfirmation ? (question.risk == "high" ? .red : .orange) : .accentColor)
+                } else {
+                    richTile(QuestionTileSummary.resolvedTile(questions, results: card.questions.indices.map { index in
+                        (resultStatus(card, index: index), card.displayAnswerValues(at: index))
+                    }), tint: .accentColor)
+                }
+            } else {
+                richTile(QuestionTileContent(title: QuestionAskLocalized("Question for you"), trailing: "",
+                                             lines: [QuestionTileLine(kind: .answer(muted: true), text: QuestionAskLocalized("Waiting for your answer…"), maxLines: 2)]), tint: .accentColor)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .questionCardToggled)) { notification in
+            guard notification.object as? UUID == block.id else { return }
+            revision &+= 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ZeQuestionDraftChanged"))) { notification in
+            guard notification.object as? String == block.questionCard?.requestId else { return }
+            revision &+= 1
+        }
+    }
+
+    private func resultStatus(_ card: QuestionCardState, index: Int) -> QuestionTileResultStatus {
+        guard card.answers.indices.contains(index), card.answers[index] != nil else {
+            return card.resolutionSource == "timeout" ? .timeout : .dismissed
+        }
+        if card.questions[index].isConfirmation {
+            guard let decision = card.confirmationDecision(at: index) else { return .dismissed }
+            return decision == "allow" ? .approved : .denied
+        }
+        if card.submittedDraft(at: index)?.delegated == true { return .delegated }
+        return .answered
+    }
+    private func richTile(_ content: QuestionTileContent, tint: Color) -> some View {
+        let capacity = QuestionTileSummary.capacity(tileHeight: Self.tileSize.height,
+                                               titleSize: t.thumbTitle, lineSize: t.thumbLine)
+        let fitted = QuestionTileSummary.fitTile(content.lines, capacity: capacity)
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 2) {
+                Text(content.title)
+                    .font(.system(size: t.thumbTitle, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if !content.trailing.isEmpty {
+                    Spacer(minLength: 2)
+                    Text(verbatim: content.trailing)
+                        .font(.system(size: t.thumbLine, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(tint)
+                        .fixedSize()
+                }
+            }
+            .padding(.bottom, 1)
+            ForEach(Array(fitted.lines.enumerated()), id: \.offset) { _, line in
+                tileLineText(line, tint: tint)
+                    .lineLimit(line.maxLines)
+                    .truncationMode(.tail)
+            }
+            if fitted.more > 0 {
+                Text(verbatim: "+\(fitted.more)")
+                    .font(.system(size: t.thumbLine, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.45))
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 3)
+        .frame(width: Self.tileSize.width, height: Self.tileSize.height, alignment: .topLeading)
+        .clipped()
+        .background(Color(red: 0.12, green: 0.12, blue: 0.14))
+    }
+
+    private func tileLineText(_ line: QuestionTileLine, tint: Color) -> Text {
+        let size = t.thumbLine
+        switch line.kind {
+        case .question:
+            return Text(line.text).font(.system(size: size, weight: .medium)).foregroundColor(Color.white.opacity(0.9))
+        case .command:
+            return Text(line.text).font(.system(size: size, design: .monospaced)).foregroundColor(Color.white.opacity(0.85))
+        case .impact:
+            return Text(verbatim: "⚠ ").font(.system(size: size)).foregroundColor(tint)
+                + Text(line.text).font(.system(size: size)).foregroundColor(Color.white.opacity(0.6))
+        case .topic:
+            return Text(line.text).font(.system(size: size)).foregroundColor(Color.white.opacity(0.6))
+        case let .option(marker, selected):
+            return Text(verbatim: marker + " ").font(.system(size: size)).foregroundColor(selected ? tint : Color.white.opacity(0.45))
+                + Text(line.text).font(.system(size: size, weight: selected ? .semibold : .regular))
+                    .foregroundColor(selected ? tint : Color.white.opacity(0.7))
+        case let .answer(muted):
+            return Text(verbatim: "→ ").font(.system(size: size)).foregroundColor(Color.white.opacity(0.35))
+                + Text(line.text).font(.system(size: size, weight: .medium))
+                    .foregroundColor(muted ? Color.white.opacity(0.45) : tint)
+        }
+    }
+
 }
 
 // MARK: - Thinking Block View

@@ -2226,6 +2226,8 @@ private struct ToolPreviewThumbnail: View {
         Group {
             if let active = linkedAgents.first(where: { $0.status.isActive }) ?? linkedAgents.first {
                 ZeSubAgentThumbnail(record: active)
+            } else if block.kind.isQuestionCardTool {
+                QuestionCardThumbnail(block: block)
             } else {
             // If we have a persisted snapshot, prefer using it for the thumbnail
             if let snapshot, let snapshotImage = loadSnapshotImage(snapshot) {

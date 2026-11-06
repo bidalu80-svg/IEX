@@ -3882,13 +3882,14 @@ struct AIChatView: View {
                                 thinkingLevel: vm.currentThinkingLevel,
                                 thinkingSupported: supported,
                                 thinkingAutomatic: automatic,
+                                thinkingCanTurnOff: vm.currentModelSupportsThinkingOff,
                                 availableLevels: vm.availableThinkingLevels,
                                 contextTokens: liveContextTokens,
                                 contextWindow: contextWindow,
                                 onSetThinkingLevel: supported && !automatic ? { level in
                                     vm.setThinkingLevel(level)
                                 } : nil,
-                                onToggleThinking: supported && !automatic ? {
+                                onToggleThinking: supported && !automatic && vm.currentModelSupportsThinkingOff ? {
                                     let newLevel: ThinkingLevel = vm.currentThinkingLevel.isEnabled ? .off : .medium
                                     vm.setThinkingLevel(newLevel)
                                     vm.dismissSlashMenu()
@@ -4166,6 +4167,7 @@ struct AIChatView: View {
         var thinkingLevel: ThinkingLevel = .off
         var thinkingSupported: Bool = true
         var thinkingAutomatic: Bool = false
+        var thinkingCanTurnOff: Bool = true
         var availableLevels: [ThinkingLevel] = ThinkingLevel.allCases
         /// Latest server-reported context size for the active session. This is
         /// deliberately sourced from `sessionTokenStats`, the same value used
@@ -4196,7 +4198,8 @@ struct AIChatView: View {
                             ? .purple : (isSelected ? .white : ChatColors.primaryText)
                         let subtitleText = cmd.id == "thinking" && thinkingAutomatic
                             ? "由模型自动控制思考"
-                            : ((cmd.id == "thinking" && !thinkingSupported) ? "当前模型不支持" : cmd.subtitle)
+                            : ((cmd.id == "thinking" && !thinkingSupported) ? "当前模型不支持"
+                               : ((cmd.id == "thinking" && !thinkingCanTurnOff) ? "思考始终开启，可调节强度" : cmd.subtitle))
                         let subtitleColor: Color = (cmd.id == "thinking" && !thinkingSupported)
                             ? .secondary
                             : (isThinkingActive ? .purple.opacity(0.7) : (isSelected ? .white.opacity(0.7) : ChatColors.secondaryText))

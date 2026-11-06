@@ -62,7 +62,9 @@ private struct ReferenceScreenshot: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("问答交互").font(.headline)
-            if scenario == "resolved" || scenario == "unconfirmed" {
+            if scenario.hasPrefix("thumbnail-") {
+                ReferenceQuestionThumbnail(ask: ask, resolved: scenario == "thumbnail-resolved")
+            } else if scenario == "resolved" || scenario == "unconfirmed" {
                 UserAskResolvedCard(block: block, questions: ask.questions,
                                     results: [UserAskCardModel.Result(status: scenario == "resolved" ? .answered : .timeout,
                                                 answer: scenario == "resolved" ? ["请求参数兼容", "工具卡片与滚动"] : [],
@@ -104,7 +106,7 @@ private final class QuestionReferenceHarness: UIResponder, UIApplicationDelegate
         do {
             guard let window else { throw failure("Missing window") }
             for scheme in [ColorScheme.light, .dark] {
-                for scenario in ["pending-single", "pending-multi", "pending-confirm", "resolved", "unconfirmed", "other-sheet"] {
+                for scenario in ["pending-single", "pending-multi", "pending-confirm", "resolved", "unconfirmed", "other-sheet", "thumbnail-pending", "thumbnail-resolved"] {
                     try await capture(window: window, scheme: scheme, scenario: scenario)
                 }
             }
@@ -141,7 +143,7 @@ private final class QuestionReferenceHarness: UIResponder, UIApplicationDelegate
         UserAskCenter.shared.asks.removeValue(forKey: ask.requestId)
     }
     private func fixture(_ scenario: String) -> PendingAsk {
-        let multi = scenario == "pending-multi" || scenario == "resolved"
+        let multi = scenario == "pending-multi" || scenario == "resolved" || scenario.hasPrefix("thumbnail-")
         let confirm = scenario == "pending-confirm"
         let options = multi ? ["请求参数兼容", "任务停止与继续", "工具卡片与滚动"] : ["自动构建与回归检查", "先查看改动记录"]
         let details = multi ? ["检查模型参数和能力映射", "检查后台任务的生命周期", "检查实时预览和操作入口"] : []
@@ -152,7 +154,7 @@ private final class QuestionReferenceHarness: UIResponder, UIApplicationDelegate
                                risk: confirm ? .high : .medium, defaultValue: nil)
         var ask = PendingAsk(requestId: UUID().uuidString, sessionId: "fixture", toolCallId: "fixture", questions: [q], createdAt: Date(), timeoutMinutes: 10)
         UserAskCenter.preselectRecommended(&ask, at: 0)
-        if scenario == "pending-multi" { ask.answers[0] = UserAskAnswer(selected: [0, 2], note: "优先执行回归检查") }
+        if scenario == "pending-multi" || scenario == "thumbnail-pending" { ask.answers[0] = UserAskAnswer(selected: [0, 2], note: "优先执行回归检查") }
         return ask
     }
     private func failure(_ text: String) -> NSError { NSError(domain: "QuestionReferenceHarness", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }

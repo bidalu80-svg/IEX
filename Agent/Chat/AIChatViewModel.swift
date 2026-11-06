@@ -946,6 +946,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         return ThinkingLevel.allCases.filter { $0 != .off && $0 <= maxLevel }
     }
 
+    var currentModelSupportsThinkingOff: Bool {
+        ThinkingLevelCatalog.supportsThinkingOff(for: resolveCurrentEntry()?.model.id ?? selectedModel.id)
+    }
+
     /// Whether a model entry should expose the thinking toggle.
     ///
     /// Base rule (tri-state, unchanged): `supportsReasoning ?? true` — `true`
@@ -5931,8 +5935,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// Set thinking level — persists if session exists, otherwise holds in memory.
     func setThinkingLevel(_ level: ThinkingLevel) {
-        let maxLevel = resolveCurrentEntry()?.effectiveMaxThinkingLevel ?? .xhigh
-        let clamped = level == .off ? level : min(level, maxLevel)
+        let entry = resolveCurrentEntry()
+        let maxLevel = entry?.effectiveMaxThinkingLevel ?? .xhigh
+        let clamped = ThinkingLevelCatalog.normalizedLevel(level, for: entry?.model.id ?? selectedModel.id, maximum: maxLevel)
         if let sid = sessionId {
             var cfg = ProviderConfigStore.shared.inferenceConfig(for: sid) ?? SessionInferenceConfig()
             cfg.thinkingLevel = clamped
@@ -5970,9 +5975,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             return pendingThinkingLevel ?? defaultGroupThinkingLevel
         }()
-        guard stored.isEnabled else { return stored }
-        let maxLevel = resolveCurrentEntry()?.effectiveMaxThinkingLevel ?? .xhigh
-        return min(stored, maxLevel)
+        let entry = resolveCurrentEntry()
+        let maxLevel = entry?.effectiveMaxThinkingLevel ?? .xhigh
+        return ThinkingLevelCatalog.normalizedLevel(stored, for: entry?.model.id ?? selectedModel.id, maximum: maxLevel)
     }
 
     /// Flush pending thinking level to the store once sessionId is available.

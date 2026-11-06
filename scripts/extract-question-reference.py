@@ -47,10 +47,28 @@ center = fetch("src/ios/Agent/Chat/UserAskCenter.swift")
 recommended = section(center, "    static func preselectRecommended(", "    // MARK: - Dismissal")
 search_root = "src/ios/Agent/MessageList/CollectionViewMessageListV3/Search/"
 units = fetch(search_root + "ChatSearchUnits.swift")
+# The miniature uses the original pure summary rules and original render methods;
+# only its dependency adapter is supplied by the harness.
+tile_models = section(views, "struct UserAskSummaryRow:", "// END UserAskSummary")
+tile_methods = section(views, "    private func richTile(", "    /// The plain list:")
+tile_view = """
+@MainActor struct ReferenceQuestionThumbnail: View {
+    let ask: PendingAsk
+    let resolved: Bool
+    private var t: UserAskTypography { .current }
+    static let tileSize = CGSize(width: 100, height: 65)
+    var body: some View {
+        if resolved {
+            richTile(UserAskSummary.resolvedTile(ask.questions, results: [(.answered, ["请求参数兼容", "工具卡片与滚动"])]), tint: .accentColor)
+        } else {
+            richTile(UserAskSummary.pendingTile(questions: ask.questions, current: ask.currentIndex, answer: ask.answers[ask.currentIndex]), tint: .accentColor)
+        }
+    }
+""" + tile_methods + "}\n"
 parts = ["import SwiftUI\nimport UIKit\nimport Combine\nimport Foundation\n", core,
          section(views, "enum UserAskCardModel {", "// MARK: - Card"),
          section(views, "enum UserAskPendingLayoutCache {", "// MARK: - Summary (mini preview tile + tool sheet)"),
-         colors, fetch(search_root + "ChatSearchEngine.swift"), fetch(search_root + "ChatSearchHighlights.swift"),
+         tile_models, tile_view, colors, fetch(search_root + "ChatSearchEngine.swift"), fetch(search_root + "ChatSearchHighlights.swift"),
          "enum ChatSearchDisplayText {\n" + section(units, "    nonisolated static func userAskTopic", "// MARK: - Snapshot"),
          (ROOT / "scripts/QuestionReferenceHarness.swift").read_text(encoding="utf-8").replace("    // UPSTREAM_PRESELECT_RECOMMENDED", recommended)]
 destination.write_text("\n".join(parts), encoding="utf-8")

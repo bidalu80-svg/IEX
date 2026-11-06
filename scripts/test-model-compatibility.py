@@ -39,12 +39,24 @@ levels = types[start:end]
 anthropic = (ROOT / "Providers/Anthropic/AnthropicProvider.swift").read_text(encoding="utf-8")
 start = anthropic.index("    static func parseClaudeVersion")
 end = anthropic.index("    /// Applies the per-model temperature policy", start)
-anthropic = "enum AnthropicContract {\n" + anthropic[start:end] + "\n}\n"
+anthropic = "enum AnthropicProvider {\n" + anthropic[start:end] + "\n}\ntypealias AnthropicContract = AnthropicProvider\n"
 openai = (ROOT / "Providers/OpenAI/OpenAIAgentProvider.swift").read_text(encoding="utf-8")
 start = openai.index("    static func isGPT6Family")
 end = openai.index("    /// Inject provider-specific thinking parameters", start)
 openai = ("struct LLMModel { let id: String; let supportsReasoning: Bool? }\n"
           + "enum OpenAIContract {\n" + openai[start:end] + "\n}\n")
+patcher = (ROOT / "Providers/Anthropic/OAuthHTTPClient.swift").read_text(encoding="utf-8")
+config_start = patcher.index("    private static let thinkingLock")
+config_end = patcher.index("    // MARK: - Compat-proxy reasoning echo", config_start)
+wire_start = patcher.index("    static func injectThinkingConfig")
+wire_end = patcher.index('    /// Injects `"ttl": "1h"`', wire_start)
+patcher = ("enum RequestBodyPatcher {\n" + patcher[config_start:config_end]
+           + patcher[wire_start:wire_end] + "\n}\n")
+agent = (ROOT / "Providers/Anthropic/AnthropicAgentProvider.swift").read_text(encoding="utf-8")
+start = agent.index("    static func thinkingEffort")
+end = agent.index("    // MARK: - Message Conversion", start)
+agent = "enum AgentContract {\n" + agent[start:end] + "\n}\n"
+levels_catalog = (ROOT / "Providers/ThinkingLevelCatalog.swift").read_text(encoding="utf-8")
 checks = r'''
 let expected: [(ThinkingLevel, String)] = [(.low, "low"), (.medium, "high"),
     (.high, "high"), (.xhigh, "high"), (.max, "max"), (.ultra, "max")]
@@ -91,7 +103,8 @@ print("PASS: production thinking rules compiled and executed")
 compiler = shutil.which("swiftc")
 with tempfile.TemporaryDirectory(prefix="ze-model-compat-") as directory:
     source = Path(directory) / "main.swift"
-    source.write_text(rules + "\n" + levels + "\n" + anthropic + openai + checks, encoding="utf-8")
+    wire_checks = (ROOT / "scripts/AnthropicRequestWireChecks.swift").read_text(encoding="utf-8")
+    source.write_text(rules + "\n" + levels + "\n" + anthropic + openai + patcher + agent + levels_catalog + checks + wire_checks, encoding="utf-8")
     if compiler:
         binary = Path(directory) / "model-tests"
         subprocess.run([compiler, str(source), "-o", str(binary)], check=True)

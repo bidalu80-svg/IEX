@@ -79,7 +79,7 @@ final class AnthropicAgentProvider: AgentProvider {
         // Older Claude models still take budget_tokens. Pick the right one per model.
         if thinkingLevel.isEnabled, model.supportsReasoning ?? false {
             if AnthropicProvider.modelUsesAdaptiveThinking(model.id) {
-                let effort = Self.thinkingEffort(for: thinkingLevel)
+                let effort = Self.thinkingEffort(for: thinkingLevel, modelId: model.id)
                 RequestBodyPatcher.setThinkingEffort(effort)
                 logger.info("Thinking enabled (adaptive): effort=\(effort)")
             } else {
@@ -98,7 +98,7 @@ final class AnthropicAgentProvider: AgentProvider {
             // thinking_tokens=256/256, empty body). Legacy (<=4.5) models
             // default to no thinking, so absence is fine there.
             RequestBodyPatcher.setThinkingDisabled()
-            logger.info("Thinking explicitly DISABLED (adaptive default-on model, level=off)")
+            logger.info("Lowest thinking setting requested; final wire policy follows the model contract")
         }
 
         // Anthropic-compat proxies (e.g. DeepSeek's deepseek-v4-pro endpoint
@@ -442,17 +442,16 @@ final class AnthropicAgentProvider: AgentProvider {
     /// Used for Claude 4.6+ which take `output_config.effort` instead of
     /// `thinking.budget_tokens`.
     ///
-    /// xhigh maps to "max" to match Anthropic's nomenclature (low/medium/high/max);
-    /// CLIProxyAPI's models.json shows opus 4.7 advertises levels
-    /// `[low, medium, high, xhigh, max]` so both `xhigh` and `max` are accepted,
-    /// but `max` is the more universally recognized token across 4.6 and 4.7.
-    static func thinkingEffort(for level: ThinkingLevel) -> String {
+    /// Keep xhigh distinct from max on models that expose the full effort ladder.
+    /// Ultra remains the app's orchestration setting, with max effort on the wire.
+    static func thinkingEffort(for level: ThinkingLevel, modelId: String? = nil) -> String {
         switch level {
         case .off: return "low"  // never reached: caller checks isEnabled first
         case .low: return "low"
         case .medium: return "medium"
         case .high: return "high"
-        case .xhigh, .max, .ultra: return "max"
+        case .xhigh: return ThinkingRuleResolver.claude55Family(modelId ?? "") != nil ? "xhigh" : "max"
+        case .max, .ultra: return "max"
         }
     }
 
