@@ -136,6 +136,9 @@ enum ThinkingRuleResolver {
     /// contain a Gemini family marker while rejecting thinkingConfig entirely.
     static func geminiThinkingConfig(modelId: String, level: ThinkingLevel) -> [String: Any] {
         let id = modelId.lowercased()
+        // The catalog establishes reasoning capability, not its wire schema.
+        // Leave the new model on provider defaults until that schema is verified.
+        if id.split(separator: "/").last == "gemini-4-argon" { return [:] }
         let specialized = ["-tts", "-image", "-embedding", "-vision"]
         if specialized.contains(where: { id.hasSuffix($0) || id.contains("\($0)-") }) { return [:] }
 
@@ -221,7 +224,7 @@ enum ThinkingRuleResolver {
         } else if isOpenRouter {
             candidates.append(rule("openrouter-default", "OpenRouter 默认规则", .allModels, .nestedReasoningEffort, "发送 reasoning.effort"))
         } else {
-            let openAIModels = ["o1*", "o3*", "o4*", "gpt-5*", "gpt-4*"]
+            let openAIModels = ["o1*", "o3*", "o4*", "gpt-6*", "gpt-5*", "gpt-4*"]
             for pattern in openAIModels {
                 candidates.append(rule("openai-\(pattern)", "OpenAI \(pattern)", .modelPattern(pattern), .reasoningEffort, "发送 reasoning_effort"))
             }
@@ -230,6 +233,7 @@ enum ThinkingRuleResolver {
                 candidates.append(rule("unified-gateway-default", "统一网关默认规则", .allModels, .reasoningEffort, "发送 reasoning_effort"))
             } else {
                 candidates.append(rule("deepseek-v4-official", "DeepSeek V4 官方规则", .modelPattern("*deepseek-v4*"), .deepSeekV4, "发送 thinking 与 reasoning_effort"))
+                candidates.append(rule("deepseek-flash-official", "DeepSeek Flash 官方规则", .modelPattern("*deepseek-flash"), .deepSeekV4, "发送 thinking 与 reasoning_effort"))
             }
         }
         candidates.append(rule("openai-compatible-default", "OpenAI 兼容默认规则", .allModels, .reasoningEffort, "发送 reasoning_effort"))
@@ -275,7 +279,7 @@ enum ThinkingRuleResolver {
             // DeepSeek V4's switch and effort are root siblings. Nesting the
             // effort inside `thinking` is silently ignored by the current API.
             body["thinking"] = ["type": level.isEnabled ? "enabled" : "disabled"]
-            if level.isEnabled { body["reasoning_effort"] = value }
+            if level.isEnabled { body["reasoning_effort"] = deepSeekEffort(level) }
         case .qwenDual:
             body["enable_thinking"] = level.isEnabled
             var budget: Int = switch level {
@@ -306,6 +310,15 @@ enum ThinkingRuleResolver {
         case .customPath:
             if level.isEnabled { set(path: rule.path, value: rule.customHighValue?.isEmpty == false ? rule.customHighValue! : value, in: &body) }
             else if let off = rule.offValue, !off.isEmpty { set(path: rule.path, value: off, in: &body) }
+        }
+    }
+
+    /// Official API mapping: low; medium/high/xhigh -> high; max/ultra -> max.
+    static func deepSeekEffort(_ level: ThinkingLevel) -> String {
+        switch level {
+        case .off, .low: return "low"
+        case .medium, .high, .xhigh: return "high"
+        case .max, .ultra: return "max"
         }
     }
 

@@ -24,6 +24,8 @@ enum ThinkingLevelCatalog {
         // xhigh" — the field report behind T-fallback-thinking-preclamp. Ark's
         // ladder tops out at high.
         ({ $0.contains("seed-") || $0.contains("bytedance-seed") }, .high),
+        ({ ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"].contains($0.replacingOccurrences(of: ".", with: "-")) }, .max),
+        ({ $0.split(separator: "/").last == "deepseek-flash" || $0.contains("deepseek-v4") }, .max),
         // Claude Opus 4.x — model IDs use hyphens (claude-opus-4-8) in the
         // built-in catalog but third-party proxies may return dots
         // (claude-opus-4.8). Normalize to match both.

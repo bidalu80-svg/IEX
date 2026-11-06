@@ -74,6 +74,8 @@ struct AssistantBlockView: View {
             if block.questionCard != nil {
                 QuestionCardView(block: block)
                     .padding(.vertical, 4)
+            } else if block.kind.isSubAgentTool {
+                ZeSubAgentInlineRow(block: block, detailBlock: $detailBlock)
             } else {
                 ToolCapsuleView(
                     block: block,
@@ -144,6 +146,68 @@ struct AssistantBlockView: View {
         )
         .fixedSize(horizontal: false, vertical: true)
         .modifier(ZeOpenURLHandler())
+    }
+}
+
+/// A delegation finishes immediately, but its child can keep working. Read
+/// the linked child's lifecycle for the transcript badge instead of showing
+/// the spawn tool's green completion check for the whole run.
+private struct ZeSubAgentInlineRow: View {
+    @ObservedObject var block: AssistantBlock
+    @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
+    @Environment(\.chatSessionId) private var sessionId
+    @Binding var detailBlock: AssistantBlock?
+
+    var body: some View {
+        let records = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: coordinator)
+        let running = records.filter { $0.status.isActive }.count
+        let record = records.first(where: { $0.status.isActive }) ?? records.first
+        Button {
+            detailBlock = block
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: ZeSubAgentTheme.iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ZeSubAgentTheme.purple)
+                Text(records.count > 1 ? "\(records.count) 个子代理" : record?.nickname ?? block.toolDescription)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                if let step = record?.steps?.last {
+                    Text(step.title)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if running > 0 {
+                    ProgressView().controlSize(.mini)
+                }
+                Text(records.count > 1 ? "\(running) 运行中" : record?.status.displayName ?? fallbackStatus)
+                    .font(.system(size: 11))
+                    .foregroundStyle(record?.status == .failed ? Color.orange : ZeSubAgentTheme.purple)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            // Match the collection view's tool-row estimate. Streaming child
+            // activity changes labels without changing the row's height.
+            .frame(height: 36)
+            .background(ZeSubAgentTheme.purpleSoft, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var fallbackStatus: String {
+        switch block.toolStatus {
+        case .streaming, .running: return String(localized: "调度中")
+        case .failed: return String(localized: "失败")
+        case .cancelled: return String(localized: "已停止")
+        default: return String(localized: "查看记录")
+        }
     }
 }
 

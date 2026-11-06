@@ -174,7 +174,7 @@ enum ProviderMigration {
                 credentialType: .oauth
             )
             config.instances.append(instance)
-            let entries = LLMModel.allGemini.map {
+            let entries = LLMModel.cloudCodeGemini.map {
                 ModelEntry(providerInstanceId: instance.id, model: $0)
             }
             config.modelEntries.append(contentsOf: entries)

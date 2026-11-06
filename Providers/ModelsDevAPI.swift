@@ -18,6 +18,7 @@ enum ModelsDevAPI {
         "Anthropic": ["anthropic"],
         "Google": ["google", "google-vertex"],
         "OpenAI": ["openai"],
+        "DeepSeek": ["deepseek"],
         "OpenRouter": ["openrouter"],
         "Antigravity": [],  // Custom proxy, no public models.dev entry
     ]

@@ -3873,6 +3873,7 @@ struct AIChatView: View {
                                 .padding(.vertical, 2)
                         }
                         if cmd.id == "thinking" {
+                            let automatic = vm.resolveCurrentEntry()?.model.usesProviderManagedThinking == true
                             let supported = vm.currentModelSupportsReasoning
                             SlashCommandRow(
                                 cmd: cmd,
@@ -3880,13 +3881,14 @@ struct AIChatView: View {
                                 memoryEnabled: vm.memoryEnabled,
                                 thinkingLevel: vm.currentThinkingLevel,
                                 thinkingSupported: supported,
+                                thinkingAutomatic: automatic,
                                 availableLevels: vm.availableThinkingLevels,
                                 contextTokens: liveContextTokens,
                                 contextWindow: contextWindow,
-                                onSetThinkingLevel: supported ? { level in
+                                onSetThinkingLevel: supported && !automatic ? { level in
                                     vm.setThinkingLevel(level)
                                 } : nil,
-                                onToggleThinking: supported ? {
+                                onToggleThinking: supported && !automatic ? {
                                     let newLevel: ThinkingLevel = vm.currentThinkingLevel.isEnabled ? .off : .medium
                                     vm.setThinkingLevel(newLevel)
                                     vm.dismissSlashMenu()
@@ -4163,6 +4165,7 @@ struct AIChatView: View {
         let memoryEnabled: Bool
         var thinkingLevel: ThinkingLevel = .off
         var thinkingSupported: Bool = true
+        var thinkingAutomatic: Bool = false
         var availableLevels: [ThinkingLevel] = ThinkingLevel.allCases
         /// Latest server-reported context size for the active session. This is
         /// deliberately sourced from `sessionTokenStats`, the same value used
@@ -4188,12 +4191,12 @@ struct AIChatView: View {
                     .foregroundStyle(thinkingIconColor)
                     .frame(width: 20)
                     VStack(alignment: .leading, spacing: 1) {
-                        let isThinkingActive = cmd.id == "thinking" && thinkingLevel.isEnabled && thinkingSupported
+                        let isThinkingActive = cmd.id == "thinking" && (thinkingLevel.isEnabled || thinkingAutomatic) && thinkingSupported
                         let titleColor: Color = isThinkingActive
                             ? .purple : (isSelected ? .white : ChatColors.primaryText)
-                        let subtitleText = (cmd.id == "thinking" && !thinkingSupported)
-                            ? "当前模型不支持"
-                            : cmd.subtitle
+                        let subtitleText = cmd.id == "thinking" && thinkingAutomatic
+                            ? "由模型自动控制思考"
+                            : ((cmd.id == "thinking" && !thinkingSupported) ? "当前模型不支持" : cmd.subtitle)
                         let subtitleColor: Color = (cmd.id == "thinking" && !thinkingSupported)
                             ? .secondary
                             : (isThinkingActive ? .purple.opacity(0.7) : (isSelected ? .white.opacity(0.7) : ChatColors.secondaryText))
@@ -4230,7 +4233,11 @@ struct AIChatView: View {
                         .font(.system(size: 16))
                         .foregroundStyle(memoryEnabled ? (isSelected ? .white : .green) : (isSelected ? .white.opacity(0.6) : .secondary))
                 }
-                if cmd.id == "thinking" && thinkingSupported {
+                if cmd.id == "thinking" && thinkingAutomatic {
+                    Text("自动")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.purple)
+                } else if cmd.id == "thinking" && thinkingSupported {
                     thinkingLevelPicker
                 }
             }
@@ -4244,7 +4251,7 @@ struct AIChatView: View {
                 return isSelected ? .white.opacity(0.8) : ChatColors.secondaryText
             }
             if !thinkingSupported { return .secondary }
-            return thinkingLevel.isEnabled ? .purple : (isSelected ? .white.opacity(0.8) : ChatColors.secondaryText)
+            return (thinkingLevel.isEnabled || thinkingAutomatic) ? .purple : (isSelected ? .white.opacity(0.8) : ChatColors.secondaryText)
         }
 
         /// Small, low-overhead context gauge shown on the Compact row. The

@@ -58,7 +58,7 @@ enum GeminiModelsAPI {
             // Standard API returns 403 for OAuth clients without generative-language scope.
             // Fall back to built-in model list.
             logger.warning("Standard models API failed for OAuth: \(error.localizedDescription). Using built-in list.")
-            return ModelsDevAPI.enrichModels(LLMModel.allGemini)
+            return ModelsDevAPI.enrichModels(LLMModel.cloudCodeGemini)
         }
     }
 
@@ -72,7 +72,7 @@ enum GeminiModelsAPI {
             return try await fetchModels(oauthToken: oauthToken, customBaseURL: customBaseURL)
         }
         logger.info("Using built-in Gemini model list (OAuth + Cloud Code Assist)")
-        return LLMModel.allGemini
+        return LLMModel.cloudCodeGemini
     }
 
     private static func performFetch(_ request: URLRequest) async throws -> [LLMModel] {
@@ -133,7 +133,7 @@ enum GeminiModelsAPI {
             let specialized = ["-tts", "-image", "-embedding", "-vision"]
             let supportsReasoning: Bool? = if specialized.contains(where: { lowerId.hasSuffix($0) || lowerId.contains("\($0)-") }) {
                 false
-            } else if lowerId.contains("gemini-3") || lowerId.contains("2.5-pro") ||
+            } else if lowerId == "gemini-4-argon" || lowerId.contains("gemini-3") || lowerId.contains("2.5-pro") ||
                         (lowerId.contains("2.5-flash") && !lowerId.contains("lite")) {
                 true
             } else if lowerId.contains("2.5-flash-lite") {

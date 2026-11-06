@@ -14,6 +14,57 @@ import SwiftUI
 import UIKit
 import WebKit
 
+// BEGIN ZeSubAgentBlockLink
+/// Persisted tool arguments/results are the identity of a child card. Never
+/// substitute an unrelated running child when a block has no resolvable ID.
+enum ZeSubAgentBlockLink {
+    static func ids(action: String, input: String?, output: String) -> [String] {
+        func object(_ text: String?) -> Any? {
+            guard let data = text?.data(using: .utf8) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }
+        var candidates: [String] = []
+        if action != "spawn_agent", let args = object(input) as? [String: Any] {
+            if let id = args["id"] as? String { candidates.append(id) }
+            if let ids = args["ids"] as? String {
+                candidates += ids.split(separator: ",").map(String.init)
+            }
+        }
+        // A wait result contains several child records. Preserve their order
+        // and show all of them in the detail sheet, including terminal runs.
+        if candidates.isEmpty {
+            if let result = object(output) as? [String: Any], let id = result["id"] as? String {
+                candidates.append(id)
+            } else if let results = object(output) as? [[String: Any]] {
+                candidates += results.compactMap { $0["id"] as? String }
+            } else if action == "spawn_agent", output.hasPrefix("子代理已排队：id=") {
+                let suffix = output.dropFirst("子代理已排队：id=".count)
+                candidates.append(String(suffix.prefix { $0 != "，" && !$0.isWhitespace }))
+            }
+        }
+        var seen: Set<String> = []
+        return candidates.compactMap { candidate in
+            guard let id = UUID(uuidString: candidate.trimmingCharacters(in: .whitespacesAndNewlines))?.uuidString,
+                  seen.insert(id).inserted else { return nil }
+            return id
+        }
+    }
+}
+// END ZeSubAgentBlockLink
+
+@MainActor
+extension ZeSubAgentBlockLink {
+    static func records(for block: AssistantBlock, rootSessionId: String?, coordinator: ZeSubAgentCoordinator) -> [ZeSubAgentRecord] {
+        guard case .memoryTool(let action) = block.kind, block.kind.isSubAgentTool else { return [] }
+        return ids(action: action, input: block.toolInputArgs, output: block.content).compactMap { id in
+            if let rootSessionId, let record = coordinator.record(id: id, rootSessionId: rootSessionId) { return record }
+            // Nested transcripts carry the child's session ID in their
+            // environment; its own descendants still belong to the root.
+            return coordinator.record(id: id)
+        }
+    }
+}
+
 /// Detects http(s) URLs in a line of shell output and returns an
 /// AttributedString with each URL marked as a `.link` plus single
 /// underline. Tapping one routes through the SwiftUI `\.openURL`
@@ -356,11 +407,13 @@ struct ToolLiveSheet: View {
     enum ActiveSecondarySheet: Identifiable {
         case takeoverBrowser
         case linkPreview(URL)
+        case subAgent(String)
 
         var id: String {
             switch self {
             case .takeoverBrowser: return "takeoverBrowser"
             case .linkPreview(let url): return "linkPreview:\(url.absoluteString)"
+            case .subAgent(let id): return "subAgent:\(id)"
             }
         }
     }
@@ -451,12 +504,25 @@ struct ToolLiveSheet: View {
 
             // Content area — `blockUpdateTick` dependency ensures live refresh
             let _ = blockUpdateTick
-            if block.kind.isSubAgentTool,
-               let sessionId,
-               let active = subAgentCoordinator.records(for: sessionId).first(where: { $0.status.isActive }) {
+            let linkedAgents = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: subAgentCoordinator)
+            if !linkedAgents.isEmpty {
                 ScrollView {
-                    ZeSubAgentBlackCard(record: active)
-                        .padding(16)
+                    LazyVStack(spacing: 12) {
+                        ForEach(linkedAgents) { record in
+                            Button {
+                                activeSheet = .subAgent(record.id)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ZeSubAgentBlackCard(record: record, compact: true)
+                                    Label(String(localized: "查看任务、工具记录与操作"), systemImage: "arrow.up.right.square")
+                                        .font(.caption)
+                                        .foregroundStyle(ZeSubAgentTheme.purple)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(16)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -536,6 +602,10 @@ struct ToolLiveSheet: View {
                 }
             case .linkPreview(let url):
                 ZeLinkPreviewView(url: url, browserPool: browserPool)
+            case .subAgent(let id):
+                ZeSubAgentDetailView(recordId: id)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -2148,11 +2218,15 @@ private struct ToolPreviewThumbnail: View {
         return false
     }
 
+    private var linkedAgents: [ZeSubAgentRecord] {
+        ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: subAgentCoordinator)
+    }
+
+    private var hasRunningChild: Bool { linkedAgents.contains { $0.status.isActive } }
+
     var body: some View {
         Group {
-            if block.kind.isSubAgentTool,
-               let sessionId,
-               let active = subAgentCoordinator.records(for: sessionId).first(where: { $0.status.isActive }) {
+            if let active = linkedAgents.first(where: { $0.status.isActive }) ?? linkedAgents.first {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("✦ " + active.nickname)
                         .font(.system(size: 7, weight: .bold))
@@ -2164,7 +2238,7 @@ private struct ToolPreviewThumbnail: View {
                             .lineLimit(2)
                     }
                     if active.steps?.isEmpty != false {
-                        Text("正在执行子代理任务…")
+                        Text(active.status.isActive ? "正在执行子代理任务…" : active.status.displayName)
                             .font(.system(size: 6))
                             .foregroundStyle(.white.opacity(0.7))
                     }
@@ -2200,7 +2274,7 @@ private struct ToolPreviewThumbnail: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
-            if block.kind.isSubAgentTool && isLive {
+            if block.kind.isSubAgentTool && hasRunningChild {
                 ZeSubAgentAnimatedRim(cornerRadius: 8)
             } else {
                 RoundedRectangle(cornerRadius: 8)
@@ -2494,6 +2568,8 @@ private struct ToolPreviewThumbnail: View {
 /// Bottom status bar: status icon + description + counter + expand chevron.
 private struct ToolStatusBar: View {
     @ObservedObject var block: AssistantBlock
+    @ObservedObject private var subAgentCoordinator = ZeSubAgentCoordinator.shared
+    @Environment(\.chatSessionId) private var sessionId
     let toolBlocks: [AssistantBlock]
     let displayedIdx: Int
     @Binding var expanded: Bool
@@ -2604,6 +2680,14 @@ private struct ToolStatusBar: View {
     }
 
     private var displayTitle: String {
+        let agents = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: subAgentCoordinator)
+        if agents.count > 1 {
+            return "\(agents.count) 个子代理 · \(agents.filter { $0.status.isActive }.count) 运行中"
+        }
+        if let agent = agents.first {
+            let activity = agent.status.isActive ? agent.steps?.last?.title : nil
+            return "\(agent.nickname) · \(activity ?? agent.status.displayName)"
+        }
         if block.kind.isQuestionCardTool { return block.toolDescription }
         if let s = block.toolSummary, !s.isEmpty { return s }
         return block.toolDescription

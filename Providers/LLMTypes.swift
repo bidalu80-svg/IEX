@@ -92,6 +92,25 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     // explicitly so the values don't depend on the id heuristic (which also
     // now defaults modern Claude to 1M as a backstop). models.dev enrich can
     // still override at runtime.
+    // Catalog snapshot refreshed from models.dev on 2026-11-06.
+    static let claudeOpus55 = LLMModel(
+        id: "claude-opus-5-5", displayName: "Claude Opus 5.5", provider: "Anthropic",
+        modalityOverride: .vision, contextWindow: 1_000_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
+    static let claudeSonnet55 = LLMModel(
+        id: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5", provider: "Anthropic",
+        modalityOverride: .vision, contextWindow: 1_000_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
+    static let claudeHaiku55 = LLMModel(
+        id: "claude-haiku-5-5", displayName: "Claude Haiku 5.5", provider: "Anthropic",
+        modalityOverride: .vision, contextWindow: 1_000_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
     static let claudeFable5 = LLMModel(
         id: "claude-fable-5",
         displayName: "Claude Fable 5",
@@ -149,6 +168,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     )
 
     static let allAnthropic: [LLMModel] = [
+        .claudeOpus55, .claudeSonnet55, .claudeHaiku55,
         .claudeFable5, .claudeOpus5, .claudeOpus48, .claudeOpus46, .claudeSonnet5, .claudeSonnet46, .claudeHaiku45,
     ]
 
@@ -172,6 +192,16 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         provider: "Google"
     )
 
+    static let gemini4Argon = LLMModel(
+        id: "gemini-4-argon",
+        displayName: "Gemini 4 Argon",
+        provider: "Google",
+        modalityOverride: .fullMultimodalInput,
+        contextWindow: 1_048_576,
+        maxOutputTokens: 32_768,
+        supportsReasoning: true
+    )
+
     static let gemini25Pro = LLMModel(
         id: "gemini-2.5-pro",
         displayName: "Gemini 2.5 Pro",
@@ -191,6 +221,12 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     )
 
     static let allGemini: [LLMModel] = [
+        .gemini4Argon, .gemini31ProPreview, .gemini3ProPreview, .gemini3FlashPreview,
+        .gemini25Pro, .gemini25Flash, .gemini25FlashLite,
+    ]
+
+    /// Cloud Code availability is separate from the public Gemini API catalog.
+    static let cloudCodeGemini: [LLMModel] = [
         .gemini31ProPreview, .gemini3ProPreview, .gemini3FlashPreview,
         .gemini25Pro, .gemini25Flash, .gemini25FlashLite,
     ]
@@ -216,6 +252,19 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     ]
 
     // MARK: - OpenAI Models
+
+    // Catalog snapshot refreshed from models.dev on 2026-11-06.
+    static let gpt61Sol = LLMModel(
+        id: "gpt-6.1-sol", displayName: "GPT-6.1 Sol", provider: "OpenAI",
+        modalityOverride: .vision, contextWindow: 1_050_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
+    static let gpt61Terra = LLMModel(
+        id: "gpt-6.1-terra", displayName: "GPT-6.1 Terra", provider: "OpenAI",
+        modalityOverride: .vision, contextWindow: 1_050_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
 
     static let gpt56Sol = LLMModel(
         id: "gpt-5.6-sol",
@@ -364,6 +413,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     )
 
     static let allOpenAI: [LLMModel] = [
+        .gpt61Sol, .gpt61Terra,
         .gpt54, .gpt52, .gpt5, .gpt41,
         .gpt4o, .gpt4oMini,
         .o3, .o4Mini,
@@ -558,6 +608,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         // Sonnet 4.6 / Sonnet 5 / Opus 4.x / Fable 5 at 200K. models.dev still
         // overrides via the explicit `contextWindow` above.
         if lid.contains("claude") {
+            if lid.contains("haiku-5-5") || lid.contains("haiku-5.5") { return 1_000_000 }
             if lid.contains("haiku") { return 200_000 }
             // Legacy generations: Claude 2.x and 3/3.5 are 200K (or less, but
             // 200K is a safe modern floor for the slider).
@@ -581,6 +632,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         if lid.contains("o3") || lid.contains("o4") { return 200_000 }
         if lid.contains("codex") { return 200_000 }
         // DeepSeek
+        if lid.contains("deepseek-v4") || lid.split(separator: "/").last == "deepseek-flash" { return 1_048_576 }
         if lid.contains("deepseek") { return 128_000 }
         // Default: assume a modern long-context model rather than 64K so the
         // group context-limit slider doesn't collapse to a single Unlimited stop.
@@ -790,7 +842,13 @@ enum ThinkingLevel: String, Codable, Hashable, CaseIterable, Comparable {
 }
 
 extension LLMModel {
+    /// Keep native provider defaults until the new model's tuning contract is verified.
+    var usesProviderManagedThinking: Bool {
+        id.lowercased().split(separator: "/").last == "gemini-4-argon"
+    }
+
     var catalogMaxThinkingLevel: ThinkingLevel {
+        if usesProviderManagedThinking { return .off }
         // A model that can't reason has max level .off regardless of any
         // catalog family rule — family rules match by id substring, so a
         // broadened rule (e.g. "mimo" covering mimo-v2.5) must not lift the

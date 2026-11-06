@@ -1037,12 +1037,9 @@ final class OpenAIAgentProvider: AgentProvider {
         // vendor-native `thinking:{}` object — sending the latter leaves thinking
         // uncontrolled (user report #7). Skip this branch there and fall through
         // to the generic reasoning_effort path below.
-        if lid.contains("deepseek-v4") && !unifiedReasoningEffort {
+        if (lid.contains("deepseek-v4") || lid.split(separator: "/").last == "deepseek-flash") && !unifiedReasoningEffort {
             if level.isEnabled {
-                let effort: String = switch level {
-                case .off, .low, .medium: "high"
-                case .high, .xhigh, .max, .ultra: "max"
-                }
+                let effort = ThinkingRuleResolver.deepSeekEffort(level)
                 // DeepSeek V4 expects the enable switch and tier as root
                 // siblings; a nested thinking.reasoning_effort is ignored.
                 body["thinking"] = ["type": "enabled"]

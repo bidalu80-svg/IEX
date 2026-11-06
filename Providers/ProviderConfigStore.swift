@@ -708,6 +708,8 @@ final class ProviderConfigStore: ObservableObject {
             let hasManualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") != nil
             if instance.providerType == .openAI {
                 builtIn = ModelsDevAPI.enrichModels(LLMModel.allOpenAICodexOAuth)
+            } else if instance.providerType == .gemini && !hasManualToken && instance.effectiveCustomBaseURL == nil {
+                builtIn = ModelsDevAPI.enrichModels(LLMModel.cloudCodeGemini)
             } else if instance.providerType == .openRouter {
                 builtIn = ModelsDevAPI.enrichModels(instance.providerType.builtInModels)
             } else {
@@ -2658,6 +2660,13 @@ final class ProviderConfigStore: ObservableObject {
                 logger.info("Third-party endpoint unreachable, preserving existing models for \(instance.label)")
                 throw ModelRefreshError.modelsDevNoMatch(warnings: warnings)
             }
+        }
+
+        // Public API catalog entries do not establish Cloud Code availability.
+        if instance.providerType == .gemini, instance.credentialType == .oauth,
+           instance.effectiveCustomBaseURL == nil,
+           ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") == nil {
+            return ModelFetchResult(models: ModelsDevAPI.enrichModels(LLMModel.cloudCodeGemini), source: "built-in", warnings: warnings)
         }
 
         // Step 2: Try models.dev fallback (skip for third-party endpoints)

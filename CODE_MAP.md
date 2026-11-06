@@ -147,8 +147,8 @@ Views/Chat/AssistantBlockView + MessageList
 | `Agent/Chat/` | 聊天 ViewModel、消息发送、流式事件、重试和消息删除桥接 |
 | `Agent/Chat/AIChatViewModel+ToolPreflight.swift` | 工具调用前置检查、权限和能力判断 |
 | `Agent/Chat/AIChatViewModel+*.swift` | 按主题拆分的聊天扩展，避免主文件继续膨胀 |
-| `Agent/Chat/ZeSubAgentCoordinator.swift` | 每会话最多 6 个、最多 3 层的子代理树；复用 AIChatViewModel、持久化状态、取消/恢复/等待和并发轮询 |
-| `Views/Chat/ZeSubAgentViews.swift` | 原生 SwiftUI 子代理 Dock、调度列表、详情和补充任务输入 |
+| `Agent/Chat/ZeSubAgentCoordinator.swift` | 每会话最多 6 个并行、最多 3 层的子代理树；复用 AIChatViewModel 提示队列和原会话恢复，同轮停止、后台节流持久化与步骤缓存 |
+| `Views/Chat/ZeSubAgentViews.swift` | 子代理 Dock、任务统计/工具历史/补充指令卡片、真实子会话与独立 Core Animation 活动边框 |
 | `Agent/Tools/` | 工具注册、参数校验、执行和结果归一化 |
 | `Agent/BrowserUse/` | 浏览器工具编排和快照管理 |
 | `Agent/ISH/` | iSH 命令执行、后台保持和终端桥接 |

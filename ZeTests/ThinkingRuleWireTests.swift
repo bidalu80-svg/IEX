@@ -102,6 +102,48 @@ final class ThinkingRuleWireTests: XCTestCase {
         XCTAssertNil(disabled["reasoning_effort"])
     }
 
+    func testDeepSeekFlashAliasUsesV4ThinkingShape() {
+        var enabled: [String: Any] = [:]
+        OpenAIAgentProvider.injectThinkingParams(
+            into: &enabled,
+            model: LLMModel(id: "deepseek-flash", displayName: "DeepSeek Flash", provider: "DeepSeek"),
+            level: .high
+        )
+        XCTAssertEqual((enabled["thinking"] as? [String: Any])?["type"] as? String, "enabled")
+        XCTAssertEqual(enabled["reasoning_effort"] as? String, "high")
+
+        var disabled: [String: Any] = [:]
+        OpenAIAgentProvider.injectThinkingParams(
+            into: &disabled,
+            model: LLMModel(id: "deepseek-flash", displayName: "DeepSeek Flash", provider: "DeepSeek"),
+            level: .off
+        )
+        XCTAssertEqual((disabled["thinking"] as? [String: Any])?["type"] as? String, "disabled")
+        XCTAssertNil(disabled["reasoning_effort"])
+    }
+
+    func testGemini4UsesProviderDefaultsUntilTuningContractIsVerified() {
+        for level in ThinkingLevel.allCases {
+            XCTAssertTrue(ThinkingRuleResolver.geminiThinkingConfig(modelId: "gemini-4-argon", level: level).isEmpty)
+        }
+        XCTAssertTrue(LLMModel.gemini4Argon.usesProviderManagedThinking)
+        XCTAssertEqual(LLMModel.gemini4Argon.catalogMaxThinkingLevel, .off)
+        XCTAssertFalse(LLMModel.cloudCodeGemini.contains { $0.id == "gemini-4-argon" })
+    }
+
+    func testDeepSeekEffortLadderAndNamespacedAlias() {
+        let cases: [(ThinkingLevel, String)] = [(.low, "low"), (.medium, "high"), (.high, "high"), (.xhigh, "high"), (.max, "max"), (.ultra, "max")]
+        for (level, effort) in cases {
+            for id in ["deepseek-flash", "deepseek/deepseek-flash", "deepseek-v4-pro"] {
+                var body: [String: Any] = [:]
+                OpenAIAgentProvider.injectThinkingParams(into: &body,
+                    model: LLMModel(id: id, displayName: id, provider: "DeepSeek"), level: level)
+                XCTAssertEqual(body["reasoning_effort"] as? String, effort, "\(id) \(level)")
+                XCTAssertEqual((body["thinking"] as? [String: Any])?["type"] as? String, "enabled")
+            }
+        }
+    }
+
     func testQwenBudgetIsStrictlyBelowMaxTokens() {
         let rule = ThinkingRule(label: "qwen", scope: .allModels, format: .qwenDual)
         ThinkingRuleCache.shared.replace([rule], for: instanceId)
