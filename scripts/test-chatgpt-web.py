@@ -14,7 +14,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [ROOT / "Providers/OpenAI/ChatGPTWeb" / name for name in
-           ("ChatGPTWebProtocol.swift", "ChatGPTWebProvider.swift")]
+           ("ChatGPTWebProtocol.swift", "ChatGPTWebChallenge.swift", "ChatGPTWebProvider.swift")]
 
 STUBS = r'''
 import Foundation
@@ -69,6 +69,19 @@ final class FixtureProtocol: URLProtocol {
     static let lock = NSLock()
     static var requests: [URLRequest] = []
     static var streamMode = "normal"
+    static func body(_ request: URLRequest) -> Data {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open(); defer { stream.close() }
+        var data = Data(); var buffer = [UInt8](repeating: 0, count: 1024)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            precondition(count >= 0)
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -76,11 +89,29 @@ final class FixtureProtocol: URLProtocol {
         let path = request.url!.path
         var body = "{}"
         var contentType = "application/json"
+        var status = 200
         switch path {
         case "/": body = "<html data-build=\"fixture\"><script src=\"/sdk.js\"></script></html>"; contentType = "text/html"
         case "/backend-api/sentinel/chat-requirements/prepare":
             body = mode == "challenge" ? #"{"turnstile":{"required":true},"prepare_token":"fixture-prepare"}"# : #"{"prepare_token":"fixture-prepare"}"#
-        case "/backend-api/sentinel/chat-requirements/finalize": body = #"{"token":"fixture-requirement","so_token":"fixture-so"}"#
+            if mode == "dx" || mode == "bad-dx" {
+                let payload = try! JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+                let source = Array((payload["p"] as! String).unicodeScalars)
+                // Opcode 2 stores a literal; opcode 7 calls result opcode 3 with its value.
+                let instructions = #"[[2,100,"fixture-challenge"],[7,3,100]]"#
+                let encrypted = String(String.UnicodeScalarView(instructions.unicodeScalars.enumerated().map {
+                    Unicode.Scalar($0.element.value ^ source[$0.offset % source.count].value)!
+                }))
+                let dx = mode == "dx" ? Data(encrypted.utf8).base64EncodedString() : "invalid!"
+                body = try! encoded(["turnstile": ["required": true, "dx": dx], "prepare_token": "fixture-prepare"])
+            } else if mode == "arkose" {
+                body = #"{"arkose":{"required":true},"prepare_token":"fixture-prepare"}"#
+            }
+        case "/backend-api/sentinel/chat-requirements/finalize":
+            let payload = try! JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
+            precondition(payload["prepare_token"] as? String == "fixture-prepare")
+            precondition(payload["turnstile_token"] as? String == (mode == "dx" ? Data("fixture-challenge".utf8).base64EncodedString() : ""))
+            body = #"{"token":"fixture-requirement","so_token":"fixture-so"}"#
         case "/backend-api/conversation":
             contentType = "text/event-stream"
             let first = try! encoded(snapshot("reply", "Hello"))
@@ -88,7 +119,8 @@ final class FixtureProtocol: URLProtocol {
             if mode != "truncated" { body += "data: [DONE]\n\n" }
         default: fatalError("Unexpected endpoint: \(path)")
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": contentType])!
+        if mode == "403:" + path { status = 403; body = "credential-containing detail" }
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": contentType])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         // Deliberately split UTF-8/SSE bytes across callbacks.
         let bytes = Data(body.utf8)
@@ -161,7 +193,14 @@ final class FixtureProtocol: URLProtocol {
         precondition(body["tools"] == nil && body["max_tokens"] == nil)
         for status in [401, 403, 429, 500] {
             let response = HTTPURLResponse(url: URL(string: "https://chatgpt.com")!, statusCode: status, httpVersion: nil, headerFields: nil)!
-            expectError({ try ChatGPTWebProtocol.checkHTTP(response) }, { _ in true })
+            expectError({ try ChatGPTWebProtocol.checkHTTP(response, stage: .models) }, { error in
+                switch error {
+                case ChatGPTWebError.authenticationExpired: return status == 401
+                case ChatGPTWebError.browserVerificationRequired(let stage): return status == 403 && stage == .models
+                case ChatGPTWebError.rejected(let actual): return actual == status && [429, 500].contains(status)
+                default: return false
+                }
+            })
         }
         print("PASS: SSE framing, timezone and request schema, HTTP errors")
 
@@ -192,8 +231,41 @@ final class FixtureProtocol: URLProtocol {
         do {
             _ = try await provider.sendMessage(messages: [LLMMessage(role: .user, content: "x")], systemPrompt: nil, maxTokens: 1, temperature: nil)
             fatalError("Browser challenge ignored")
-        } catch ChatGPTWebError.browserVerificationRequired {}
+        } catch ChatGPTWebError.challengeProtocolChanged {}
         precondition(FixtureProtocol.collectedRequests().count == 2)
+        FixtureProtocol.setMode("dx")
+        let challenged = try await provider.sendMessage(messages: [LLMMessage(role: .user, content: "x")], systemPrompt: nil, maxTokens: 1, temperature: nil)
+        precondition(challenged.text == "Hello world")
+        let challengedRequests = FixtureProtocol.collectedRequests()
+        precondition(challengedRequests.count == 4)
+        precondition(challengedRequests.last!.value(forHTTPHeaderField: "OpenAI-Sentinel-Turnstile-Token") == Data("fixture-challenge".utf8).base64EncodedString())
+        FixtureProtocol.setMode("bad-dx")
+        do {
+            _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)
+            fatalError("Malformed challenge accepted")
+        } catch ChatGPTWebError.challengeProtocolChanged {}
+        precondition(FixtureProtocol.collectedRequests().count == 2)
+        FixtureProtocol.setMode("arkose")
+        do {
+            _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)
+            fatalError("Interactive challenge ignored")
+        } catch ChatGPTWebError.interactiveVerificationRequired {}
+        precondition(FixtureProtocol.collectedRequests().count == 2)
+        let stages: [(String, ChatGPTWebRequestStage, Int)] = [
+            ("/", .bootstrap, 1), ("/backend-api/sentinel/chat-requirements/prepare", .prepare, 2),
+            ("/backend-api/sentinel/chat-requirements/finalize", .finalize, 3), ("/backend-api/conversation", .conversation, 4)
+        ]
+        for (path, expected, count) in stages {
+            FixtureProtocol.setMode("403:" + path)
+            do {
+                _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)
+                fatalError("403 accepted")
+            } catch ChatGPTWebError.browserVerificationRequired(let actual) {
+                precondition(actual == expected)
+                precondition(!(ChatGPTWebError.browserVerificationRequired(actual).errorDescription ?? "").contains("credential-containing"))
+            }
+            precondition(FixtureProtocol.collectedRequests().count == count)
+        }
         do {
             _ = try await provider.streamAgentMessageClamped(messages: [], systemPrompt: nil, tools: [AgentToolDefinition()], maxTokens: 1, thinkingLevel: .off)
             fatalError("Tools accepted")

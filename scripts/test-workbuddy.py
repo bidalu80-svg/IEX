@@ -16,6 +16,71 @@ if swift is None:
 
 SUPPORT = r'''
 import Foundation
+/// Intercept every URL, including unexpected ones: fixtures never fall back to
+/// real HTTP. Registration is verified with a non-network scheme before login.
+final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
+    enum Scenario { case login, cancel, stateFailure }
+    private static let lock = NSLock()
+    private static var scenario: Scenario = .login
+    private static var counts: [String: Int] = [:]
+
+    static func reset(_ value: Scenario) {
+        lock.lock(); defer { lock.unlock() }
+        scenario = value
+        counts = [:]
+    }
+    static func count(_ path: String) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return counts[path, default: 0]
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+
+    private static func response(for request: URLRequest) throws -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        guard let url = request.url else { throw URLError(.badURL) }
+        if url.scheme == "ze-workbuddy-fixture" { return ["fixture": true] }
+        guard url.scheme == "https", ["copilot.tencent.com", "www.workbuddy.ai"].contains(url.host ?? "") else {
+            throw URLError(.unsupportedURL)
+        }
+        let path = url.path
+        counts[path, default: 0] += 1
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        switch path {
+        case "/v2/plugin/auth/state":
+            guard request.httpMethod == "POST", query.contains(where: { $0.name == "platform" && $0.value == "CLI" }) else { throw URLError(.badURL) }
+            if scenario == .stateFailure { return ["code":11217, "msg":"login ing...", "data": NSNull()] }
+            let host = url.host == "copilot.tencent.com" ? "www.codebuddy.cn" : "www.workbuddy.ai"
+            return ["code":0, "data":["state":"fixture-state", "authUrl":"https://\(host)/fixture-authorize"]]
+        case "/v2/plugin/auth/token":
+            guard scenario == .login, request.httpMethod == "GET",
+                  query.contains(where: { $0.name == "state" && $0.value == "fixture-state" }) else { throw URLError(.badURL) }
+            if counts[path, default: 0] <= 2 { return ["code":11217, "msg":"login ing...", "data":NSNull()] }
+            return ["code":0, "data":["accessToken":"fixture-login-access", "refreshToken":"fixture-login-refresh", "expiresIn":3600]]
+        case "/v2/plugin/login/account":
+            guard scenario == .login, request.httpMethod == "GET",
+                  request.value(forHTTPHeaderField:"Authorization") == "Bearer fixture-login-access" else { throw URLError(.userAuthenticationRequired) }
+            return ["code":0, "data":["uid":"fixture-login-user", "enterpriseId":"", "nickname":"Fixture"]]
+        default:
+            throw URLError(.unsupportedURL)
+        }
+    }
+
+    override func startLoading() {
+        do {
+            let object = try Self.response(for: request)
+            let data = try JSONSerialization.data(withJSONObject: object)
+            guard let url = request.url else { throw URLError(.badURL) }
+            let response = HTTPURLResponse(url:url, statusCode:200, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"application/json"])!
+            client?.urlProtocol(self, didReceive:response, cacheStoragePolicy:.notAllowed)
+            client?.urlProtocol(self, didLoad:data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError:error)
+        }
+    }
+}
 struct ModelModality: OptionSet, Sendable {
     let rawValue: Int
     static let textOnly = ModelModality(rawValue: 3)
@@ -50,8 +115,89 @@ func modelDisplayName(from id: String) -> String { id }
         func expectFailure(_ message: String, _ operation: () throws -> Void) {
             do { try operation(); preconditionFailure(message) } catch {}
         }
+        check(URLProtocol.registerClass(WorkBuddyFixtureProtocol.self), "register offline HTTP fixture")
+        defer { URLProtocol.unregisterClass(WorkBuddyFixtureProtocol.self) }
+        // Same ephemeral configuration as production. If Foundation ignores
+        // global registration, stop at an unsupported custom scheme; do not
+        // proceed to any real service host.
+        let probe = URLSession(configuration:.ephemeral)
+        let (probeData, _) = try await probe.data(from:URL(string:"ze-workbuddy-fixture://probe")!)
+        probe.invalidateAndCancel()
+        let probeJSON = try JSONSerialization.jsonObject(with:probeData) as? [String:Bool]
+        check(probeJSON?["fixture"] == true, "ephemeral URLSession honors offline protocol registration")
+
+        for realm in WorkBuddyRealm.allCases {
+            WorkBuddyFixtureProtocol.reset(.login)
+            let id = "http-login-\(realm.rawValue)"
+            var presented = false
+            try await WorkBuddyOAuthManager.shared.login(instanceId:id, realm:realm) { _ in presented = true }
+            check(presented, "real manager presents authorization URL")
+            check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/state") == 1, "one state request")
+            check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 3, "real loop survives two 11217 responses")
+            check(WorkBuddyFixtureProtocol.count("/v2/plugin/login/account") == 1, "account lookup follows successful token")
+            let saved = ProviderKeychainHelper.loadOAuthToken(instanceId:id, as:WorkBuddyTokenStorage.self)
+            check(saved?.uid == "fixture-login-user" && saved?.realm == realm, "successful login persists matching account")
+            WorkBuddyOAuthManager.shared.logout(instanceId:id)
+        }
+        WorkBuddyFixtureProtocol.reset(.cancel)
+        do {
+            try await WorkBuddyOAuthManager.shared.login(instanceId:"http-cancel") { _ in
+                WorkBuddyOAuthManager.shared.cancelLogin(instanceId:"http-cancel")
+            }
+            preconditionFailure("present-time cancellation must stop real login")
+        } catch is CancellationError {}
+        check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 0, "cancelled login never polls")
+        check(!WorkBuddyOAuthManager.shared.isAuthenticated(instanceId:"http-cancel"), "cancelled login never saves")
+        WorkBuddyFixtureProtocol.reset(.stateFailure)
+        do {
+            try await WorkBuddyOAuthManager.shared.login(instanceId:"http-state-failure") { _ in
+                preconditionFailure("failed state must not present authorization")
+            }
+            preconditionFailure("11217 at state endpoint must fail")
+        } catch WorkBuddyError.business(let code, _) { check(code == 11217, "state failure code") }
+        check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 0, "state business failure does not start polling")
+        check(!WorkBuddyOAuthManager.shared.isAuthenticated(instanceId:"http-state-failure"), "failed state never saves")
         check(WorkBuddyOAuthManager.isPending("login ing"), "pending response")
+        check(WorkBuddyOAuthManager.isPending("login ing..."), "observed CN/global pending punctuation")
+        check(WorkBuddyOAuthManager.isPending("login ing…"), "pending Unicode ellipsis")
         check(!WorkBuddyOAuthManager.isPending("access denied"), "rejected authorization is not pending")
+        check(!WorkBuddyOAuthManager.isPending("login ing denied"), "pending matching is bounded")
+        // Actual anonymous CN/global response shape, with no live state/token.
+        let pendingEnvelope = Data(#"{"code":11217,"msg":"login ing...","data":null}"#.utf8)
+        var pendingCount = 0
+        for envelope in [pendingEnvelope, pendingEnvelope, Data(#"{"code":0,"data":{"accessToken":"fixture-access"}}"#.utf8)] {
+            do {
+                let payload = try WorkBuddyHTTP.payload(from: envelope, authorizationPoll:true)
+                let result = try JSONSerialization.jsonObject(with: payload) as? [String:String]
+                check(result?["accessToken"] == "fixture-access", "pending transitions to success")
+                check(pendingCount == 2, "both pending responses classified before success")
+            } catch WorkBuddyError.authorizationPending {
+                pendingCount += 1
+            }
+        }
+        check(pendingCount == 2, "11217 continues polling")
+        do {
+            _ = try WorkBuddyHTTP.payload(from: pendingEnvelope)
+            preconditionFailure("11217 outside auth poll must remain an error")
+        } catch WorkBuddyError.business(let code, _) {
+            check(code == 11217, "non-poll error code preserved")
+        }
+        for message in ["authorization_pending", "login ing...", "login ing"] {
+            let envelope = try JSONSerialization.data(withJSONObject:["code":123, "msg":message])
+            do {
+                _ = try WorkBuddyHTTP.payload(from:envelope, authorizationPoll:true)
+                preconditionFailure("known pending message")
+            } catch WorkBuddyError.authorizationPending {}
+        }
+        for message in ["access denied", "state expired", "login ing denied", "secret-fixture-token"] {
+            let envelope = try JSONSerialization.data(withJSONObject:["code":123, "msg":message])
+            do {
+                _ = try WorkBuddyHTTP.payload(from:envelope, authorizationPoll:true)
+                preconditionFailure("denied and expired responses must fail")
+            } catch WorkBuddyError.business(let code, let redacted) {
+                check(code == 123 && !redacted.contains(message), "non-pending error redaction")
+            }
+        }
         check(WorkBuddyOAuthManager.isAuthorizationHost("www.codebuddy.cn", realm: .cn), "CN authorization domain")
         check(!WorkBuddyOAuthManager.isAuthorizationHost("codebuddy.cn.example.org", realm: .cn), "domain suffix attack")
         check(!WorkBuddyOAuthManager.isAuthorizationHost("www.workbuddy.ai", realm: .cn), "realm isolation")

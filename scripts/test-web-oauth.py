@@ -21,11 +21,35 @@ func rejects(_ block: () throws -> Void) {
 }
 let root = "https://platform.openai.com/auth/callback"
 check(try ChatGPTWebAuthProtocol.callbackCode(URL(string: root + "?code=ABC&state=S")!, expectedState: "S") == "ABC")
+// Query mode: harmless fragments do not reject the provider's redirect, and
+// fragment content never supplies or overrides authorization query values.
+for fragment in ["", "#", "#_=_", "#fragment", "#code=FAKE&state=wrong", "#state=S&code=FAKE&error=denied"] {
+    let callback = URL(string: root + "?code=ABC&state=S" + fragment)!
+    check(ChatGPTWebAuthProtocol.isCallbackURL(callback))
+    check(try ChatGPTWebAuthProtocol.callbackCode(callback, expectedState: "S") == "ABC")
+}
+check(ChatGPTWebAuthProtocol.isCallbackURL(URL(string: "https://platform.openai.com:443/auth/callback?code=ABC&state=S#_=_")!))
+check(try ChatGPTWebAuthProtocol.callbackCode(URL(string: root + "?code=A%23B&state=S#_=_")!, expectedState: "S") == "A#B")
+for callback in [root + "#code=ABC&state=S", root + "?code=ABC#state=S", root + "?state=S#code=ABC",
+                 root + "?code=ABC&state=wrong#state=S", root + "?code=&state=S#code=ABC"] {
+    rejects { _ = try ChatGPTWebAuthProtocol.callbackCode(URL(string: callback)!, expectedState: "S") }
+}
+let invalidCallbackAddresses = [
+    "http://platform.openai.com/auth/callback", "https://platform.openai.com.attacker.invalid/auth/callback",
+    "https://platform.openai.com:8443/auth/callback", "https://user@platform.openai.com/auth/callback",
+    "https://user:password@platform.openai.com/auth/callback", "https://platform.openai.com/auth/callback/other",
+    "https://platform.openai.com/auth/callback/", "https://platform.openai.com/other/auth/callback"
+]
+for address in invalidCallbackAddresses {
+    let callback = URL(string: address + "?code=ABC&state=S#_=_")!
+    check(!ChatGPTWebAuthProtocol.isCallbackURL(callback))
+    rejects { _ = try ChatGPTWebAuthProtocol.callbackCode(callback, expectedState: "S") }
+}
 for url in [
     root + "?code=ABC&state=wrong", root + "?code=ABC", root + "?state=S",
     root + "?code=&state=S", root + "?code=A&code=B&state=S",
     root + "?code=A&state=S&state=S", root + "?code=A&state=S&error=denied",
-    root + "?code=A&state=S#fragment", "http://platform.openai.com/auth/callback?code=A&state=S",
+    "http://platform.openai.com/auth/callback?code=A&state=S",
     "https://platform.openai.com.attacker.invalid/auth/callback?code=A&state=S",
     "https://platform.openai.com:8443/auth/callback?code=A&state=S",
     "https://user@platform.openai.com/auth/callback?code=A&state=S",

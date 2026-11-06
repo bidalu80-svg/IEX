@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		7CD272E08E5C0F210A3AB999 /* ChatGPTWebChallenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */; };
 		F1P00003 /* ChatPiPController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1P00001 /* ChatPiPController.swift */; };
 		F1L00005 /* AdaptivePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00001 /* AdaptivePaneLayout.swift */; };
 		F1L00006 /* ChatScrollMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00002 /* ChatScrollMemory.swift */; };
@@ -614,6 +615,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebChallenge.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebChallenge.swift; sourceTree = SOURCE_ROOT; };
 		F1P00001 /* ChatPiPController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPiPController.swift; sourceTree = "<group>"; };
 		F1L00001 /* AdaptivePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePaneLayout.swift; sourceTree = "<group>"; };
 		F1L00002 /* ChatScrollMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollMemory.swift; sourceTree = "<group>"; };
@@ -1480,6 +1482,7 @@
 				44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */,
 				E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */,
 				8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */,
+				18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */,
 				028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */,
 				1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */,
 				D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */,
@@ -2967,6 +2970,7 @@
 				619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */,
 				9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */,
 				890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */,
+				7CD272E08E5C0F210A3AB999 /* ChatGPTWebChallenge.swift in Sources */,
 				37435B2FDA467070F6EFFFB4 /* ChatGPTWebProtocol.swift in Sources */,
 				A5320A5E89F1FE62A60EF845 /* ChatGPTWebProvider.swift in Sources */,
 				21EAB6DEFC66132C63D75667 /* ChatGPTWebOAuthManager.swift in Sources */,

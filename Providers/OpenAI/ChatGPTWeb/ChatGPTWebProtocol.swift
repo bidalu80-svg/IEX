@@ -3,9 +3,16 @@ import Foundation
 /// Experimental web protocol, pinned against basketikun/chatgpt2api
 /// 92dd80e91543157d36a4ddad60e765c5293760e9. This is not the Codex Responses API.
 /// Keep wire parsing independent of UIKit/networking so fixtures exercise production code.
+enum ChatGPTWebRequestStage: String {
+    case bootstrap = "WEB-HOME", prepare = "WEB-PREPARE", finalize = "WEB-FINALIZE"
+    case conversation = "WEB-CHAT", models = "WEB-MODELS", unknown = "WEB-REQUEST"
+}
+
 enum ChatGPTWebError: LocalizedError {
     case authenticationExpired
-    case browserVerificationRequired
+    case browserVerificationRequired(ChatGPTWebRequestStage)
+    case interactiveVerificationRequired
+    case challengeProtocolChanged
     case unsupportedAttachment
     case unsupportedTools
     case malformedResponse
@@ -18,8 +25,12 @@ enum ChatGPTWebError: LocalizedError {
         switch self {
         case .authenticationExpired:
             return "ChatGPT 网页登录已失效，请在服务商详情重新登录。"
-        case .browserVerificationRequired:
-            return "ChatGPT 网页服务要求浏览器验证。请打开网页登录完成验证后重试；实验直连仍可能被网页服务拒绝。"
+        case .browserVerificationRequired(let stage):
+            return "ChatGPT 网页请求被拒绝（\(stage.rawValue)-403）。网页登录与聊天验证是不同步骤；反复登录未必有效。实验直连尚未通过此阶段的网页检查。"
+        case .interactiveVerificationRequired:
+            return "ChatGPT 要求额外的交互验证（WEB-ARKOSE），本次直连未完成该验证。请暂时使用官方网页聊天；重新进行 OAuth 登录不会补上这一验证。"
+        case .challengeProtocolChanged:
+            return "ChatGPT 网页验证数据暂未适配（WEB-DX）。本次请求已停止，请反馈此错误码；重复登录通常不会解决。"
         case .unsupportedAttachment:
             return "ChatGPT 网页实验直连目前仅接入文字对话，请移除附件或选择其他服务商。"
         case .unsupportedTools:
@@ -58,12 +69,12 @@ enum ChatGPTWebProtocol {
         ]
     }
 
-    static func checkHTTP(_ response: URLResponse) throws {
+    static func checkHTTP(_ response: URLResponse, stage: ChatGPTWebRequestStage = .unknown) throws {
         guard let http = response as? HTTPURLResponse else { throw ChatGPTWebError.malformedResponse }
         switch http.statusCode {
         case 200..<300: return
         case 401: throw ChatGPTWebError.authenticationExpired
-        case 403: throw ChatGPTWebError.browserVerificationRequired
+        case 403: throw ChatGPTWebError.browserVerificationRequired(stage)
         default: throw ChatGPTWebError.rejected(http.statusCode)
         }
     }

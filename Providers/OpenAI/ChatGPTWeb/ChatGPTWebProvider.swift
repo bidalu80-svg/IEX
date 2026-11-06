@@ -66,7 +66,7 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     for (field, value) in requirements { request.setValue(value, forHTTPHeaderField: field) }
                     let (bytes, response) = try await session.bytes(for: request)
-                    try ChatGPTWebProtocol.checkHTTP(response)
+                    try ChatGPTWebProtocol.checkHTTP(response, stage: .conversation)
                     guard (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true else {
                         throw ChatGPTWebError.malformedResponse
                     }
@@ -132,7 +132,7 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
     static func fetchModels(instanceId: String, tokenProvider: @escaping () async throws -> String) async throws -> [LLMModel] {
         let provider = ChatGPTWebProvider(model: builtInModels[0], instanceId: instanceId, tokenProvider: tokenProvider)
         let token = try await tokenProvider()
-        let data = try await provider.json(path: "/backend-api/models?history_and_training_disabled=true", token: token)
+        let data = try await provider.json(path: "/backend-api/models?history_and_training_disabled=true", token: token, stage: .models)
         guard let entries = data["models"] as? [[String: Any]] else { throw ChatGPTWebError.malformedResponse }
         var seen = Set<String>()
         let models: [LLMModel] = entries.compactMap { item in
@@ -167,7 +167,7 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
         return request
     }
 
-    private func json(path: String, token: String, body: [String: Any]? = nil) async throws -> [String: Any] {
+    private func json(path: String, token: String, stage: ChatGPTWebRequestStage, body: [String: Any]? = nil) async throws -> [String: Any] {
         var request = request(path: path, token: token)
         if let body {
             request.httpMethod = "POST"
@@ -175,7 +175,7 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         let (data, response) = try await session.data(for: request)
-        try ChatGPTWebProtocol.checkHTTP(response)
+        try ChatGPTWebProtocol.checkHTTP(response, stage: stage)
         return try ChatGPTWebProtocol.object(from: data)
     }
 
@@ -183,15 +183,26 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
         var home = request(path: "/")
         home.setValue("text/html", forHTTPHeaderField: "Accept")
         let (htmlData, response) = try await session.data(for: home)
-        try ChatGPTWebProtocol.checkHTTP(response)
+        try ChatGPTWebProtocol.checkHTTP(response, stage: .bootstrap)
         let html = String(data: htmlData, encoding: .utf8) ?? ""
         let config = ChatGPTWebProtocol.requirementsConfig(userAgent: userAgent, html: html, deviceId: deviceId)
         let source = try ChatGPTWebProtocol.requirementsToken(config: config)
         let base = "/backend-api/sentinel/chat-requirements"
-        let prepared = try await json(path: base + "/prepare", token: token, body: ["p": source])
-        for name in ["arkose", "turnstile"] {
-            if let challenge = prepared[name] as? [String: Any], challenge["required"] as? Bool == true {
-                throw ChatGPTWebError.browserVerificationRequired
+        let prepared = try await json(path: base + "/prepare", token: token, stage: .prepare, body: ["p": source])
+        if let challenge = prepared["arkose"] as? [String: Any], challenge["required"] as? Bool == true {
+            throw ChatGPTWebError.interactiveVerificationRequired
+        }
+        var turnstile = ""
+        if let challenge = prepared["turnstile"] as? [String: Any], challenge["required"] as? Bool == true {
+            guard let dx = challenge["dx"] as? String, !dx.isEmpty else {
+                throw ChatGPTWebError.challengeProtocolChanged
+            }
+            do {
+                turnstile = try await ChatGPTWebChallenge.token(dx: dx, source: source)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw ChatGPTWebError.challengeProtocolChanged
             }
         }
         var proof = ""
@@ -204,11 +215,12 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
         guard let prepareToken = prepared["prepare_token"] as? String, !prepareToken.isEmpty else {
             throw ChatGPTWebError.malformedResponse
         }
-        let finalized = try await json(path: base + "/finalize", token: token,
-                                       body: ["prepare_token": prepareToken, "proof_token": proof, "turnstile_token": ""])
+        let finalized = try await json(path: base + "/finalize", token: token, stage: .finalize,
+                                       body: ["prepare_token": prepareToken, "proof_token": proof, "turnstile_token": turnstile])
         guard let requirement = finalized["token"] as? String, !requirement.isEmpty else { throw ChatGPTWebError.malformedResponse }
         var headers = ["OpenAI-Sentinel-Chat-Requirements-Token": requirement]
         if !proof.isEmpty { headers["OpenAI-Sentinel-Proof-Token"] = proof }
+        if !turnstile.isEmpty { headers["OpenAI-Sentinel-Turnstile-Token"] = turnstile }
         if let so = finalized["so_token"] as? String, !so.isEmpty { headers["OpenAI-Sentinel-SO-Token"] = so }
         return headers
     }

@@ -25,12 +25,14 @@ enum WorkBuddyError: LocalizedError {
     case message(String)
     case http(Int)
     case business(Int, String)
+    case authorizationPending
 
     var errorDescription: String? {
         switch self {
         case .message(let text): return text
         case .http(let status): return "WorkBuddy 请求失败（HTTP \(status)）。"
         case .business(let code, let message): return "WorkBuddy：\(message)（\(code)）"
+        case .authorizationPending: return "等待 WorkBuddy 浏览器授权…"
         }
     }
 }
@@ -118,7 +120,7 @@ final class WorkBuddyOAuthManager: ObservableObject {
                 let tokenData: Data
                 do {
                     tokenData = try await WorkBuddyHTTP.data(realm: realm, path: "/v2/plugin/auth/token", query: [URLQueryItem(name: "state", value: state.state)], login: true)
-                } catch WorkBuddyError.business(_, let message) where Self.isPending(message) {
+                } catch WorkBuddyError.authorizationPending {
                     try await Task.sleep(nanoseconds: 3_000_000_000)
                     continue
                 }
@@ -211,8 +213,9 @@ final class WorkBuddyOAuthManager: ObservableObject {
         return Date().addingTimeInterval(seconds)
     }
 
-    static func isPending(_ message: String) -> Bool {
+    nonisolated static func isPending(_ message: String) -> Bool {
         let normalized = message.lowercased().replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".…").union(.whitespacesAndNewlines))
         return normalized == "logining" || normalized == "authorization_pending"
     }
 
@@ -262,19 +265,22 @@ enum WorkBuddyHTTP {
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw WorkBuddyError.message("WorkBuddy 未返回 HTTP 响应。") }
         guard (200..<300).contains(http.statusCode) else { throw WorkBuddyError.http(http.statusCode) }
-        return try payload(from: data)
+        return try payload(from: data, authorizationPoll: login && method == "GET" && path == "/v2/plugin/auth/token")
     }
 
-    static func payload(from data: Data) throws -> Data {
+    static func payload(from data: Data, authorizationPoll: Bool = false) throws -> Data {
         guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let code = envelope["code"] as? Int else { throw WorkBuddyError.message("WorkBuddy 响应格式错误。") }
         guard code == 0 else {
-            // Display only the business message; response bodies can contain tokens.
             let message = envelope["msg"] as? String ?? "请求失败"
-            // Pending detection uses known protocol strings. Other service
-            // messages are not echoed: a server can include credential material.
-            let pending = message.lowercased().replacingOccurrences(of: " ", with: "")
-            throw WorkBuddyError.business(code, ["logining", "authorization_pending"].contains(pending) ? message : "请求失败，请检查账号状态后重试")
+            // CN and global anonymously verified on 2026-11-07: a fresh,
+            // unapproved state returns HTTP 200 / 11217 / "login ing...".
+            // Classify before redaction and only at the login polling endpoint;
+            // other RPCs must never turn a business failure into a retry loop.
+            if authorizationPoll && (code == 11217 || WorkBuddyOAuthManager.isPending(message)) {
+                throw WorkBuddyError.authorizationPending
+            }
+            throw WorkBuddyError.business(code, "请求失败，请检查账号状态后重试")
         }
         guard let payload = envelope["data"], JSONSerialization.isValidJSONObject(payload) else {
             throw WorkBuddyError.message("WorkBuddy 响应缺少数据。")

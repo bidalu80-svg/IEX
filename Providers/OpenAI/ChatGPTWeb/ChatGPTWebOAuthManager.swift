@@ -195,10 +195,17 @@ final class ChatGPTWebOAuthManager: ObservableObject {
 // BEGIN ChatGPTWebAuthProtocol
 /// Validation shared by the live browser/token client and deterministic fixtures.
 enum ChatGPTWebAuthProtocol {
+    /// OAuth response_mode=query reads authorization values only from the query.
+    /// Fragments (such as #_=_) do not change callback identity.
+    static func isCallbackURL(_ url: URL) -> Bool {
+        url.scheme == "https" && url.host == "platform.openai.com"
+            && (url.port == nil || url.port == 443)
+            && url.user == nil && url.password == nil
+            && url.path == "/auth/callback"
+    }
+
     static func callbackCode(_ url: URL, expectedState: String) throws -> String {
-        guard url.scheme == "https", url.host == "platform.openai.com",
-              url.port == nil || url.port == 443, url.user == nil, url.password == nil,
-              url.path == "/auth/callback", url.fragment == nil else {
+        guard isCallbackURL(url) else {
             throw LLMError.providerError(message: "网页登录回调地址校验失败。")
         }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -313,8 +320,7 @@ private final class ChatGPTWebLoginController: UIViewController, WKNavigationDel
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let target = action.request.url else { decisionHandler(.cancel); return }
-        if target.scheme == "https", target.host == "platform.openai.com", target.port == nil || target.port == 443,
-           target.path == "/auth/callback", action.targetFrame?.isMainFrame == true {
+        if ChatGPTWebAuthProtocol.isCallbackURL(target), action.targetFrame?.isMainFrame == true {
             decisionHandler(.cancel)
             do {
                 finish(.success(try ChatGPTWebAuthProtocol.callbackCode(target, expectedState: expectedState)))

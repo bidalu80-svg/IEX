@@ -56,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/test-web-oauth.py | tee web-oauth-tests.log
+          python3 scripts/test-web-challenge.py | tee web-challenge-tests.log
           python3 scripts/test-chatgpt-web.py | tee chatgpt-web-tests.log
           python3 scripts/test-workbuddy.py | tee workbuddy-tests.log
           xcrun swiftc -parse-as-library Providers/AgentProvider.swift scripts/ProviderToolCapabilityTests.swift -o "$RUNNER_TEMP/provider-tool-capability-tests"
@@ -964,6 +965,7 @@ jobs:
             image-wire-tests.log
             reasoning-wire-tests.log
             web-oauth-tests.log
+            web-challenge-tests.log
             chatgpt-web-tests.log
             workbuddy-tests.log
             subagent-lifecycle-tests.log
