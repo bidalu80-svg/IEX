@@ -35,8 +35,10 @@ final class MemoryPressureMonitor {
     func start() {
         guard timer == nil else { return }
 
+        // Observe recovery too: otherwise a critical event leaves the brake
+        // latched until a later warning, even after pressure returns to normal.
         let source = DispatchSource.makeMemoryPressureSource(
-            eventMask: [.warning, .critical], queue: queue)
+            eventMask: [.normal, .warning, .critical], queue: queue)
         source.setEventHandler { [weak self] in
             guard let self else { return }
             self.critical = source.data.contains(.critical)

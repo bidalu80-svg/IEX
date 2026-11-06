@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <errno.h>
+#include "fs/fd.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -237,9 +239,57 @@ __attribute__((constructor)) static void create_attr() {
     pthread_attr_setdetachstate(&task_thread_attr, PTHREAD_CREATE_DETACHED);
 }
 
-void task_start(struct task *task) {
-    if (pthread_create(&task->thread, &task_thread_attr, task_thread, task) < 0)
-        die("could not create thread");
+// Only for a completely constructed task whose host thread never started.
+// It has no children or running code, so no exit notification/waitpid zombie is
+// needed. Both clone threads (shared group) and fresh leaders are supported.
+void task_discard_unstarted(struct task *task) {
+    if (task == NULL) return;
+    lock(&task->general_lock);
+    struct mm *mm = task->mm;
+    task->mm = NULL;
+    task->mem = NULL;
+    struct fdtable *files = task->files;
+    task->files = NULL;
+    struct fs_info *fs = task->fs;
+    task->fs = NULL;
+    unlock(&task->general_lock);
+
+    lock(&pids_lock);
+    struct sighand *sighand = task->sighand;
+    task->sighand = NULL;
+    // Shared sighand refcounts follow do_exit's pids_lock discipline.
+    if (sighand) sighand_release(sighand);
+    struct tgroup *group = task->group;
+    list_remove_safe(&task->group_links);
+    bool free_group = group != NULL && list_empty(&group->threads);
+    if (free_group) {
+        lock(&group->lock);
+        task_leave_session(task);
+        list_remove_safe(&group->pgroup);
+        unlock(&group->lock);
+    }
+    task->group = NULL;
+    if (current == task) current = NULL;
+    task_destroy(task);
+    unlock(&pids_lock);
+
+    // Releasing memory/fds can acquire filesystem locks: never do so under
+    // pids_lock. Each reference below was owned by this unstarted task.
+    if (files) fdtable_release(files);
+    if (fs) fs_info_release(fs);
+    if (mm) mm_release(mm);
+    if (free_group) {
+        cond_destroy(&group->child_exit);
+        cond_destroy(&group->stopped_cond);
+        free(group);
+    }
+}
+
+int task_start(struct task *task) {
+    int err = pthread_create(&task->thread, &task_thread_attr, task_thread, task);
+    if (err != 0)
+        return err == EAGAIN ? _EAGAIN : _ENOMEM;
+    return 0;
 }
 
 int_t sys_sched_yield() {

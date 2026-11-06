@@ -122,6 +122,10 @@ struct task {
     // specifically: comm, mm
     lock_t general_lock;
 
+    // Per-task fork pace, touched only by its own guest thread in sys_clone.
+    uint64_t fork_rate_last_ns;
+    double fork_rate_ewma;
+
     struct task_sockrestart sockrestart;
 
     // Native offload: when is_native_proxy is true, this task is waiting
@@ -263,7 +267,10 @@ struct task *pid_get_task_zombie(dword_t id); // don't return null if the task e
 #define MAX_PID (1 << 15) // oughta be enough
 
 // TODO document
-void task_start(struct task *task);
+// Returns negative guest errno; callers retain ownership on failure.
+int task_start(struct task *task);
+// Fully constructed task only; must never have run a host thread.
+void task_discard_unstarted(struct task *task);
 void task_run_current(void);
 
 extern void (*exit_hook)(struct task *task, int code);
@@ -276,6 +283,12 @@ void ish_set_timer_tick_hook(ish_timer_tick_hook_t hook);
 // runs on the forking thread and must not allocate or take kernel locks.
 typedef int (*ish_fork_guard_t)(void);
 void ish_set_fork_guard(ish_fork_guard_t guard);
+
+// Successful guest process/thread launches, for host diagnostics.
+extern _Atomic uint64_t ish_guest_forks;
+// Reference token bucket: light callers bypass pressure from heavy forkers.
+void ish_set_fork_rate_limit(unsigned per_sec, unsigned burst);
+void ish_fork_rate_stats(uint64_t *throttled, uint64_t *bypassed, uint64_t *sleep_ns);
 
 #define superuser() (current != NULL && current->euid == 0)
 

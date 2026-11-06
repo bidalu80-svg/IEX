@@ -22,6 +22,7 @@
 #include "kernel/errno.h"
 #include "kernel/task.h"
 #include "fs/fd.h"
+#include "fs/path.h"
 #include "fs/dev.h"
 #include "fs/inode.h"
 #include "fs/real.h"
@@ -117,10 +118,12 @@ static _Atomic(fakefs_path_reverse_hook_t) g_path_reverse_hook = NULL;
 
 void fakefs_set_path_translate_hook(fakefs_path_translate_hook_t hook) {
     atomic_store_explicit(&g_path_translate_hook, hook, memory_order_release);
+    path_cache_invalidate();
 }
 
 void fakefs_set_path_reverse_hook(fakefs_path_reverse_hook_t hook) {
     atomic_store_explicit(&g_path_reverse_hook, hook, memory_order_release);
+    path_cache_invalidate();
 }
 
 /* Absolute host path of the fakefs `data/` directory, registered by the
@@ -138,6 +141,7 @@ void fakefs_set_rootfs_data_path(const char *abs_host_path) {
         g_rootfs_data_path[0] = '\0';
         g_rootfs_data_path_len = 0;
         fprintf(stderr, "fakefs: rootfs_data_path cleared\n");
+        path_cache_invalidate();
         return;
     }
     /* Strip any trailing slash so prefix arithmetic below works uniformly:
@@ -150,6 +154,7 @@ void fakefs_set_rootfs_data_path(const char *abs_host_path) {
         fprintf(stderr,
                 "fakefs: rootfs_data_path too long (%zu chars, max %zu) — ignored\n",
                 n, sizeof(g_rootfs_data_path) - 1);
+        path_cache_invalidate();
         return;
     }
     memcpy(g_rootfs_data_path, abs_host_path, n);
@@ -157,6 +162,7 @@ void fakefs_set_rootfs_data_path(const char *abs_host_path) {
     g_rootfs_data_path_len = (int)n;
     fprintf(stderr, "fakefs: rootfs_data_path registered \"%s\" (len=%d)\n",
             g_rootfs_data_path, g_rootfs_data_path_len);
+    path_cache_invalidate();
 }
 
 /* True if `host_path` is an ancestor of (or equal to) the registered
@@ -439,20 +445,26 @@ static struct fd *fakefs_open(struct mount *mount, const char *path, int flags, 
             fd->fake_inode = 1;  /* non-zero so the ENOENT branch below is skipped */
         return fd;
     }
-    db_begin_write(fs);
+    // Existing opens, including shell O_CREAT redirections, only read rows.
+    // Avoid reserving SQLite's WAL writer for every command/file open.
+    db_begin_read(fs);
     fd->fake_inode = path_get_inode(fs, path);
-    if (flags & O_CREAT_) {
+    db_commit(fs);
+    if (fd->fake_inode == 0 && (flags & O_CREAT_)) {
         struct ish_stat ishstat;
         ishstat.mode = mode | S_IFREG;
         ishstat.uid = current->euid;
         ishstat.gid = current->egid;
         ishstat.rdev = 0;
+        db_begin_write(fs);
+        // Another creator may have populated the row after our read commit.
+        fd->fake_inode = path_get_inode(fs, path);
         if (fd->fake_inode == 0) {
             path_create(fs, path, &ishstat);
             fd->fake_inode = path_get_inode(fs, path);
         }
+        db_commit(fs);
     }
-    db_commit(fs);
     if (fd->fake_inode == 0) {
         /* Auto-create for bind-mounted paths */
         if (is_under_bind_mount(path)) {
@@ -615,6 +627,14 @@ static int fakefs_rename(struct mount *mount, const char *src, const char *dst) 
     if (src_bind && rename(host_src, host_dst) < 0)
         return errno_map();
     db_begin_write(fs);
+    ino_t replaced_ino = path_get_inode(fs, dst);
+    ino_t source_ino = path_get_inode(fs, src);
+    // POSIX rename between two names of one inode is a no-op. Preserve both
+    // hard-link names instead of deleting a metadata path via UPDATE REPLACE.
+    if (source_ino != 0 && source_ino == replaced_ino) {
+        db_commit(fs);
+        return 0;
+    }
     path_rename(fs, src, dst);
     if (!src_bind) {
         int err = realfs.rename(mount, src, dst);
@@ -626,6 +646,12 @@ static int fakefs_rename(struct mount *mount, const char *src, const char *dst) 
     db_commit(fs);
     if (src_bind)
         fakefs_record_change(dst, FAKEFS_CHANGE_OP_RENAME);
+    // Use the existing open-inode reference table. A closed overwritten inode
+    // is reclaimed now; an open one survives until inode_release on last close.
+    // Run after committing: inode_check_orphaned takes inodes_lock, whose
+    // normal close path then enters the metadata transaction in that order.
+    if (replaced_ino != 0 && replaced_ino != source_ino)
+        inode_check_orphaned(mount, replaced_ino);
     return 0;
 }
 
@@ -1214,6 +1240,7 @@ int fakefs_bind_mount(const char *linux_path, const char *host_path, bool read_o
 
             if (!host_changed) {
                 fprintf(stderr, "fakefs_bind_mount: slot[%d] already mounted with same host_path, mode refreshed\n", i);
+                path_cache_invalidate();
                 return 0;
             }
             /* host_path changed (e.g. session switch) — update slot and symlink */
@@ -1235,6 +1262,7 @@ int fakefs_bind_mount(const char *linux_path, const char *host_path, bool read_o
                 g_bind_mounts[i].active = false;
                 return _EINVAL;
             }
+            path_cache_invalidate();
             return 0;
         }
     }
@@ -1306,6 +1334,7 @@ int fakefs_bind_mount(const char *linux_path, const char *host_path, bool read_o
             }
             db_commit(fs);
 
+            path_cache_invalidate();
             return 0;
         }
     }
@@ -1328,6 +1357,7 @@ int fakefs_bind_unmount(const char *linux_path) {
             snprintf(host_link, sizeof(host_link), "%s", fix_path(linux_path));
             unlinkat(g_fakefs_mount->root_fd, host_link, 0);
 
+            path_cache_invalidate();
             return 0;
         }
     }

@@ -3,6 +3,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include "kernel/calls.h"
 #include "fs/path.h"
 
@@ -17,6 +18,10 @@ struct path_cache_entry {
     char input_path[MAX_PATH];     // Original path (with at_path prefix if any)
     char normalized[MAX_PATH];     // Normalized result
     uint64_t timestamp;            // nanosecond timestamp
+    uint64_t generation;
+    uint64_t fs_context;
+    uintptr_t fs_identity, root_identity;
+    unsigned pid, euid, egid;
     int flags;                     // N_SYMLINK_FOLLOW or N_SYMLINK_NOFOLLOW
     bool valid;
 };
@@ -24,6 +29,18 @@ struct path_cache_entry {
 // Thread-local cache (one per thread for lock-free access)
 static __thread struct path_cache_entry path_cache[PATH_CACHE_SIZE];
 static __thread bool path_cache_initialized = false;
+
+// The entries remain thread-local. Only the namespace generation is shared,
+// so a mutation on any guest thread invalidates all TLS tables without walking
+// them or introducing a shared lookup lock. Snapshot BEFORE normalization:
+// a walk overlapping a mutation can never publish its result as a newer epoch.
+static _Atomic uint64_t path_cache_generation = 1;
+void path_cache_invalidate(void) {
+    atomic_fetch_add_explicit(&path_cache_generation, 1, memory_order_release);
+}
+static uint64_t path_cache_snapshot(void) {
+    return atomic_load_explicit(&path_cache_generation, memory_order_acquire);
+}
 
 // Simple hash function for path strings
 static inline uint32_t path_hash(const char *str) {
@@ -51,7 +68,7 @@ static void path_cache_init(void) {
 
 // Try to get cached normalized path
 // Returns 0 on cache hit, -1 on cache miss
-static int path_cache_get(const char *full_path, int flags, char *out) {
+static int path_cache_get(const char *full_path, int flags, char *out, uint64_t generation, struct fd *root) {
     path_cache_init();
 
     uint32_t hash = path_hash(full_path);
@@ -60,6 +77,15 @@ static int path_cache_get(const char *full_path, int flags, char *out) {
 
     // Check cache validity
     if (!entry->valid)
+        return -1;
+
+    if (entry->generation != generation ||
+        entry->generation != path_cache_snapshot() ||
+        entry->pid != (unsigned)current->pid ||
+        entry->euid != current->euid || entry->egid != current->egid ||
+        entry->fs_context != (current->group ? current->group->fs_context : 0) ||
+        entry->fs_identity != (uintptr_t)current->fs ||
+        entry->root_identity != (uintptr_t)root)
         return -1;
 
     // Check path and flags match
@@ -82,7 +108,7 @@ static int path_cache_get(const char *full_path, int flags, char *out) {
 }
 
 // Store normalized path in cache
-static void path_cache_set(const char *full_path, int flags, const char *normalized) {
+static void path_cache_set(const char *full_path, int flags, const char *normalized, uint64_t generation, struct fd *root) {
     path_cache_init();
 
     uint32_t hash = path_hash(full_path);
@@ -98,6 +124,13 @@ static void path_cache_set(const char *full_path, int flags, const char *normali
 
     entry->flags = flags;
     entry->timestamp = get_time_ns();
+    entry->generation = generation;
+    entry->pid = (unsigned)current->pid;
+    entry->euid = current->euid;
+    entry->egid = current->egid;
+    entry->fs_context = current->group ? current->group->fs_context : 0;
+    entry->fs_identity = (uintptr_t)current->fs;
+    entry->root_identity = (uintptr_t)root;
     entry->valid = true;
 }
 
@@ -232,6 +265,7 @@ int path_normalize(struct fd *at, const char *path, char *out, int flags) {
 
     // start with root or cwd, depending on whether it starts with a slash
     lock(&current->fs->lock);
+    struct fd *root = current->fs->root;
     if (path[0] == '/')
         at = current->fs->root;
     else if (at == AT_PWD)
@@ -246,28 +280,25 @@ int path_normalize(struct fd *at, const char *path, char *out, int flags) {
         assert(path_is_normalized(at_path));
     }
 
-    // Build full input path for cache lookup
+    // Cache keys must never be silently truncated: a longer path sharing a
+    // MAX_PATH prefix must still reach the walk and report ENAMETOOLONG.
     char full_input[MAX_PATH];
+    bool cacheable = !(flags & N_PARENT_DIR_WRITE);
     if (at != NULL && strcmp(at_path, "/") != 0) {
-        snprintf(full_input, MAX_PATH, "%s/%s", at_path, path);
+        int length = snprintf(full_input, MAX_PATH, "%s/%s", at_path, path);
+        cacheable = cacheable && length >= 0 && length < MAX_PATH;
     } else {
+        cacheable = cacheable && strlen(path) < MAX_PATH;
         strncpy(full_input, path, MAX_PATH - 1);
         full_input[MAX_PATH - 1] = '\0';
     }
 
-    // Try cache lookup first
-    if (path_cache_get(full_input, flags, out) == 0) {
-        // Cache hit - fast return
+    uint64_t generation = path_cache_snapshot();
+    if (cacheable && path_cache_get(full_input, flags, out, generation, root) == 0)
         return 0;
-    }
-
-    // Cache miss - do full normalization
     int result = __path_normalize(at != NULL ? at_path : NULL, path, out, flags, 0);
-
-    // Store result in cache (even on error, we cache the error)
-    if (result == 0) {
-        path_cache_set(full_input, flags, out);
-    }
+    if (cacheable && result == 0)
+        path_cache_set(full_input, flags, out, generation, root);
 
     return result;
 }

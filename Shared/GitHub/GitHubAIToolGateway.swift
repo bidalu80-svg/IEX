@@ -89,7 +89,7 @@ enum GitHubAIToolGateway {
             ),
             AgentToolDefinition(
                 name: "github_file_read",
-                description: "读取 GitHub 仓库中的文件，返回文本内容和当前文件 SHA。目录会返回目录项列表。",
+                description: "读取最多 1 MiB 的 UTF-8 文件，返回内容和 SHA；输出超过 30000 字符时明确标记截断。目录返回目录项列表。",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "显示给用户的简短操作标题"),
                     "account_id": AgentToolParam(type: .string, description: "GitHub 账号 UUID"),
@@ -222,24 +222,11 @@ enum GitHubAIToolGateway {
         guard let (account, token) = authorizedAccount(arguments),
               let owner = string("owner", arguments), let repository = string("repository", arguments),
               let filePath = string("path", arguments) else { return missing("account_id、owner、repository 或 path") }
-        let branch = string("branch", arguments)
-        let suffix = branch.map { "?ref=\(urlEncode($0))" } ?? ""
         do {
-            let (data, _) = try await api.raw(path: "/repos/\(urlEncode(owner))/\(urlEncode(repository))/contents/\(encodePath(filePath))\(suffix)", token: token)
-            let object = try JSONSerialization.jsonObject(with: data)
-            if let items = object as? [[String: Any]] {
-                let rows = items.map { ["name": $0["name"] as? String ?? "", "path": $0["path"] as? String ?? "", "type": $0["type"] as? String ?? ""] }
-                return .init(output: json(["account": account.login, "path": filePath, "items": rows]), success: true)
-            }
-            guard let value = object as? [String: Any] else { return malformed() }
-            if let encoded = value["content"] as? String {
-                let compact = encoded.filter { !$0.isWhitespace }
-                guard let decoded = Data(base64Encoded: compact), let text = String(data: decoded, encoding: .utf8) else {
-                    return .init(output: "Error: 文件不是 UTF-8 文本，未暴露给模型。", success: false)
-                }
-                return .init(output: json(["account": account.login, "path": filePath, "sha": value["sha"] as? String ?? "", "content": truncate(text)]), success: true)
-            }
-            return malformed()
+            var value = try await repositories.readFile(owner: owner, repository: repository, path: filePath,
+                branch: string("branch", arguments), token: token)
+            value["account"] = account.login
+            return .init(output: json(value), success: true)
         } catch { return failure(error) }
     }
 
@@ -248,6 +235,9 @@ enum GitHubAIToolGateway {
               let owner = string("owner", arguments), let repository = string("repository", arguments),
               let filePath = string("path", arguments), let content = arguments["content"] as? String,
               let message = string("message", arguments) else { return missing("写入所需参数") }
+        let endpoint: String
+        do { endpoint = try GitHubRepositoryClient.contentsPath(owner: owner, repository: repository, path: filePath) }
+        catch { return failure(error) }
         let branch = string("branch", arguments)
         let detail = "账号 \(account.login) 将写入 \(owner)/\(repository)/\(filePath)，创建提交并推送\(branch.map { "到分支 \($0)" } ?? "")。提交说明：\(message)"
         guard await RemoteServerAIConfirmationGate.shared.request(serverName: "GitHub / \(account.login)", operation: "写入并推送 GitHub 文件", detail: detail, isDestructive: true) else {
@@ -258,7 +248,7 @@ enum GitHubAIToolGateway {
         if let sha = string("file_sha", arguments) { body["sha"] = sha }
         do {
             let data = try JSONSerialization.data(withJSONObject: body, options: [])
-            let (responseData, _) = try await api.raw(path: "/repos/\(urlEncode(owner))/\(urlEncode(repository))/contents/\(encodePath(filePath))", token: token, method: "PUT", body: data)
+            let (responseData, _) = try await api.raw(path: endpoint, token: token, method: "PUT", body: data)
             let value = (try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]) ?? [:]
             return .init(output: json(["success": true, "account": account.login, "repository": "\(owner)/\(repository)", "path": filePath, "commit_sha": (value["commit"] as? [String: Any])?["sha"] as? String ?? "", "message": "文件已提交并推送。"]), success: true)
         } catch { return failure(error) }
@@ -269,6 +259,9 @@ enum GitHubAIToolGateway {
               let owner = string("owner", arguments), let repository = string("repository", arguments),
               let filePath = string("path", arguments), let sha = string("file_sha", arguments),
               let message = string("message", arguments) else { return missing("删除所需参数") }
+        let endpoint: String
+        do { endpoint = try GitHubRepositoryClient.contentsPath(owner: owner, repository: repository, path: filePath) }
+        catch { return failure(error) }
         let branch = string("branch", arguments)
         let detail = "账号 \(account.login) 将删除 \(owner)/\(repository)/\(filePath)，创建提交并推送。提交说明：\(message)"
         guard await RemoteServerAIConfirmationGate.shared.request(serverName: "GitHub / \(account.login)", operation: "删除并推送 GitHub 文件", detail: detail, isDestructive: true) else {
@@ -278,7 +271,7 @@ enum GitHubAIToolGateway {
         if let branch { body["branch"] = branch }
         do {
             let data = try JSONSerialization.data(withJSONObject: body, options: [])
-            let (responseData, _) = try await api.raw(path: "/repos/\(urlEncode(owner))/\(urlEncode(repository))/contents/\(encodePath(filePath))", token: token, method: "DELETE", body: data)
+            let (responseData, _) = try await api.raw(path: endpoint, token: token, method: "DELETE", body: data)
             let value = (try? JSONSerialization.jsonObject(with: responseData) as? [String: Any]) ?? [:]
             return .init(output: json(["success": true, "account": account.login, "path": filePath, "commit_sha": (value["commit"] as? [String: Any])?["sha"] as? String ?? "", "message": "文件已删除并推送。"]), success: true)
         } catch { return failure(error) }

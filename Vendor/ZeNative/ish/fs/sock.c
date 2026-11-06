@@ -117,6 +117,7 @@ static int unix_socket_get(const char *path_raw, struct fd *bind_fd, uint32_t *s
             err = mount->fs->mknod(mount, path, S_IFSOCK | mode, 0);
             if (err < 0)
                 goto out;
+            path_cache_invalidate();
             err = mount->fs->stat(mount, path, &stat);
             if (err < 0)
                 goto out;

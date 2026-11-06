@@ -161,6 +161,57 @@ private final class FixtureProtocol: URLProtocol {
             })]
         _ = try await client.createBranch(owner: "example", repository: "project", branch: "new-branch", fromSHA: old, token: token)
         done("branch creation writes explicit new ref")
+        for path in ["..", "../x", "a/../../x", "/absolute", "a//b", "a/./b", "nul\0file", "line\nfile"] {
+            do {
+                _ = try await client.readFile(owner: "example", repository: "project", path: path, branch: nil, token: token)
+                fatalError("Invalid path was accepted")
+            } catch GitHubConnectorError.http(400, _) { }
+        }
+        for (owner, repository) in [("..", "project"), ("example", "."), ("bad/owner", "project"), ("example", "bad\\repo")] {
+            do {
+                _ = try GitHubRepositoryClient.contentsPath(owner: owner, repository: repository, path: "valid.txt")
+                fatalError("Invalid repository identity was accepted")
+            } catch GitHubConnectorError.http(400, _) { }
+        }
+        let escaped = try GitHubRepositoryClient.contentsPath(owner: "valid-owner", repository: "valid.repo_name", path: "dir/a & b.txt")
+        precondition(escaped == "/repos/valid-owner/valid.repo_name/contents/dir/a%20%26%20b.txt")
+        done("contents paths reject traversal before transport and retain valid repository names")
+
+        FixtureProtocol.replies = [.init("GET", base + "/contents/empty.txt",
+            ["type": "file", "size": 0, "encoding": "base64", "content": "", "sha": "empty-sha"])]
+        let empty = try await client.readFile(owner: "example", repository: "project", path: "empty.txt", branch: nil, token: token)
+        precondition(empty["content"] as? String == "" && empty["truncated"] as? Bool == false)
+        done("real empty file succeeds")
+        for value in [
+            ["size": 2_000_000, "encoding": "none", "content": "", "download_url": "https://untrusted.invalid/file"] as [String: Any],
+            ["size": 1, "encoding": "base64", "content": ""],
+            ["size": 1_048_577, "encoding": "base64", "content": ""]
+        ] {
+            FixtureProtocol.replies = [.init("GET", base + "/contents/large.txt", value)]
+            do {
+                _ = try await client.readFile(owner: "example", repository: "project", path: "large.txt", branch: nil, token: token)
+                fatalError("Incomplete/oversized contents accepted")
+            } catch GitHubConnectorError.http(422, _) { }
+            done("incomplete or oversized contents fail without following download_url")
+        }
+        var stored = "old-metadata", credential = "old-token"
+        let diskError = NSError(domain: NSPOSIXErrorDomain, code: 28)
+        do {
+            try GitHubAccountPersistence.commit(writeMetadata: { throw diskError },
+                writeCredential: { credential = "new-token" }, rollbackMetadata: { stored = "old-metadata" })
+            fatalError("Expected disk failure")
+        } catch { }
+        precondition(stored == "old-metadata" && credential == "old-token")
+        do {
+            try GitHubAccountPersistence.commit(writeMetadata: { stored = "new-metadata" },
+                writeCredential: { throw GitHubConnectorError.keychain(-1) }, rollbackMetadata: { stored = "old-metadata" })
+            fatalError("Expected credential failure")
+        } catch GitHubConnectorError.keychain { }
+        precondition(stored == "old-metadata" && credential == "old-token")
+        try GitHubAccountPersistence.commit(writeMetadata: { stored = "new-metadata" },
+            writeCredential: { credential = "new-token" }, rollbackMetadata: { stored = "old-metadata" })
+        precondition(stored == "new-metadata" && credential == "new-token")
+        done("account transaction reports failure and retains old credential/metadata until success")
         precondition(GitHubAPI.scopes("repo, read:org workflow") == ["read:org", "repo", "workflow"])
         precondition(GitHubAPI.encode("feature/a&ref=b") == "feature%2Fa%26ref%3Db")
         print("GitHub client runtime fixtures passed: \(passed)")

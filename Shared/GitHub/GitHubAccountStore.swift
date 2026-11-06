@@ -8,6 +8,7 @@ final class GitHubAccountStore: ObservableObject {
 
     @Published private(set) var accounts: [GitHubAccount] = []
     @Published private(set) var isLoading = false
+    @Published var persistenceError: String?
 
     private let session: URLSession
     private let service = "com.ze.app.github-accounts"
@@ -96,9 +97,15 @@ final class GitHubAccountStore: ObservableObject {
     }
 
     func delete(_ account: GitHubAccount) {
-        accounts.removeAll { $0.id == account.id }
-        deleteKeychain(account.id)
-        persist()
+        do {
+            let remaining = accounts.filter { $0.id != account.id }
+            let original = accounts
+            try GitHubAccountPersistence.commit(
+                writeMetadata: { try self.persist(remaining) },
+                writeCredential: { try self.deleteKeychain(account.id) },
+                rollbackMetadata: { try self.persist(original) })
+            accounts = remaining
+        } catch { persistenceError = error.localizedDescription }
     }
 
     private func addAccount(token: String, grantedScopes: [String]? = nil) async throws -> GitHubAccount {
@@ -110,11 +117,16 @@ final class GitHubAccountStore: ObservableObject {
         let account = GitHubAccount(id: existing?.id ?? UUID(), login: profile.login,
             displayName: profile.name ?? "", avatarURL: profile.avatarURL,
             createdAt: existing?.createdAt ?? .now, grantedScopes: scopes)
-        try saveKeychain(token, accountID: account.id)
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) { accounts[index] = account }
-        else { accounts.append(account) }
-        accounts.sort { $0.login.localizedCaseInsensitiveCompare($1.login) == .orderedAscending }
-        persist()
+        let original = accounts
+        var updated = accounts
+        if let index = updated.firstIndex(where: { $0.id == account.id }) { updated[index] = account }
+        else { updated.append(account) }
+        updated.sort { $0.login.localizedCaseInsensitiveCompare($1.login) == .orderedAscending }
+        try GitHubAccountPersistence.commit(
+            writeMetadata: { try self.persist(updated) },
+            writeCredential: { try self.saveKeychain(token, accountID: account.id) },
+            rollbackMetadata: { try self.persist(original) })
+        accounts = updated
         return account
     }
 
@@ -123,11 +135,11 @@ final class GitHubAccountStore: ObservableObject {
         accounts = loaded
     }
 
-    private func persist() {
+    private func persist(_ values: [GitHubAccount]) throws {
         do {
             try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try encoder.encode(accounts).write(to: storageURL, options: .atomic)
-        } catch { print("GitHub account persistence failed: \(error)") }
+            try encoder.encode(values).write(to: storageURL, options: .atomic)
+        } catch { throw GitHubConnectorError.storage(error) }
     }
 
     private func accountKey(_ id: UUID) -> String { id.uuidString.lowercased() }
@@ -152,10 +164,11 @@ final class GitHubAccountStore: ObservableObject {
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else { throw GitHubConnectorError.keychain(status) }
         return value
     }
-    private func deleteKeychain(_ id: UUID) {
+    private func deleteKeychain(_ id: UUID) throws {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                      kSecAttrAccount as String: accountKey(id), kSecAttrSynchronizable as String: kCFBooleanFalse as Any]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw GitHubConnectorError.keychain(status) }
     }
 
     private func form(_ values: [String: String]) -> Data? {

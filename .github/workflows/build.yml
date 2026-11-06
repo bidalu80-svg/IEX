@@ -119,6 +119,10 @@ jobs:
           python3 scripts/test-kernel-runtime.py | tee kernel-runtime-tests.log
           python3 scripts/test-native-cancellation.py | tee native-cancellation-tests.log
           python3 scripts/test-kernel-locks.py | tee kernel-lock-tests.log
+          python3 scripts/test-task-start-failure.py | tee task-start-tests.log
+          python3 scripts/test-path-cache-invalidation.py | tee path-cache-tests.log
+          python3 scripts/test-fakefs-metadata.py | tee fakefs-metadata-tests.log
+          python3 scripts/test-fork-admission.py | tee fork-admission-tests.log
           python3 scripts/test-kernel-cpu-sensor.py | tee kernel-cpu-tests.log
           python3 scripts/test-rootfs-recovery.py | tee rootfs-recovery-tests.log
           bash Vendor/ZeNative/ish/kernel/offload_tests/path_scope/run.sh | tee kernel-offload-tests.log
@@ -885,6 +889,10 @@ jobs:
             kernel-runtime-tests.log
             native-cancellation-tests.log
             kernel-lock-tests.log
+            task-start-tests.log
+            path-cache-tests.log
+            fakefs-metadata-tests.log
+            fork-admission-tests.log
             kernel-cpu-tests.log
             rootfs-recovery-tests.log
             kernel-offload-tests.log

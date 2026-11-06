@@ -126,6 +126,7 @@ int do_mount(const struct fs_ops *fs, const char *source, const char *point, con
 
     // Invalidate all mount caches
     global_mount_version++;
+    path_cache_invalidate();
 
     return 0;
 }
@@ -144,6 +145,7 @@ int mount_remove(struct mount *mount) {
 
     // Invalidate all mount caches
     global_mount_version++;
+    path_cache_invalidate();
 
     return 0;
 }

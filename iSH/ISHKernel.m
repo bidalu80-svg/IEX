@@ -26,6 +26,8 @@
 #include <signal.h>
 #include <setjmp.h>
 #import <mach/mach.h>
+#import <mach/mach_time.h>
+#include <unistd.h>
 #include <execinfo.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -68,6 +70,302 @@ static ISHKernel *g_sharedKernel = nil;
 
 // External hooks
 extern void (*exit_hook)(struct task *task, int code);
+
+// Fork admission policy from OpenMinis 1a71df0f381cefde80bf912b723de6f9831bc177.
+// [fork-guard] Stall guest fork() while the app's memory footprint is too high.
+//
+// Every guest process lives inside Minis.app's own address space, so a burst
+// like `xargs -P 15` running 32MB Go binaries adds ~480MB to the app's iOS
+// footprint and gets the whole app SIGKILLed by Jetsam.
+//
+// We measure phys_footprint (TASK_VM_INFO) — the metric Jetsam actually uses to
+// decide what to kill. An earlier version of this guard used
+// os_proc_available_memory() (remaining headroom) with a 400MB reserve, but on
+// an 8GB device the per-process limit is ~1.5-2GB, so headroom never fell
+// anywhere near 400MB and the guard never fired once. Measuring what we have
+// spent, not what is nominally left, is the check that trips in practice.
+//
+// We *block* rather than returning _EAGAIN: busybox xargs (what the Alpine
+// rootfs ships) does not retry a failed fork — it calls bb_simple_perror_msg
+// and exits 126, silently dropping that work item. Blocking the forking thread
+// applies the same backpressure without losing work: the guest simply sees a
+// slow fork() and the burst self-throttles to what the device can sustain.
+//
+// Safe to block here: sys_clone calls the guard before task_create_ and holds
+// no kernel locks at that point (pids_lock is taken later), and it runs on the
+// guest thread that asked to fork, so only that thread waits.
+//
+// [T-ish-forkguard-stall] THRESHOLD AND GATING, after a field report of every
+// trivial guest command (`true`, `echo hi`) taking a flat ~10s.
+//
+// The 500MB ceiling this replaces was derived in 59714a04 from a single
+// `xargs -P 10` stress run that peaked at ~317MB, with a crash at ~358MB. That
+// commit's own closing note — "Still unverified on device: whether the guard
+// now actually engages ... That test is what would confirm the threshold is
+// right" — is exactly what went wrong: the number was never checked against
+// ordinary steady-state use on a large device.
+//
+// Two independent defects, both visible in field logs:
+//
+// 1. A DEVICE-INDEPENDENT CEILING against a device-dependent limit. Jetsam's
+//    per-process budget scales with installed RAM, but 500MB did not. On a 4GB
+//    iPhone 11 the app idles at 84-145MB and the guard never fires; on a 12GB
+//    device it idles at 885MB-1.0GB and the guard fires on EVERY fork. Same
+//    binary, same workload, opposite behaviour — the ceiling was calibrated on
+//    one device class and silently mis-set for the other. Scaling off physical
+//    RAM restores the intent (engage before the kill zone, stay out of the way
+//    below it) on both.
+//
+// 2. A WAIT THAT NEVER DENIES ANYTHING. On timeout the guard logs and forks
+//    anyway, by design — busybox xargs would drop the work item on a failed
+//    fork. But that makes the 10s a pure delay, not backpressure: with a
+//    footprint that is high because the app legitimately holds that much (not
+//    because a burst is in flight), nothing is going to fall in 10s, so every
+//    fork pays the full penalty and then proceeds regardless. Field log: 272
+//    stalls, every one of them a timeout ending in "allowing fork anyway".
+//
+// The fix keeps the guard's real purpose — throttling a *burst* that is
+// actively inflating the footprint — and drops the cost when there is no burst:
+//
+//   - Gate on system memory PRESSURE first. Waiting is only meaningful when the
+//     OS is actually short of memory; the field logs show pressure=normal with
+//     3-4.5GB free the entire time the guard was stalling. Under normal
+//     pressure we allow immediately.
+//   - Scale the footprint ceiling to the device, so "high for this hardware"
+//     means the same thing everywhere.
+//   - Cap the wait at 2s. The guard exists to let *exiting* guest processes
+//     return memory; that happens in hundreds of milliseconds or not at all,
+//     and since a timeout forks anyway, a longer wait buys nothing.
+//
+// Threads are exempt (handled in sys_clone) since they add no separate address
+// space.
+//
+// Ceiling = 25% of physical RAM, clamped to [500MB, 2GB]:
+//   4GB device  -> 1.0GB   (idle 84-145MB, so still far below — no change in
+//                           behaviour for the class where the guard was quiet)
+//   8GB device  -> 2.0GB   (clamp)
+//   12GB device -> 2.0GB   (clamp; idle 885MB-1.0GB now sits below it)
+// The lower clamp keeps a small device from setting a ceiling so low that
+// ordinary operation trips it; the upper clamp keeps a large device from
+// setting one so high the guard can never engage before Jetsam does.
+#define ZE_FORK_GUARD_FOOTPRINT_FRACTION 4          // 1/4 of physical RAM
+#define ZE_FORK_GUARD_FLOOR_BYTES   (500ULL * 1024 * 1024)
+#define ZE_FORK_GUARD_CEIL_BYTES    (2048ULL * 1024 * 1024)
+#define ZE_FORK_GUARD_POLL_US       (50 * 1000)     // 50ms between checks
+#define ZE_FORK_GUARD_MAX_WAIT_US   (2 * 1000000)   // give up after 2s
+
+static atomic_ullong g_fork_guard_stalls = 0;
+
+// System-wide memory pressure, kept current by a dispatch source (0 = normal,
+// non-zero = warn/critical). Mirrors the mechanism HangDetector.m uses for its
+// [MemMonitor] readout; a private source is used rather than reaching into that
+// file's statics so the two stay independent.
+static atomic_uint_fast32_t g_fork_guard_pressure = ATOMIC_VAR_INIT(0);
+static dispatch_source_t g_fork_guard_pressure_source = nil;
+
+// Footprint ceiling for this device, computed once at install.
+static uint64_t g_fork_guard_max_footprint = ZE_FORK_GUARD_FLOOR_BYTES;
+
+static uint64_t ze_fork_guard_compute_ceiling(void) {
+    uint64_t ram = [NSProcessInfo processInfo].physicalMemory;
+    if (ram == 0)
+        return ZE_FORK_GUARD_FLOOR_BYTES;
+    uint64_t ceiling = ram / ZE_FORK_GUARD_FOOTPRINT_FRACTION;
+    if (ceiling < ZE_FORK_GUARD_FLOOR_BYTES)
+        ceiling = ZE_FORK_GUARD_FLOOR_BYTES;
+    if (ceiling > ZE_FORK_GUARD_CEIL_BYTES)
+        ceiling = ZE_FORK_GUARD_CEIL_BYTES;
+    return ceiling;
+}
+
+static void ze_fork_guard_start_pressure_source(void) {
+    if (g_fork_guard_pressure_source != nil)
+        return;
+    g_fork_guard_pressure_source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0,
+        DISPATCH_MEMORYPRESSURE_NORMAL | DISPATCH_MEMORYPRESSURE_WARN |
+        DISPATCH_MEMORYPRESSURE_CRITICAL,
+        dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+    if (g_fork_guard_pressure_source == nil)
+        return;
+    dispatch_source_set_event_handler(g_fork_guard_pressure_source, ^{
+        unsigned long flags = dispatch_source_get_data(g_fork_guard_pressure_source);
+        uint32_t level = 0;
+        if (flags & DISPATCH_MEMORYPRESSURE_CRITICAL) level = 2;
+        else if (flags & DISPATCH_MEMORYPRESSURE_WARN) level = 1;
+        atomic_store_explicit(&g_fork_guard_pressure, level, memory_order_relaxed);
+    });
+    dispatch_resume(g_fork_guard_pressure_source);
+}
+
+// Current phys_footprint in bytes, or 0 if unavailable. Matches the TASK_VM_INFO
+// pattern already used by HangDetector.m and BrowserResourceMonitor.swift.
+
+static uint64_t ze_read_phys_footprint(void) {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
+                                 (task_info_t) &info, &count);
+    if (kr != KERN_SUCCESS)
+        return 0;
+    return (uint64_t) info.phys_footprint;
+}
+
+// [T-ish-forkguard-port-exhaustion] Cached footprint, refreshed at most once per
+// ZE_FORK_GUARD_FOOTPRINT_TTL_NS.
+//
+// `task_info` is a MIG call, and MIG obtains a per-thread Mach reply port via
+// `mig_get_reply_port`. The guard runs on the CALLING GUEST THREAD inside
+// sys_clone, and iSH creates one detached pthread per guest task
+// (deps/ish/kernel/task.c:243), so a fork-heavy workload burns through
+// thousands of short-lived threads — each one allocating a fresh reply port the
+// first time it touches MIG.
+//
+// Those ports are only reclaimed when the thread's port set is torn down, which
+// for detached threads the system does lazily. With concurrent sub agents each
+// running their own shell pipelines the allocation rate outruns reclamation,
+// and the process is killed with EXC_RESOURCE / PORT_SPACE "Exceeded
+// system-wide per-process Port Limit" (114835 ports) — three such reports on
+// 2026-09-15, two landing exactly in ze_fork_memory_guard -> task_info, with
+// guest thread ids already past 16000.
+//
+// Caching breaks the coupling between fork RATE and MIG call rate: the value is
+// only re-read when it is actually stale, so most forks never touch MIG at all
+// and short-lived guest threads exit without ever allocating a reply port. A
+// slightly stale footprint is fine for this guard — it is a coarse ceiling
+// check, it already tolerates a 0 ("unknown") reading by allowing the fork, and
+// 250ms is far shorter than the memory swings it is meant to catch.
+#define ZE_FORK_GUARD_FOOTPRINT_TTL_NS (250ull * NSEC_PER_MSEC)
+
+static _Atomic uint64_t g_fork_guard_footprint_cached = 0;
+static _Atomic uint64_t g_fork_guard_footprint_stamp = 0;   // mach_absolute_time units
+
+static uint64_t ze_current_phys_footprint(void) {
+    static mach_timebase_info_data_t tb;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mach_timebase_info(&tb); });
+
+    uint64_t now = mach_absolute_time();
+    uint64_t stamp = atomic_load_explicit(&g_fork_guard_footprint_stamp, memory_order_relaxed);
+    if (stamp != 0 && tb.denom != 0) {
+        uint64_t elapsed_ns = ((now - stamp) * tb.numer) / tb.denom;
+        if (elapsed_ns < ZE_FORK_GUARD_FOOTPRINT_TTL_NS)
+            return atomic_load_explicit(&g_fork_guard_footprint_cached, memory_order_relaxed);
+    }
+
+    uint64_t footprint = ze_read_phys_footprint();
+    atomic_store_explicit(&g_fork_guard_footprint_cached, footprint, memory_order_relaxed);
+    atomic_store_explicit(&g_fork_guard_footprint_stamp, now, memory_order_relaxed);
+    return footprint;
+}
+
+static int ze_fork_memory_guard(void) {
+    // A 0 reading means task_info failed; treat that as "no information" and
+    // allow the fork rather than stalling every process spawn.
+    uint64_t footprint = ze_current_phys_footprint();
+    if (footprint == 0 || footprint < g_fork_guard_max_footprint)
+        return 0;
+
+    // [T-ish-forkguard-stall] Above the ceiling, but is the SYSTEM actually
+    // short of memory? Waiting only helps when memory is genuinely contended;
+    // a high footprint under normal pressure just means the app legitimately
+    // holds that much, and nothing is going to hand it back inside the wait.
+    // The field logs are unambiguous on this: every one of the 272 stalls ran
+    // with pressure=normal and 3-4.5GB free, waited the full timeout, and then
+    // forked anyway. Allowing immediately here is what removes the per-fork
+    // penalty; the wait below is preserved for the case it was written for —
+    // real pressure, where backing off can let exiting processes return memory.
+    // A dispatch memory-pressure source only fires on TRANSITIONS, so if the
+    // system was already under pressure when the source was created we may not
+    // have been told yet and would read a stale 0. Treat a footprint far past
+    // the ceiling as its own evidence of trouble and fall back to the wait,
+    // independent of what the source has reported. Without this the guard
+    // would be fully disabled in exactly the situation it exists for: a burst
+    // that inflates the footprint faster than pressure notifications arrive.
+    uint32_t pressure = atomic_load_explicit(&g_fork_guard_pressure, memory_order_relaxed);
+    BOOL farOverCeiling = footprint > g_fork_guard_max_footprint +
+                                      (g_fork_guard_max_footprint / 2);   // 1.5x
+    if (pressure == 0 && !farOverCeiling)
+        return 0;
+
+    uint64_t n = atomic_fetch_add_explicit(&g_fork_guard_stalls, 1, memory_order_relaxed) + 1;
+    uint64_t first_footprint = footprint;
+    useconds_t waited_us = 0;
+
+    // Wait for the footprint to fall as earlier guest processes exit. Bounded so
+    // a workload whose memory never comes back stalls briefly instead of hanging.
+    while (waited_us < ZE_FORK_GUARD_MAX_WAIT_US) {
+        usleep(ZE_FORK_GUARD_POLL_US);
+        waited_us += ZE_FORK_GUARD_POLL_US;
+
+        // [T-ish-forkguard-port-exhaustion] Deliberately the UNCACHED read: the
+        // whole point of this loop is to observe the footprint FALLING, and a
+        // cached value would make it spin out its full timeout without ever
+        // seeing the change. The cache exists to keep the common path (a fork
+        // that is nowhere near the ceiling) off MIG entirely; this path already
+        // sleeps between polls, so its MIG rate is bounded by the poll interval
+        // rather than by the fork rate. Refresh the cache while we are here so
+        // concurrent forks see the new value.
+        footprint = ze_read_phys_footprint();
+        atomic_store_explicit(&g_fork_guard_footprint_cached, footprint, memory_order_relaxed);
+        atomic_store_explicit(&g_fork_guard_footprint_stamp, mach_absolute_time(), memory_order_relaxed);
+
+        // Pressure clearing is the signal we were waiting for, so stop waiting
+        // even if our own footprint is unchanged. Guarded by the same 1.5x
+        // check as the entry test: when we got here on the far-over-ceiling
+        // path (pressure never reported), a still-0 pressure reading is not
+        // news and must not short-circuit the wait on the first poll.
+        if (atomic_load_explicit(&g_fork_guard_pressure, memory_order_relaxed) == 0 &&
+            footprint <= g_fork_guard_max_footprint + (g_fork_guard_max_footprint / 2))
+            return 0;
+        if (footprint == 0 || footprint < g_fork_guard_max_footprint) {
+            // Log the first stall of a burst and then every 64th, so a throttled
+            // workload doesn't flood the log through LoggingManager.
+            if (n == 1 || (n % 64) == 0) {
+                NSLog(@"ISHKernel: [ForkGuard] fork resumed after %ums — footprint %.1fMB -> %.1fMB (stalls=%llu)",
+                      waited_us / 1000, (double) first_footprint / (1024.0 * 1024.0),
+                      (double) footprint / (1024.0 * 1024.0), n);
+            }
+            return 0;
+        }
+    }
+
+    // Timed out. Allowing the fork risks Jetsam, but denying it would make
+    // busybox xargs drop the work item outright — a silent wrong answer is
+    // worse than a risky one, so allow it and leave a loud trace.
+    NSLog(@"ISHKernel: [ForkGuard] WARNING timed out after %ums with footprint still %.1fMB "
+          @"(max %.0fMB, pressure=%u) — allowing fork anyway (stalls=%llu)",
+          waited_us / 1000, (double) footprint / (1024.0 * 1024.0),
+          (double) g_fork_guard_max_footprint / (1024.0 * 1024.0), pressure, n);
+    return 0;
+}
+
+static unsigned ze_fork_rate_for_thermal(NSProcessInfoThermalState st) {
+    switch (st) {
+        case NSProcessInfoThermalStateNominal:  return 400;
+        case NSProcessInfoThermalStateFair:     return 250;
+        case NSProcessInfoThermalStateSerious:  return 120;
+        case NSProcessInfoThermalStateCritical: return 60;
+    }
+    return 250;
+}
+
+static void ze_fork_rate_apply(const char *why) {
+    NSProcessInfoThermalState st = [NSProcessInfo processInfo].thermalState;
+    unsigned rate = ze_fork_rate_for_thermal(st);
+    ish_set_fork_rate_limit(rate, rate * 2);
+    NSLog(@"ISHKernel: [ForkRate] thermal=%ld -> limit %u/s burst %u (%s)", (long)st, rate, rate * 2, why);
+}
+
+void ish_fork_rate_governor_start(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        ze_fork_rate_apply("start");
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSProcessInfoThermalStateDidChangeNotification
+                                                      object:nil queue:nil
+                                                  usingBlock:^(NSNotification *note) { ze_fork_rate_apply("thermal change"); }];
+    });
+}
 
 #pragma mark - JIT Crash Recovery Handler
 
@@ -398,6 +696,16 @@ static void handle_process_exit(struct task *task, int code) {
     // 6. Set exit hook
     exit_hook = handle_process_exit;
 
+    // Independent of the existing mmap footprint brake and AOJIT policy.
+    // Install before any guest process can fork.
+    g_fork_guard_max_footprint = ze_fork_guard_compute_ceiling();
+    ze_fork_guard_start_pressure_source();
+    ish_set_fork_guard(ze_fork_memory_guard);
+    ish_fork_rate_governor_start();
+    NSLog(@"ISHKernel: [ForkGuard] installed max=%.0fMB waitCap=%ums",
+          (double)g_fork_guard_max_footprint / (1024.0 * 1024.0),
+          ZE_FORK_GUARD_MAX_WAIT_US / 1000);
+
     // 7. Register TTY driver and set up console device
     tty_drivers[TTY_CONSOLE_MAJOR] = &ish_console_driver;
     set_console_device(TTY_CONSOLE_MAJOR, 1);
@@ -682,6 +990,7 @@ static void handle_process_exit(struct task *task, int code) {
     // This must be done in a background thread
     NSArray<NSString *> *commandCopy = [command copy];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        struct task *saved_current = current;
         // Create a new child process of init
         int err = become_new_init_child();
         if (err < 0) {
@@ -845,8 +1154,24 @@ static void handle_process_exit(struct task *task, int code) {
 
         NSLog(@"ISHKernel: Starting shell process (PID %d)", current->pid);
 
-        // Start task - this runs the emulator loop and doesn't return
-        task_start(current);
+        // A dispatch queue has already accepted the launch, so report a
+        // failed host-thread creation through the terminal output channel.
+        err = task_start(current);
+        if (err < 0) {
+            self->_consoleTTY = NULL;
+            task_discard_unstarted(current);
+            current = saved_current;
+            NSLog(@"ISHKernel: shell task_start failed: %d", err);
+            NSString *message = [NSString stringWithFormat:@"\r\nShell launch failed (error %d). Please retry.\r\n", err];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSData *data = [message dataUsingEncoding:NSUTF8StringEncoding];
+                if (self.outputCallback) self.outputCallback(data);
+                [[NSNotificationCenter defaultCenter] postNotificationName:ISHTerminalOutputNotification
+                    object:nil userInfo:@{@"data": data}];
+            });
+            return;
+        }
+        current = saved_current;
     });
 
     NSLog(@"ISHKernel: Shell launch initiated: %@", command[0]);

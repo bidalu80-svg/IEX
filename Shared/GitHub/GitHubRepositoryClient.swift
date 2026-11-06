@@ -61,6 +61,47 @@ struct GitHubRepositoryClient {
     let api: GitHubAPI
     init(api: GitHubAPI = GitHubAPI()) { self.api = api }
 
+    static func contentsPath(owner: String, repository: String, path: String) throws -> String {
+        func validName(_ value: String) -> Bool {
+            !value.isEmpty && value != "." && value != ".." &&
+                !value.contains(where: { $0 == "/" || $0 == "\\" || $0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) })
+        }
+        guard validName(owner), validName(repository), validFilePath(path) else {
+            throw GitHubConnectorError.http(400, "仓库名称或文件路径无效；路径必须位于仓库内且不得包含点路径段或控制字符。")
+        }
+        return "/repos/" + GitHubAPI.encode(owner) + "/" + GitHubAPI.encode(repository) + "/contents/" +
+            path.split(separator: "/").map { GitHubAPI.encode(String($0)) }.joined(separator: "/")
+    }
+
+    static func validFilePath(_ path: String) -> Bool {
+        !path.isEmpty && !path.hasPrefix("/") && !path.contains("\\") &&
+            !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) &&
+            !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.lowercased() == ".git" })
+    }
+
+    /// Contents API inline text is limited to 1 MiB; encoding:none must never become empty success.
+    func readFile(owner: String, repository: String, path: String, branch: String?, token: String) async throws -> [String: Any] {
+        let endpoint = try Self.contentsPath(owner: owner, repository: repository, path: path)
+        let suffix = branch.map { "?ref=" + GitHubAPI.encode($0) } ?? ""
+        let (data, _) = try await api.raw(path: endpoint + suffix, token: token)
+        let object = try JSONSerialization.jsonObject(with: data)
+        if let items = object as? [[String: Any]] {
+            return ["path": path, "items": items.map { ["name": $0["name"] ?? "", "path": $0["path"] ?? "", "type": $0["type"] ?? ""] }]
+        }
+        guard let value = object as? [String: Any], value["encoding"] as? String == "base64",
+              let size = value["size"] as? Int, size >= 0, size <= 1_048_576 else {
+            throw GitHubConnectorError.http(422, "文件未提供完整内联内容；此工具读取上限为 1 MiB UTF-8 文本。请使用仓库检出工具读取较大文件。")
+        }
+        guard let encoded = value["content"] as? String,
+              let decoded = Data(base64Encoded: encoded.filter { !$0.isWhitespace }), decoded.count == size,
+              let content = String(data: decoded, encoding: .utf8) else {
+            throw GitHubConnectorError.http(422, "文件不是完整的 UTF-8 文本。")
+        }
+        let truncated = content.count > 30_000
+        return ["path": path, "sha": value["sha"] ?? "", "content": truncated ? String(content.prefix(30_000)) + "\n[内容已截断]" : content,
+                "truncated": truncated, "size": size]
+    }
+
     struct Change: Decodable {
         let path: String
         let content: String?
@@ -199,13 +240,12 @@ struct GitHubRepositoryClient {
     }
 
     private func repositoryPath(_ owner: String, _ repository: String) throws -> String {
-        guard !owner.isEmpty, !repository.isEmpty, !owner.contains("/"), !repository.contains("/") else { throw GitHubConnectorError.http(400, "仓库所有者和名称无效。") }
-        return "/repos/" + GitHubAPI.encode(owner) + "/" + GitHubAPI.encode(repository)
+        let contents = try Self.contentsPath(owner: owner, repository: repository, path: "validation")
+        return String(contents.dropLast("/contents/validation".count))
     }
 
     private func validPath(_ path: String) -> Bool {
-        !path.isEmpty && !path.hasPrefix("/") && !path.contains("\\") && !path.contains("\0") &&
-            !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.lowercased() == ".git" })
+        Self.validFilePath(path)
     }
 
     private func branchPath(_ branch: String) throws -> String {

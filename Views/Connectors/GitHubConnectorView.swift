@@ -90,6 +90,11 @@ struct GitHubConnectorView: View {
                 }
             }
         }
+        .alert("账号保存失败", isPresented: Binding(
+            get: { store.persistenceError != nil },
+            set: { if !$0 { store.persistenceError = nil } })) {
+                Button("好") { store.persistenceError = nil }
+            } message: { Text(store.persistenceError ?? "") }
         .navigationTitle("GitHub连接器")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingLogin) {

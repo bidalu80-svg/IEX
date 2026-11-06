@@ -54,6 +54,7 @@ static int fixture_mkdir(const char *p,int mode){(void)p;(void)mode;return host_
 static void db_begin_write(struct fakefs_db *fs){assert(!fs->held);fs->held=1;txns++;}
 static void db_commit(struct fakefs_db *fs){assert(fs->held);fs->held=0;}
 static void db_rollback(struct fakefs_db *fs){db_commit(fs);}
+static ino_t path_get_inode(struct fakefs_db *fs,const char *p){assert(fs->held);return !strcmp(p,"a")?1:2;}
 static ino_t path_unlink(struct fakefs_db *fs,const char *p){(void)p;assert(fs->held);return 1;}
 static void path_rename(struct fakefs_db *fs,const char *p,const char *q){(void)p;(void)q;assert(fs->held);}
 struct ish_stat {int mode,uid,gid,rdev;};

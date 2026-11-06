@@ -518,7 +518,15 @@ static int32_t _sweptContexts = 0;
     // Get guest PID and start task
     ctx.guestPid = task->pid;
     ctx.result.pid = ctx.guestPid;
-    task_start(task);
+    err = task_start(task);
+    if (err < 0) {
+        task_discard_unstarted(task);
+        current = saved_current;
+        if (stdinPipe[1] >= 0) { close(stdinPipe[1]); stdinPipe[1] = -1; }
+        [ctx cleanup];
+        NSLog(@"ISHShellExecutor: task_start failed: %d", err);
+        return ISHShellExecutorErrorProcessCreationFailed;
+    }
     current = saved_current;
 
     // Register context

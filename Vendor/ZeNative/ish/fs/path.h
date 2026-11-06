@@ -25,6 +25,8 @@
 // at is AT_PWD, uses current->pwd (with appropriate locking).
 int path_normalize(struct fd *at, const char *path, char *out, int flags);
 bool path_is_normalized(const char *path);
+// Call after guest namespace or permission mutations complete.
+void path_cache_invalidate(void);
 
 // Helper function for iterating through a normalized path.
 //

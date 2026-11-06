@@ -1,5 +1,25 @@
 import Foundation
 
+/// Publish metadata before changing credentials; a failed metadata write never touches Keychain.
+/// Keychain operations are atomic. If they fail, restore the previous metadata before reporting failure.
+enum GitHubAccountPersistence {
+    static func commit(writeMetadata: () throws -> Void, writeCredential: () throws -> Void,
+                       rollbackMetadata: () throws -> Void) throws {
+        try writeMetadata()
+        do { try writeCredential() }
+        catch {
+            let credentialError = error
+            do { try rollbackMetadata() }
+            catch {
+                throw GitHubConnectorError.storage(NSError(domain: "GitHubAccountPersistence", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "凭据未更新，恢复账号元数据失败，请重新登录。\(error.localizedDescription)",
+                               NSUnderlyingErrorKey: credentialError]))
+            }
+            throw credentialError
+        }
+    }
+}
+
 struct GitHubAccount: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let login: String

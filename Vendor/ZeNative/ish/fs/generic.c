@@ -54,6 +54,8 @@ struct fd *generic_openat(struct fd *at, const char *path_raw, int flags, int mo
         mount_release(mount);
         return fd;
     }
+    // O_CREAT may already have changed the namespace even if a later check fails.
+    if (flags & O_CREAT_) path_cache_invalidate();
     fd->mount = mount;
 
     lock(&inodes_lock); // TODO: don't do this
@@ -164,6 +166,7 @@ int generic_linkat(struct fd *src_at, const char *src_raw, struct fd *dst_at, co
         err = mount->fs->link(mount, src, dst);
     mount_release(mount);
     mount_release(dst_mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -181,6 +184,7 @@ int generic_unlinkat(struct fd *at, const char *path_raw) {
     if (mount->fs->unlink)
         err = mount->fs->unlink(mount, path);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -207,6 +211,7 @@ int generic_renameat(struct fd *src_at, const char *src_raw, struct fd *dst_at, 
         err = mount->fs->rename(mount, src, dst);
     mount_release(mount);
     mount_release(dst_mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -220,6 +225,7 @@ int generic_symlinkat(const char *target, struct fd *at, const char *link_raw) {
     if (mount->fs->symlink)
         err = mount->fs->symlink(mount, target, link);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -238,6 +244,7 @@ int generic_mknodat(struct fd *at, const char *path_raw, mode_t_ mode, dev_t_ de
     if (mount->fs->mknod)
         err = mount->fs->mknod(mount, path, mode, dev);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -251,6 +258,7 @@ int generic_setattrat(struct fd *at, const char *path_raw, struct attr attr, boo
     if (mount->fs->setattr)
         err = mount->fs->setattr(mount, path, attr);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -290,6 +298,7 @@ int generic_mkdirat(struct fd *at, const char *path_raw, mode_t_ mode) {
     if (mount->fs->mkdir)
         err = mount->fs->mkdir(mount, path, mode);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 
@@ -305,6 +314,7 @@ int generic_rmdirat(struct fd *at, const char *path_raw) {
     if (mount->fs->rmdir)
         err = mount->fs->rmdir(mount, path);
     mount_release(mount);
+    if (err >= 0) path_cache_invalidate();
     return err;
 }
 

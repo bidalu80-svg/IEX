@@ -15,11 +15,18 @@ import PDFKit
         guard value else { throw NSError(domain: "ConversationShareVerification", code: 1,
                                           userInfo: [NSLocalizedDescriptionKey: label]) }
         checks.append(label)
+        checkpoint(label)
+    }
+
+    private static func checkpoint(_ label: String) {
+        print("ConversationShareVerification: \(label)")
+        try? label.write(to: directory.appendingPathComponent("progress.txt"), atomically: true, encoding: .utf8)
     }
 
     static func run() async {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            checkpoint("Waiting for application window")
             var window: UIWindow?
             for _ in 0..<100 {
                 window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -33,6 +40,7 @@ import PDFKit
             defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = oldStyle }
             window.overrideUserInterfaceStyle = .light
             let vm = AIChatViewModel()
+            checkpoint("Creating production fixture")
             let messages = try fixture()
             let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)
             try require(request.initialSelection.isEmpty, "Conversation menu starts with no selection")
@@ -74,6 +82,7 @@ import PDFKit
                 var imageOptions = ChatExportOptions()
                 imageOptions.dark = dark
                 imageOptions.adaptiveTables = true
+                checkpoint("Rendering \(name) PNG")
                 let image = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
                     title: "分享验证 Share Verification", options: imageOptions, progress: { _, _ in })
                 let imageURL = try save(image.url, name: "export-\(name).png")
@@ -83,6 +92,7 @@ import PDFKit
 
                 var pdfOptions = imageOptions
                 pdfOptions.format = .pdf
+                checkpoint("Rendering \(name) PDF")
                 let pdf = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
                     title: "分享验证 Share Verification", options: pdfOptions, progress: { _, _ in })
                 let pdfURL = try save(pdf.url, name: "export-\(name).pdf")

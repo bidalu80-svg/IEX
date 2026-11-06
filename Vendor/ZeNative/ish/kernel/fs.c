@@ -1126,7 +1126,9 @@ dword_t sys_utime(addr_t path_addr, addr_t times_addr) {
 static int generic_fsetattr(struct fd *fd, struct attr attr) {
     if (fd->mount->fs->fsetattr == NULL)
         return _EPERM;
-    return fd->mount->fs->fsetattr(fd, attr);
+    int err = fd->mount->fs->fsetattr(fd, attr);
+    if (err >= 0) path_cache_invalidate();
+    return err;
 }
 
 dword_t sys_fchmod(fd_t f, dword_t mode) {
