@@ -155,7 +155,12 @@ struct BrowserSheetView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 5) {
-                        Image(systemName: pool.userAgentProfile.icon)
+                        // The selected tab's own profile - what the page on
+                        // screen was loaded with - not the global default,
+                        // which only says what the NEXT tab will get.
+                        Image(systemName: UserAgentProfile.panelProfile(
+                            activeTab: pool.activeManager?.currentProfile,
+                            globalDefault: pool.userAgentProfile).icon)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                         Text(navigationTitle)
@@ -296,8 +301,6 @@ struct BrowserSheetView: View {
         if !title.isEmpty { return String(title.prefix(20)) }
         let url = tab.manager.currentURL
         if !url.isEmpty { return String(url.prefix(20)) }
-        // Tab ids are zero-based implementation details; present a one-based,
-        // localized label when a blank tab has no page title or URL yet.
         return "标签页 \(tab.id + 1)"
     }
 }
@@ -415,14 +418,13 @@ struct BrowserDownloadBanner: View {
 // MARK: - Floating download button (chat overlay)
 
 /// Round 36×36 floating button shown near the scroll-jump buttons while the
-/// session has active/unviewed native browser downloads. Mirrors the scroll
-/// buttons' visual language (semi-transparent system background circle, gray
-/// stroke, soft shadow). Badge = in-flight + unviewed terminal entries;
+/// session has active/unviewed native browser downloads. Shares the scroll
+/// buttons' surface (`FloatingCircleButtonSurface`: glass on iOS 26+,
+/// system-background circle + stroke + shadow below). Badge = in-flight + unviewed terminal entries;
 /// hidden entirely at badge 0. Tapping opens BrowserDownloadPanelSheet.
 /// [T-browser-download-ux-v2]
 struct BrowserDownloadFloatingButton: View {
     @ObservedObject private var center = BrowserDownloadCenter.shared
-    @Environment(\.colorScheme) private var colorScheme
     let sessionId: String
     let action: () -> Void
 
@@ -440,16 +442,15 @@ struct BrowserDownloadFloatingButton: View {
             Button(action: action) {
                 Image(systemName: "arrow.down.circle")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(FloatingCircleButtonSurface.glyphStyle)
                     .modifier(DownloadPulseModifier(active: downloading, legacyPulse: $legacyPulse))
                     .frame(width: 36, height: 36)
-                    .background {
-                        Color(.systemBackground)
-                            .opacity(colorScheme == .dark ? 0.8 : 0.5)
-                            .clipShape(Circle())
-                    }
-                    .overlay(Circle().stroke(Color.gray.opacity(0.25), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                    .modifier(FloatingCircleButtonSurface(
+                        legacyLightOpacity: 0.5,
+                        legacyStrokeOpacity: 0.25,
+                        legacyShadowOpacity: 0.12,
+                        legacyShadowRadius: 4
+                    ))
                     .overlay(alignment: .topTrailing) {
                         if badge > 0 {
                             Text("\(badge)")
@@ -812,5 +813,53 @@ private struct BrowserLoadErrorOverlay: View {
         if let err = manager.loadError {
             WebLoadErrorOverlay(error: err) { manager.retryFailedLoad() }
         }
+    }
+}
+
+// Source: OpenMinis/OpenMinis at 1a71df0f381cefde80bf912b723de6f9831bc177,
+// src/ios/Views/Chat/AIChatView/Composer/ComposerSurface.swift.
+struct FloatingCircleButtonSurface: ViewModifier {
+    var legacyLightOpacity: Double = 0.92
+    var legacyStrokeOpacity: Double = 0.35
+    var legacyShadowOpacity: Double = 0.18
+    var legacyShadowRadius: CGFloat = 5
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Glyph style for icons on this surface. Inside a default-styled Button
+    /// both resolve against the button tint (accent): `.secondary` is a faded
+    /// accent that washes out against the glass material, `.primary` is the
+    /// full-strength accent, which stays readable (verified on device).
+    /// Sub-26 keeps the original `.secondary` over its opaque disc.
+    static var glyphStyle: HierarchicalShapeStyle {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { return .primary }
+        #endif
+        return .secondary
+    }
+
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: .circle)
+                .contentShape(Circle())
+        } else {
+            legacySurface(content: content)
+        }
+        #else
+        legacySurface(content: content)
+        #endif
+    }
+
+    private func legacySurface(content: Content) -> some View {
+        content
+            .background {
+                Color(.systemBackground)
+                    .opacity(colorScheme == .dark ? 0.8 : legacyLightOpacity)
+                    .clipShape(Circle())
+            }
+            .overlay(Circle().stroke(Color.gray.opacity(legacyStrokeOpacity), lineWidth: 0.5))
+            .shadow(color: .black.opacity(legacyShadowOpacity), radius: legacyShadowRadius, y: 2)
     }
 }

@@ -56,9 +56,10 @@ extension AIChatViewModel {
 
     /// Executor adapter handing OnDemandBash a way to run guest commands.
     private func ishExecutor(sessionId sid: String) -> OnDemandBash.Executor {
-        OnDemandBash.Executor(run: { command, timeout in
+        let ownerId = sessionId
+        return OnDemandBash.Executor(run: { command, timeout in
             let r = try? await ISHExecutionCoordinator.shared.execute(
-                sessionId: sid, command: command, timeout: timeout,
+                sessionId: sid, command: command, timeout: timeout, ownerId: ownerId,
                 lineCallback: { _ in }, pidCallback: { _ in })
             return r?.exitCode ?? -1
         })
@@ -134,6 +135,7 @@ extension AIChatViewModel {
             sessionId: sid,
             command: command,
             timeout: effectiveTimeout,
+            ownerId: sessionId,
             // ISHShellExecutor dispatches every line on the main queue
             // already (ISHShellExecutor.m:780/812), so we're guaranteed to
             // run on the main thread here. Calling the MainActor-isolated

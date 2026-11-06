@@ -69,6 +69,7 @@ struct BrowserManagementView: View {
             let vp = pool.userAgentProfile.viewportSize
             Text("视口：\(vp.width)×\(vp.height)")
         }
+        .onAppear { pool.syncGlobalDefaultsFromStore() }
     }
 
     private func displayUA(for profile: UserAgentProfile) -> String {
@@ -171,6 +172,7 @@ struct BrowserManagementView: View {
             }
         }
         .onAppear {
+            pool.syncGlobalDefaultsFromStore()
             if pool.customViewportWidth > 0 {
                 viewportWidthText = String(pool.customViewportWidth)
             }

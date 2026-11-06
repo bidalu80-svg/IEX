@@ -11,7 +11,7 @@ struct GitHubConnectorView: View {
                 HStack(spacing: 14) {
                     GitHubMark(size: 46)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("GitHub 连接器")
+                        Text("GitHub连接器")
                             .font(.headline)
                         Text("登录后，模型可以按你的确认读取和管理项目。")
                             .font(.footnote)
@@ -62,6 +62,9 @@ struct GitHubConnectorView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
+                                Text(account.repositoryAccessSummary)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
                             Spacer()
                             Image(systemName: "checkmark.circle.fill")
@@ -76,6 +79,7 @@ struct GitHubConnectorView: View {
                             }
                         }
                         .contextMenu {
+                            Button("重新授权仓库权限") { showingLogin = true }
                             Button(role: .destructive) {
                                 store.delete(account)
                             } label: {
@@ -86,7 +90,7 @@ struct GitHubConnectorView: View {
                 }
             }
         }
-        .navigationTitle("GitHub")
+        .navigationTitle("GitHub连接器")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingLogin) {
             GitHubAccountLoginSheet(store: store)
@@ -143,7 +147,9 @@ private struct GitHubAccountLoginSheet: View {
                         ProgressView("等待 GitHub 授权…")
                             .controlSize(.small)
                     }
-                    Text("授权完成后返回此处，页面会自动继续。")
+                    Text(store.oauthClientID == "178c6fc778ccc68e1d6a"
+                        ? "授权页显示 GitHub CLI。允许仓库、组织与工作流权限后返回此处；实际可写范围仍受仓库角色和组织策略约束。"
+                        : "授权完成后返回此处，页面会自动继续。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -290,9 +296,11 @@ struct GitHubMark: View {
     let size: CGFloat
 
     var body: some View {
-        Image(systemName: "cat.fill")
-            .font(.system(size: size * 0.72, weight: .bold))
-            .foregroundStyle(.black)
+        Image("GitHubMark")
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .foregroundStyle(.primary)
             .frame(width: size, height: size)
             .accessibilityLabel("GitHub")
     }

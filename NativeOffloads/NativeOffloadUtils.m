@@ -7,6 +7,7 @@
 
 #import "NativeOffloadUtils.h"
 #include "kernel/fs.h"
+#include "kernel/task.h"
 #include "fs/fd.h"
 #include "fs/path.h"
 #include <unistd.h>
@@ -244,6 +245,15 @@ void noff_ensure_guest_stub(const char *guest_path) {
 NSString *_Nullable noff_resolve_host_path(NSString *guestPath) {
     if (guestPath.length == 0) return nil;
 
+    // argv may already have been translated by native_offload.c.
+    NSString *home = NSHomeDirectory();
+    NSString *privateHome = [@"/private" stringByAppendingString:home];
+    for (NSString *prefix in @[home, privateHome, @"/var/mobile/Containers/Shared",
+                               @"/private/var/mobile/Containers/Shared"]) {
+        if ([guestPath isEqualToString:prefix] ||
+            [guestPath hasPrefix:[prefix stringByAppendingString:@"/"]]) return guestPath;
+    }
+
     // Documents/alpine-rootfs/data/ is the fakefs data root
     NSString *documents = NSSearchPathForDirectoriesInDomains(
         NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -298,4 +308,10 @@ BOOL noff_try_objc(void (NS_NOESCAPE ^block)(void)) {
         NSLog(@"noff_try_objc: caught ObjC exception: %@ — %@", e.name, e.reason);
         return NO;
     }
+}
+
+// Capture on the invoking guest thread before dispatching to MainActor.
+uint64_t noff_current_fs_context(void) {
+    if (current == NULL || current->group == NULL) return 0;
+    return current->group->fs_context;
 }

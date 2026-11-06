@@ -5569,7 +5569,7 @@ private struct SettingsSheet: View {
                         GitHubConnectorView()
                     } label: {
                         Label {
-                            Text("GitHub")
+                            Text("GitHub连接器")
                         } icon: {
                             GitHubMark(size: 13)
                                 .frame(width: 21, height: 21)

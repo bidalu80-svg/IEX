@@ -1,0 +1,112 @@
+{
+  "reference_app_commit": "1a71df0f381cefde80bf912b723de6f9831bc177",
+  "reference_ish_commit": "0fd17a135e78b7a0cf08a4f5831217bbb76ed22f",
+  "comparison": "Git blob SHA1 after normalizing checkout CRLF to LF; differences are not a missing-feature verdict",
+  "native_files": [
+    {
+      "path": "kernel/task.c",
+      "status": "different",
+      "local_git_blob": "016e663a9234a2794fe597f6814ba08da40ed9a3",
+      "upstream_git_blob": "b0a096d2c812e2949f9bc1fecf7808b7ae5a245d"
+    },
+    {
+      "path": "kernel/task.h",
+      "status": "different",
+      "local_git_blob": "a667fa72eb72b3753230b2ee3db1d554f24cb798",
+      "upstream_git_blob": "a6ecca2ddf7589dbb9e3200eb80d1a26766b0ea2"
+    },
+    {
+      "path": "kernel/exit.c",
+      "status": "different",
+      "local_git_blob": "64fe55b617e37eae8137ce72dcc11be3f49edf36",
+      "upstream_git_blob": "fa51fc2f4c7d610fc7671cd0401bf2aa2f4167da"
+    },
+    {
+      "path": "kernel/fork.c",
+      "status": "different",
+      "local_git_blob": "bc36c7708b7e5898fe484877c4914fa4c88a1175",
+      "upstream_git_blob": "2fb29b1582b6a724e17dd1fc475d73368512ba76"
+    },
+    {
+      "path": "kernel/signal.c",
+      "status": "different",
+      "local_git_blob": "a1bafd9b13cef608c7eeddefc809c16aa50a0580",
+      "upstream_git_blob": "f54619254360be3ffe7df30a4e8a13f58f20e75a"
+    },
+    {
+      "path": "kernel/exec.c",
+      "status": "different",
+      "local_git_blob": "366652a6775b7ea6347a94e21b35eddd41de22dd",
+      "upstream_git_blob": "26fd31733e2d8f552a053156ca38b7caf70df6d3"
+    },
+    {
+      "path": "kernel/native_offload.c",
+      "status": "different",
+      "local_git_blob": "c84be7800c92fa987b216e2849c7c02d540373ed",
+      "upstream_git_blob": "a1d23535dcaef07a9617b5d39655a70717b9fa00"
+    },
+    {
+      "path": "kernel/native_offload_policy.c",
+      "status": "identical",
+      "local_git_blob": "c74b675ef98873e6bff091429d943d473eaa2b1b",
+      "upstream_git_blob": "c74b675ef98873e6bff091429d943d473eaa2b1b"
+    },
+    {
+      "path": "kernel/native_offload_policy.h",
+      "status": "identical",
+      "local_git_blob": "11c04ca3c1dde7ca881c1a2472a641da04272ea6",
+      "upstream_git_blob": "11c04ca3c1dde7ca881c1a2472a641da04272ea6"
+    },
+    {
+      "path": "fs/fake.c",
+      "status": "different",
+      "local_git_blob": "66f92dbfeff2799025391df72e07d1708bc64cd4",
+      "upstream_git_blob": "ab3f82b72d03d7f2cc1e56e4728d7fb2cb7b9663"
+    },
+    {
+      "path": "fs/real.c",
+      "status": "different",
+      "local_git_blob": "0ff8b9ada8a1562e4fe20218e6100947d5524630",
+      "upstream_git_blob": "d5af5b03325f93bb070ac080afedf62734a3cf53"
+    },
+    {
+      "path": "fs/path.c",
+      "status": "different",
+      "local_git_blob": "2ca7a54fc0adee0a4ece61bc5d2391e6cb10df5f",
+      "upstream_git_blob": "1a057a0bba905c3b398c8a3c66f2b5d9eda7b0e6"
+    },
+    {
+      "path": "fs/proc/pid.c",
+      "status": "identical",
+      "local_git_blob": "2920f5254ff969fed6ef7c34d7046ab2189448d5",
+      "upstream_git_blob": "2920f5254ff969fed6ef7c34d7046ab2189448d5"
+    },
+    {
+      "path": "asbestos/guest-arm64/jit.c",
+      "status": "different",
+      "local_git_blob": "d1b15e4a16ed1691d63825ae447008b5769f5d83",
+      "upstream_git_blob": "b35c42e1f714b800a3714704e31a66b885fac23d"
+    },
+    {
+      "path": "asbestos/guest-arm64/jit.h",
+      "status": "different",
+      "local_git_blob": "fa3e5dd42413d51577b854e4bf525e24e8c34e77",
+      "upstream_git_blob": "c1e99ca0f9c7d2e0a51490b96c8396af1b8c3180"
+    },
+    {
+      "path": "meson.build",
+      "status": "different",
+      "local_git_blob": "41e9b2fb1913e2fa2f81f44625682cfb00638a64",
+      "upstream_git_blob": "890ce198a914ccb5c1639d9b726ccd9b3eb4d30e"
+    }
+  ],
+  "wrapper_reference_sha256": {
+    "ISHExecutionCoordinator.swift": "9db9ed29a052bff8c144063d059a265dce9ef57edda03532e5bfbc07527efcb1",
+    "ISHKernel.m": "fef731d21b9b04f1b10aba3d10cc026b6eb0ecee78aac6b72d2385e720ea0368",
+    "ISHShellExecutor.m": "2548ef0175db3872d0fd57a59d08a15f6c062bab23ed00e6337668cf205978d9",
+    "MinisFsRouter.swift": "8e0bc13bdea890f74fd411306ba07a861ebf82646dfc29cc1c4dddf88eecb5d3",
+    "NativeOffloadPathScopeTests.swift": "efd3410e4dca11d2f71cb70af68e6061466c750be1ba1cfa2d98d060d4983d63",
+    "NativeOffloadUtils.m": "658eec1d52d7827293a97a77bf4d9ae681e808a0b966f25312031f4272cd44bc",
+    "RootfsManager.swift": "26146bb788a166c87df4b0330eae39d043dcb94163da838425e7c238c40e428d"
+  }
+}

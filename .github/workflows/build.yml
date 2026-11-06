@@ -111,6 +111,14 @@ jobs:
           xcrun swiftc -frontend -parse Shared/GitHub/GitHubAccountStore.swift
           xcrun swiftc -frontend -parse Shared/GitHub/GitHubAIToolGateway.swift
           xcrun swiftc -frontend -parse Views/Connectors/GitHubConnectorView.swift
+          bash scripts/test-github-client.sh | tee github-client-tests.log
+
+      - name: Test kernel ownership and browser recovery
+        run: |
+          set -euo pipefail
+          python3 scripts/test-kernel-runtime.py | tee kernel-runtime-tests.log
+          bash Vendor/ZeNative/ish/kernel/offload_tests/path_scope/run.sh | tee kernel-offload-tests.log
+          python3 scripts/test-browser-parity.py
 
       - name: Test API key quota UI and parser structure
         run: |
@@ -869,6 +877,10 @@ jobs:
           name: build-log
           path: |
             build.log
+            github-client-tests.log
+            kernel-runtime-tests.log
+            kernel-offload-tests.log
+            browser-parity-evidence/
             model-compatibility-tests.log
             subagent-lifecycle-tests.log
             subagent-delivery-tests.log

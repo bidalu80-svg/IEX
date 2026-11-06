@@ -1609,10 +1609,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             }
             return ["result": NSNull()] as [String: Any]
         } catch {
-            let nsError = error as NSError
-            let detail = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String
-                ?? error.localizedDescription
-            throw RPCError(code: -32000, message: "JavaScript error: \(detail)")
+            throw RPCError(code: -32000, message: BrowserJSErrorFormatter.message(error))
         }
     }
 
@@ -1631,7 +1628,7 @@ final class DebugJSONRPC: @unchecked Sendable {
             }
             return ["result": String(describing: raw ?? "null")]
         } catch {
-            throw RPCError(code: -32000, message: "JavaScript error: \(error.localizedDescription)")
+            throw RPCError(code: -32000, message: BrowserJSErrorFormatter.message(error))
         }
     }
 

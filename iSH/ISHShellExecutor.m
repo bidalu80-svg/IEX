@@ -640,7 +640,12 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     int hops = 0;
     while (t != NULL && hops < MAX_PID) {
         if (t->pid == rootPid) return YES;
-        t = t->parent;
+        struct task *parent = t->parent;
+        if (parent == NULL) return NO;
+        pid_t_ parentPid = parent->pid;
+        if (parentPid == 0 || parentPid >= MAX_PID) return NO;
+        if (pid_get_task((dword_t)parentPid) != parent) return NO;
+        t = parent;
         hops++;
     }
     return NO;
@@ -670,11 +675,11 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     lock(&pids_lock);
     struct task *rootTask = pid_get_task((dword_t)pid);
     pid_t_ pgid = 0;
-    if (rootTask) {
+    if (rootTask && rootTask->group) {
         pgid = rootTask->group->pgid;
         for (int i = 2; i < MAX_PID; i++) {
             struct task *t = pid_get_task(i);
-            if (!t) continue;
+            if (!t || !t->group) continue;
             BOOL byPgid = (pgid != 0 && t->group->pgid == pgid);
             BOOL byAncestry = ISHTaskIsDescendantOf(t, (pid_t_)pid);
             if (byPgid || byAncestry) {
@@ -710,7 +715,7 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
         }
         for (int i = 2; i < MAX_PID; i++) {
             struct task *t = pid_get_task(i);
-            if (!t) continue;
+            if (!t || !t->group) continue;
             BOOL byPgid = (capturedPgid != 0 && t->group->pgid == capturedPgid);
             BOOL byAncestry = ISHTaskIsDescendantOf(t, (pid_t_)capturedPid);
             if (byPgid || byAncestry) {

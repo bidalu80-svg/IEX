@@ -483,7 +483,10 @@ extension AIChatViewModel {
         // here because runningCommandPids was empty. Bail only when NONE apply,
         // so random taps don't poison the flag for a future real invocation.
         let browserLoading = browserTabPool.hasLoadingTab
-        guard !runningCommandPids.isEmpty || toolDelayWaitActive || browserLoading else { return }
+        let hasShell = fileSystemSessionId.map {
+            ISHExecutionCoordinator.hasStoppableCommand(sessionId: $0, ownerId: sessionId)
+        } ?? false
+        guard !runningCommandPids.isEmpty || hasShell || toolDelayWaitActive || browserLoading else { return }
         commandCancelledByUser = true
         // Stop any in-flight browser page loads. stopLoading() resolves the
         // manager's navigationContinuation, so the awaited browserTabPool
@@ -495,10 +498,10 @@ extension AIChatViewModel {
         // Stop ALL currently running shells — concurrent tool execution
         // can have many in flight at once and a stop tap should cancel
         // the entire batch. [T-concurrent-tools 2026-05-25]
-        if !runningCommandPids.isEmpty {
+        if let workspace = fileSystemSessionId, !runningCommandPids.isEmpty || hasShell {
             // Keep Stop synchronous and outside the coordinator actor so a
             // wedged guest cannot queue its own cancellation behind itself.
-            let killed = ISHExecutionCoordinator.stopAllNonisolated()
+            let killed = ISHExecutionCoordinator.stopAllNonisolated(sessionId: workspace, ownerId: sessionId)
             logger.info("⏹️ stopCurrentCommand - signalled \(killed) shell pid(s)")
         }
         runningCommandPids.removeAll()

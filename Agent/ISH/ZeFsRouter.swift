@@ -30,7 +30,13 @@ final class ZeFsRouter: @unchecked Sendable {
     private let lock = NSLock()
     private var nextContext: UInt64 = 1
     private var contextToSid: [UInt64: String] = [:]
-    private var sidToContext: [String: UInt64] = [:]
+    private struct ContextKey: Hashable {
+        let workspace: String
+        let owner: String
+    }
+    private var knownWorkspaces: Set<String> = []
+    private var contextToOwner: [UInt64: String] = [:]
+    private var sidToContext: [ContextKey: UInt64] = [:]
 
     /// Host base URL (~/Library/ZeChat/ze). Captured once at install time.
     private let zeBaseURL: URL
@@ -42,14 +48,17 @@ final class ZeFsRouter: @unchecked Sendable {
     /// Allocate a stable fs_context token for `sid`. Repeated calls with the
     /// same sid return the same token, so workers can be respawned without
     /// invalidating prior routing.
-    func context(for sid: String) -> UInt64 {
+    func context(for sid: String, ownerId: String? = nil) -> UInt64 {
         lock.lock(); defer { lock.unlock() }
-        if let existing = sidToContext[sid] { return existing }
+        let key = ContextKey(workspace: sid, owner: ownerId ?? sid)
+        if let existing = sidToContext[key] { return existing }
         let ctx = nextContext
         nextContext &+= 1
         if nextContext == 0 { nextContext = 1 }   // never hand out 0 (= "no override")
+        knownWorkspaces.insert(sid)
         contextToSid[ctx] = sid
-        sidToContext[sid] = ctx
+        contextToOwner[ctx] = key.owner
+        sidToContext[key] = ctx
         return ctx
     }
 
@@ -59,6 +68,13 @@ final class ZeFsRouter: @unchecked Sendable {
         if context == 0 { return nil }
         lock.lock(); defer { lock.unlock() }
         return contextToSid[context]
+    }
+
+    /// Actual chat that issued the command, independent of shared file routing.
+    func owner(for context: UInt64) -> String? {
+        guard context != 0 else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        return contextToOwner[context]
     }
 
     /// Install the path-translate hook on ISHKernel. Idempotent; call once
@@ -136,7 +152,7 @@ final class ZeFsRouter: @unchecked Sendable {
         // would be reverse-translated even when <X> is a stale or unrelated
         // directory — harmless today but masks the cause of bugs.
         lock.lock()
-        let known = sidToContext[sidPart] != nil
+        let known = knownWorkspaces.contains(sidPart)
         lock.unlock()
         guard known else { return nil }
         guard let bucket = perSessionBuckets.first(where: { $0.hostSubdir == bucketName })

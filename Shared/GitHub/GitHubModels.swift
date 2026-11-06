@@ -6,6 +6,13 @@ struct GitHubAccount: Codable, Identifiable, Hashable, Sendable {
     let displayName: String
     let avatarURL: URL?
     let createdAt: Date
+    var grantedScopes: [String]? = nil
+
+    var repositoryAccessSummary: String {
+        guard let grantedScopes else { return "令牌权限由仓库授权决定" }
+        return grantedScopes.contains("repo") ? "已授予 repo 权限；可写范围取决于仓库权限"
+            : "仓库授权受限，可重新授权 repo 权限"
+    }
 
     var title: String { displayName.isEmpty ? login : displayName }
 }
@@ -29,6 +36,8 @@ enum GitHubConnectorError: LocalizedError {
     case malformedResponse
     case keychain(OSStatus)
     case storage(Error)
+    case permissionDenied(String)
+    case conflict(String)
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +50,8 @@ enum GitHubConnectorError: LocalizedError {
         case .malformedResponse: return "GitHub 返回的数据格式异常。"
         case .keychain(let status): return "GitHub 令牌保存失败（Keychain \(status)）。"
         case .storage(let error): return "GitHub 账号保存失败：\(error.localizedDescription)"
+        case .permissionDenied(let detail): return "GitHub 权限不足：\(detail)"
+        case .conflict(let detail): return "GitHub 分支或文件已变化：\(detail)"
         }
     }
 }

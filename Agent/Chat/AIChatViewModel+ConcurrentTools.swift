@@ -802,7 +802,7 @@ extension AIChatViewModel {
             toolOutput = favoriteResult.output
             toolSuccess = favoriteResult.success
 
-        case "github_account_list", "github_repository_list", "github_file_read", "github_file_write", "github_file_delete":
+        case "github_account_list", "github_repository_list", "github_file_read", "github_file_write", "github_file_delete", "github_repository_info", "github_commit_push", "github_branch_create":
             let githubResult = await GitHubAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 messages[msgIdx].blocks[blockIdx].content = githubResult.output

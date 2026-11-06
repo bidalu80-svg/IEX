@@ -33,11 +33,9 @@ final class GitHubAccountStore: ObservableObject {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty, !trimmed.contains("$(") { return trimmed }
         }
-        // Device Flow needs a public client identifier. Reuse the app's existing
-        // public GitHub device-flow client when no build-time override is set;
-        // no client secret is stored or sent. A personal access token remains
-        // available as the fallback for builds that do not allow this client.
-        return GitHubCopilotOAuthManager.shared.clientID
+        // Public OAuth client from github.com/cli/cli internal/authflow/flow.go.
+        // Device flow sends no client secret. The authorization page names GitHub CLI.
+        return "178c6fc778ccc68e1d6a"
     }
 
     func startDeviceLogin() async throws -> GitHubDeviceAuthorization {
@@ -46,7 +44,7 @@ final class GitHubAccountStore: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = form(["client_id": clientID, "scope": "repo read:user user:email"])
+        request.httpBody = form(["client_id": clientID, "scope": "repo read:org workflow read:user user:email"])
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
         let value = try decoder.decode(DeviceResponse.self, from: data)
@@ -80,7 +78,7 @@ final class GitHubAccountStore: ObservableObject {
                 }
             }
             guard let token = tokenResponse?.accessToken else { throw GitHubConnectorError.malformedResponse }
-            return try await addAccount(token: token)
+            return try await addAccount(token: token, grantedScopes: tokenResponse?.scope.map(GitHubAPI.scopes))
         }
         throw GitHubConnectorError.expiredDeviceCode
     }
@@ -103,17 +101,18 @@ final class GitHubAccountStore: ObservableObject {
         persist()
     }
 
-    private func addAccount(token: String) async throws -> GitHubAccount {
+    private func addAccount(token: String, grantedScopes: [String]? = nil) async throws -> GitHubAccount {
         guard !token.isEmpty else { throw GitHubConnectorError.invalidToken }
-        let profile = try await GitHubAPI(session: session).currentUser(token: token)
-        let account = GitHubAccount(id: UUID(), login: profile.login, displayName: profile.name ?? "", avatarURL: profile.avatarURL, createdAt: .now)
-        if let existing = accounts.first(where: { $0.login.caseInsensitiveCompare(account.login) == .orderedSame }) {
-            try saveKeychain(token, accountID: existing.id)
-            persist()
-            return existing
-        }
+        let (data, response) = try await GitHubAPI(session: session).raw(path: "/user", token: token)
+        let profile = try JSONDecoder().decode(GitHubUserProfile.self, from: data)
+        let existing = accounts.first { $0.login.caseInsensitiveCompare(profile.login) == .orderedSame }
+        let scopes = response.value(forHTTPHeaderField: "X-OAuth-Scopes").map(GitHubAPI.scopes) ?? grantedScopes
+        let account = GitHubAccount(id: existing?.id ?? UUID(), login: profile.login,
+            displayName: profile.name ?? "", avatarURL: profile.avatarURL,
+            createdAt: existing?.createdAt ?? .now, grantedScopes: scopes)
         try saveKeychain(token, accountID: account.id)
-        accounts.append(account)
+        if let index = accounts.firstIndex(where: { $0.id == account.id }) { accounts[index] = account }
+        else { accounts.append(account) }
         accounts.sort { $0.login.localizedCaseInsensitiveCompare($1.login) == .orderedAscending }
         persist()
         return account
@@ -161,7 +160,7 @@ final class GitHubAccountStore: ObservableObject {
 
     private func form(_ values: [String: String]) -> Data? {
         let encoded = values.map { key, value in
-            let escaped = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let escaped = value.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
             return "\(key)=\(escaped)"
         }.joined(separator: "&")
         return encoded.data(using: .utf8)
@@ -176,57 +175,11 @@ final class GitHubAccountStore: ObservableObject {
     private struct DeviceResponse: Decodable { let deviceCode: String; let userCode: String; let verificationURI: String; let expiresIn: Int; let interval: Int?
         enum CodingKeys: String, CodingKey { case deviceCode = "device_code"; case userCode = "user_code"; case verificationURI = "verification_uri"; case expiresIn = "expires_in"; case interval }
     }
-    private struct TokenResponse: Decodable { let accessToken: String?; let error: String?
-        enum CodingKeys: String, CodingKey { case accessToken = "access_token"; case error }
+    private struct TokenResponse: Decodable { let accessToken: String?; let error: String?; let scope: String?
+        enum CodingKeys: String, CodingKey { case accessToken = "access_token"; case error; case scope }
     }
 }
 
 struct GitHubUserProfile: Decodable { let login: String; let name: String?; let avatarURL: URL?
     enum CodingKeys: String, CodingKey { case login; case name; case avatarURL = "avatar_url" }
-}
-
-struct GitHubAPI: Sendable {
-    let session: URLSession
-    init(session: URLSession = .shared) { self.session = session }
-
-    func currentUser(token: String) async throws -> GitHubUserProfile {
-        try await request(path: "/user", token: token)
-    }
-
-    func request<T: Decodable>(path: String, token: String, method: String = "GET", body: Data? = nil) async throws -> T {
-        var request = URLRequest(url: URL(string: "https://api.github.com\(path)")!)
-        request.httpMethod = method
-        request.httpBody = body
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Ze-iOS", forHTTPHeaderField: "User-Agent")
-        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw GitHubConnectorError.malformedResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw GitHubConnectorError.invalidToken }
-            if http.statusCode == 403 { throw GitHubConnectorError.rateLimited }
-            throw GitHubConnectorError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
-        }
-        return try JSONDecoder().decode(T.self, from: data)
-    }
-
-    func raw(path: String, token: String, method: String = "GET", body: Data? = nil) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: URL(string: "https://api.github.com\(path)")!)
-        request.httpMethod = method; request.httpBody = body
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Ze-iOS", forHTTPHeaderField: "User-Agent")
-        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw GitHubConnectorError.malformedResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw GitHubConnectorError.invalidToken }
-            if http.statusCode == 403 { throw GitHubConnectorError.rateLimited }
-            throw GitHubConnectorError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
-        }
-        return (data, http)
-    }
 }

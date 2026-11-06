@@ -1148,11 +1148,9 @@ extension ConfigRegistry {
 
     // MARK: Browser (browser_use tool's WebKit pool)
     //
-    // Storage backs UserDefaults directly. The live BrowserTabPool
-    // instance is owned by ContentView, so we don't reach into it from
-    // here — instead we write the same UserDefaults keys it reads on
-    // launch. The pool re-applies viewport/UA on next tab open; for an
-    // immediate refresh users can dismiss/reopen the browser tab.
+    // UserDefaults stores the global defaults. Every pool re-reads these via
+    // BrowserTabPool.syncGlobalDefaultsFromStore before creating a tab.
+    // Already open tabs retain their own profile and viewport.
 
     @MainActor
     private static func registerBrowser(into r: ConfigRegistry) {

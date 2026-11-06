@@ -1,0 +1,116 @@
+{
+  "commit": "1a71df0f381cefde80bf912b723de6f9831bc177",
+  "sources": [
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserHistory.swift",
+      "gitBlob": "ec0e4fc338d7f271dea724e6e0a3fe5e7ae9befd"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserManagementView.swift",
+      "gitBlob": "3c4105d7723626141403d65b20e5f0e0ea192cd8"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserSheetView.swift",
+      "gitBlob": "3335c3fa253f8254a360994857d0e3ceef5192ff"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserTabPool.swift",
+      "gitBlob": "84e08e7d3408edaea2f0b5f91a74874c53578596"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserUseActions.swift",
+      "gitBlob": "6cf83f877619fad1fb2a92664bf347972f175722"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserUseJavaScript.swift",
+      "gitBlob": "46ac9c002b9e600b055870f67f5b80292cdcabc9"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserUseManager.swift",
+      "gitBlob": "5a3e87692a68f753602ff9ab06cb3e152e0ad729"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/BrowserWebView.swift",
+      "gitBlob": "a90955e991e81c3a2aa5bb7335ef71fb6d63839d"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/CookieAuditLogger.swift",
+      "gitBlob": "3bbef0091be946ab0462350cc6f6564ed6ed1eb6"
+    },
+    {
+      "path": "src/ios/Agent/BrowserUse/CookieBackupStore.swift",
+      "gitBlob": "cd694a63dd7e8b2e3ac2056fcfba14429b092645"
+    },
+    {
+      "path": "src/ios/Diagnostics/BrowserResourceMonitor.swift",
+      "gitBlob": "4d0c1de81a7fd1de8cf3f253cdf071805aa125e0"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserCLIReclaimScopeTests.swift",
+      "gitBlob": "67361730eb5a9e00408b5eecf02fff686a70e3fb"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserCLITimeoutReclaimTests.swift",
+      "gitBlob": "d1119bc60c7c3374abe7ea4328a9e58ac6893e0f"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserJSErrorDetailTests.swift",
+      "gitBlob": "501ddd270f3ab37c2f7bf9c3eaa7c950ddc3e412"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserPoolCallerSessionTests.swift",
+      "gitBlob": "695a45fcd8875c5b0f1c2ec0ded52c6ce6405b8c"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserUseDOMRectCloneTests.swift",
+      "gitBlob": "4e96c835a91ca4352286be24141fbba2f909aab6"
+    },
+    {
+      "path": "src/ios/MinisTests/Standalone/BrowserUserAgentPerTabTests.swift",
+      "gitBlob": "001b1421fd61d0c8270b67befe90bd1372a77278"
+    },
+    {
+      "path": "src/ios/NativeOffloads/BrowserUseOffload.h",
+      "gitBlob": "5bcc22df4bdba545f431b69a7d29bafde2ca603a"
+    },
+    {
+      "path": "src/ios/NativeOffloads/BrowserUseOffload.m",
+      "gitBlob": "a21d459a22b038bc66ce3c2bba98df3d0f25cfe5"
+    },
+    {
+      "path": "src/ios/NativeOffloads/BrowserUseOffloadBridge.swift",
+      "gitBlob": "96fe53a9f520262791391192ef0c3b0fd03edd06"
+    }
+  ],
+  "localBaseline": [
+    {
+      "path": "Agent/BrowserUse/BrowserTabPool.swift",
+      "sha256": "6ce7a61519a77d4d56d477468691d8db6bcf1b246bb339a1645413bd1815a1ab"
+    },
+    {
+      "path": "Agent/BrowserUse/BrowserUseActions.swift",
+      "sha256": "033e902265682e51b50e44cd607d8ef1353cd87aa4fb4ee6c5242aa5dae8910d"
+    },
+    {
+      "path": "Agent/BrowserUse/BrowserUseJavaScript.swift",
+      "sha256": "65d1b5c5a24018bae6cbb1e3f41629636df258a60de79380546901033eda59fa"
+    },
+    {
+      "path": "Agent/BrowserUse/BrowserUseManager.swift",
+      "sha256": "ecaaa593adfbad83f7deb476ca461ef60091fdc7285fd444bdf1c84f26978d45"
+    },
+    {
+      "path": "NativeOffloads/BrowserUseOffload.m",
+      "sha256": "d32468cfe5dd8f8122c7b6fc7936a5173df1861d303c106aaf6b42fbc12bb152"
+    },
+    {
+      "path": "NativeOffloads/BrowserUseOffloadBridge.swift",
+      "sha256": "545c35f4ba8b0e54ac2236fafb933cbfc8b3ea106aace1913d50f1a4124b0410"
+    },
+    {
+      "path": "Diagnostics/BrowserResourceMonitor.swift",
+      "sha256": "38e09f58c87688886e84ea47f58bc93c409d4e3324b6c35d999ca2bff618bcf7"
+    }
+  ],
+  "additionalSource": "src/ios/Views/Chat/AIChatView/Composer/ComposerSurface.swift"
+}

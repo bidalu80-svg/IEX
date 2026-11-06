@@ -105,4 +105,7 @@ NSString *_Nullable noff_read_stdin(int stdin_fd);
 /// Use from Swift to safely call UIKit methods that may throw NSInternalInconsistencyException.
 BOOL noff_try_objc(void (NS_NOESCAPE ^_Nonnull block)(void));
 
+/// Current guest task routing token; capture before crossing threads.
+uint64_t noff_current_fs_context(void);
+
 #endif /* NativeOffloadUtils_h */
