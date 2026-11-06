@@ -26,6 +26,7 @@ func AppLocalized(_ key: String) -> String { NSLocalizedString(key, comment: "")
 final class UserAskCenter: ObservableObject {
     static let shared = UserAskCenter()
     @Published var asks: [String: PendingAsk] = [:]
+    // UPSTREAM_PRESELECT_RECOMMENDED
     func noteInteraction(requestId: String) {}
     func updateAnswer(requestId: String, index: Int, _ answer: UserAskAnswer) { asks[requestId]?.answers[index] = answer }
     func submitQuestion(requestId: String, index: Int) {}
@@ -121,7 +122,7 @@ private final class QuestionReferenceHarness: UIResponder, UIApplicationDelegate
         window.makeKeyAndVisible()
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
-        try await Task.sleep(nanoseconds: scenario == "other-sheet" ? 1_000_000_000 : 450_000_000)
+        try await Task.sleep(nanoseconds: scenario == "other-sheet" ? 1_500_000_000 : 450_000_000)
         host.view.layoutIfNeeded()
         CATransaction.flush()
         if scenario == "other-sheet", host.presentedViewController == nil { throw failure("Reference input sheet not presented") }
@@ -150,6 +151,7 @@ private final class QuestionReferenceHarness: UIResponder, UIApplicationDelegate
                                multiSelect: multi, impact: confirm ? "构建成功后生成待安装的软件包。" : nil,
                                risk: confirm ? .high : .medium, defaultValue: nil)
         var ask = PendingAsk(requestId: UUID().uuidString, sessionId: "fixture", toolCallId: "fixture", questions: [q], createdAt: Date(), timeoutMinutes: 10)
+        UserAskCenter.preselectRecommended(&ask, at: 0)
         if scenario == "pending-multi" { ask.answers[0] = UserAskAnswer(selected: [0, 2], note: "优先执行回归检查") }
         return ask
     }

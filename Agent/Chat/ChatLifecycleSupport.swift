@@ -706,6 +706,8 @@ struct QuestionCardState: Codable, Equatable {
     var resolutionSource: String? = nil
     /// Explicit tool-result decisions; absent in older saved sessions.
     var confirmationDecisions: [String: String]? = nil
+    /// Exact submitted draft; absent in legacy sessions with only rendered text.
+    var structuredAnswerDrafts: [QuestionCardDraft?]? = nil
 
     init(requestId: String, title: String, questions: [QuestionCardQuestion], timeoutAt: Date, status: QuestionCardStatus = .pending) {
         self.requestId = requestId
@@ -727,7 +729,7 @@ struct QuestionCardState: Codable, Equatable {
     /// Validate the displayed question identity before mutating any answer.
     /// Revisiting an earlier question always advances through the subsequent
     /// questions again; retained answers never silently submit the whole card.
-    mutating func submit(answer: String, at index: Int, now: Date = Date()) -> Bool {
+    mutating func submit(answer: String, at index: Int, draft: QuestionCardDraft? = nil, now: Date = Date()) -> Bool {
         guard status == .pending, now < timeoutAt, index == currentIndex,
               questions.indices.contains(index) else { return false }
         let cleaned = String(answer.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
@@ -738,6 +740,11 @@ struct QuestionCardState: Codable, Equatable {
         }
         if answers.count < questions.count { answers += Array(repeating: nil, count: questions.count - answers.count) }
         answers[index] = cleaned
+        var submitted = structuredAnswerDrafts ?? []
+        if submitted.count < questions.count { submitted += Array(repeating: nil, count: questions.count - submitted.count) }
+        // Notification replies and old results have no matching structured draft.
+        submitted[index] = draft?.answer(for: question) == cleaned ? draft : nil
+        structuredAnswerDrafts = submitted
         confirmationDecisions?.removeValue(forKey: question.id)
         if let decision = confirmationDecision(at: index) {
             if confirmationDecisions == nil { confirmationDecisions = [:] }
@@ -762,6 +769,30 @@ struct QuestionCardState: Codable, Equatable {
             }
         }
         return nil
+    }
+
+    func submittedDraft(at index: Int) -> QuestionCardDraft? {
+        guard questions.indices.contains(index), answers.indices.contains(index),
+              let drafts = structuredAnswerDrafts, drafts.indices.contains(index),
+              let draft = drafts[index], let answer = answers[index],
+              draft.answer(for: questions[index]) == answer else { return nil }
+        return draft
+    }
+
+    /// Display-only selected/freeform values, preserving punctuation inside each
+    /// answer. Legacy strings stay untouched instead of guessing their structure.
+    func displayAnswerValues(at index: Int) -> [String] {
+        guard questions.indices.contains(index), answers.indices.contains(index) else { return [] }
+        guard let draft = submittedDraft(at: index) else { return answers[index].map { [$0] } ?? [] }
+        let question = questions[index]
+        if question.isConfirmation {
+            return confirmationDecision(at: index) == "deny" && !draft.note.isEmpty ? [draft.note] : []
+        }
+        if draft.delegated { return [] }
+        var values = Array(Set(draft.selectedIndices)).sorted().map { question.options[$0] }
+        let other = String(draft.otherText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        if !other.isEmpty { values.append(other) }
+        return values
     }
 
     /// The question currently on screen. Clamped so a stale `currentIndex`
@@ -936,6 +967,7 @@ struct QuestionCardResponse: Codable, Equatable {
         let question: String
         let answer: String?
         var decision: String? = nil
+        var draft: QuestionCardDraft? = nil
     }
 
     let confirmed: Bool
@@ -955,6 +987,8 @@ struct QuestionCardResponse: Codable, Equatable {
                 ]
                 item["answer"] = answer.answer ?? NSNull()
                 if let decision = answer.decision { item["decision"] = decision }
+                if let draft = answer.draft, let data = try? JSONEncoder().encode(draft),
+                   let object = try? JSONSerialization.jsonObject(with: data) { item["draft"] = object }
                 return item
             }
         ]
@@ -1088,10 +1122,18 @@ enum QuestionCardParser {
         }
         state.resolutionSource = object["source"] as? String
         state.confirmationDecisions = nil
+        state.structuredAnswerDrafts = nil
         if let answers = object["answers"] as? [[String: Any]] {
             for (index, question) in state.questions.enumerated() {
                 if let match = answers.first(where: { ($0["id"] as? String) == question.id }) {
                     state.answers[index] = match["answer"] as? String
+                    if let object = match["draft"] as? [String: Any],
+                       let data = try? JSONSerialization.data(withJSONObject: object),
+                       let draft = try? JSONDecoder().decode(QuestionCardDraft.self, from: data),
+                       let answer = state.answers[index], draft.answer(for: question) == answer {
+                        if state.structuredAnswerDrafts == nil { state.structuredAnswerDrafts = Array(repeating: nil, count: state.questions.count) }
+                        state.structuredAnswerDrafts?[index] = draft
+                    }
                     if question.isConfirmation, let decision = match["decision"] as? String,
                        decision == "allow" || decision == "deny" {
                         if state.confirmationDecisions == nil { state.confirmationDecisions = [:] }
@@ -1337,7 +1379,9 @@ final class QuestionCardCoordinator {
             finish(requestId: requestId, status: .unconfirmed, source: "timeout")
             return false
         }
-        guard request.state.submit(answer: answer, at: questionIndex ?? request.state.currentIndex) else { return false }
+        let index = questionIndex ?? request.state.currentIndex
+        let submittedDraft = QuestionCardPersistence.savedDraft(requestId: requestId, questionIndex: index)
+        guard request.state.submit(answer: answer, at: index, draft: submittedDraft) else { return false }
         request.source = source
         if request.state.status == .confirmed {
             finish(requestId: requestId, status: .confirmed, source: source)
@@ -1413,7 +1457,8 @@ final class QuestionCardCoordinator {
                 id: question.id,
                 question: question.prompt,
                 answer: index < request.state.answers.count ? request.state.answers[index] : nil,
-                decision: request.state.confirmationDecision(at: index)
+                decision: request.state.confirmationDecision(at: index),
+                draft: request.state.submittedDraft(at: index)
             )
         }
         let response = QuestionCardResponse(

@@ -2037,6 +2037,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Budget expiry requests one final answer at the next completed-tool boundary.
     var zeSubAgentWrapUpRequested = false
     var zeSubAgentResultPromptIds: Set<UUID> = []
+    var zeSubAgentProgressPromptIds: [String: UUID] = [:]
+    var zeSubAgentCompletionPromptIds: [String: UUID] = [:]
     /// Reentrancy guard for `drainQueuedPrompts()`. After a Stop with queued
     /// prompts, `cancel()` hands off to a fresh Task via `resumeQueueAfterCancel()`,
     /// but the original (superseded) send/retry/resume Task ALSO reaches its own
@@ -5569,7 +5571,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // it as in-loop context for the previous turn and never gave it its
             // own response (the #579 bug). Breaking → fresh turn avoids the merge
             // entirely while still inserting/un-queuing the message immediately.
-            if !promptQueue.isEmpty {
+            if hasQueuedNonProgressPrompt {
                 logger.info("📨[QueueInterrupt] \(self.promptQueue.count) queued prompt(s) — interrupting after current tool call to start a standalone turn")
                 self.prevCommittedBlockCount = self.committedBlockCount
                 committedBlockCount = messages[msgIdx].blocks.count

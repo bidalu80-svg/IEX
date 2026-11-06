@@ -56,6 +56,7 @@ jobs:
           set -euo pipefail
           xcrun swiftc -parse-as-library Agent/Chat/ZeSubAgentCoordinator.swift scripts/SubAgentLifecycleHarness.swift -o "$RUNNER_TEMP/subagent-lifecycle-tests"
           "$RUNNER_TEMP/subagent-lifecycle-tests" | tee subagent-lifecycle-tests.log
+          python3 scripts/test-subagent-delivery.py | tee subagent-delivery-tests.log
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -838,6 +839,7 @@ jobs:
             build.log
             model-compatibility-tests.log
             subagent-lifecycle-tests.log
+            subagent-delivery-tests.log
             subagent-card-tests.log
             scheduled-task-tests.log
             consecutive-tool-tests.log

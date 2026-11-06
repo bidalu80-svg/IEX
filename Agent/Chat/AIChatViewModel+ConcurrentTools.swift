@@ -707,7 +707,8 @@ extension AIChatViewModel {
             let nickname = toolArgs["nickname"] as? String ?? ""
             let budgetMinutes = toolArgs["max_minutes"] as? Int ?? ZeSubAgentCoordinator.defaultBudgetMinutes
             let record = ZeSubAgentCoordinator.shared.spawn(from: self, message: message, forkContext: forkContext,
-                                                          nickname: nickname, budgetMinutes: budgetMinutes)
+                                                          nickname: nickname, budgetMinutes: budgetMinutes,
+                                                          progressReport: toolArgs["progress_report"] as? String ?? "none")
             if let error = record.error {
                 toolOutput = error
                 toolSuccess = false

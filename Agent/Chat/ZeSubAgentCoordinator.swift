@@ -89,6 +89,7 @@ struct ZeSubAgentRecord: Identifiable, Codable, Equatable, Sendable {
     var startedAt: Date? = nil
     var finishedAt: Date? = nil
     var budgetMinutes: Int? = nil
+    var progressReport: String? = nil
     var requestedModel: String? = nil
     var modelPinUnavailable: Bool? = nil
     var requestModelId: String? = nil
@@ -139,6 +140,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private var deliveryTasks: [String: Task<Void, Never>] = [:]
     private var mutedDeliveries: Set<String> = []
     private var inlineWaiters: [String: Int] = [:]
+    private var lastProgressAt: [String: Date] = [:]
+    private var lastProgressSignature: [String: String] = [:]
     private var budgetToolStopped: Set<String> = []
     private let now: () -> Date
     private var pollTasks: [String: Task<Void, Never>] = [:]
@@ -207,7 +210,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
         forkContext: Bool = false,
         nickname: String = "",
         modelEntryReference: String? = nil,
-        budgetMinutes: Int = ZeSubAgentCoordinator.defaultBudgetMinutes
+        budgetMinutes: Int = ZeSubAgentCoordinator.defaultBudgetMinutes,
+        progressReport: String = "none"
     ) -> ZeSubAgentRecord {
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let root = rootSessionId(for: parent)
@@ -255,6 +259,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
         )
         record.parentTurnId = parent.messages.last(where: { $0.role == .assistant })?.id.uuidString
         record.budgetMinutes = min(Self.maxBudgetMinutes, max(1, budgetMinutes))
+        let progress = progressReport.lowercased()
+        record.progressReport = ["none", "moderate", "frequent"].contains(progress) ? progress : "none"
         record.modelPinUnavailable = requestedModelReference != nil && configuredEntry == nil
         record.requestedModel = configuredEntry?.model.displayName ?? requestedModelReference
             ?? effectiveEntry?.model.displayName ?? parent.selectedModel.displayName
@@ -345,6 +351,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
         record.wrapUpStartedAt = nil
         record.deliveryState = "pending"
         mutedDeliveries.remove(id)
+        parentModel(for: record)?.discardQueuedSubAgentResult(key: id)
         deliveryTasks.removeValue(forKey: id)?.cancel()
         record.revision += 1
         record.updatedAt = Date()
@@ -443,6 +450,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
         record.pendingInputCount = 0
         record.finishedAt = now()
         mutedDeliveries.insert(id)
+        parentModel(for: record)?.discardQueuedSubAgentResult(key: id)
         deliveryTasks.removeValue(forKey: id)?.cancel()
         record.deliveryState = "suppressed"
         record.steps = record.steps?.map { step in
@@ -468,9 +476,19 @@ final class ZeSubAgentCoordinator: ObservableObject {
     func cancelRunGroup(id: String) {
         guard let selected = record(id: id) else { return }
         let group = records(for: selected.rootSessionId).filter {
-            Self.belongsToRunGroup($0, selected: selected) && $0.status.isActive
-        }.map(\.id)
-        for childId in group { cancel(id: childId) }
+            Self.belongsToRunGroup($0, selected: selected)
+        }
+        // A completed sibling can still have a callback queued in the parent.
+        // Stop vetoes the entire delegating turn without rewriting its results.
+        for record in group {
+            mutedDeliveries.insert(record.id)
+            deliveryTasks.removeValue(forKey: record.id)?.cancel()
+            parentModel(for: record)?.discardQueuedSubAgentResult(key: record.id)
+            if record.status.isActive { cancel(id: record.id) }
+            else if record.deliveryState == "pending" {
+                markDelivery(id: record.id, revision: record.revision, state: "suppressed")
+            }
+        }
     }
 
     static func belongsToRunGroup(_ candidate: ZeSubAgentRecord, selected: ZeSubAgentRecord) -> Bool {
@@ -596,6 +614,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
             record.deliveryState = "pending"
             record.pendingInputCount = 0
             budgetToolStopped.remove(id)
+            lastProgressAt[id] = now()
+            lastProgressSignature[id] = nil
             child.zeSubAgentWrapUpRequested = false
             update(record, root: root)
             child.inputText = inputs.joined(separator: "\n\n")
@@ -623,12 +643,44 @@ final class ZeSubAgentCoordinator: ObservableObject {
         update(record, root: location.root)
     }
 
+    private func parentModel(for record: ZeSubAgentRecord) -> AIChatViewModel? {
+        parents[record.id]?.value ?? children[record.parentId]
+            ?? (record.parentId == record.rootSessionId ? ViewModelCache.shared.get(for: record.parentId) : nil)
+    }
+
+    private func reportProgress(_ record: ZeSubAgentRecord) {
+        let interval: TimeInterval
+        switch record.progressReport {
+        case "frequent": interval = 15
+        case "moderate": interval = 60
+        default: return
+        }
+        let current = now()
+        guard record.status.isActive, record.startedAt != nil,
+              current.timeIntervalSince(lastProgressAt[record.id] ?? current) >= interval else { return }
+        lastProgressAt[record.id] = current
+        let tool = record.steps?.last(where: { $0.toolName != nil })
+        let signature = "\(record.status.rawValue)|\(tool?.toolName ?? "")|\(tool?.state ?? "")|\(record.turnCount ?? 0)|\(record.output.prefix(200))"
+        guard record.progressReport != "frequent" || lastProgressSignature[record.id] != signature,
+              !mutedDeliveries.contains(record.id),
+              record.rootSessionId != ZeSubAgentPreferences.settingsRootSessionId,
+              let parent = parentModel(for: record),
+              parent.isProcessing || parent.currentTask == nil else { return }
+        parents[record.id] = ParentReference(parent)
+        let elapsed = Int(max(0, current.timeIntervalSince(record.startedAt ?? current)))
+        let activity = tool.map { "\($0.toolName ?? "") · \($0.title)" } ?? "等待子代理输出"
+        let text = "[子代理进度 · \(record.nickname) · id=\(record.id) · \(elapsed)s · 第 \(record.turnCount ?? 0) 轮]\n\(activity)\n\(record.output.prefix(800))"
+        if parent.submitSubAgentResult(text, progressKey: record.id) {
+            lastProgressSignature[record.id] = signature
+        }
+    }
+
     private func deliverResult(_ record: ZeSubAgentRecord) {
+        parentModel(for: record)?.discardQueuedSubAgentProgress(key: record.id)
         guard record.deliveryState == "pending", inlineWaiters[record.id, default: 0] == 0,
               deliveryTasks[record.id] == nil else { return }
         guard !mutedDeliveries.contains(record.id),
-              let parent = parents[record.id]?.value ?? children[record.parentId]
-                ?? (record.parentId == record.rootSessionId ? ViewModelCache.shared.get(for: record.parentId) : nil),
+              let parent = parentModel(for: record),
               record.rootSessionId != ZeSubAgentPreferences.settingsRootSessionId else {
             markDelivery(id: record.id, revision: record.revision, state: "suppressed")
             return
@@ -647,7 +699,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
                   current.deliveryState == "pending" else { return }
             let body = record.output.isEmpty ? (record.error ?? "没有最终输出，请检查子代理记录。") : record.output
             let text = "[子代理任务结束 · \(record.nickname) · \(record.status.displayName) · id=\(record.id)]\n" + body
-            let accepted = parent.submitSubAgentResult(text)
+            let accepted = parent.submitSubAgentResult(text, resultKey: record.id)
             self.markDelivery(id: record.id, revision: record.revision, state: accepted ? "delivered" : "unavailable")
         }
     }
@@ -726,6 +778,7 @@ final class ZeSubAgentCoordinator: ObservableObject {
                     next.updatedAt = Date()
                     self.update(next, root: root, immediate: next.status != current.status || !next.status.isActive)
                 }
+                if child.isProcessing { self.reportProgress(next) }
                 if !child.isProcessing {
                     self.pollTasks[id] = nil
                     self.completedSteps[id] = nil

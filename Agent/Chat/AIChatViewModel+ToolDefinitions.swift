@@ -130,10 +130,11 @@ extension AIChatViewModel {
                     "message": AgentToolParam(type: .string, description: "The concrete, bounded task for the child agent."),
                     "fork_context": AgentToolParam(type: .boolean, description: "Copy a bounded slice of the current conversation context."),
                     "nickname": AgentToolParam(type: .string, description: "Short display name for the child agent."),
+                    "progress_report": AgentToolParam(type: .string, description: "none (default), frequent (every 15 seconds only when changed), or moderate (every 60 seconds). Progress waits until the parent's current tool chain finishes and pending reports are coalesced."),
                     "max_minutes": AgentToolParam(type: .integer, description: "Execution budget in minutes, 1-60; default 10. The child gets one final-answer grace period after expiry."),
                 ],
                 required: ["tool_title", "message"],
-                propertyOrdering: ["tool_title", "message", "fork_context", "nickname", "max_minutes"]
+                propertyOrdering: ["tool_title", "message", "fork_context", "nickname", "max_minutes", "progress_report"]
             ),
             AgentToolDefinition(
                 name: "send_input",

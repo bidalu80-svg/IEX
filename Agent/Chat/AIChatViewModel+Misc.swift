@@ -85,12 +85,18 @@ extension AIChatViewModel {
     /// Programmatic child results use the existing prompt queue without
     /// overwriting the user's composer or attaching the user's unsent files.
     @discardableResult
-    func submitSubAgentResult(_ text: String) -> Bool {
+    func submitSubAgentResult(_ text: String, progressKey: String? = nil, resultKey: String? = nil) -> Bool {
         guard remoteDeviceId == nil, !text.isEmpty, !userDidCancel, !canResume, !zeSubAgentWrapUpRequested else { return false }
         if isProcessing {
-            zeSubAgentResultPromptIds.formIntersection(Set(promptQueue.map(\.id)))
+            let queuedIds = Set(promptQueue.map(\.id))
+            zeSubAgentResultPromptIds.formIntersection(queuedIds)
+            zeSubAgentProgressPromptIds = zeSubAgentProgressPromptIds.filter { queuedIds.contains($0.value) }
+            zeSubAgentCompletionPromptIds = zeSubAgentCompletionPromptIds.filter { queuedIds.contains($0.value) }
+            if let key = progressKey { discardQueuedSubAgentProgress(key: key) }
             let prompt = QueuedPrompt(text: text, attachments: [])
             zeSubAgentResultPromptIds.insert(prompt.id)
+            if let key = progressKey { zeSubAgentProgressPromptIds[key] = prompt.id }
+            if let key = resultKey { zeSubAgentCompletionPromptIds[key] = prompt.id }
             promptQueue.append(prompt)
             let row = ChatMessage(role: .user, content: text, isQueued: true)
             row.queuedPromptId = prompt.id
@@ -112,11 +118,31 @@ extension AIChatViewModel {
         return isProcessing || isCompacting
     }
 
+    var hasQueuedNonProgressPrompt: Bool {
+        let progressIds = Set(zeSubAgentProgressPromptIds.values)
+        return promptQueue.contains { !progressIds.contains($0.id) }
+    }
+
+    func discardQueuedSubAgentProgress(key: String) {
+        guard let id = zeSubAgentProgressPromptIds.removeValue(forKey: key) else { return }
+        removeQueuedPrompt(id: id)
+        zeSubAgentResultPromptIds.remove(id)
+    }
+
+    func discardQueuedSubAgentResult(key: String) {
+        discardQueuedSubAgentProgress(key: key)
+        guard let id = zeSubAgentCompletionPromptIds.removeValue(forKey: key) else { return }
+        removeQueuedPrompt(id: id)
+        zeSubAgentResultPromptIds.remove(id)
+    }
+
     /// Stop must discard already-accepted child callbacks as well as future
     /// deliveries; normal user queued prompts retain their existing semantics.
     func discardQueuedSubAgentResults() {
         for id in zeSubAgentResultPromptIds { removeQueuedPrompt(id: id) }
         zeSubAgentResultPromptIds.removeAll()
+        zeSubAgentProgressPromptIds.removeAll()
+        zeSubAgentCompletionPromptIds.removeAll()
     }
 
     /// Remove a queued prompt by ID and its corresponding chat message.

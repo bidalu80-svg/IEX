@@ -862,14 +862,14 @@ struct QuestionCardProgressBar: View {
 private func QuestionAskLocalized(_ key: String) -> String {
     guard Locale.current.languageCode == "zh" else { return NSLocalizedString(key, comment: "") }
     let labels: [String: String] = [
-        "Needs your answer": "需要你的回答", "Needs your approval": "需要你的确认",
+        "Needs your answer": "需要你回答", "Needs your approval": "需要你授权",
         "High-risk action": "高风险操作", "Recommended": "推荐", "Other…": "其他…",
-        "Type your answer…": "输入你的回答…", "You decide": "由你决定",
-        "Add a note": "添加备注", "Cancel with a reason / do this instead": "取消并说明原因／改为这样做",
-        "Previous": "上一题", "Next": "下一题", "Submit": "提交", "Cancel": "取消", "Allow": "允许",
-        "Show less": "收起", "Show more": "展开更多", "Answered": "已回答", "Skipped": "已跳过",
-        "Cancelled": "已取消", "Timed out": "已超时", "Allowed once": "已允许",
-        "Your answer": "你的回答", "Reason / do this instead": "原因／替代方案",
+        "Type your answer…": "输入你的回答…", "You decide": "你看着办",
+        "Add a note": "补充说明", "Cancel with a reason / do this instead": "取消并说明原因 / 改成这样做",
+        "Previous": "上一个", "Next": "下一步", "Submit": "提交", "Cancel": "取消", "Allow": "允许",
+        "Show less": "收起", "Show more": "展开", "Answered": "已回答", "Skipped": "已跳过",
+        "Cancelled": "已取消", "Timed out": "已超时", "Allowed once": "已允许一次",
+        "Your answer": "你的回答", "Reason / do this instead": "原因 / 改成这样做",
         "Stop dictation": "停止听写", "Dictate": "听写", "Done": "完成", "Edit": "编辑",
         "Time left": "剩余时间", "option": "选项"
     ]
@@ -1682,7 +1682,7 @@ private struct QuestionResolvedCard: View {
     private var first: QuestionCardQuestion? { card.questions.first }
     private var isConfirm: Bool { first?.isConfirmation == true }
     private var tint: Color {
-        if card.status == .unconfirmed { return .gray }
+        if card.status == .unconfirmed, card.resolutionSource != "timeout" { return .gray }
         return isConfirm ? (first?.risk == "high" ? .red : .orange) : .accentColor
     }
     private var denied: Bool { card.questions.indices.contains { card.confirmationDecision(at: $0) == "deny" } }
@@ -1707,7 +1707,10 @@ private struct QuestionResolvedCard: View {
         }
         return QuestionAskLocalized("Answered")
     }
-    private var digest: String { card.answerPreview ?? "" }
+    private var digest: String {
+        card.questions.indices.map { card.displayAnswerValues(at: $0).joined(separator: ", ") }
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1862,6 +1865,7 @@ private struct QuestionAnswerInputSheet: View {
     let onCancel: (() -> Void)?
     let requestId: String?
     let questionIndex: Int?
+    private let initialText: String
     @State private var text: String
     @FocusState private var focused: Bool
     @ObservedObject private var fonts = FontSettings.shared
@@ -1875,7 +1879,8 @@ private struct QuestionAnswerInputSheet: View {
          onCancel: (() -> Void)? = nil, requestId: String? = nil, questionIndex: Int? = nil) {
         self.title = title; self.question = question; self.onChange = onChange; self.onDone = onDone
         self.onCancel = onCancel; self.requestId = requestId; self.questionIndex = questionIndex
-        _text = State(initialValue: initialText)
+        self.initialText = initialText
+        _text = State(initialValue: "")
     }
 
     var body: some View {
@@ -1911,7 +1916,7 @@ private struct QuestionAnswerInputSheet: View {
                     }
                     .buttonStyle(.bordered)
                     Spacer()
-                    Text("\(text.count)/1000")
+                    Text("\(text.count)/\(1000)")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 if voiceActive {
@@ -1943,7 +1948,7 @@ private struct QuestionAnswerInputSheet: View {
                 }
             }
         }
-        .onAppear { focused = true }
+        .onAppear { text = initialText; focused = true }
         .onDisappear { leaveVoice() }
         .task {
             guard let requestId, let questionIndex else { return }

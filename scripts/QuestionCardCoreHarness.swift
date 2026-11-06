@@ -23,6 +23,23 @@ import Foundation
         check(draft.answer(for: questions[0]) == "Search；Export；其他：Custom；补充说明：Please keep data", "other and notes are returned with selected choices")
         draft.delegated = true
         check(draft.answer(for: questions[0]) == "由你决定。补充说明：Please keep data", "delegation is explicit and never a hidden selection")
+        let displayQuestion = QuestionCardQuestion(id: "display", prompt: "Choose", options: ["A；literal", "B"], multiSelect: true)
+        let displayDraft = QuestionCardDraft(selectedIndices: [0, 1], otherText: "custom；literal", note: "private note")
+        var displayState = QuestionCardState(requestId: "display", title: "Display", questions: [displayQuestion], timeoutAt: .distantFuture)
+        check(displayState.submit(answer: displayDraft.answer(for: displayQuestion)!, at: 0, draft: displayDraft), "structured draft captured only at explicit submission")
+        check(displayState.displayAnswerValues(at: 0) == ["A；literal", "B", "custom；literal"], "display values preserve punctuation and exclude supplemental note")
+        let reloadedDisplay = try JSONDecoder().decode(QuestionCardState.self, from: JSONEncoder().encode(displayState))
+        check(reloadedDisplay.submittedDraft(at: 0) == displayDraft, "submitted structure survives Codable persistence")
+        let displayResponse = QuestionCardResponse(confirmed: true, status: "confirmed", answers: [.init(id: "display", question: "Choose", answer: displayState.answers[0], draft: displayDraft)], source: "in_app")
+        var restoredDisplay = QuestionCardState(requestId: "wire", title: "Display", questions: [displayQuestion], timeoutAt: .distantFuture)
+        QuestionCardParser.apply(resultJSON: displayResponse.json, to: &restoredDisplay)
+        check(restoredDisplay.displayAnswerValues(at: 0) == displayState.displayAnswerValues(at: 0), "structured display survives tool-result restoration")
+        restoredDisplay.answers = ["free；text"]
+        check(restoredDisplay.submittedDraft(at: 0) == nil && restoredDisplay.displayAnswerValues(at: 0) == ["free；text"], "mismatched draft never rewrites freeform answer")
+        var oldStateObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(displayState)) as! [String: Any]
+        oldStateObject.removeValue(forKey: "structuredAnswerDrafts")
+        let oldDisplay = try JSONDecoder().decode(QuestionCardState.self, from: JSONSerialization.data(withJSONObject: oldStateObject))
+        check(oldDisplay.structuredAnswerDrafts == nil && oldDisplay.displayAnswerValues(at: 0) == [displayState.answers[0]!], "old string-only session decodes and displays verbatim")
         let single = QuestionCardQuestion(id: "q", prompt: "One", options: ["A", "B"])
         check(!QuestionCardDraft(selectedIndices: [0, 1]).isComplete(for: single), "single-choice rejects multiple selections")
         check(!QuestionCardDraft(selectedIndices: [-1]).isComplete(for: single), "invalid selected index rejected")

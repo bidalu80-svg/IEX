@@ -149,7 +149,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
         window.makeKeyAndVisible()
         host.view.frame = window.bounds
         host.view.layoutIfNeeded()
-        try await Task.sleep(nanoseconds: scenario == "other-sheet" ? 800_000_000 : 400_000_000)
+        try await Task.sleep(nanoseconds: scenario == "other-sheet" ? 1_500_000_000 : 450_000_000)
         host.view.layoutIfNeeded()
         CATransaction.flush()
         if scenario == "other-sheet" {
@@ -190,7 +190,9 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
         var card = QuestionCardState(requestId: UUID().uuidString, title: "更新验证", questions: [question], timeoutAt: Date().addingTimeInterval(600))
         if scenario == "resolved" {
             card.status = .confirmed
-            card.answers = ["请求参数兼容；工具卡片与滚动；补充说明：优先执行回归检查"]
+            let draft = QuestionCardDraft(selectedIndices: [0, 2], note: "优先执行回归检查")
+            card.answers = [draft.answer(for: question)]
+            card.structuredAnswerDrafts = [draft]
         } else if scenario == "unconfirmed" {
             card.status = .unconfirmed
             card.resolutionSource = "timeout"

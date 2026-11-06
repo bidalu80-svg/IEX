@@ -84,8 +84,10 @@ struct QueuedPrompt { let id = UUID(); let text: String }
     var receivedResults: [String] = []
     var sendCount = 0
     func discardQueuedSubAgentResults() {}
+    func discardQueuedSubAgentProgress(key: String) {}
+    func discardQueuedSubAgentResult(key: String) {}
     func stopCurrentCommand() { stoppedTools += 1 }
-    func submitSubAgentResult(_ text: String) -> Bool {
+    func submitSubAgentResult(_ text: String, progressKey: String? = nil, resultKey: String? = nil) -> Bool {
         guard !userDidCancel, !canResume else { return false }
         receivedResults.append(text)
         return true
@@ -265,6 +267,41 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         made.last?.isProcessing = false
         await tick()
         check(parent.receivedResults.count == deliveredCount, "cancelled parent is never revived by child result")
+
+        let progressParent = AIChatViewModel()
+        progressParent.sessionId = "progress-root"
+        let frequent = coordinator.spawn(from: progressParent, message: "frequent updates", progressReport: "frequent")
+        let frequentChild = made.last!
+        testNow = testNow.addingTimeInterval(14)
+        await tick()
+        check(progressParent.receivedResults.isEmpty, "frequent progress does not report before fifteen seconds")
+        testNow = testNow.addingTimeInterval(1)
+        await tick()
+        check(progressParent.receivedResults.count == 1, "frequent progress reports first activity after fifteen seconds")
+        testNow = testNow.addingTimeInterval(15)
+        await tick()
+        check(progressParent.receivedResults.count == 1, "unchanged frequent progress is suppressed")
+        frequentChild.agentHistory.append(AgentMessage(role: .assistant, parts: [.text("new turn")]))
+        testNow = testNow.addingTimeInterval(15)
+        await tick()
+        check(progressParent.receivedResults.count == 2, "changed turn produces next frequent report")
+        coordinator.cancel(id: frequent.id)
+        let moderate = coordinator.spawn(from: progressParent, message: "moderate updates", progressReport: "moderate")
+        testNow = testNow.addingTimeInterval(59)
+        await tick()
+        check(progressParent.receivedResults.count == 2, "moderate progress waits sixty seconds")
+        testNow = testNow.addingTimeInterval(1)
+        await tick()
+        check(progressParent.receivedResults.count == 3, "moderate progress reports at sixty seconds")
+        testNow = testNow.addingTimeInterval(60)
+        await tick()
+        check(progressParent.receivedResults.count == 4, "moderate progress repeats unchanged state at next interval")
+        coordinator.parentDidCancel(progressParent)
+        testNow = testNow.addingTimeInterval(60)
+        await tick()
+        check(progressParent.receivedResults.count == 4 && coordinator.record(id: moderate.id)?.status == .cancelled,
+              "parent Stop suppresses future progress")
+        check(first.progressReport == "none", "progress defaults to none")
 
         // Persistence writes occur on a serial background queue. Wait for its
         // terminal snapshot, then build a fresh coordinator as after relaunch.

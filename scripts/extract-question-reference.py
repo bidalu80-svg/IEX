@@ -43,6 +43,8 @@ views = fetch("src/ios/Views/Chat/UserAskCardView.swift")
 assert manifest["sources"]["src/ios/Views/Chat/UserAskCardView.swift"]["gitBlob"] == "a25b5871a124a0f639469c6ef516a530d7fc4239", "Pinned reference view changed"
 core = fetch("src/ios/Agent/Chat/UserAskCore.swift")
 colors = fetch("src/ios/Views/Chat/AIChatView/Support/ChatColors.swift")
+center = fetch("src/ios/Agent/Chat/UserAskCenter.swift")
+recommended = section(center, "    static func preselectRecommended(", "    // MARK: - Dismissal")
 search_root = "src/ios/Agent/MessageList/CollectionViewMessageListV3/Search/"
 units = fetch(search_root + "ChatSearchUnits.swift")
 parts = ["import SwiftUI\nimport UIKit\nimport Combine\nimport Foundation\n", core,
@@ -50,7 +52,7 @@ parts = ["import SwiftUI\nimport UIKit\nimport Combine\nimport Foundation\n", co
          section(views, "enum UserAskPendingLayoutCache {", "// MARK: - Summary (mini preview tile + tool sheet)"),
          colors, fetch(search_root + "ChatSearchEngine.swift"), fetch(search_root + "ChatSearchHighlights.swift"),
          "enum ChatSearchDisplayText {\n" + section(units, "    nonisolated static func userAskTopic", "// MARK: - Snapshot"),
-         (ROOT / "scripts/QuestionReferenceHarness.swift").read_text(encoding="utf-8")]
+         (ROOT / "scripts/QuestionReferenceHarness.swift").read_text(encoding="utf-8").replace("    // UPSTREAM_PRESELECT_RECOMMENDED", recommended)]
 destination.write_text("\n".join(parts), encoding="utf-8")
 catalog = json.loads(fetch("src/ios/Localizable.xcstrings"))
 translations = {k: e["localizations"]["zh-Hans"]["stringUnit"]["value"] for k,e in catalog["strings"].items() if "stringUnit" in e.get("localizations",{}).get("zh-Hans",{})}

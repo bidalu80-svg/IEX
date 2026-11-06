@@ -543,6 +543,9 @@ struct ZeSubAgentDetailContent: View {
                                     if let finish = record.finishedAt { metadata("结束时间", finish.formatted(date: .omitted, time: .standard)) }
                                     if let budget = record.budgetMinutes { metadata("时间预算", "\(budget) 分钟") }
                                     if let delivery = record.deliveryState { metadata("结果交付", deliveryLabel(delivery)) }
+                                    if let progress = record.progressReport, progress != "none" {
+                                        metadata("进度汇报", progress == "frequent" ? "有变化时每 15 秒" : "每 60 秒")
+                                    }
                                 }
                             }
                             ZeSubAgentRunStats(record: record)
