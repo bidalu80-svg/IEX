@@ -29,8 +29,8 @@ if swift is None:
 
 fixture = r'''
 func check(_ value: @autoclosure () -> Bool, _ message: String) { precondition(value(), message) }
-func expectFailure(_ operation: () throws -> Void) {
-    do { try operation(); preconditionFailure("expected parameter failure") } catch {}
+func expectFailure(_ label: String, _ operation: () throws -> Void) {
+    do { try operation(); preconditionFailure("expected parameter failure: \(label)") } catch {}
 }
 for model in ["gpt-image-2.5", "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "openai/gpt-image-2.5-sunburst-2026-09-08", "openai/chatgpt-image-latest"] {
     let fields = try OpenAIProvider.imageRequestFields(modelID:model, prompt:"original", n:1, size:"1024x1024", quality:"high", extraBody:["response_format":"url", "model":"wrong", "quality":"max", "size":"1536x864", "output_format":"webp", "output_compression":90, "background":"transparent", "complexity":"high"])
@@ -45,12 +45,14 @@ for model in ["gpt-image-2.5", "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-imag
 let legacy = try OpenAIProvider.imageRequestFields(modelID:"grok-imagine-image", prompt:"p", n:1, size:nil, quality:nil, extraBody:["response_format":"url"])
 check(legacy["response_format"] as? String == "url", "non-GPT provider explicit format unchanged")
 for format in ["svg", "gif"] {
-    expectFailure { _ = try OpenAIProvider.imageRequestFields(modelID:"gpt-image-2.6", prompt:"p", n:1, size:nil, quality:nil, extraBody:["output_format":format]) }
+    expectFailure("output format \(format)") { _ = try OpenAIProvider.imageRequestFields(modelID:"gpt-image-2.6", prompt:"p", n:1, size:nil, quality:nil, extraBody:["output_format":format]) }
 }
-expectFailure { _ = try OpenAIProvider.imageRequestFields(modelID:"gpt-image-2.6", prompt:"p", n:1, size:nil, quality:nil, extraBody:["stream":true]) }
-expectFailure { _ = try OpenAIProvider.imageMultipartFields(["mask":"fake-file"]) }
-expectFailure { _ = try OpenAIProvider.imageMultipartFields(["bad\r\nfield":"x"]) }
-expectFailure { try OpenAIProvider.validateImageResultMime("image/svg+xml; charset=utf-8") }
+expectFailure("stream") { _ = try OpenAIProvider.imageRequestFields(modelID:"gpt-image-2.6", prompt:"p", n:1, size:nil, quality:nil, extraBody:["stream":true]) }
+expectFailure("mask") { _ = try OpenAIProvider.imageMultipartFields(["mask":"fake-file"]) }
+for key in ["bad\r\nfield", "bad\rfield", "bad\nfield", "bad\"field"] {
+    expectFailure("multipart field \(key.debugDescription)") { _ = try OpenAIProvider.imageMultipartFields([key:"x"]) }
+}
+expectFailure("SVG MIME") { try OpenAIProvider.validateImageResultMime("image/svg+xml; charset=utf-8") }
 let booleans = Dictionary(uniqueKeysWithValues: try OpenAIProvider.imageMultipartFields(["watermark":false, "output_compression":100]))
 check(booleans["watermark"] == "false" && booleans["output_compression"] == "100", "multipart boolean versus number")
 print("GPT image wire fixtures passed: namespaces, aliases, generation/edit formats, passthrough, rendering constraints.")

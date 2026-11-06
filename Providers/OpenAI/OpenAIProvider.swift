@@ -1531,7 +1531,9 @@ final class OpenAIProvider: LLMProvider {
             guard !["image", "image[]", "mask", "markup"].contains(key) else {
                 throw LLMError.providerError(message: "图片编辑的 \(key) 参数需要文件上传；当前入口只接收 images 附件。")
             }
-            guard !key.contains("\r"), !key.contains("\n"), !key.contains("\"") else {
+            // CRLF is one extended grapheme in Swift; Character matching for
+            // standalone CR or LF misses that pair. Validate header scalars.
+            guard !key.unicodeScalars.contains(where: { $0.value == 13 || $0.value == 10 || $0.value == 34 }) else {
                 throw LLMError.providerError(message: "图片编辑参数名称无效。")
             }
             guard let value = fields[key], !(value is NSNull) else { return nil }
