@@ -45,26 +45,53 @@ PY
 }
 trap diagnostics EXIT
 verification_failed=0
+# Build only a small XCTest UI runner. It attaches to the app already built by
+# build-share-search-simulator.sh; no additional Ze/native dependency build.
+xcui_work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ze-share-xcui-driver"
+xcui_ready=1
+if ! python3 scripts/share-xcui-driver.py prepare --work "$xcui_work" --device "$device"; then
+    xcui_ready=0
+    verification_failed=1
+fi
+mkdir -p "$evidence/xcui"
+if [ -f "$xcui_work/build.log" ]; then cp "$xcui_work/build.log" "$evidence/xcui/build.log"; fi
 for kind in chat share search; do
     xcrun simctl terminate "$device" "$bundle_id" >/dev/null 2>&1 || true
     # Delete only this generated result marker; retain earlier artifacts if a
     # fresh run fails, and rely on the fresh success manifest for validation.
     rm -f "$container/Documents/$kind-verification/result.json" "$evidence/$kind-verification/result.json"
-    if ! launch_output=$(xcrun simctl launch --stdout="$container/Documents/verification-$kind-stdout.log" --stderr="$container/Documents/verification-$kind-stderr.log" "$device" "$bundle_id" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN "--verify-conversation-$kind"); then
-        verification_failed=1
-        collect
-        continue
-    fi
-    echo "$launch_output"
-    app_pid="${launch_output##*: }"
-    for attempt in $(seq 1 150); do
-        if [ -f "$container/Documents/$kind-verification/result.json" ]; then break; fi
-        if [[ "$app_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$app_pid" 2>/dev/null; then
-            echo "$kind application exited before producing its result (pid $app_pid)"
-            break
+    if [ "$kind" = share ]; then
+        rm -f "$container/Documents/share-verification/ui-request.json" "$container/Documents/share-verification/ui-ack.json"
+        if [ "$xcui_ready" -ne 1 ]; then
+            echo 'Share verification failed: the external XCTest driver did not build.'
+            continue
         fi
-        sleep 2
-    done
+    fi
+    if [ "$kind" = share ]; then
+        # XCTest owns launch with the verification arguments and the same WebKit
+        # fallback environment. Starting via simctl before testmanager risks a
+        # reinstall/relaunch losing those arguments and racing the first UI request.
+        if ! python3 scripts/share-xcui-driver.py run --work "$xcui_work" --device "$device" \
+            --app "$app" --container "$container" --bundle "$bundle_id" --evidence "$evidence/xcui"; then
+            verification_failed=1
+        fi
+    else
+        if ! launch_output=$(xcrun simctl launch --stdout="$container/Documents/verification-$kind-stdout.log" --stderr="$container/Documents/verification-$kind-stderr.log" "$device" "$bundle_id" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN "--verify-conversation-$kind"); then
+            verification_failed=1
+            collect
+            continue
+        fi
+        echo "$launch_output"
+        app_pid="${launch_output##*: }"
+        for attempt in $(seq 1 150); do
+            if [ -f "$container/Documents/$kind-verification/result.json" ]; then break; fi
+            if [[ "$app_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$app_pid" 2>/dev/null; then
+                echo "$kind application exited before producing its result (pid $app_pid)"
+                break
+            fi
+            sleep 2
+        done
+    fi
     collect
     if ! python3 - "$evidence/$kind-verification/result.json" "$kind" <<'PY'
 import json,pathlib,sys

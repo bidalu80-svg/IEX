@@ -216,8 +216,8 @@ import PDFKit
         }
     }
 
-    /// A bounded public-API UI oracle. A successful accessibility dispatch alone
-    /// is never a pass: the actual activity controller must become visible.
+    /// The host-side XCTest runner drives real taps and interactive dismissals.
+    /// The in-app oracle independently verifies the actual presented controllers.
     private static func verifyActivityPresentation(window: UIWindow, root: UIViewController,
                                                    preview: UIViewController, url: URL,
                                                    format: String, name: String) async throws {
@@ -234,34 +234,7 @@ import PDFKit
 
         for attempt in 1...2 {
             try require(activityController(in: root) == nil, "\(name) attempt \(attempt) starts without an activity sheet")
-            let inspector = DebugViewInspector()
-            var target: DebugViewInspector.TapTarget?
-            for _ in 0..<8 {
-                target = inspector.findTarget(identifier: "chatShare.export")
-                if target != nil { break }
-                try await Task.sleep(nanoseconds: 150_000_000)
-            }
-            guard let target else {
-                throw verificationError("\(name) share button is absent from the public accessibility tree")
-            }
-            let action = inspector.resolveActionable(target)
-            checkpoint("\(name) attempt \(attempt): public action \(action.description)")
-            switch action {
-            case .control(let control):
-                try require(control.isEnabled && control.window === window,
-                            "\(name) attempt \(attempt) share control is enabled and visible")
-                control.sendActions(for: .touchUpInside)
-            case .buttonElement(let element):
-                let accepted = element.accessibilityActivate()
-                checkpoint("\(name) accessibilityActivate returned \(accepted)")
-            case .activatableView(let view):
-                try require(view.window === window && !view.isHidden,
-                            "\(name) attempt \(attempt) share accessibility view is visible")
-                let accepted = view.accessibilityActivate()
-                checkpoint("\(name) accessibilityActivate returned \(accepted)")
-            case .collectionCell, .tableCell, .coordinate:
-                throw verificationError("\(name) share button has no supported public accessibility activation; no synthetic/private tap fallback was used")
-            }
+            try await requestUIAction("open", details: ["identifier": "chatShare.export"])
             try await waitUntil("\(name) attempt \(attempt) production button presents a visible UIActivityViewController") {
                 guard let activity = activityController(in: root), let view = activity.viewIfLoaded else { return false }
                 return view.window === window && !view.isHidden && view.alpha > 0
@@ -274,25 +247,52 @@ import PDFKit
                         "\(name) attempt \(attempt) activity presentation is owned by the existing preview")
             try await Task.sleep(nanoseconds: 350_000_000)
             try capture(window, name: "activity-\(name)-\(attempt).png")
-            // Programmatic UIKit dismissal alone does not consistently notify the
-            // SwiftUI sheet binding. Deliver the public adaptive-presentation
-            // dismissal notification as an interactive cancellation would. Invoke
-            // the installed delegate, never mutate the preview's private state.
-            // This remains a simulator lifecycle test, not a system Cancel tap.
-            let presentation = preview.presentedViewController?.presentationController
-            let presentationDelegate = presentation?.delegate
-            activity.dismiss(animated: true)
+            // XCTest swipes the presented sheet's grabber area. Do not dismiss
+            // from UIKit or synthesize a presentation delegate notification: the
+            // system must restore SwiftUI's binding after a real gesture.
+            guard let presented = preview.presentedViewController,
+                  let sheetView = presented.presentationController?.presentedView
+            else { throw verificationError("Missing activity sheet presentation geometry") }
+            let frame = sheetView.convert(sheetView.bounds, to: window)
+            let startY = min(frame.minY + 12, window.bounds.maxY - 100)
+            try await requestUIAction("dismiss", details: [
+                "startX": 0.5, "startY": max(0.01, startY / window.bounds.height),
+                "endX": 0.5, "endY": (window.bounds.maxY - 12) / window.bounds.height
+            ])
             try await waitUntil("\(name) attempt \(attempt) dismissal returns to the same preview") {
                 activityController(in: root) == nil && preview.presentedViewController == nil
                     && preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
             }
-            if let presentation, let presentationDelegate {
-                presentationDelegate.presentationControllerDidDismiss?(presentation)
-                checkpoint("\(name) public adaptive-presentation dismissal notification delivered")
-            }
             try await Task.sleep(nanoseconds: 200_000_000)
         }
         try capture(window, name: "activity-dismissed-\(name).png")
+    }
+
+    /// JSON is exchanged through a loopback bridge by the simulator test runner.
+    /// An acknowledgement only means the real tap/gesture was sent; controller
+    /// visibility above remains the success oracle. Stale acknowledgements cannot
+    /// complete a different action.
+    private static func requestUIAction(_ action: String, details: [String: Any]) async throws {
+        let sequence = UUID().uuidString
+        var request = details
+        request["sequence"] = sequence
+        request["action"] = action
+        try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+            .write(to: directory.appendingPathComponent("ui-request.json"), options: .atomic)
+        checkpoint("Waiting for XCTest \(action) \(sequence)")
+        for _ in 0..<450 {
+            try Task.checkCancellation()
+            if let data = try? Data(contentsOf: directory.appendingPathComponent("ui-ack.json")),
+               let ack = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               ack["sequence"] as? String == sequence {
+                guard ack["success"] as? Bool == true else {
+                    throw verificationError("XCTest \(action) failed: \(ack["error"] as? String ?? "unknown error")")
+                }
+                return
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw verificationError("XCTest did not acknowledge \(action) within 45 seconds")
     }
 
     private static func activityController(in root: UIViewController) -> UIActivityViewController? {
@@ -405,7 +405,7 @@ import PDFKit
 
     private static func result(success: Bool, error: String? = nil) throws {
         let output: [String: Any] = ["success": success, "error": error ?? "", "checks": checks, "files": files,
-            "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button invoked only through public accessibilityActivate or UIControl.sendActions; visible UIActivityViewController, programmatic UIKit dismissal with installed public presentation-delegate notification and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, physical system-Cancel tap, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
+            "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button tapped through external XCTest UI automation; visible UIActivityViewController, real interactive swipe dismissal and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
         try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("result.json"), options: .atomic)
     }
