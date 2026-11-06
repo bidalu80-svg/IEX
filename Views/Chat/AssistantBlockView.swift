@@ -4,6 +4,7 @@ import Combine
 // MARK: - Assistant Block View (individual block — isolated invalidation)
 
 struct AssistantBlockView: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
     @ObservedObject var block: AssistantBlock
     @ObservedObject var message: ChatMessage
     let isActiveMessage: Bool
@@ -96,8 +97,8 @@ struct AssistantBlockView: View {
                 return Array(reasonLines.prefix(4)) + [String(localized: "⋯ \(reasonLines.count - 8) more")] + Array(reasonLines.suffix(4))
             }()
             VStack(alignment: .leading, spacing: 3) {
-                ForEach(Array(displayReasons.enumerated()), id: \.offset) { _, line in
-                    Text(line)
+                ForEach(Array(displayReasons.enumerated()), id: \.offset) { index, line in
+                    SearchHighlightText(line, blockId: block.id, field: .line(index), messageId: message.id)
                         .font(.system(size: 10))
                         .foregroundStyle(ChatColors.primaryText.opacity(0.45))
                         .lineLimit(2)
@@ -107,7 +108,7 @@ struct AssistantBlockView: View {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.orange.opacity(0.8))
-                        Text(switchedLine)
+                        SearchHighlightText(switchedLine, blockId: block.id, field: .title, messageId: message.id)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(ChatColors.primaryText.opacity(0.75))
                             .lineLimit(2)
@@ -153,6 +154,7 @@ struct AssistantBlockView: View {
 /// the linked child's lifecycle for the transcript badge instead of showing
 /// the spawn tool's green completion check for the whole run.
 private struct ZeSubAgentInlineRow: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
     @ObservedObject var block: AssistantBlock
     @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
     @Environment(\.chatSessionId) private var sessionId
@@ -165,6 +167,7 @@ private struct ZeSubAgentInlineRow: View {
             ZeSubAgentCompactCard(record: record, open: { detailBlock = block },
                                   stop: { coordinator.cancelRunGroup(id: record.id) },
                                   resume: { _ = coordinator.resume(id: record.id) })
+                .environment(\.chatSearchBlockId, block.id)
         } else {
             Button { detailBlock = block } label: {
                 HStack(spacing: 12) {
@@ -173,7 +176,7 @@ private struct ZeSubAgentInlineRow: View {
                         .frame(width: 34, height: 34)
                         .background(ZeSubAgentTheme.purple.opacity(0.15), in: Circle())
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(block.toolDescription).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        SearchHighlightText(block.toolDescription, blockId: block.id, field: .title, messageId: searchMessageId).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         Text(fallbackStatus).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
@@ -368,6 +371,8 @@ struct ShimmerOverlay: View {
 // MARK: - Tool Step View (unified text row for all tool types)
 
 struct ToolCapsuleView: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
+    @Environment(\.chatSearchHighlights) private var searchCenter
     @ObservedObject var block: AssistantBlock
     let icon: String
     let accentColor: Color
@@ -394,12 +399,7 @@ struct ToolCapsuleView: View {
     @EnvironmentObject private var vm: AIChatViewModel
 
     /// Display text: prefer LLM-generated toolSummary, fall back to toolDescription.
-    private var displayText: String {
-        if let summary = block.toolSummary, !summary.isEmpty {
-            return summary
-        }
-        return block.toolDescription
-    }
+    private var displayText: String { ChatSearchDisplayText.toolCapsule(block) }
 
     /// [T-ios-tool-bubble-longpress-menu] Human-readable, paste-back-able
     /// dump of this tool call + its result for the "Copy Tool Details"
@@ -494,6 +494,10 @@ struct ToolCapsuleView: View {
 
                 // Description text with bouncing dots during streaming
                 HStack(spacing: 0) {
+                    if searchCenter != nil {
+                        SearchHighlightText(displayText, blockId: block.id, field: .body, messageId: searchMessageId)
+                            .font(.system(size: 13, weight: .medium)).foregroundStyle(ChatColors.secondaryText)
+                    } else {
                     ChatShimmerText(
                         text: displayText,
                         font: .system(size: 13, weight: .medium),
@@ -501,6 +505,7 @@ struct ToolCapsuleView: View {
                         isActive: isActive,
                         usesIntrinsicWidth: false
                     )
+                    }
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
                             Text(".")
@@ -1676,6 +1681,7 @@ private struct QuestionAskButtonStyle: ButtonStyle {
 
 @MainActor
 private struct QuestionResolvedCard: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
     @ObservedObject var block: AssistantBlock
     let card: QuestionCardState
     let onToggle: () -> Void
@@ -1694,10 +1700,7 @@ private struct QuestionResolvedCard: View {
     }
     private var statusColor: Color { card.status == .unconfirmed || denied ? ChatColors.secondaryText : tint }
     private var badge: String? { card.questions.count == 1 ? first?.header : nil }
-    private var topic: String {
-        if card.questions.count == 1 { return first?.prompt ?? card.displayQuestion }
-        return card.questions.map { ($0.header?.isEmpty == false ? $0.header : nil) ?? $0.prompt }.joined(separator: " / ")
-    }
+    private var topic: String { ChatSearchQuestionText.questionTopic(card) }
     private var status: String {
         if card.questions.count > 1 { return "\(card.answeredCount)/\(card.questions.count) " + QuestionAskLocalized("Answered") }
         if card.status == .unconfirmed {
@@ -1709,10 +1712,7 @@ private struct QuestionResolvedCard: View {
         }
         return QuestionAskLocalized("Answered")
     }
-    private var digest: String {
-        card.questions.indices.map { card.displayAnswerValues(at: $0).joined(separator: ", ") }
-            .filter { !$0.isEmpty }.joined(separator: " · ")
-    }
+    private var digest: String { ChatSearchQuestionText.questionDigest(card) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1736,7 +1736,7 @@ private struct QuestionResolvedCard: View {
                                     .lineLimit(1)
                                     .fixedSize()
                             }
-                            Text(topic)
+                            SearchHighlightText(topic, blockId: block.id, field: .title, messageId: searchMessageId)
                                 .font(isConfirm ? .system(size: t.resolvedTopic - 1, weight: .medium, design: .monospaced)
                                                 : .system(size: t.resolvedTopic, weight: .medium))
                                 .foregroundStyle(ChatColors.primaryText)
@@ -1749,7 +1749,7 @@ private struct QuestionResolvedCard: View {
                                 .lineLimit(1)
                                 .layoutPriority(1)
                             if !digest.isEmpty {
-                                Text(digest)
+                                SearchHighlightText(digest, blockId: block.id, field: .activity, messageId: searchMessageId)
                                     .font(.system(size: t.meta))
                                     .foregroundStyle(ChatColors.secondaryText)
                                     .lineLimit(1)
@@ -1790,7 +1790,7 @@ private struct QuestionResolvedCard: View {
 
     private func resolvedQuestionRow(_ card: QuestionCardState, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(card.questions[index].prompt)
+            SearchHighlightText(card.questions[index].prompt, blockId: block.id, field: .question(index), messageId: searchMessageId)
                 .font(.system(size: t.resolvedDetail))
                 .foregroundStyle(ChatColors.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)

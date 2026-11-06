@@ -1685,6 +1685,9 @@ final class CodeBlockAttachment: NSTextAttachment {
 // MARK: - Table Attachment
 
 final class TableAttachment: NSTextAttachment {
+    /// Export-only capped adaptive tables wrap to their page, without changing
+    /// the live chat's horizontal scrolling layout or its shared layout cache.
+    var exportWrapToWidth = false
     private(set) var alignments: [RawTableColumnAlignment]
     private(set) var rows: [RawTableRow]
     let theme: SelectableMarkdownTheme
@@ -1929,6 +1932,7 @@ final class TableAttachment: NSTextAttachment {
     }
 
     func computeLayout(for width: CGFloat, persist: Bool = true) -> TableLayout {
+        if exportWrapToWidth { return computeExportLayout(for: width) }
         if let cached = cachedLayout, cached.width == width {
             return cached
         }
@@ -2068,6 +2072,36 @@ final class TableAttachment: NSTextAttachment {
         }
         Self.flushSharedLayoutStatsIfNeeded()
         return layout
+    }
+
+    private func computeExportLayout(for width: CGFloat) -> TableLayout {
+        let count = alignments.count
+        guard count > 0 else { return TableLayout(width: width, columnWidths: [], rowHeights: [], tableWidth: width) }
+        var columns = [CGFloat](repeating: 80, count: count)
+        for (r, row) in rows.enumerated() {
+            let font = UIFont.systemFont(ofSize: theme.baseFontSize, weight: r == 0 ? .semibold : .regular)
+            for (c, cell) in row.cells.enumerated() where c < count {
+                columns[c] = max(columns[c], ceil((cell.content.plainText as NSString).size(withAttributes: [.font: font]).width) + Self.cellPaddingH * 2 + 12)
+            }
+        }
+        let total = columns.reduce(0, +)
+        if total > width {
+            let minimum = min(64, width / CGFloat(count))
+            let remaining = max(0, width - minimum * CGFloat(count))
+            let excess = columns.reduce(0) { $0 + max(0, $1 - minimum) }
+            columns = columns.map { minimum + (excess > 0 ? remaining * max(0, $0 - minimum) / excess : 0) }
+        } else { columns[count - 1] += width - total }
+        var heights = [CGFloat](repeating: Self.minRowHeight, count: rows.count)
+        for (r, row) in rows.enumerated() {
+            let font = UIFont.systemFont(ofSize: theme.baseFontSize, weight: r == 0 ? .semibold : .regular)
+            for (c, cell) in row.cells.enumerated() where c < count {
+                let text = renderCellInlines(cell.content, baseFont: font)
+                let size = text.boundingRect(with: CGSize(width: max(1, columns[c] - Self.cellPaddingH * 2), height: .greatestFiniteMagnitude),
+                                            options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+                heights[r] = max(heights[r], ceil(size.height) + Self.cellPaddingV * 2)
+            }
+        }
+        return TableLayout(width: width, columnWidths: columns, rowHeights: heights, tableWidth: width)
     }
 
     // MARK: - [T-ios-attachbounds-cold-cache] Shared layout cache helpers
@@ -4480,6 +4514,19 @@ private extension Array where Element == InlineNode {
 /// background rendering (see `fillBackgroundRectArray` below). Kept as a
 /// dedicated class so other layout-manager hooks can be added in one place.
 final class ZeLayoutManager: NSLayoutManager {
+    var searchHighlightRanges: [NSRange] = []
+    var searchHighlightCurrent: NSRange?
+    var searchHighlightDimmed = false
+    var onTextStorageEdited: (() -> Void)?
+    override func processEditing(for textStorage: NSTextStorage, edited editMask: NSTextStorage.EditActions, range newCharRange: NSRange, changeInLength delta: Int, invalidatedRange invalidatedCharRange: NSRange) {
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange, changeInLength: delta, invalidatedRange: invalidatedCharRange)
+        onTextStorageEdited?()
+    }
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        drawSearchHighlights(forGlyphRange: glyphsToShow, at: origin)
+    }
+
 
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<CGRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: UIColor) {
         // Check if this range has inline code background
@@ -4601,105 +4648,16 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     /// LazyVStack / SwiftUI is still settling.
     var hasScheduledRecoveryForCurrentContent = false
 
-    // [T-chat-search] Query currently painted and the text length it was
-    // painted at, so a SwiftUI update can skip the work when nothing changed.
-    private var appliedSearchQuery: String = ""
-    private var lastHighlightedLength: Int = -1
-    private var searchCancellable: AnyCancellable?
-    private var observesSearchStore = false
-    /// Only reply bodies participate; see `SelectableMarkdownView`.
     var allowsSearchHighlight = false
-    /// Marks the background ranges this view painted, so they can be removed
-    /// without touching any background the markdown itself carries.
-    private static let searchHighlightKey = NSAttributedString.Key("ZeSearchHighlight")
-
-    /// Tint at 22% disappears on a dark transcript: the blue sits on black and
-    /// the composite is nearly indistinguishable from the background. Dark mode
-    /// gets a lighter base and a much higher alpha so a match reads as a
-    /// highlight rather than a smudge.
-    static let searchHighlightColor: UIColor = UIColor { traits in
-        let dark = traits.userInterfaceStyle == .dark
-        let base: UIColor = dark ? .systemBlue : .tintColor
-        return base.withAlphaComponent(dark ? 0.55 : 0.24)
-    }
-
-    /// Re-paint match backgrounds for a new query without re-rendering the
-    /// markdown. Idempotent: only our own ranges are removed and re-added.
-    func applySearchHighlight(query: String) {
-        guard allowsSearchHighlight else { return }
-        observeSearchStoreIfNeeded()
-
-        let current = super.attributedText
-        let length = current?.length ?? 0
-        guard query != appliedSearchQuery || length != lastHighlightedLength else { return }
-        guard length > 0, let current else {
-            // The query arrived before the cell rendered its text. Retry after
-            // the current update pass, which is where the content lands.
-            if query != appliedSearchQuery {
-                appliedSearchQuery = query
-                DispatchQueue.main.async { [weak self] in
-                    self?.applySearchHighlight(query: query)
-                }
-            }
-            return
-        }
-        appliedSearchQuery = query
-        lastHighlightedLength = length
-
-        let mutable = NSMutableAttributedString(attributedString: current)
-        let full = NSRange(location: 0, length: mutable.length)
-
-        var stale: [NSRange] = []
-        mutable.enumerateAttribute(Self.searchHighlightKey, in: full, options: []) { value, range, _ in
-            if value != nil { stale.append(range) }
-        }
-        for range in stale {
-            mutable.removeAttribute(.backgroundColor, range: range)
-            mutable.removeAttribute(Self.searchHighlightKey, range: range)
-        }
-
-        let keywords = ChatSearchEngine.keywords(in: query)
-        if !keywords.isEmpty {
-            let text = mutable.string as NSString
-            var painted = 0
-            for keyword in keywords {
-                var searchRange = NSRange(location: 0, length: text.length)
-                while searchRange.length > 0 {
-                    let found = text.range(of: keyword,
-                                           options: [.caseInsensitive, .diacriticInsensitive],
-                                           range: searchRange)
-                    if found.location == NSNotFound { break }
-
-                    mutable.addAttribute(.backgroundColor,
-                                         value: Self.searchHighlightColor,
-                                         range: found)
-                    mutable.addAttribute(Self.searchHighlightKey, value: true, range: found)
-                    painted += 1
-                    let next = found.location + max(found.length, 1)
-                    if next >= text.length || painted >= 400 { break }
-                    searchRange = NSRange(location: next, length: text.length - next)
-                }
-                if painted >= 400 { break }
-            }
-        }
-
-        super.attributedText = mutable
-    }
-
-    /// Subscribes once, on first render. Query changes then repaint even while
-    /// the cell is not being re-evaluated by SwiftUI — UIKit cells built with
-    /// `UIHostingConfiguration` do not inherit the chat's environment, so the
-    /// store is the only signal that reaches them.
-    private func observeSearchStoreIfNeeded() {
-        guard !observesSearchStore else { return }
-        observesSearchStore = true
-        searchCancellable = ChatSearchHighlightStore.shared.publisher
-            .removeDuplicates()
-            .debounce(for: .milliseconds(120), scheduler: DispatchQueue.main)
-            .sink { [weak self] query in
-                self?.applySearchHighlight(query: query)
-            }
-    }
+    var searchHighlightDimmed = false
+    var searchHighlightToken: ChatSearchHighlightToken?
+    var searchHighlightSub: AnyCancellable?
+    var searchHighlightRefreshScheduled = false
+    var searchHits: [ChatSearchDrawnHit] = []
+    var searchHighlightCurrentOrdinal: Int?
+    var searchHighlightLayer: CAShapeLayer?
+    var searchUnitKey: ChatSearchUnitKey?
+    weak var searchCenter: ChatSearchHighlightCenter?
 
     /// Invoked when the user picks "Copy Screenshot" from the text selection menu.
     /// Set by the SwiftUI layer so the menu item can reach the owning turn.
@@ -5286,6 +5244,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     required init?(coder: NSCoder) { fatalError() }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(searchSelectionInChat(_:)) { return searchCenter?.openSearch != nil && selectedRange.length > 0 }
         // Block edit-related actions since we're read-only; allow everything else
         // (select, copy, look up, share, Copy Markdown, etc.)
         let blocked: Set<String> = ["paste:", "cut:", "delete:", "_addShortcut:"]
@@ -5314,6 +5273,13 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             return selectedRange.length > 0
         }
         return super.canPerformAction(action, withSender: sender)
+    }
+
+    @objc func searchSelectionInChat(_ sender: Any?) {
+        guard selectedRange.length > 0 else { return }
+        let selection = plainTextWithTables(in: selectedRange)
+        selectedTextRange = nil
+        searchCenter?.openSearch?(selection)
     }
 
     /// Append the currently-selected text to the active chat's input field
@@ -5444,6 +5410,10 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             action: #selector(copyRichText(_:))
         )
         var extras: [UIMenuElement] = [copyMd, copyRtf]
+        if searchCenter?.openSearch != nil {
+            extras.append(UICommand(title: String(localized: "Search in Chat"), image: UIImage(systemName: "magnifyingglass"), action: #selector(searchSelectionInChat(_:))))
+        }
+
         if onCopyScreenshot != nil {
             extras.append(UICommand(
                 title: String(localized: "Copy Screenshot"),
@@ -6105,6 +6075,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             }
         }
         super.layoutSubviews()
+        updateSearchAttachmentOutlines()
 
         // UIKit clamps textContainer.size.height to the view's bounds during
         // layout. For a non-scrolling text view (isScrollEnabled=false), this
@@ -6593,6 +6564,9 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
 /// SwiftUI wrapper for the UITextView-based selectable Markdown renderer.
 struct SelectableMarkdownView: UIViewRepresentable {
+    @Environment(\.chatSearchHighlights) private var searchCenter
+    @Environment(\.chatSearchDimmed) private var searchDimmed
+    @Environment(\.chatSnapshotRendering) private var snapshotRendering
     let markdown: String
     var cachedContent: MarkdownContent?
     var cachedAttributedString: NSAttributedString?
@@ -6630,9 +6604,9 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // fresh TableAttachment objects → layoutManager sees attachments
         // with no identity continuity and keeps the early-stream glyph
         // rects cached.
-        if let mid = messageId, let existing = SelectableMarkdownView.rendererCache[mid] {
+        if !snapshotRendering, let mid = messageId, let existing = SelectableMarkdownView.rendererCache[mid] {
             coord.renderer = existing
-        } else if let mid = messageId {
+        } else if !snapshotRendering, let mid = messageId {
             SelectableMarkdownView.rendererCache[mid] = coord.renderer
         }
         return coord
@@ -6685,7 +6659,10 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // [T-chat-search] Runs before the markdown-unchanged early return so a
         // query change re-colours the visible text without re-rendering it.
         textView.allowsSearchHighlight = allowsSearchHighlight
-        textView.applySearchHighlight(query: ChatSearchHighlightStore.shared.query)
+        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body) } : nil
+        textView.searchCenter = snapshotRendering ? nil : searchCenter
+        textView.bindSearchHighlight(center: allowsSearchHighlight && !snapshotRendering ? searchCenter : nil, key: textView.searchUnitKey, dimmed: searchDimmed)
+        textView.scheduleSearchHighlightRefresh()
 
         let currentFontSize = FontSettings.shared.scaledMessage(16.5)
         let fontChanged = context.coordinator.lastFontSize != currentFontSize
@@ -7065,7 +7042,10 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // [T-chat-search] Repaint after either path: the fast path mutates
         // textStorage directly, so the highlight would otherwise be dropped on
         // the next streaming tick.
-        textView.applySearchHighlight(query: ChatSearchHighlightStore.shared.query)
+        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body) } : nil
+        textView.searchCenter = snapshotRendering ? nil : searchCenter
+        textView.bindSearchHighlight(center: allowsSearchHighlight && !snapshotRendering ? searchCenter : nil, key: textView.searchUnitKey, dimmed: searchDimmed)
+        textView.scheduleSearchHighlightRefresh()
 
         // [WordFade] Now that storage holds the final text (via either path),
         // fade the revealed range in word-by-word. Decoupled from fastPathTaken
@@ -8255,4 +8235,250 @@ private func resolveZeFileURLForNativeText(url: URL) -> URL? {
 
     imgLogger.warning("[ZeImage][Resolve] NOT FOUND in active session / global dirs url=\(url.absoluteString) host=\(host) subPaths=\(subPaths) (cross-session scan disabled for isolation)")
     return nil
+}
+
+// Source-derived search drawing, pinned reference recorded in docs/search-parity-audit.md.
+/// The search's view of a rendered block: its visible text, and for every
+/// UTF-16 unit of that text the storage index it came from.
+struct ChatSearchComposite {
+    let text: String
+    /// Storage index of each UTF-16 unit of `text`.
+    let storageIndex: [Int]
+    /// Whether that unit came from an attachment (code block / table).
+    let fromAttachment: [Bool]
+
+    static func build(_ storage: NSAttributedString) -> ChatSearchComposite {
+        var units: [UInt16] = []
+        var index: [Int] = []
+        var attach: [Bool] = []
+        units.reserveCapacity(storage.length)
+        index.reserveCapacity(storage.length)
+        attach.reserveCapacity(storage.length)
+        let ns = storage.string as NSString
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
+            if value == nil {
+                for i in range.location..<NSMaxRange(range) {
+                    let u = ns.character(at: i)
+                    switch u {
+                    case 0x200B, 0x200A, 0xFFFC: continue
+                    case 0x2028:
+                        units.append(0x0A)
+                    default:
+                        units.append(u)
+                    }
+                    index.append(i)
+                    attach.append(false)
+                }
+                return
+            }
+            let text: String
+            if let code = value as? CodeBlockAttachment {
+                text = code.code
+            } else if let table = value as? TableAttachment {
+                text = ChatSearchMarkdownText.tableText(rows: table.rows, columnCount: table.alignments.count)
+            } else {
+                return
+            }
+            for u in text.utf16 {
+                units.append(u)
+                index.append(range.location)
+                attach.append(true)
+            }
+        }
+        return ChatSearchComposite(text: String(utf16CodeUnits: units, count: units.count),
+                                   storageIndex: index, fromAttachment: attach)
+    }
+
+    /// Where a match (a range of `text`) lies in the storage: the text span it
+    /// covers, and the attachment it falls in, if any.
+    func locate(_ match: NSRange) -> (textRange: NSRange?, attachment: Int?) {
+        let lo = max(0, match.location), hi = min(storageIndex.count, NSMaxRange(match))
+        guard lo < hi else { return (nil, nil) }
+        var minText = Int.max, maxText = -1
+        var attachment: Int?
+        for i in lo..<hi {
+            if fromAttachment[i] {
+                attachment = attachment ?? storageIndex[i]
+            } else {
+                minText = min(minText, storageIndex[i])
+                maxText = max(maxText, storageIndex[i])
+            }
+        }
+        let textRange = maxText >= 0 ? NSRange(location: minText, length: maxText - minText + 1) : nil
+        return (textRange, attachment)
+    }
+}
+
+/// One drawn occurrence.
+struct ChatSearchDrawnHit {
+    let textRange: NSRange?
+    let attachmentIndex: Int?
+}
+
+extension SelectableMarkdownTextView {
+    /// Binds this view to the highlight of the block it shows. Called on every
+    /// updateUIView; cheap when nothing changed.
+    func bindSearchHighlight(center: ChatSearchHighlightCenter?, key: ChatSearchUnitKey?, dimmed: Bool) {
+        let token = key.flatMap { center?.token(for: $0) }
+        let dimmedChanged = dimmed != searchHighlightDimmed
+        searchHighlightDimmed = dimmed
+        if token !== searchHighlightToken {
+            searchHighlightToken = token
+            // @Published emits in willSet: use the delivered value, the
+            // token's property still holds the old one at this point.
+            searchHighlightSub = token?.$state
+                .dropFirst()
+                .removeDuplicates()
+                .sink { [weak self] state in self?.refreshSearchHighlight(state) }
+            refreshSearchHighlight()
+        } else if dimmedChanged {
+            refreshSearchHighlight()
+        }
+    }
+
+    var zeSearchLayoutManager: ZeLayoutManager? { layoutManager as? ZeLayoutManager }
+
+    /// The text changed (streaming, re-render): find the occurrences again
+    /// once the edit has finished.
+    func scheduleSearchHighlightRefresh() {
+        guard !searchHighlightRefreshScheduled else { return }
+        searchHighlightRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.searchHighlightRefreshScheduled = false
+            self.refreshSearchHighlight()
+        }
+    }
+
+    /// Recomputes and redraws this view's highlights from its token
+    /// (`incoming`: a state being published, before the token stores it).
+    func refreshSearchHighlight(_ incoming: ChatSearchUnitHighlight?? = nil) {
+        guard let lm = zeSearchLayoutManager else { return }
+        let state: ChatSearchUnitHighlight? = incoming ?? searchHighlightToken?.state
+        let hadAny = !lm.searchHighlightRanges.isEmpty || !searchHits.isEmpty
+        // Follow edits (streaming) only while there is something to keep
+        // highlighted; every chat text view has a token, most never use it.
+        lm.onTextStorageEdited = state == nil ? nil : { [weak self] in
+            self?.scheduleSearchHighlightRefresh()
+        }
+        guard let state, textStorage.length > 0 else {
+            searchHits = []
+            searchHighlightCurrentOrdinal = nil
+            lm.searchHighlightRanges = []
+            lm.searchHighlightCurrent = nil
+            if hadAny { lm.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: textStorage.length)) }
+            updateSearchAttachmentOutlines()
+            return
+        }
+        let composite = ChatSearchComposite.build(textStorage)
+        let ranges = ChatSearchMatcher.nsRanges(of: state.query, in: composite.text, limit: state.drawLimit)
+        let hits = ranges.map { r -> ChatSearchDrawnHit in
+            let loc = composite.locate(r)
+            return ChatSearchDrawnHit(textRange: loc.textRange, attachmentIndex: loc.attachment)
+        }
+        #if DEBUG
+        if hits.count != state.count {
+            AppLogger(category: "ChatSearch").warning("[ChatSearch][drift] block shows \(hits.count) occurrence(s), search counted \(state.count) — text=\(composite.text.count) chars")
+        }
+        #endif
+        searchHits = hits
+        searchHighlightCurrentOrdinal = state.current
+        lm.searchHighlightDimmed = searchHighlightDimmed
+        lm.searchHighlightRanges = hits.compactMap(\.textRange)
+        lm.searchHighlightCurrent = state.current.flatMap { hits.indices.contains($0) ? hits[$0].textRange : nil }
+        lm.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: textStorage.length))
+        updateSearchAttachmentOutlines()
+    }
+
+    /// Outlines around code blocks / tables holding a match. Re-run on
+    /// layout, since the attachment's position moves with the text.
+    func updateSearchAttachmentOutlines() {
+        let attachmentHits = searchHits.enumerated().compactMap { i, hit in
+            hit.attachmentIndex.map { (index: $0, isCurrent: i == searchHighlightCurrentOrdinal) }
+        }
+        guard !attachmentHits.isEmpty else {
+            searchHighlightLayer?.removeFromSuperlayer()
+            searchHighlightLayer = nil
+            return
+        }
+        let layer: CAShapeLayer
+        if let existing = searchHighlightLayer {
+            layer = existing
+        } else {
+            layer = CAShapeLayer()
+            layer.fillColor = UIColor.clear.cgColor
+            layer.zPosition = 1000
+            self.layer.addSublayer(layer)
+            searchHighlightLayer = layer
+        }
+        layer.frame = bounds
+        let current = layer.sublayers?.first as? CAShapeLayer ?? {
+            let l = CAShapeLayer()
+            l.fillColor = UIColor.clear.cgColor
+            layer.addSublayer(l)
+            return l
+        }()
+        let others = UIBezierPath()
+        let currentPath = UIBezierPath()
+        var seen = Set<Int>()
+        for hit in attachmentHits.sorted(by: { $0.isCurrent && !$1.isCurrent }) where !seen.contains(hit.index) {
+            seen.insert(hit.index)
+            guard let rect = searchRect(forStorageRange: NSRange(location: hit.index, length: 1)) else { continue }
+            let path = UIBezierPath(roundedRect: rect.insetBy(dx: -2, dy: -2), cornerRadius: 8)
+            (hit.isCurrent ? currentPath : others).append(path)
+        }
+        layer.path = others.cgPath
+        layer.lineWidth = 2
+        layer.strokeColor = ChatSearchHighlightStyle.matchColor(dimmed: true).cgColor
+        current.frame = layer.bounds
+        current.path = currentPath.cgPath
+        current.lineWidth = 3
+        current.strokeColor = ChatSearchHighlightStyle.currentColor(dimmed: true).cgColor
+    }
+
+    /// Rect of `ordinal`'s occurrence in this view's coordinates, for
+    /// scrolling a result into view.
+    func searchMatchRect(ordinal: Int) -> CGRect? {
+        guard searchHits.indices.contains(ordinal) else { return nil }
+        let hit = searchHits[ordinal]
+        if let r = hit.textRange { return searchRect(forStorageRange: r) }
+        if let a = hit.attachmentIndex { return searchRect(forStorageRange: NSRange(location: a, length: 1)) }
+        return nil
+    }
+
+    private func searchRect(forStorageRange range: NSRange) -> CGRect? {
+        guard NSMaxRange(range) <= textStorage.length, range.length > 0 else { return nil }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        guard glyphs.length > 0 else { return nil }
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+        rect.origin.x += textContainerInset.left
+        rect.origin.y += textContainerInset.top
+        return rect
+    }
+}
+
+extension ZeLayoutManager {
+    /// [T-in-chat-search] Fills the search highlights under the glyphs. Pure
+    /// drawing: the storage and the layout are left exactly as they were.
+    func drawSearchHighlights(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        guard !searchHighlightRanges.isEmpty, let tc = textContainers.first,
+              let context = UIGraphicsGetCurrentContext() else { return }
+        let visibleChars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        let match = ChatSearchHighlightStyle.matchColor(dimmed: searchHighlightDimmed)
+        let current = ChatSearchHighlightStyle.currentColor(dimmed: searchHighlightDimmed)
+        context.saveGState()
+        for range in searchHighlightRanges {
+            guard NSIntersectionRange(range, visibleChars).length > 0 else { continue }
+            let color = range == searchHighlightCurrent ? current : match
+            context.setFillColor(color.cgColor)
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                                    in: tc) { rect, _ in
+                let r = rect.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -1, dy: 0)
+                context.addPath(UIBezierPath(roundedRect: r, cornerRadius: 3).cgPath)
+                context.fillPath()
+            }
+        }
+        context.restoreGState()
+    }
 }

@@ -97,6 +97,7 @@ private struct PreviewContentSizeKey: PreferenceKey {
 // MARK: - Chat Message Row
 
 struct ChatMessageRow: View {
+    @Environment(\.chatSearchHighlights) private var searchCenter
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @ObservedObject var message: ChatMessage
     /// Only the actively streaming message needs vm access (for typing indicator & stop button).
@@ -217,7 +218,7 @@ struct ChatMessageRow: View {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
                         .font(.system(size: 10))
                 }
-                Text(message.content)
+                SearchHighlightText(message.content, key: .init(messageId: message.id, blockId: nil, field: .body))
                     .font(.system(size: 12, weight: .medium))
                 if !message.isCompactLoading && message.compactSummary != nil {
                     Button {
@@ -261,7 +262,7 @@ struct ChatMessageRow: View {
                     Image(systemName: icon)
                         .font(.system(size: 10))
                 }
-                Text(message.content)
+                SearchHighlightText(message.content, key: .init(messageId: message.id, blockId: nil, field: .body))
                     .font(.system(size: 12, weight: .medium))
                     .multilineTextAlignment(.center)
             }
@@ -284,16 +285,7 @@ struct ChatMessageRow: View {
     // MARK: User Row
 
     /// User message text with `<user-attached-files>` metadata stripped out.
-    private var userDisplayText: String {
-        var text = message.content
-        if let start = text.range(of: "<user-attached-files>") {
-            let end = text.range(of: "</user-attached-files>")
-            let endBound = end?.upperBound ?? text.endIndex
-            text = String(text[text.startIndex..<start.lowerBound] + text[endBound...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return text
-    }
+    private var userDisplayText: String { ChatSearchDisplayText.userBubble(message.content) }
 
     /// A queued prompt is an insertion point in the active turn, not a normal
     /// sent message. Keep it compact so it reads as a pending inline action.
@@ -354,29 +346,6 @@ struct ChatMessageRow: View {
         )
     }
 
-    /// Bubble content is separated from `userRow` so the collapse control stays
-    /// [T-chat-search-user-bubble] The user bubble is a plain `Text`, so it
-    /// never went through the markdown text view that paints matches. Mirror
-    /// the same query here as an attributed run background.
-    @State private var searchQuery: String = ""
-
-    /// `userDisplayText` with every keyword backgrounded.
-    private var highlightedUserText: AttributedString {
-        var attr = AttributedString(userDisplayText)
-        let keywords = ChatSearchEngine.keywords(in: searchQuery)
-        guard !keywords.isEmpty else { return attr }
-        let color = Color(uiColor: SelectableMarkdownTextView.searchHighlightColor)
-        for keyword in keywords {
-            var cursor = attr.startIndex
-            while cursor < attr.endIndex,
-                  let found = attr[cursor..<attr.endIndex].range(of: keyword, options: .caseInsensitive) {
-                attr[found].backgroundColor = color
-                cursor = found.upperBound
-            }
-        }
-        return attr
-    }
-
     /// inside the same rounded card and participates in one intrinsic-height
     /// measurement.
     private var userMessageBubble: some View {
@@ -384,14 +353,13 @@ struct ChatMessageRow: View {
         let expanded = message.isUserTextExpanded
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text(highlightedUserText)
+            SearchHighlightText(userDisplayText, key: .init(messageId: message.id, blockId: nil, field: .body))
                 .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
                 .foregroundStyle(ChatColors.userMessageText)
                 .lineLimit(collapsible && !expanded
                     ? UserMessageCollapsePolicy.collapsedLineLimit
                     : nil)
                 .truncationMode(.tail)
-                .onReceive(ChatSearchHighlightStore.shared.publisher) { searchQuery = $0 }
 
             if collapsible {
                 HStack(spacing: 4) {
@@ -462,6 +430,9 @@ struct ChatMessageRow: View {
                 .disabled(true)
 
                 Divider()
+                if let open = searchCenter?.openSearch {
+                    Button { open(nil) } label: { Label(String(localized: "Search in Chat"), systemImage: "magnifyingglass") }
+                }
 
                 Button {
                     UIPasteboard.general.string = message.content
@@ -785,7 +756,7 @@ struct ChatMessageRow: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.red)
-                Text(error)
+                SearchHighlightText(error, key: .init(messageId: message.id, blockId: nil, field: .footerError))
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(2)

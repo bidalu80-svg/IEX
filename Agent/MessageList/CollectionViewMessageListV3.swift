@@ -33,6 +33,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var onRevertCompact: (() -> Void)?
     var onForceSync: (() -> Void)?
     var onScreenshotImage: ((UIImage) -> Void)?
+    var onShareMessage: ((UUID) -> Void)?
     var maxContentWidth: CGFloat
     var floatingBarHeight: CGFloat
     var inputBarHeight: CGFloat
@@ -76,6 +77,8 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.onRevertCompact = onRevertCompact
         coord.onForceSync = onForceSync
         coord.onScreenshotImage = onScreenshotImage
+        coord.onShareMessage = onShareMessage
+        coord.keepSearchAfterWidthChange(vc.collectionView.bounds.width)
         coord.maxContentWidth = maxContentWidth
         coord.updateToolGroupingPreference(collapseConsecutiveToolCalls)
 
@@ -682,7 +685,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.red)
-                Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                SearchHighlightText(error, key: .init(messageId: message.id, blockId: nil, field: .footerError)).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
             .contentShape(Rectangle())
             .contextMenu {
@@ -881,6 +884,7 @@ extension CollectionViewMessageListV3 {
         var onRevertCompact: (() -> Void)?
         var onForceSync: (() -> Void)?
         var onScreenshotImage: ((UIImage) -> Void)?
+        var onShareMessage: ((UUID) -> Void)?
         var maxContentWidth: CGFloat = 0
         var lastInputFocused: Bool = false
         private var collapseConsecutiveToolCalls = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool) ?? ConsecutiveToolCallsPolicy.defaultEnabled
@@ -1387,6 +1391,7 @@ extension CollectionViewMessageListV3 {
             // generation guard never trips (gen never changes) and the
             // broad cache may return a stale height for the swapped content.
             // Both reduce the window for the ViewGraphGeometryObservers race.
+            let searchHighlights = forceUncollapsedToolsForScreenshot ? nil : vm.chatSearch.highlights
             switch item {
             case .wholeMessage(let msgId):
                 guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { return }
@@ -1418,6 +1423,9 @@ extension CollectionViewMessageListV3 {
                     // explicitly on every hosting config.
                     // [T-ios-tool-capsule-vm-envobject-crash]
                     .environmentObject(vm)
+                    .environment(\.chatSearchHighlights, searchHighlights)
+                    .environment(\.chatSearchMessageId, message.id)
+                    .environment(\.chatSearchDimmed, message.isCompactedHistory)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
 
@@ -1437,6 +1445,9 @@ extension CollectionViewMessageListV3 {
                                                 && message.taskDuration != nil)
                         .transaction { $0.disablesAnimations = true }
                         .environmentObject(vm)
+                    .environment(\.chatSearchHighlights, searchHighlights)
+                    .environment(\.chatSearchMessageId, message.id)
+                    .environment(\.chatSearchDimmed, message.isCompactedHistory)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
 
@@ -1461,6 +1472,9 @@ extension CollectionViewMessageListV3 {
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
+                    .environment(\.chatSearchHighlights, searchHighlights)
+                    .environment(\.chatSearchMessageId, message.id)
+                    .environment(\.chatSearchDimmed, message.isCompactedHistory)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
 
@@ -1476,6 +1490,9 @@ extension CollectionViewMessageListV3 {
                     }
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
+                    .environment(\.chatSearchHighlights, searchHighlights)
+                    .environment(\.chatSearchMessageId, message.id)
+                    .environment(\.chatSearchDimmed, message.isCompactedHistory)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
 
@@ -1492,6 +1509,9 @@ extension CollectionViewMessageListV3 {
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
+                    .environment(\.chatSearchHighlights, searchHighlights)
+                    .environment(\.chatSearchMessageId, message.id)
+                    .environment(\.chatSearchDimmed, message.isCompactedHistory)
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
             }
@@ -1678,6 +1698,7 @@ extension CollectionViewMessageListV3 {
             bridge.onSpeakText = { [weak vm] text in vm?.speakText(text) }
             bridge.onCopyScreenshot = { [weak self, weak vm] in
                 guard let self, let vm else { return }
+                if let onShareMessage = self.onShareMessage { onShareMessage(message.id); return }
                 let msgs = vm.messages
                 guard let anchorIdx = msgs.firstIndex(where: { $0.id == message.id }) else { return }
                 let anchor = msgs[anchorIdx]
@@ -1983,11 +2004,9 @@ extension CollectionViewMessageListV3 {
             NotificationCenter.default.publisher(for: .chatSearchJump)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] note in
-                    guard let messageId = note.userInfo?["messageId"] as? UUID else { return }
-                    self?.revealSearchHit(messageId: messageId,
-                                          blockId: note.userInfo?["blockId"] as? UUID,
-                                          line: note.userInfo?["line"] as? String,
-                                          keyword: note.userInfo?["keyword"] as? String)
+                    guard let self, let vm = self.vm, note.object as AnyObject? === vm.chatSearch,
+                          let hit = note.userInfo?["hit"] as? ChatSearchHit else { return }
+                    self.revealSearchHit(hit)
                 }
                 .store(in: &subscriptions)
 
@@ -4042,164 +4061,71 @@ extension CollectionViewMessageListV3 {
 
         // MARK: - Search
 
-        /// [T-chat-search] Reveal a hit posted by the search panel: scroll its
-        /// first item to the middle of the viewport, then flash an accent ring
-        /// around the row so the eye lands on it after the animation.
-        func revealSearchHit(messageId: UUID, blockId: UUID?, line: String?, keyword: String?, animated: Bool = true) {
-            guard let cv = viewController?.collectionView, let ds = dataSource else { return }
-            // [T-chat-search-block-target] The list is cell-per-block, and the
-            // first cell of an assistant message is its thinking header. Jumping
-            // by message id alone therefore landed on "思考了 4s" instead of the
-            // reply body that actually contains the match.
+        private var searchViewportWidth: CGFloat = 0
+        func keepSearchAfterWidthChange(_ width: CGFloat) {
+            let old = searchViewportWidth
+            searchViewportWidth = width
+            guard old > 0, abs(old - width) > 1, let vm, vm.chatSearch.isActive, let hit = vm.chatSearch.current else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak vm] in
+                guard let self, vm?.chatSearch.current?.match == hit.match, self.viewController?.collectionView.isTracking == false else { return }
+                self.revealSearchHit(hit)
+            }
+        }
+        func revealSearchHit(_ hit: ChatSearchHit) {
+            guard let vm, let cv = viewController?.collectionView, let ds = dataSource,
+                  let message = vm.messages.first(where: { $0.id == hit.messageId }) else { return }
+            scrollMode = .userBrowsing
+            lastJumpedUserId = nil
+            if message.role == .user, !message.isUserTextExpanded {
+                toggleUserMessageExpansion(messageId: message.id)
+            }
+            if let blockId = hit.blockId {
+                if message.isStepsCollapsed { message.isStepsCollapsed = false }
+                for segment in AssistantBlockPresentationSegment.make(message.blocks, enabled: collapseConsecutiveToolCalls)
+                where segment.blocks.contains(where: { $0.id == blockId }) && segment.isToolGroup {
+                    segment.blocks.first?.isToolGroupExpanded = true
+                }
+                applySnapshot(messages: vm.messages, caller: "search-expand")
+            }
             let items = ds.snapshot().itemIdentifiers
-            let item = items.first { item in
-                if let blockId,
-                   case .assistantBlock(let mid, let bid) = item,
-                   mid == messageId, bid == blockId {
-                    return true
+            let item: MessageListItem?
+            if hit.match.key.field == .footerError { item = items.first { $0 == .assistantFooter(message.id) } }
+            else if let bid = hit.blockId { item = items.first { $0 == .assistantBlock(message.id, bid) } }
+            else { item = items.first { $0.messageId == message.id } }
+            guard let item = item ?? items.first(where: { $0.messageId == message.id }), let ip = ds.indexPath(for: item) else { return }
+            if cv.cellForItem(at: ip) == nil { cv.scrollToItem(at: ip, at: .centeredVertically, animated: false); cv.layoutIfNeeded() }
+            placeSearchHit(hit, item: item)
+            for delay in [0.0, 0.25] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak vm] in
+                    guard let self, vm?.chatSearch.current?.match == hit.match, !cv.isTracking, !cv.isDecelerating else { return }
+                    self.placeSearchHit(hit, item: item)
                 }
-                return blockId == nil && item.messageId == messageId
-            } ?? items.first { $0.messageId == messageId }
-            guard let item, let indexPath = ds.indexPath(for: item) else {
-                AppLogger(category: "ScrollDiag").info("[ScrollDiag][searchJump] item not found msg=\(messageId.uuidString.prefix(8))")
-                return
             }
-
-            // [T-chat-search-exact-jump] Bring the row's top to the viewport
-            // top without animation so its text views exist and are laid out,
-            // then scroll again to the match itself. Centring the whole cell
-            // (the old behaviour) dropped the reader at the start of a reply
-            // and left the hit somewhere off-screen.
-            cv.scrollToItem(at: indexPath, at: .top, animated: false)
-            cv.layoutIfNeeded()
-
-            var target: CGFloat?
-            var matchRect: CGRect?
-            if let line, let keyword,
-               let cell = cv.cellForItem(at: indexPath),
-               let rect = Self.matchRect(in: cell, line: line, keyword: keyword) {
-                // `rect` is already in content coordinates. Placing it 12pt
-                // below the inset-adjusted top keeps it clear of the search
-                // bar, which the safe-area inset accounts for.
-                target = rect.minY - cv.adjustedContentInset.top - 12
-                matchRect = rect
-            }
-
-            if let target {
-                let minY = -cv.adjustedContentInset.top
-                let maxY = max(cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom, minY)
-                let y = min(max(target, minY), maxY)
-                cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: y), animated: animated)
-            } else {
-                cv.scrollToItem(at: indexPath, at: .top, animated: animated)
-            }
-
-            flashSearchHighlight(contentRect: matchRect,
-                                 item: item,
-                                 delay: animated ? 0.3 : 0)
         }
-
-        /// Rect of `keyword` on `line`, in the cell's coordinate space.
-        /// A cell hosts several text views (prose, thinking, tool output), so
-        /// the first one containing the line wins.
-        private static func matchRect(in cell: UICollectionViewCell,
-                                      line: String,
-                                      keyword: String) -> CGRect? {
-            for textView in textViews(in: cell.contentView) {
-                guard let text = textView.text, !text.isEmpty else { continue }
-                let ns = text as NSString
-                let lineRange = ns.range(of: line)
-                guard lineRange.location != NSNotFound else { continue }
-                let within = ns.range(of: keyword,
-                                      options: [.caseInsensitive, .diacriticInsensitive],
-                                      range: lineRange)
-                guard within.location != NSNotFound else { continue }
-
-                textView.layoutIfNeeded()
-
-                // UITextInput path — works with both TextKit generations.
-                if let start = textView.position(from: textView.beginningOfDocument,
-                                                 offset: within.location),
-                   let end = textView.position(from: start, offset: within.length),
-                   let textRange = textView.textRange(from: start, to: end) {
-                    let rect = textView.firstRect(for: textRange)
-                    if !rect.isNull, !rect.isEmpty {
-                        return textView.convert(rect, to: cell)
-                    }
-                }
-
-                // Fallback for a text view that cannot build a UITextRange.
-                // `layoutManager` is non-optional on UITextView.
-                let layoutManager = textView.layoutManager
-                let glyphs = layoutManager.glyphRange(forCharacterRange: within,
-                                                      actualCharacterRange: nil)
-                var rect = layoutManager.boundingRect(forGlyphRange: glyphs,
-                                                      in: textView.textContainer)
-                rect.origin.x += textView.textContainerInset.left
-                rect.origin.y += textView.textContainerInset.top
-                if !rect.isEmpty {
-                    return textView.convert(rect, to: cell)
+        private func placeSearchHit(_ hit: ChatSearchHit, item: MessageListItem) {
+            guard let cv = viewController?.collectionView, let ip = dataSource?.indexPath(for: item),
+                  let frame = cv.layoutAttributesForItem(at: ip)?.frame else { return }
+            var rect = frame
+            if let cell = cv.cellForItem(at: ip), let textView = Self.searchTextViews(in: cell.contentView).first(where: { $0.searchUnitKey == hit.match.key }),
+               let local = textView.searchMatchRect(ordinal: hit.match.ordinal) { rect = textView.convert(local, to: cv) }
+            else if hit.blockId == nil, hit.match.key.field == .body, frame.height > cv.bounds.height * 0.8 {
+                let ranges = ChatSearchMatcher.ranges(of: hit.keyword, in: hit.text, limit: hit.match.ordinal + 1)
+                if ranges.indices.contains(hit.match.ordinal) {
+                    let offset = hit.text.distance(from: hit.text.startIndex, to: ranges[hit.match.ordinal].lowerBound)
+                    rect = CGRect(x: frame.minX, y: frame.minY + frame.height * CGFloat(offset) / CGFloat(max(1, hit.text.count)), width: frame.width, height: 24)
                 }
             }
-            return nil
+            let top = cv.contentOffset.y + cv.adjustedContentInset.top
+            let height = cv.bounds.height - cv.adjustedContentInset.top - cv.adjustedContentInset.bottom
+            guard height > 40 else { return }
+            if rect.minY >= top + 40 && rect.maxY <= top + height - 40 { return }
+            let minimum = -cv.adjustedContentInset.top
+            let maximum = max(minimum, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
+            let target = rect.minY - cv.adjustedContentInset.top - height * 0.3
+            cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: min(maximum, max(minimum, target))), animated: false)
         }
-
-        private static func textViews(in view: UIView) -> [UITextView] {
-            var out: [UITextView] = []
-            for sub in view.subviews {
-                if let textView = sub as? UITextView { out.append(textView) }
-                out.append(contentsOf: textViews(in: sub))
-            }
-            return out
-        }
-
-        private func flashSearchHighlight(contentRect: CGRect?,
-                                          item: MessageListItem?,
-                                          delay: TimeInterval) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, let cv = self.viewController?.collectionView else { return }
-                self.searchHighlightView?.removeFromSuperview()
-
-                // [T-chat-search-block-target] Prefer the glyph rect: ringing
-                // the whole cell drew the flash around a thinking row when the
-                // match lived in a later block of the same message.
-                let frame: CGRect
-                if let contentRect {
-                    frame = contentRect.insetBy(dx: -4, dy: -2)
-                } else if let item,
-                          let indexPath = self.dataSource?.indexPath(for: item),
-                          let cell = cv.cellForItem(at: indexPath) {
-                    frame = cv.convert(cell.bounds, from: cell).insetBy(dx: 6, dy: 2)
-                } else {
-                    return
-                }
-
-                // Content coordinates: the overlay is a subview of the scroll
-                // view, so it travels with the cell instead of floating.
-                let highlight = UIView(frame: frame)
-                highlight.isUserInteractionEnabled = false
-                highlight.backgroundColor = UIColor.tintColor.withAlphaComponent(0.10)
-                highlight.layer.cornerRadius = 6
-                highlight.layer.cornerCurve = .continuous
-                highlight.layer.borderWidth = 1.5
-                highlight.layer.borderColor = UIColor.tintColor.withAlphaComponent(0.55).cgColor
-                highlight.alpha = 0
-                cv.addSubview(highlight)
-                self.searchHighlightView = highlight
-
-                UIView.animate(withDuration: 0.18, animations: {
-                    highlight.alpha = 1
-                }, completion: { _ in
-                    UIView.animate(withDuration: 0.55, delay: 1.4, options: [.curveEaseOut], animations: {
-                        highlight.alpha = 0
-                    }, completion: { _ in
-                        highlight.removeFromSuperview()
-                        if self.searchHighlightView === highlight {
-                            self.searchHighlightView = nil
-                        }
-                    })
-                })
-            }
+        private static func searchTextViews(in view: UIView) -> [SelectableMarkdownTextView] {
+            (view as? SelectableMarkdownTextView).map { [$0] } ?? view.subviews.flatMap { searchTextViews(in: $0) }
         }
 
         /// The user-message id the up-button last jumped to, so a repeated tap

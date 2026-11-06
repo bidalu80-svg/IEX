@@ -36,7 +36,7 @@ struct AttachmentMeta: Identifiable, Equatable {
 }
 
 final class ChatMessage: Identifiable, ObservableObject {
-    let id = UUID()
+    let id: UUID
     let role: ChatMessageRole
     @Published var content: String
     /// For assistant turns: ordered list of content blocks (text + tool calls)
@@ -116,8 +116,10 @@ final class ChatMessage: Identifiable, ObservableObject {
         content: String,
         blocks: [AssistantBlock] = [],
         isQueued: Bool = false,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        id: UUID = UUID()
     ) {
+        self.id = id
         self.role = role
         self.content = content
         self.blocks = blocks
@@ -216,7 +218,7 @@ enum ToolBlockStatus: Equatable {
 
 /// A single block within an assistant turn.
 final class AssistantBlock: Identifiable, ObservableObject {
-    let id = UUID()
+    let id: UUID
     @Published var kind: AssistantBlockKind
     @Published var content: String
 
@@ -358,7 +360,8 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// be silently undone by a streaming sibling's recomposition.
     @Published var thinkingUserToggled: Bool = false
 
-    init(kind: AssistantBlockKind, content: String, toolStatus: ToolBlockStatus? = nil, toolUseId: String? = nil) {
+    init(kind: AssistantBlockKind, content: String, toolStatus: ToolBlockStatus? = nil, toolUseId: String? = nil, id: UUID = UUID()) {
+        self.id = id
         self.kind = kind
         self.content = content
         self.toolStatus = toolStatus

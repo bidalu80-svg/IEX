@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import sys
+from search_harness_support import search_support
 
 root = pathlib.Path(__file__).resolve().parents[1]
 views_path = root / "Views/Chat/AssistantBlockView.swift"
@@ -20,6 +21,7 @@ models_begin = state.index("struct QuestionCardQuestion:")
 parts = [
     "import SwiftUI\nimport UIKit\nimport Foundation\nimport Combine\nimport UserNotifications\n",
     state[models_begin:],
+    search_support(root, question=True),
     palette[palette_begin:palette_end],
     views[begin:end],
     speech_path.read_text(encoding="utf-8"),

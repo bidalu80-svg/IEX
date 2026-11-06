@@ -13,6 +13,9 @@ private let logger = AppLogger(category: "AIChatVM")
 
 @MainActor
 final class AIChatViewModel: ObservableObject, SpeechControlling {
+    /// Search state belongs to this transcript, including per-unit highlights.
+    /// Keeping it off @Published prevents match navigation from rebuilding chat.
+    let chatSearch = ChatSearchModel()
 
     /// Maximum characters returned in a single tool result to the model
     static let kMaxToolResultChars = 15000

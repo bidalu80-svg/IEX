@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import sys
+from search_harness_support import search_support
 
 root = pathlib.Path(__file__).resolve().parents[1]
 views_path = root / "Views/Chat/ZeSubAgentViews.swift"
@@ -17,6 +18,7 @@ def section(source, start, end):
     return source[begin:finish]
 
 parts = [
+    search_support(root),
     "import SwiftUI\nimport UIKit\nimport Foundation\n",
     section(models, "enum ZeSubAgentStatus:", "/// Owns a bounded child-agent tree"),
     section(views, "enum ZeSubAgentTheme {", "/// Compact, native iOS dock"),

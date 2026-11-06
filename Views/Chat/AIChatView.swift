@@ -425,10 +425,11 @@ struct AIChatView: View {
     @State private var screenshotPreview: ChatScreenshotPreview?
     /// [T-chat-search] In-conversation search panel. The model owns the query
     /// and hits; the overlay owns presentation only.
-    @StateObject private var chatSearchModel = ChatSearchModel()
+    private var chatSearchModel: ChatSearchModel { vm.chatSearch }
     @State private var showChatSearch = false
     /// [T-session-share] Presents the session export / share configuration.
     @State private var showSessionShare = false
+    @State private var selectedShareMessageId: UUID?
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var attachmentGridHeight: CGFloat = 0
     @State private var transcriptHeight: CGFloat = 0
@@ -634,8 +635,13 @@ struct AIChatView: View {
                         // Register the composer (tool preview + input bar) as a
                         // region the global speech capsule must not cover.
                         .capsuleProtectedFrame("inputBar")
+                        .opacity(showChatSearch ? 0 : 1)
+                        .allowsHitTesting(!showChatSearch)
+                        .accessibilityHidden(showChatSearch)
                         inputPopupOverlay
                             .padding(.bottom, inputBarHeight)
+                            .opacity(showChatSearch ? 0 : 1)
+                            .allowsHitTesting(!showChatSearch)
                     }
                 }
                 // Collapse the expanded speech player on a tap anywhere in the chat
@@ -728,9 +734,9 @@ struct AIChatView: View {
         // budget ("unable to type-check this expression in reasonable time").
         .modifier(ChatSearchPresentation(
             model: chatSearchModel,
-            isPresented: showChatSearch,
-            messages: vm.messages,
-            onJump: jumpToSearchHit,
+            viewModel: vm,
+            isPresented: $showChatSearch,
+            inputFocused: $inputFocused,
             onClose: closeChatSearch
         ))
         .environment(\.chatSessionId, vm.sessionId)
@@ -1092,7 +1098,8 @@ struct AIChatView: View {
                 messages: vm.messages,
                 header: sessionExportHeader,
                 adaptiveWidth: maxContentWidth ?? 393,
-                vm: vm
+                vm: vm,
+                initialMessageId: selectedShareMessageId
             )
         }
         .sheet(isPresented: $showSessionSkills) {
@@ -1825,7 +1832,10 @@ struct AIChatView: View {
             // [T-chat-search] Sits above Share Session in the menu.
             onSearchChat: { openChatSearch() },
             // [T-session-share] Opens the export / share configuration sheet.
-            onShareSession: { showSessionShare = true }
+            onShareSession: {
+                selectedShareMessageId = nil
+                showSessionShare = true
+            }
         )
     }
 
@@ -1835,26 +1845,12 @@ struct AIChatView: View {
     /// Re-binding on every open keeps a long-running session searchable
     /// without subscribing the model to `$messages`.
     private func openChatSearch() {
-        chatSearchModel.bind(messages: vm.messages)
-        showChatSearch = true
+        chatSearchModel.bind(viewModel: vm)
+        chatSearchModel.activate(prefill: nil)
     }
 
     private func closeChatSearch() {
-        showChatSearch = false
-        chatSearchModel.clear()
-    }
-
-    /// The message list owns scrolling + the in-place highlight, so the panel
-    /// only needs to name the message.
-    private func jumpToSearchHit(_ hit: ChatSearchHit) {
-        NotificationCenter.default.post(name: .chatSearchJump,
-                                        object: nil,
-                                        userInfo: [
-                                            "messageId": hit.messageId,
-                                            "blockId": hit.blockId as Any,
-                                            "line": hit.line,
-                                            "keyword": hit.keyword
-                                        ])
+        chatSearchModel.deactivate()
     }
 
     // MARK: - New Chat (menu entry)
@@ -2474,6 +2470,10 @@ struct AIChatView: View {
                 },
                 onScreenshotImage: { image in
                     screenshotPreview = ChatScreenshotPreview(image: image)
+                },
+                onShareMessage: { messageId in
+                    selectedShareMessageId = messageId
+                    showSessionShare = true
                 },
                 maxContentWidth: maxContentWidth ?? 0,
                 // The status bar's measured height is deliberately smaller
@@ -5662,42 +5662,36 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
 /// the tap-through gating.
 private struct ChatSearchPresentation: ViewModifier {
     @ObservedObject var model: ChatSearchModel
-    let isPresented: Bool
-    let messages: [ChatMessage]
-    let onJump: (ChatSearchHit) -> Void
+    let viewModel: AIChatViewModel
+    @Binding var isPresented: Bool
+    @Binding var inputFocused: Bool
     let onClose: () -> Void
+    @State private var ownerId = UUID()
 
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .top, spacing: 0) {
-                // [T-chat-search-inset] A safe-area inset, not an overlay: the
-                // bar pushes the transcript down, so a jumped-to message can
-                // never sit underneath it. It also means the collection view's
-                // adjustedContentInset already includes the bar, which is what
-                // the jump offset math relies on.
                 if isPresented {
-                    ChatSearchOverlay(model: model, onJump: onJump, onClose: onClose)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    ChatSearchOverlay(model: model, onJump: { _ in }, onClose: onClose)
                 }
             }
-            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isPresented)
-            .onChange(of: messages.count) { _ in
-                // Keep the panel honest while a reply streams in underneath it.
-                if isPresented {
-                    model.bind(messages: messages)
+            .onAppear {
+                model.bind(viewModel: viewModel)
+                model.highlights.openSearchOwner = ownerId
+                model.highlights.openSearch = { [weak model] prefill in
+                    model?.activate(prefill: prefill)
                 }
             }
-            .onChange(of: model.query) { newValue in
-                // [T-chat-search] Paints the reply body itself. The store is
-                // used instead of the environment because the transcript's
-                // UIKit cells do not inherit it.
-                ChatSearchHighlightStore.shared.set(isPresented ? newValue : "")
-            }
-            .onChange(of: isPresented) { presented in
-                ChatSearchHighlightStore.shared.set(presented ? model.query : "")
+            .onReceive(model.$isActive.removeDuplicates()) { active in
+                guard active != isPresented else { return }
+                if active { inputFocused = false }
+                isPresented = active
             }
             .onDisappear {
-                ChatSearchHighlightStore.shared.set("")
+                guard model.highlights.openSearchOwner == ownerId else { return }
+                model.deactivate()
+                model.highlights.openSearch = nil
+                model.highlights.openSearchOwner = nil
             }
     }
 }

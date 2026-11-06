@@ -7,6 +7,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from search_harness_support import search_support
 import urllib.request
 
 COMMIT = "1a71df0f381cefde80bf912b723de6f9831bc177"
@@ -69,6 +70,7 @@ local_models_path = ROOT / "Agent/Chat/ZeSubAgentCoordinator.swift"
 local_views = local_views_path.read_text(encoding="utf-8")
 local_models = local_models_path.read_text(encoding="utf-8")
 local_parts = ["import SwiftUI\nimport UIKit\nimport Combine\nimport Foundation\n",
+    search_support(ROOT),
     section(local_models, "enum ZeSubAgentStatus:", "/// Owns a bounded child-agent tree"),
     section(local_views, "enum ZeSubAgentTheme {", "/// Compact, native iOS dock"),
     section(local_views, "enum ZeSubAgentPresentation {", "struct ZeSubAgentDetailView:"),

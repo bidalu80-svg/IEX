@@ -26,6 +26,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-share") {
+            Task { @MainActor in await ConversationShareVerification.run() }
+        }
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-search") {
+            Task { @MainActor in await ConversationSearchVerification.run() }
+        }
+        #endif
         if #available(iOS 17.0, *) {
             CLBackgroundActivitySession().invalidate()
         }

@@ -348,6 +348,9 @@ private final class ZeSubAgentSpinnerLayerView: UIView {
 }
 
 struct ZeSubAgentCompactCard: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
+    @Environment(\.chatSearchBlockId) private var searchBlockId
+    private func searchKey(_ field: ChatSearchField) -> ChatSearchUnitKey? { searchMessageId.map { .init(messageId: $0, blockId: searchBlockId, field: field) } }
     let record: ZeSubAgentRecord
     var open: () -> Void
     var stop: () -> Void
@@ -371,7 +374,7 @@ struct ZeSubAgentCompactCard: View {
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(ZeSubAgentTheme.purple.opacity(0.15)).clipShape(Capsule())
                         .lineLimit(1)
-                    Text(record.shortPrompt).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                    SearchHighlightText(record.shortPrompt, key: searchKey(.title)).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
                 }
                 HStack(spacing: 6) {
                     if record.status.isActive, let step = record.steps?.last(where: { $0.state == "running" }) {
@@ -379,9 +382,9 @@ struct ZeSubAgentCompactCard: View {
                             Image(systemName: ZeSubAgentPresentation.icon(step)).font(.system(size: 10, weight: .semibold))
                             Text(ZeSubAgentPresentation.tool(step)).font(.system(size: 11, weight: .semibold))
                         }.foregroundStyle(ZeSubAgentTheme.purple).lineLimit(1).fixedSize()
-                        Text(step.title).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        SearchHighlightText(step.title, key: searchKey(.activity)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     } else {
-                        Text(ZeSubAgentPresentation.status(record)).font(.system(size: 11, weight: .semibold))
+                        SearchHighlightText(ZeSubAgentPresentation.status(record), key: searchKey(.activity)).font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(ZeSubAgentPresentation.color(record.status)).fixedSize()
                     }
                     if !record.status.isActive, let model = ZeSubAgentPresentation.model(record) {

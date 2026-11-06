@@ -141,6 +141,14 @@ jobs:
             xcrun swiftc -frontend -parse "$file"
           done
 
+      - name: Test conversation search and sharing behavior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/test-chat-search.py | tee chat-search-tests.log
+          python3 scripts/test-share-reference-model.py | tee chat-share-model-tests.log
+
       - name: Test foldable pane layout
         run: |
           set -euo pipefail
@@ -245,6 +253,30 @@ jobs:
             subagent-comparison-evidence/
             subagent-full-detail-evidence/
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Compare conversation search and sharing controls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          bash scripts/test-share-search-reference-ui.sh
+          bash scripts/test-share-search-production-ui.sh
+          python3 scripts/compare-share-search-ui.py
+
+      - name: Upload conversation control review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-control-review
+          path: |
+            share-search-reference-evidence/
+            share-search-production-evidence/
+            share-search-comparison-evidence/
+            share-model-reference-evidence/
+            chat-search-tests.log
+            chat-share-model-tests.log
           retention-days: 7
 
       - name: Create ProviderCustomization.xcconfig
@@ -860,3 +892,27 @@ jobs:
             subagent-comparison-evidence/
             subagent-full-detail-evidence/
             model-picker-evidence/
+
+
+  conversation-application:
+    name: Verify conversation sharing and search in application
+    runs-on: macos-15-arm64
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build complete application for simulator
+        run: bash scripts/build-share-search-simulator.sh
+      - name: Verify actual exports and search navigation
+        timeout-minutes: 12
+        run: bash scripts/test-share-search-application.sh
+      - name: Upload application verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-application-review
+          path: |
+            share-search-application-evidence/
+            share-search-simulator-build.log
+            share-search-simulator-resolve.log
+            share-search-simulator-app-path.txt
+          retention-days: 7

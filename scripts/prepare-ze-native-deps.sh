@@ -6,7 +6,13 @@ output_input="${1:?Usage: prepare-ze-native-deps.sh <deps-output-directory>}"
 output_parent="$(cd "$(dirname "$output_input")" && pwd)"
 output_dir="$output_parent/$(basename "$output_input")"
 vendor_dir="$repo_root/Vendor/ZeNative"
-work_root="${RUNNER_TEMP:-$repo_root/.build}/ze-native-build"
+native_sdk="${ZE_NATIVE_SDK:-iphoneos}"
+case "$native_sdk" in
+    iphoneos) native_destination='generic/platform=iOS'; native_target='arm64-apple-ios16.0' ;;
+    iphonesimulator) native_destination='generic/platform=iOS Simulator'; native_target='arm64-apple-ios16.0-simulator' ;;
+    *) echo "Unexpected ZE_NATIVE_SDK: $native_sdk" >&2; exit 1 ;;
+esac
+work_root="${RUNNER_TEMP:-$repo_root/.build}/ze-native-build-$native_sdk"
 
 if [ "$(basename "$output_dir")" != "deps" ]; then
     echo "Refusing to replace a directory not named deps: $output_dir" >&2
@@ -34,8 +40,9 @@ xcodebuild \
     -target libish_emu \
     -target libfakefs \
     -configuration Release \
-    -sdk iphoneos \
-    -destination 'generic/platform=iOS' \
+    -sdk "$native_sdk" \
+    -destination "$native_destination" \
+    ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
     CONFIGURATION_BUILD_DIR="$ish_products" \
     GUEST_ARCH=arm64 \
     NINJA_TARGETS='libish.a libish_emu.a libfakefs.a' \
@@ -142,10 +149,10 @@ test -f "$work_root/alpine-rootfs/meta.db"
 test -s "$output_dir/resources/alpine-rootfs.zip"
 cp -R "$ish_dir/app/RootfsPatch.bundle" "$output_dir/resources/RootfsPatch.bundle"
 
-ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-export CC="$(xcrun --sdk iphoneos -f clang)"
-export CFLAGS="-arch arm64 -miphoneos-version-min=16.0 -isysroot $ios_sdk -Oz -fPIC -Wno-implicit-function-declaration"
-export LDFLAGS="-arch arm64 -miphoneos-version-min=16.0 -isysroot $ios_sdk"
+ios_sdk="$(xcrun --sdk "$native_sdk" --show-sdk-path)"
+export CC="$(xcrun --sdk "$native_sdk" -f clang)"
+export CFLAGS="-target $native_target -isysroot $ios_sdk -Oz -fPIC -Wno-implicit-function-declaration"
+export LDFLAGS="-target $native_target -isysroot $ios_sdk"
 (
     cd "$work_root/lame-3.100"
     ./configure \
@@ -162,7 +169,7 @@ export LDFLAGS="-arch arm64 -miphoneos-version-min=16.0 -isysroot $ios_sdk"
 )
 test -s "$work_root/lame-build/lib/libmp3lame.a"
 
-ZE_NATIVE_WORKDIR="$work_root" bash "$repo_root/scripts/build-ze-ffmpeg.sh"
+ZE_NATIVE_SDK="$native_sdk" ZE_NATIVE_WORKDIR="$work_root" bash "$repo_root/scripts/build-ze-ffmpeg.sh"
 cp -R "$work_root/frameworks" "$output_dir/frameworks"
 
 for framework in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do

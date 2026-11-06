@@ -594,6 +594,7 @@ private struct CodeBlockCopyButton: View {
 }
 
 struct UserAttachmentList: View {
+    @Environment(\.chatSearchMessageId) private var searchMessageId
     let attachments: [AttachmentMeta]
     @Environment(\.openURL) private var openURL
     @Environment(\.openImageGallery) private var openImageGallery
@@ -673,7 +674,7 @@ struct UserAttachmentList: View {
                     .foregroundStyle(ChatColors.secondaryText)
                     .frame(maxHeight: .infinity, alignment: .bottom)
 
-                Text(meta.fileName)
+                SearchHighlightText(meta.fileName, key: searchMessageId.map { ChatSearchUnitKey(messageId: $0, blockId: nil, field: .attachmentName(attachments.firstIndex(where: { $0.id == meta.id }) ?? 0)) })
                     .font(.system(size: 9))
                     .foregroundStyle(ChatColors.primaryText)
                     .lineLimit(2)

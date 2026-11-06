@@ -1,157 +1,149 @@
 //
-//  ChatSearchOverlay.swift
-//  ZeApp
+//  ChatSearchBar.swift
+//  Minis - chat page (AIChatView)
 //
-//  [T-chat-search] Search bar for the open conversation.
+//  [T-in-chat-search] The bar "Search in Chat" opens under the navigation
+//  bar: query field, "3/12" counter, previous (older) / next (newer), Done.
+//  Mounted in AIChatView's `topBanners`, so the list's top inset already
+//  makes room for it. Observes only the search controller - typing here
+//  never re-renders the chat page.
 //
-//  Layout follows the in-chat search people already know: one horizontal bar
-//  under the navigation bar, a filled field with the magnifier on the left and
-//  "n/m" plus the clear button on the right, then the previous/next chevrons
-//  and a Done button. No result list — the hits are painted on the transcript
-//  itself, so the bar only has to move between them.
+//  Keys: Return = next result, Shift-Return = previous.
+//
+//  Map of the AIChatView files: AIChatView/AIChatView.swift.
 //
 
 import SwiftUI
+import UIKit
 
 struct ChatSearchOverlay: View {
-    /// Height of the bar, including its vertical padding. Used by the list to
-    /// keep a jumped-to match clear of it.
-    static let barHeight: CGFloat = 54
-
     @ObservedObject var model: ChatSearchModel
+    static let barHeight: CGFloat = 52
     var onJump: (ChatSearchHit) -> Void
     var onClose: () -> Void
+    /// Called after Done: the page restores its composer.
 
-    @FocusState private var isFocused: Bool
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.horizontalSizeClass) private var sizeClass
+    @FocusState private var fieldFocused: Bool
 
-    private var fieldFill: Color {
-        colorScheme == .dark ? Color.white.opacity(0.12) : Color(white: 0.92)
-    }
-
-    private var barFill: Color {
-        colorScheme == .dark ? Color(white: 0.11) : Color(white: 0.98)
-    }
-
-    private var secondaryText: Color {
-        colorScheme == .dark ? Color(white: 0.62) : Color(white: 0.45)
-    }
-
-    private var hairline: Color {
-        colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.10)
-    }
-
-    private var maxWidth: CGFloat {
-        sizeClass == .regular ? 720 : .infinity
-    }
-
-    private var counterText: String {
-        guard !model.hits.isEmpty else { return "0/0" }
-        return "\(model.currentIndex + 1)/\(model.hits.count)"
-    }
+    private var hasQuery: Bool { !model.normalizedQuery.isEmpty }
+    private var hasResults: Bool { model.hits.count > 0 }
 
     var body: some View {
-        HStack(spacing: 10) {
-            field
-
-            stepButton("chevron.up", label: String(localized: "Previous Match")) {
-                step(-1)
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(ChatColors.secondaryText)
+                TextField(String(localized: "Search this chat"), text: $model.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15))
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .focused($fieldFocused)
+                    .onSubmit {
+                        model.step(1)
+                        // Return must not dismiss the keyboard: the user is
+                        // stepping through results.
+                        fieldFocused = true
+                    }
+                    .accessibilityIdentifier("chatSearchField")
+                if hasQuery {
+                    counter
+                    Button {
+                        model.query = ""
+                        fieldFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(ChatColors.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(String(localized: "Clear"))
+                }
             }
-            stepButton("chevron.down", label: String(localized: "Next Match")) {
-                step(1)
-            }
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .background(Color(UIColor.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            Button(action: onClose) {
+            navButton(systemName: "chevron.up", label: String(localized: "Previous Result")) { model.step(-1) }
+                .keyboardShortcut(.return, modifiers: .shift)
+                .accessibilityIdentifier("chatSearchPrevious")
+            navButton(systemName: "chevron.down", label: String(localized: "Next Result")) { model.step(1) }
+                .accessibilityIdentifier("chatSearchNext")
+
+            Button {
+                fieldFocused = false
+                model.deactivate()
+                onClose()
+            } label: {
                 Text(String(localized: "Done"))
-                    .font(.system(size: 17))
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 15, weight: .semibold))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(String(localized: "Close Search"))
+            .foregroundStyle(Color.accentColor)
+            .padding(.leading, 2)
+            .accessibilityIdentifier("chatSearchDone")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .frame(maxWidth: maxWidth)
-        .background(
-            barFill
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(hairline)
-                        .frame(height: 0.5)
-                }
-        )
-        .onAppear { isFocused = true }
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .overlay(alignment: .bottom) { noticeView.offset(y: 34) }
+        .onAppear { fieldFocused = true }
+        .onChange(of: model.focusRequest) { _ in fieldFocused = true }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chatSearchBar")
     }
 
-    // MARK: Field
-
-    private var field: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(secondaryText)
-
-            TextField(String(localized: "Search"), text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 17))
-                .focused($isFocused)
-                .submitLabel(.search)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .onSubmit { step(1) }
-
-            if !model.query.isEmpty {
-                Text(counterText)
-                    .font(.system(size: 15, design: .monospaced))
-                    .foregroundStyle(secondaryText)
-                    .contentTransition(.numericText())
-                    .animation(.easeOut(duration: 0.15), value: model.currentIndex)
-
-                Button {
-                    model.clear()
-                    isFocused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 17))
-                        .foregroundStyle(secondaryText.opacity(0.55))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(localized: "Clear Search"))
-                .transition(.opacity)
-            }
+    @ViewBuilder
+    private var counter: some View {
+        if model.isSearching && !hasResults {
+            ProgressView().scaleEffect(0.7).frame(width: 20)
+        } else if hasResults {
+            Text(verbatim: ChatSearchNavigation.counterText(index: model.hits.isEmpty ? nil : model.currentIndex, count: model.hits.count,
+                                                            truncated: model.isTruncated))
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(ChatColors.secondaryText)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityLabel("结果 \(model.currentIndex + 1)，共 \(model.hits.count) 个")
+                .accessibilityIdentifier("chatSearchCounter")
+        } else {
+            Text(String(localized: "No results"))
+                .font(.system(size: 13))
+                .foregroundStyle(ChatColors.secondaryText)
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityIdentifier("chatSearchCounter")
         }
-        .padding(.horizontal, 9)
-        .frame(height: 38)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(fieldFill)
-        )
-        .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
     }
 
-    private func stepButton(_ symbol: String,
-                            label: String,
-                            action: @escaping () -> Void) -> some View {
+    private func navButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 18, weight: .semibold))
-                .frame(width: 28, height: 34)
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 30, height: 36)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(model.hits.isEmpty ? secondaryText.opacity(0.35) : Color.accentColor)
-        .disabled(model.hits.isEmpty)
+        .foregroundStyle(hasResults ? Color.accentColor : ChatColors.tertiaryText)
+        .disabled(!hasResults)
         .accessibilityLabel(label)
     }
 
-    // MARK: Stepping
-
-    private func step(_ delta: Int) {
-        guard !model.hits.isEmpty else { return }
-        model.step(delta)
-        if let current = model.current {
-            onJump(current)
+    @ViewBuilder
+    private var noticeView: some View {
+        if let notice = model.notice {
+            Text(notice)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.75), in: Capsule())
+                .transition(.opacity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 }
