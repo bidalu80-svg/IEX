@@ -79,7 +79,7 @@ extension TableAttachment {
         for (rowIndex, row) in rows.enumerated() {
             let font = UIFont.systemFont(ofSize: theme.baseFontSize, weight: rowIndex == 0 ? .semibold : .regular)
             for (index, cell) in row.cells.enumerated() where widths.indices.contains(index) {
-                let width = (cell.content.plainText as NSString).size(withAttributes: [.font: font]).width
+                let width = (ChatSearchMarkdownText.inlineText(cell.content) as NSString).size(withAttributes: [.font: font]).width
                 widths[index] = max(widths[index], ceil(width) + Self.cellPaddingH * 2 + 12)
             }
         }
@@ -230,7 +230,7 @@ enum ChatExportContent {
                 let runs = AssistantBlockPresentationSegment.make(m.blocks, enabled: true).filter(\.isToolGroup)
                 folds[m.id] = runs.map { run in
                     ChatShareFold(memberIds: run.blocks.map(\.id), toolCount: run.blocks.count,
-                                  failedCount: run.blocks.filter { $0.toolStatus == .failed }.count,
+                                  failedCount: run.blocks.filter { if case .failed? = $0.toolStatus { return true }; return false }.count,
                                   cancelledCount: run.blocks.filter { $0.toolStatus == .cancelled }.count,
                                   duration: run.blocks.compactMap(\.toolDuration).reduce(0, +))
                 }
