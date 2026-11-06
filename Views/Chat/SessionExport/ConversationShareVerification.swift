@@ -98,9 +98,29 @@ import PDFKit
                 let pdfURL = try save(pdf.url, name: "export-\(name).pdf")
                 guard let document = PDFDocument(url: pdfURL) else { throw ChatExportError.writeFailed }
                 let text = document.string ?? ""
+                let markers = ["SHARE_BEGIN", "SHARE_END", "CODE_MARKER", "TABLE_LAST"]
+                let matches = Dictionary(uniqueKeysWithValues: markers.map {
+                    ($0, document.findString($0, withOptions: []))
+                })
+                // Persist extraction and actual PDFKit search separately: PDFKit may
+                // insert layout whitespace in `string` that differs from findString.
+                try saveText(text, name: "pdf-document-text-\(name).txt")
+                let pageText = (0..<document.pageCount).map { index in
+                    "--- Page \(index + 1) ---\n" + (document.page(at: index)?.string ?? "<nil>")
+                }.joined(separator: "\n\n")
+                try saveText(pageText, name: "pdf-page-text-\(name).txt")
+                let searchReport: [String: Any] = Dictionary(uniqueKeysWithValues: markers.map { marker in
+                    (marker, ["count": matches[marker]!.count,
+                              "documentStringContains": text.contains(marker),
+                              "selections": matches[marker]!.map { $0.string ?? "<nil>" }] as [String: Any])
+                })
+                let searchName = "pdf-search-\(name).json"
+                try JSONSerialization.data(withJSONObject: searchReport, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: directory.appendingPathComponent(searchName), options: .atomic)
+                files.append(searchName)
                 try require(document.pageCount > 1, "\(name) PDF paginates the complete long reply")
-                for marker in ["SHARE_BEGIN", "SHARE_END", "CODE_MARKER", "TABLE_LAST"] {
-                    try require(text.contains(marker), "\(name) PDF has searchable \(marker) without truncation")
+                for marker in markers {
+                    try require(!matches[marker]!.isEmpty, "\(name) PDF has searchable \(marker) without truncation")
                 }
                 try require(!text.contains("MUTATED LIVE CONTENT"), "\(name) export never reads later streaming changes")
                 try capturePDF(document, name: "pdf-first-\(name).png", page: 0)
@@ -210,6 +230,11 @@ import PDFKit
         guard let page = document.page(at: index) else { throw ChatExportError.writeFailed }
         let image = page.thumbnail(of: CGSize(width: 900, height: 1300), for: .mediaBox)
         try image.pngData()!.write(to: directory.appendingPathComponent(name))
+        files.append(name)
+    }
+
+    private static func saveText(_ text: String, name: String) throws {
+        try text.write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
         files.append(name)
     }
 

@@ -1475,7 +1475,7 @@ final class CodeBlockAttachment: NSTextAttachment {
             .font: theme.codeBlockFont,
             .paragraphStyle: codeStyle,
         ])
-        let tv = UITextView()
+        let tv = UITextView(usingTextLayoutManager: false)
         tv.isScrollEnabled = false
         tv.textContainerInset = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
         tv.textContainer.lineFragmentPadding = 0
@@ -1531,7 +1531,7 @@ final class CodeBlockAttachment: NSTextAttachment {
         scrollView.alwaysBounceVertical = true
         scrollView.clipsToBounds = true
 
-        let codeTextView = UITextView()
+        let codeTextView = UITextView(usingTextLayoutManager: false)
         codeTextView.isEditable = false
         codeTextView.isSelectable = true
         codeTextView.isScrollEnabled = false // scrollView handles scrolling
