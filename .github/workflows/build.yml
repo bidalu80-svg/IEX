@@ -212,6 +212,10 @@ jobs:
           xcrun swiftc -frontend -parse Views/Settings/MediaFavoritesView.swift
           xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift
 
+      - name: Test searchable PDF glyphs and page boundaries
+        timeout-minutes: 5
+        run: python3 scripts/test-pdf-vector-rendering.py
+
       - name: Test favorites success feedback and square layout on simulator
         # Simulator-only UI check; CoreSimulator occasionally never boots
         # ("Waiting on System App" for the full 8 minutes) on the macOS runner.
@@ -897,6 +901,7 @@ jobs:
             rootfs-recovery-tests.log
             kernel-offload-tests.log
             browser-parity-evidence/
+            pdf-vector-evidence/
             model-compatibility-tests.log
             subagent-lifecycle-tests.log
             subagent-delivery-tests.log

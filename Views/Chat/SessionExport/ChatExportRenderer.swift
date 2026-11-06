@@ -3,6 +3,7 @@
 import SwiftUI
 import UIKit
 import PDFKit
+import CoreText
 
 private let logger = AppLogger(category: "ChatExport")
 
@@ -855,7 +856,7 @@ final class ChatExportRenderer {
                 ctx.saveGState()
                 ctx.translateBy(x: m, y: m + slice.pageY - slice.unitY)
                 ctx.clip(to: CGRect(x: 0, y: slice.unitY, width: laid.size.width, height: slice.height))
-                drawVector(laid.host.view, in: ctx)
+                drawVector(laid.host.view, in: ctx, visibleBounds: CGRect(x: 0, y: slice.unitY, width: laid.size.width, height: slice.height), searchablePDF: true)
                 ctx.restoreGState()
             }
         }
@@ -892,14 +893,16 @@ final class ChatExportRenderer {
     /// App-added subviews of a text view (table, code and math attachment views) stay
     /// visible in pass 1, and their own text views are handled in pass 2 like any other.
     /// A text view on TextKit 2 is left alone and comes out as a bitmap, as before.
-    private func drawVector(_ root: UIView, in ctx: CGContext) {
+    private func drawVector(_ root: UIView, in ctx: CGContext, visibleBounds: CGRect? = nil, searchablePDF: Bool = false) {
         // Dynamic colours (text, code, table rules) resolve against the CURRENT trait
         // collection while drawing — the app's, not the export's. A dark app exporting
         // a light page drew white text on white. Draw under the hosting view's traits.
-        root.traitCollection.performAsCurrent { drawVectorInCurrentTraits(root, in: ctx) }
+        root.traitCollection.performAsCurrent {
+            drawVectorInCurrentTraits(root, in: ctx, visibleBounds: visibleBounds ?? root.bounds, searchablePDF: searchablePDF)
+        }
     }
 
-    private func drawVectorInCurrentTraits(_ root: UIView, in ctx: CGContext) {
+    private func drawVectorInCurrentTraits(_ root: UIView, in ctx: CGContext, visibleBounds: CGRect, searchablePDF: Bool) {
         var textViews: [UITextView] = []
         var labels: [UILabel] = []
         var hidden: [UIView] = []
@@ -929,7 +932,7 @@ final class ChatExportRenderer {
 
         /// The part of `view` its ancestors let show, in root coordinates.
         func visibleRect(_ view: UIView) -> CGRect {
-            var rect = view.convert(view.bounds, to: root)
+            var rect = view.convert(view.bounds, to: root).intersection(visibleBounds)
             var v: UIView? = view.superview
             while let a = v, a !== root {
                 if a.clipsToBounds { rect = rect.intersection(a.convert(a.bounds, to: root)) }
@@ -948,8 +951,13 @@ final class ChatExportRenderer {
             let origin = tv.convert(CGPoint.zero, to: root)
             ctx.translateBy(x: origin.x, y: origin.y)
             let inset = CGPoint(x: tv.textContainerInset.left, y: tv.textContainerInset.top)
-            lm.drawBackground(forGlyphRange: glyphs, at: inset)
-            lm.drawGlyphs(forGlyphRange: glyphs, at: inset)
+            if searchablePDF {
+                let localClip = tv.convert(clip, from: root)
+                drawPDFText(tv, in: ctx, clip: localClip)
+            } else {
+                lm.drawBackground(forGlyphRange: glyphs, at: inset)
+                lm.drawGlyphs(forGlyphRange: glyphs, at: inset)
+            }
             ctx.restoreGState()
         }
         for label in labels {
@@ -959,9 +967,96 @@ final class ChatExportRenderer {
             ctx.clip(to: clip)
             let origin = label.convert(CGPoint.zero, to: root)
             ctx.translateBy(x: origin.x, y: origin.y)
-            label.drawText(in: label.bounds)
+            if searchablePDF {
+                drawPDFLabel(label, in: ctx, clip: label.convert(clip, from: root))
+            } else {
+                label.drawText(in: label.bounds)
+            }
             ctx.restoreGState()
         }
+    }
+
+    /// Emit complete shaped lines rather than TextKit's separate punctuation drawing
+    /// operations. PDFKit sorted the independently drawn underscore below its word
+    /// ("SHARE\nBEGIN\n_"). CoreText keeps each contiguous text span together.
+    /// TextKit still chooses the line breaks and exact baseline; attachment views
+    /// retain their own geometry and are drawn by the background pass above.
+    private func drawPDFText(_ textView: UITextView, in ctx: CGContext, clip: CGRect) {
+        let lm = textView.layoutManager
+        let storage = textView.textStorage
+        let inset = textView.textContainerInset
+        let containerClip = clip.offsetBy(dx: -inset.left, dy: -inset.top)
+        let visibleGlyphs = lm.glyphRange(forBoundingRect: containerClip, in: textView.textContainer)
+        guard visibleGlyphs.length > 0 else { return }
+        lm.drawBackground(forGlyphRange: visibleGlyphs, at: CGPoint(x: inset.left, y: inset.top))
+        lm.enumerateLineFragments(forGlyphRange: visibleGlyphs) { lineRect, usedRect, _, glyphRange, _ in
+            guard usedRect.intersects(containerClip) else { return }
+            let chars = lm.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            let raw = storage.string as NSString
+            var start = chars.location
+            func drawSpan(endingAt end: Int) {
+                guard end > start else { return }
+                let span = NSMutableAttributedString(attributedString: storage.attributedSubstring(
+                    from: NSRange(location: start, length: end - start)))
+                // CoreText requires CGColor rather than UIKit dynamic UIColor.
+                span.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: span.length)) { value, range, _ in
+                    let color = (value as? UIColor) ?? textView.textColor ?? .label
+                    span.addAttribute(NSAttributedString.Key(kCTForegroundColorAttributeName as String),
+                                      value: color.resolvedColor(with: textView.traitCollection).cgColor, range: range)
+                }
+                let firstGlyph = lm.glyphIndexForCharacter(at: start)
+                let location = lm.location(forGlyphAt: firstGlyph)
+                let baseline = CGPoint(x: inset.left + lineRect.minX + location.x,
+                                       y: inset.top + lineRect.minY + location.y)
+                let line = CTLineCreateWithAttributedString(span)
+                ctx.saveGState()
+                ctx.textMatrix = .identity
+                ctx.scaleBy(x: 1, y: -1)
+                ctx.textPosition = CGPoint(x: baseline.x, y: -baseline.y)
+                CTLineDraw(line, ctx)
+                ctx.restoreGState()
+            }
+            for index in chars.location..<NSMaxRange(chars) {
+                let character = raw.character(at: index)
+                if character == 0xFFFC || character == 0x0A || character == 0x0D {
+                    drawSpan(endingAt: index)
+                    start = index + 1
+                }
+            }
+            drawSpan(endingAt: NSMaxRange(chars))
+        }
+    }
+
+    private func drawPDFLabel(_ label: UILabel, in ctx: CGContext, clip: CGRect) {
+        let value = label.attributedText ?? NSAttributedString(string: label.text ?? "")
+        guard value.length > 0 else { return }
+        let attributed = NSMutableAttributedString(attributedString: value)
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        attributed.enumerateAttributes(in: fullRange) { attrs, range, _ in
+            if attrs[.font] == nil { attributed.addAttribute(.font, value: label.font ?? UIFont.systemFont(ofSize: UIFont.labelFontSize), range: range) }
+            if attrs[.foregroundColor] == nil {
+                attributed.addAttribute(.foregroundColor, value: label.textColor ?? UIColor.label, range: range)
+            }
+            if attrs[.paragraphStyle] == nil {
+                let style = NSMutableParagraphStyle()
+                style.alignment = label.textAlignment
+                style.lineBreakMode = label.lineBreakMode
+                attributed.addAttribute(.paragraphStyle, value: style, range: range)
+            }
+        }
+        let rect = label.textRect(forBounds: label.bounds, limitedToNumberOfLines: label.numberOfLines)
+        let textView = UITextView(usingTextLayoutManager: false)
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.maximumNumberOfLines = label.numberOfLines
+        textView.textContainer.lineBreakMode = label.lineBreakMode
+        textView.frame = CGRect(origin: .zero, size: rect.size)
+        textView.attributedText = attributed
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        ctx.saveGState()
+        ctx.translateBy(x: rect.minX, y: rect.minY)
+        drawPDFText(textView, in: ctx, clip: clip.offsetBy(dx: -rect.minX, dy: -rect.minY))
+        ctx.restoreGState()
     }
 
     /// DEBUG aid: the text PDFKit extracts from a rendered PDF (proves text stayed vector).
