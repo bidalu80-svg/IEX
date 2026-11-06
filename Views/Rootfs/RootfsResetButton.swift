@@ -39,33 +39,33 @@ struct RootfsResetButton: View {
             }
         }
         .disabled(isProcessing)
-        .alert("Reset Rootfs?", isPresented: $showResetAlert) {
+        .alert("重建 Rootfs？", isPresented: $showResetAlert) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset", role: .destructive) {
+            Button("全新重建", role: .destructive) {
                 performReset(keepBackup: false)
             }
         } message: {
-            Text("This will delete the entire rootfs. All data will be lost. The app will need to restart.")
+            Text("重启后安装全新的 rootfs，不自动恢复 /root。原目录会保留，不会释放存储空间。")
         }
-        .alert("Reset with Backup?", isPresented: $showBackupAlert) {
+        .alert("重建并保留用户数据？", isPresented: $showBackupAlert) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset & Backup", role: .destructive) {
+            Button("重建并保留用户数据", role: .destructive) {
                 performReset(keepBackup: true)
             }
         } message: {
-            Text("This will backup /root directory before resetting. You can restore it later.")
+            Text("保留原目录并记录恢复任务。重启后会在内核启动前自动恢复 /root；其他位置的数据仍保留在原目录中。")
         }
     }
 
     private var compactButton: some View {
         Menu {
             Button(action: { showResetAlert = true }) {
-                Label("Reset All", systemImage: "trash")
+                Label("全新重建", systemImage: "trash")
             }
 
             if showBackupOption {
                 Button(action: { showBackupAlert = true }) {
-                    Label("Reset & Backup", systemImage: "archivebox")
+                    Label("重建并保留用户数据", systemImage: "archivebox")
                 }
             }
         } label: {
@@ -78,16 +78,16 @@ struct RootfsResetButton: View {
     private var normalButton: some View {
         Menu {
             Button(action: { showResetAlert = true }) {
-                Label("Reset All", systemImage: "trash")
+                Label("全新重建", systemImage: "trash")
             }
 
             if showBackupOption {
                 Button(action: { showBackupAlert = true }) {
-                    Label("Reset & Backup", systemImage: "archivebox")
+                    Label("重建并保留用户数据", systemImage: "archivebox")
                 }
             }
         } label: {
-            Label("Reset Rootfs", systemImage: "arrow.clockwise")
+            Label("重建 Rootfs", systemImage: "arrow.clockwise")
                 .foregroundColor(.red)
         }
     }
@@ -95,7 +95,7 @@ struct RootfsResetButton: View {
     private var prominentButton: some View {
         VStack(spacing: 12) {
             Button(action: { showResetAlert = true }) {
-                Label("Reset Rootfs", systemImage: "arrow.clockwise")
+                Label("重建 Rootfs", systemImage: "arrow.clockwise")
                     .font(.headline)
                     .padding()
                     .frame(maxWidth: .infinity)
@@ -106,7 +106,7 @@ struct RootfsResetButton: View {
 
             if showBackupOption {
                 Button(action: { showBackupAlert = true }) {
-                    Label("Reset & Backup", systemImage: "archivebox")
+                    Label("重建并保留用户数据", systemImage: "archivebox")
                         .font(.headline)
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -129,7 +129,7 @@ struct RootfsResetButton: View {
 
     private func performReset(keepBackup: Bool) {
         isProcessing = true
-        statusMessage = keepBackup ? "Backing up and resetting..." : "Resetting rootfs..."
+        statusMessage = keepBackup ? "正在保留数据并安排恢复…" : "正在保留原目录并重建…"
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -138,10 +138,10 @@ struct RootfsResetButton: View {
                 DispatchQueue.main.async {
                     self.isProcessing = false
 
-                    if keepBackup, let backup = backup {
-                        self.statusMessage = "✅ Reset complete. Backup at: \(backup.lastPathComponent)"
+                    if keepBackup, backup != nil {
+                        self.statusMessage = "✅ 已安排恢复 /root，请重启应用。原目录完整保留。"
                     } else {
-                        self.statusMessage = "✅ Reset complete. Restart app to reinstall."
+                        self.statusMessage = "✅ 请重启应用以全新安装。原目录保留，未释放存储空间。"
                     }
 
                     // Clear message after 5 seconds

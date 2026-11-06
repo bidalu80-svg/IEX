@@ -117,6 +117,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/test-kernel-runtime.py | tee kernel-runtime-tests.log
+          python3 scripts/test-native-cancellation.py | tee native-cancellation-tests.log
+          python3 scripts/test-kernel-locks.py | tee kernel-lock-tests.log
+          python3 scripts/test-kernel-cpu-sensor.py | tee kernel-cpu-tests.log
+          python3 scripts/test-rootfs-recovery.py | tee rootfs-recovery-tests.log
           bash Vendor/ZeNative/ish/kernel/offload_tests/path_scope/run.sh | tee kernel-offload-tests.log
           python3 scripts/test-browser-parity.py
 
@@ -879,6 +883,10 @@ jobs:
             build.log
             github-client-tests.log
             kernel-runtime-tests.log
+            native-cancellation-tests.log
+            kernel-lock-tests.log
+            kernel-cpu-tests.log
+            rootfs-recovery-tests.log
             kernel-offload-tests.log
             browser-parity-evidence/
             model-compatibility-tests.log

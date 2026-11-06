@@ -8,10 +8,12 @@
 import Foundation
 import Compression
 import SQLite3
+import Darwin
 
 class RootfsManager {
     static let shared = RootfsManager()
     private let logger = AppLogger(category: "RootfsManager")
+    private let lifecycleLock = NSRecursiveLock()
 
     /// [T-mcp-cli-help-and-readonly-ios] Guest path of the bundled ze-mcp-cli
     /// Python lib. Its files are mounted read-only (see applyDefaultMountOverlay).
@@ -49,130 +51,262 @@ class RootfsManager {
     }
 
     var isInstalled: Bool {
-        guard FileManager.default.fileExists(atPath: dataPath.path) else { return false }
-        // Check architecture matches
-        guard let tag = try? String(contentsOf: archTagPath, encoding: .utf8) else { return false }
-        return tag.trimmingCharacters(in: .whitespacesAndNewlines) == currentArch
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        return installationDiagnostic(at: rootfsPath) == nil
+    }
+
+    /// Cheap structural check: a stale architecture marker alone is not a valid installation.
+    private func installationDiagnostic(at root: URL) -> String? {
+        let fm = FileManager.default
+        guard let attributes = try? fm.attributesOfItem(atPath: root.appendingPathComponent("data").path),
+              attributes[.type] as? FileAttributeType == .typeDirectory else { return "data-directory-missing-or-invalid" }
+        guard let metadata = try? fm.attributesOfItem(atPath: root.appendingPathComponent("meta.db").path),
+              metadata[.type] as? FileAttributeType == .typeRegular,
+              ((metadata[.size] as? NSNumber)?.int64Value ?? 0) > 0 else { return "metadata-missing-or-empty" }
+        let tagURL = root.appendingPathComponent(".arch")
+        guard let raw = try? String(contentsOf: tagURL, encoding: .utf8) else { return "arch-tag-missing-or-unreadable" }
+        let tag = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tag == currentArch ? nil : "arch-mismatch(found=\(tag), expected=\(currentArch))"
+    }
+
+    private struct PendingRestore: Codable {
+        let directoryName: String
+    }
+
+    private var pendingRestoreFile: URL {
+        rootfsPath.deletingLastPathComponent().appendingPathComponent(".rootfs-pending-restore.json")
+    }
+
+    var hasPendingUserDataRestore: Bool {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        return RootfsRecovery.exists(pendingRestoreFile)
+    }
+
+    private func pendingRestore() throws -> URL? {
+        guard RootfsRecovery.exists(pendingRestoreFile) else { return nil }
+        let value = try JSONDecoder().decode(PendingRestore.self, from: Data(contentsOf: pendingRestoreFile))
+        let prefix = ".alpine-rootfs-recovery-"
+        guard value.directoryName.hasPrefix(prefix),
+              UUID(uuidString: String(value.directoryName.dropFirst(prefix.count))) != nil else {
+            throw NSError(domain: "RootfsManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Invalid pending rootfs recovery record; existing data was preserved."])
+        }
+        return rootfsPath.deletingLastPathComponent().appendingPathComponent(value.directoryName)
+    }
+
+    /// Complete the write-ahead reset record before checking whether the active tree is installed.
+    /// The relative directory name survives iOS container relocation across launches.
+    private func preparePendingRestore() throws -> URL? {
+        guard let previous = try pendingRestore() else { return nil }
+        guard !ISHKernel.shared.isBooted else {
+            throw NSError(domain: "RootfsManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Restart the app to restore the pending user-data backup before the kernel starts."])
+        }
+        if !RootfsRecovery.exists(previous) {
+            // A process exit after writing the journal but before retiring the tree.
+            guard RootfsRecovery.exists(rootfsPath) else {
+                throw NSError(domain: "RootfsManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "Pending backup is missing; recovery remains pending and no data was deleted."])
+            }
+            try RootfsRecovery.moveEntry(rootfsPath, previous)
+        }
+        return previous.appendingPathComponent("data/root")
+    }
+
+    private func finishPendingRestore(_ backup: URL?) throws {
+        guard let backup else { return }
+        try restoreUserData(from: backup)
+        // Only clear the journal after replacement and metadata registration succeed.
+        try FileManager.default.removeItem(at: pendingRestoreFile)
+        logger.info("[Rootfs] pending user data restored before kernel boot; original backup retained")
     }
 
     func installIfNeeded() throws {
-        if FileManager.default.fileExists(atPath: rootfsPath.path) && !isInstalled {
-            print("RootfsManager: Arch mismatch or missing tag, reinstalling \(currentArch) rootfs...")
-            try FileManager.default.removeItem(at: rootfsPath)
-        }
-
-        guard !isInstalled else {
-            print("RootfsManager: Already installed (\(currentArch)) at \(rootfsPath.path)")
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        let pendingBackup = try preparePendingRestore()
+        if isInstalled {
+            try finishPendingRestore(pendingBackup)
             return
         }
-
+        // A live fakefs mount cannot be replaced in this process.
+        guard !ISHKernel.shared.isBooted else {
+            throw NSError(domain: "RootfsManager", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Rootfs recovery requires restarting the app because the kernel has already booted."])
+        }
         guard let zipURL = Bundle.main.url(forResource: "alpine-rootfs", withExtension: "zip") else {
-            throw NSError(
-                domain: "RootfsManager",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "alpine-rootfs.zip not found in bundle"]
-            )
+            throw NSError(domain: "RootfsManager", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "alpine-rootfs.zip not found in bundle; existing rootfs was preserved."])
         }
-
-        print("RootfsManager: Installing rootfs from \(zipURL.path)...")
-
-        // Create destination directory
-        try FileManager.default.createDirectory(
-            at: rootfsPath,
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
-
-        // Unzip using custom ZIP reader
-        try unzipFile(at: zipURL, to: rootfsPath)
-
-        // Write architecture tag so we detect mismatches on future launches
-        try currentArch.write(to: archTagPath, atomically: true, encoding: .utf8)
-
-        // Pre-create /var/ze/ shared directory structure
-        let zeSubdirs = ["var/ze/attachments", "var/ze/offloads", "var/ze/workspace", "var/ze/skills", "var/ze/shared"]
-        for subdir in zeSubdirs {
-            let dirPath = dataPath.appendingPathComponent(subdir)
-            try? FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
-        }
-
-        // Flag fresh install so first-boot tasks (e.g. mirror auto-detect) can trigger.
-        UserDefaults.standard.set(true, forKey: "rootfs.freshInstall")
-
-        print("RootfsManager: Installation complete (\(currentArch)) at \(rootfsPath.path)")
-    }
-
-    /// Reset (delete) the rootfs, forcing a fresh install on next launch
-    /// - Parameter keepUserData: If true, backs up /root directory before deletion
-    /// - Returns: URL of backup directory if keepUserData was true, nil otherwise
-    @discardableResult
-    func reset(keepUserData: Bool = false) throws -> URL? {
-        print("RootfsManager: Resetting rootfs...")
-
-        var backupURL: URL?
-
-        if keepUserData {
-            // Backup /root directory
-            let userDataPath = dataPath.appendingPathComponent("root")
-            if FileManager.default.fileExists(atPath: userDataPath.path) {
-                let backupPath = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("rootfs-backup-\(Date().timeIntervalSince1970)")
-                    .appendingPathComponent("root")
-
-                try FileManager.default.createDirectory(
-                    at: backupPath.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-
-                try FileManager.default.copyItem(at: userDataPath, to: backupPath)
-                backupURL = backupPath
-                print("RootfsManager: User data backed up to \(backupPath.path)")
+        logger.warning("[Rootfs] preparing recovery: \(installationDiagnostic(at: rootfsPath) ?? "unknown")")
+        let previous = try RootfsRecovery.replace(at: rootfsPath) { staging in
+            try self.unzipFile(at: zipURL, to: staging)
+            // Validate SQLite before publishing the new tree or writing its install marker.
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(staging.appendingPathComponent("meta.db").path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+                  let openedDB = db else {
+                if let db { sqlite3_close(db) }
+                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata is invalid."])
+            }
+            defer { sqlite3_close(openedDB) }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(openedDB, "PRAGMA quick_check", -1, &statement, nil) == SQLITE_OK, let statement else {
+                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata check failed."])
+            }
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW, let result = sqlite3_column_text(statement, 0),
+                  String(cString: result) == "ok",
+                  sqlite3_exec(openedDB, "SELECT path, inode FROM paths LIMIT 1; SELECT inode, stat FROM stats LIMIT 1;", nil, nil, nil) == SQLITE_OK else {
+                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata is corrupt."])
+            }
+            try self.currentArch.write(to: staging.appendingPathComponent(".arch"), atomically: true, encoding: .utf8)
+            if let reason = self.installationDiagnostic(at: staging) {
+                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Incomplete rootfs: \(reason)"])
+            }
+            for subdir in ["attachments", "offloads", "workspace", "skills", "shared"] {
+                try FileManager.default.createDirectory(at: staging.appendingPathComponent("data/var/ze/" + subdir), withIntermediateDirectories: true)
             }
         }
-
-        // Delete rootfs
-        if FileManager.default.fileExists(atPath: rootfsPath.path) {
-            try FileManager.default.removeItem(at: rootfsPath)
-            print("RootfsManager: Rootfs deleted from \(rootfsPath.path)")
-        }
-
-        // [T-rootfs-reset-terminal-crash] If the kernel already booted this
-        // session, its fakefs is now mounted against a deleted tree. The kernel
-        // cannot be re-mounted or un-booted in-process, so mark the session
-        // poisoned; the terminal start path checks this and refuses to reuse the
-        // stale mount (which would crash) until the app is relaunched.
-        if ISHKernel.shared.isBooted {
-            didResetWhileBooted = true
-            logger.warning("Rootfs reset while kernel booted; terminal disabled until app relaunch")
-        }
-
-        print("RootfsManager: Reset complete. Run installIfNeeded() to reinstall.")
-
-        return backupURL
+        if let previous { logger.warning("[Rootfs] previous tree preserved at \(previous.path); no user files were deleted") }
+        UserDefaults.standard.set(true, forKey: "rootfs.freshInstall")
+        try finishPendingRestore(pendingBackup)
+        logger.info("[Rootfs] installation complete at \(rootfsPath.path)")
     }
 
-    /// Restore user data from a backup
-    /// - Parameter backupURL: URL of backup created by reset(keepUserData: true)
+    /// Retire the complete tree without traversing it. A backup retains data and fakefs metadata.
+    /// keepUserData returns the relocated /root path for the existing restore UI.
+    @discardableResult
+    func reset(keepUserData: Bool = false) throws -> URL? {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        guard !hasPendingUserDataRestore else {
+            throw NSError(domain: "RootfsManager", code: 7, userInfo: [NSLocalizedDescriptionKey: "A user-data restore is already pending. Restart the app to complete it before resetting again."])
+        }
+        guard RootfsRecovery.exists(rootfsPath) else { return nil }
+        let previous = rootfsPath.deletingLastPathComponent()
+            .appendingPathComponent(".alpine-rootfs-recovery-" + UUID().uuidString)
+        let hasUserData = FileManager.default.fileExists(atPath: dataPath.appendingPathComponent("root").path)
+        let shouldRestore = keepUserData && hasUserData
+        if shouldRestore {
+            let record = PendingRestore(directoryName: previous.lastPathComponent)
+            try JSONEncoder().encode(record).write(to: pendingRestoreFile, options: .atomic)
+        }
+        do { try RootfsRecovery.moveEntry(rootfsPath, previous) }
+        catch {
+            // If removing the journal fails, the next launch safely completes its reset intent.
+            if shouldRestore { try? FileManager.default.removeItem(at: pendingRestoreFile) }
+            throw error
+        }
+        if ISHKernel.shared.isBooted {
+            didResetWhileBooted = true
+            logger.warning("[Rootfs] reset while kernel booted; relaunch required")
+        }
+        logger.warning("[Rootfs] reset preserved complete tree at \(previous.path)")
+        return shouldRestore ? previous.appendingPathComponent("data/root") : nil
+    }
+
+    /// Stage the backup before replacing /root; failed copy/activation preserves both originals.
     func restoreUserData(from backupURL: URL) throws {
-        guard isInstalled else {
-            throw NSError(
-                domain: "RootfsManager",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Rootfs not installed. Run installIfNeeded() first."]
-            )
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        guard isInstalled, !ISHKernel.shared.isBooted else {
+            throw NSError(domain: "RootfsManager", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Install rootfs and restore the backup before starting the kernel; restart the app if it has booted."])
         }
-
         let userDataPath = dataPath.appendingPathComponent("root")
-
-        // Remove existing /root directory
-        if FileManager.default.fileExists(atPath: userDataPath.path) {
-            try FileManager.default.removeItem(at: userDataPath)
+        _ = try RootfsRecovery.replace(at: userDataPath) { staging in
+            // replace supplies an empty staging directory; copy into it without changing the backup.
+            for child in try FileManager.default.contentsOfDirectory(at: backupURL, includingPropertiesForKeys: nil) {
+                try FileManager.default.copyItem(at: child, to: staging.appendingPathComponent(child.lastPathComponent))
+            }
         }
+        try registerRestoredRootMetadata(from: backupURL)
+        logger.info("[Rootfs] restored /root from \(backupURL.path)")
+    }
 
-        // Copy backup to rootfs
-        try FileManager.default.copyItem(at: backupURL, to: userDataPath)
-
-        print("RootfsManager: User data restored from \(backupURL.path)")
+    /// Restore registration is strict: every SQLite/host traversal failure aborts boot,
+    /// rolls back metadata and leaves the persistent restore journal for the next attempt.
+    /// Preserve the original fakefs stat blob (including guest symlink mode), because a
+    /// fakefs symlink is represented by an ordinary host file containing its target.
+    private func registerRestoredRootMetadata(from backup: URL) throws {
+        func failure(_ detail: String) -> NSError {
+            NSError(domain: "RootfsManager", code: 8, userInfo: [NSLocalizedDescriptionKey: "User-data metadata restore failed: " + detail])
+        }
+        func open(_ url: URL, flags: Int32) throws -> OpaquePointer {
+            var pointer: OpaquePointer?
+            let status = sqlite3_open_v2(url.path, &pointer, flags, nil)
+            guard status == SQLITE_OK, let pointer else {
+                if let pointer { sqlite3_close(pointer) }
+                throw failure("open " + url.lastPathComponent)
+            }
+            return pointer
+        }
+        let source = try open(backup.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("meta.db"), flags: SQLITE_OPEN_READONLY)
+        defer { sqlite3_close(source) }
+        let target = try open(rootfsPath.appendingPathComponent("meta.db"), flags: SQLITE_OPEN_READWRITE)
+        defer { sqlite3_close(target) }
+        func execute(_ sql: String) throws {
+            guard sqlite3_exec(target, sql, nil, nil, nil) == SQLITE_OK else {
+                throw failure(String(cString: sqlite3_errmsg(target)))
+            }
+        }
+        func statement(_ db: OpaquePointer, _ sql: String) throws -> OpaquePointer {
+            var stmt: OpaquePointer?
+            let status = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+            guard status == SQLITE_OK, let stmt else {
+                if let stmt { sqlite3_finalize(stmt) }
+                throw failure(String(cString: sqlite3_errmsg(db)))
+            }
+            return stmt
+        }
+        func bind(_ bytes: Data, to stmt: OpaquePointer, index: Int32) throws {
+            let status = bytes.withUnsafeBytes { sqlite3_bind_blob(stmt, index, $0.baseAddress, Int32($0.count), Self.SQLITE_TRANSIENT) }
+            guard status == SQLITE_OK else { throw failure("bind metadata") }
+        }
+        let lookup = try statement(source, "SELECT stats.stat FROM paths LEFT JOIN stats ON paths.inode = stats.inode WHERE paths.path = ?")
+        defer { sqlite3_finalize(lookup) }
+        let insertStat = try statement(target, "INSERT INTO stats(stat) VALUES (?)")
+        defer { sqlite3_finalize(insertStat) }
+        let insertPath = try statement(target, "INSERT INTO paths(path, inode) VALUES (?, ?)")
+        defer { sqlite3_finalize(insertPath) }
+        try execute("BEGIN IMMEDIATE")
+        var committed = false
+        defer { if !committed { try? execute("ROLLBACK") } }
+        let clear = try statement(target, "DELETE FROM paths WHERE path = ? OR substr(path, 1, 6) = ?")
+        defer { sqlite3_finalize(clear) }
+        try bind(Data("/root".utf8), to: clear, index: 1)
+        try bind(Data("/root/".utf8), to: clear, index: 2)
+        guard sqlite3_step(clear) == SQLITE_DONE else { throw failure("clear old /root paths") }
+        var stack: [(URL, String)] = [(dataPath.appendingPathComponent("root"), "/root")]
+        while let (host, linuxPath) = stack.popLast() {
+            let attributes = try FileManager.default.attributesOfItem(atPath: host.path)
+            let isDirectory = attributes[.type] as? FileAttributeType == .typeDirectory
+            sqlite3_reset(lookup); sqlite3_clear_bindings(lookup)
+            try bind(Data(linuxPath.utf8), to: lookup, index: 1)
+            let status = sqlite3_step(lookup)
+            let statData: Data
+            if status == SQLITE_ROW {
+                let count = Int(sqlite3_column_bytes(lookup, 0))
+                guard count >= 16, let raw = sqlite3_column_blob(lookup, 0) else { throw failure("invalid original stat for " + linuxPath) }
+                statData = Data(bytes: raw, count: count)
+            } else if status == SQLITE_DONE {
+                // Host-imported entries can legitimately lack original fakefs metadata.
+                let permissions = (attributes[.posixPermissions] as? NSNumber)?.uint32Value ?? (isDirectory ? 0o755 : 0o644)
+                var mode = ((isDirectory ? UInt32(0o040000) : UInt32(0o100000)) | permissions).littleEndian
+                var generated = Data(count: 16)
+                withUnsafeBytes(of: &mode) { generated.replaceSubrange(0..<4, with: $0) }
+                statData = generated
+            } else { throw failure("read original stat for " + linuxPath) }
+            sqlite3_reset(insertStat); sqlite3_clear_bindings(insertStat)
+            try bind(statData, to: insertStat, index: 1)
+            guard sqlite3_step(insertStat) == SQLITE_DONE else { throw failure("write stat for " + linuxPath) }
+            let inode = sqlite3_last_insert_rowid(target)
+            sqlite3_reset(insertPath); sqlite3_clear_bindings(insertPath)
+            try bind(Data(linuxPath.utf8), to: insertPath, index: 1)
+            guard sqlite3_bind_int64(insertPath, 2, inode) == SQLITE_OK,
+                  sqlite3_step(insertPath) == SQLITE_DONE else { throw failure("register " + linuxPath) }
+            if isDirectory {
+                for child in try FileManager.default.contentsOfDirectory(at: host, includingPropertiesForKeys: nil) {
+                    stack.append((child, linuxPath + "/" + child.lastPathComponent))
+                }
+            }
+        }
+        try execute("COMMIT")
+        committed = true
     }
 
     /// Overlay default configuration files from the bundle onto the rootfs.
@@ -496,6 +630,10 @@ class RootfsManager {
             // Skip empty paths (the root directory itself)
             guard !relativePath.isEmpty else { continue }
 
+            guard !relativePath.hasPrefix("/"), !relativePath.contains("\\"),
+                  !relativePath.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else {
+                throw NSError(domain: "RootfsManager", code: 6, userInfo: [NSLocalizedDescriptionKey: "Invalid ZIP path"])
+            }
             let entryPath = destinationURL.appendingPathComponent(relativePath)
 
             // Create parent directories if needed
@@ -508,11 +646,77 @@ class RootfsManager {
             if entry.isDirectory {
                 try fileManager.createDirectory(at: entryPath, withIntermediateDirectories: true)
             } else {
-                if let data = try archive.extractData(for: entry) {
-                    try data.write(to: entryPath)
+                guard let data = try archive.extractData(for: entry), data.count == entry.uncompressedSize else {
+                    throw NSError(domain: "RootfsManager", code: 6,
+                        userInfo: [NSLocalizedDescriptionKey: "Incomplete ZIP entry: \(relativePath)"])
                 }
+                try data.write(to: entryPath)
             }
         }
+    }
+}
+
+/// Same-volume directory-entry transactions. Never recursively deletes an old tree:
+/// deep/unreadable descendants therefore cannot block recovery or be partly erased.
+/// Preserved trees intentionally require explicit later user cleanup.
+enum RootfsRecovery {
+    typealias Move = (URL, URL) throws -> Void
+
+    static func exists(_ url: URL) -> Bool {
+        // Unlike fileExists, lstat also detects a broken symbolic link at the root.
+        var value = stat()
+        return url.path.withCString { lstat($0, &value) } == 0
+    }
+
+    static func moveEntry(_ source: URL, _ destination: URL) throws {
+        guard !exists(destination) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EEXIST),
+                userInfo: [NSFilePathErrorKey: destination.path])
+        }
+        let result = source.path.withCString { sourcePath in
+            destination.path.withCString { destinationPath in Darwin.rename(sourcePath, destinationPath) }
+        }
+        if result != 0 {
+            let code = errno
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code),
+                userInfo: [NSFilePathErrorKey: source.path])
+        }
+    }
+
+    @discardableResult
+    static func preserve(at root: URL, move: Move = moveEntry) throws -> URL? {
+        guard exists(root) else { return nil }
+        let aside = root.deletingLastPathComponent().appendingPathComponent(".\(root.lastPathComponent)-recovery-\(UUID().uuidString)")
+        try move(root, aside)
+        return aside
+    }
+
+    @discardableResult
+    static func replace(at root: URL, move: Move = moveEntry, prepare: (URL) throws -> Void) throws -> URL? {
+        let fm = FileManager.default
+        let parent = root.deletingLastPathComponent()
+        let staging = parent.appendingPathComponent(".\(root.lastPathComponent)-install-\(UUID().uuidString)")
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        // Only this newly generated staging tree is eligible for deletion.
+        // If cleanup fails it remains as an incomplete install, never as the active tree.
+        defer { if exists(staging) { try? fm.removeItem(at: staging) } }
+        try prepare(staging)
+        let previous = try preserve(at: root, move: move)
+        do {
+            try move(staging, root)
+        } catch {
+            let activationError = error
+            if let previous, !exists(root) {
+                do { try move(previous, root) }
+                catch {
+                    throw NSError(domain: "RootfsRecovery", code: 2, userInfo: [
+                        NSLocalizedDescriptionKey: "Installation failed; original data remains at \(previous.path). Rollback failed: \(error.localizedDescription)",
+                        NSUnderlyingErrorKey: activationError, NSFilePathErrorKey: previous.path])
+                }
+            }
+            throw activationError
+        }
+        return previous
     }
 }
 
@@ -583,12 +787,15 @@ private class ZIPArchive {
         fileHandle.seek(toFileOffset: UInt64(centralDirOffset))
 
         for _ in 0..<entryCount {
-            guard let entry = readCentralDirectoryEntry() else { break }
+            guard let entry = readCentralDirectoryEntry() else {
+                throw NSError(domain: "ZIPArchive", code: 3, userInfo: [NSLocalizedDescriptionKey: "Truncated ZIP directory"])
+            }
             entries.append(entry)
         }
     }
 
     private func findEOCD(in data: Data) -> Int? {
+        guard data.count >= 22 else { return nil }
         let signature: [UInt8] = [0x50, 0x4B, 0x05, 0x06]
         for i in stride(from: data.count - 22, through: 0, by: -1) {
             if data[i] == signature[0] && data[i+1] == signature[1] &&

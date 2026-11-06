@@ -365,9 +365,25 @@ private struct ChatExportHeaderView: View {
     /// an image fills it, a glyph sits centred on a light disc.
     @ViewBuilder
     private var avatar: some View {
-        SoulAvatarView(size: Self.avatarSize)
-            .clipShape(Circle())
-            .overlay(Circle().stroke(Color(uiColor: .separator), lineWidth: 0.5))
+        // Match the reference export header's disc and glyph geometry while
+        // resolving Ze's existing image/emoji/logo sources.
+        let size = Self.avatarSize
+        let emoji = SoulStore.cachedMetadata.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        ZStack {
+            Circle().fill(Color(uiColor: .secondarySystemBackground))
+            if let image = SoulAvatarStore.load() {
+                Image(uiImage: image).resizable().scaledToFill()
+                    .frame(width: size, height: size)
+            } else if !emoji.isEmpty {
+                Text(emoji).font(.system(size: size * 0.55))
+            } else {
+                Image("ZeAssistantAvatar").resizable().scaledToFit()
+                    .frame(width: size * 0.55, height: size * 0.55)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color(uiColor: .separator), lineWidth: 0.5))
     }
 
     /// "model · date" on one line when it fits; otherwise one part per line, so a

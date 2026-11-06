@@ -239,7 +239,8 @@ struct ChatShareSelectionView: View {
                     .onChanged { value in
                         guard let current = frames.index(at: value.location.y), cells.indices.contains(current) else { return }
                         if drag == nil {
-                            let start = frames.index(at: value.startLocation.y) ?? current
+                            let cachedStart = frames.index(at: value.startLocation.y) ?? current
+                            let start = cells.indices.contains(cachedStart) ? cachedStart : current
                             drag = (start, !selection.contains(cells[start].id), selection)
                         }
                         guard let d = drag, cells.indices.contains(d.start) else { return }

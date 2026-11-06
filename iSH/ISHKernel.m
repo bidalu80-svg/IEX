@@ -1348,13 +1348,23 @@ static uint64_t g_gov_begin_ts;
 static uint64_t g_gov_last_log_ts;
 
 static uint64_t gov_process_cpu_ns(void) {
+    // MACH_TASK_BASIC_INFO accumulates terminated-thread time. Long-running
+    // guest workers remain live, so add TASK_THREAD_TIMES_INFO or the governor
+    // sees almost no burn until those workers exit.
     mach_task_basic_info_data_t basic;
     mach_msg_type_number_t basic_count = MACH_TASK_BASIC_INFO_COUNT;
+    task_thread_times_info_data_t live;
+    mach_msg_type_number_t live_count = TASK_THREAD_TIMES_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
                   (task_info_t)&basic, &basic_count) != KERN_SUCCESS)
         return 0;
+    if (task_info(mach_task_self(), TASK_THREAD_TIMES_INFO,
+                  (task_info_t)&live, &live_count) != KERN_SUCCESS)
+        return 0;
     uint64_t us = (uint64_t)basic.user_time.seconds * 1000000ULL + basic.user_time.microseconds
-                + (uint64_t)basic.system_time.seconds * 1000000ULL + basic.system_time.microseconds;
+                + (uint64_t)basic.system_time.seconds * 1000000ULL + basic.system_time.microseconds
+                + (uint64_t)live.user_time.seconds * 1000000ULL + live.user_time.microseconds
+                + (uint64_t)live.system_time.seconds * 1000000ULL + live.system_time.microseconds;
     return us * 1000ULL;
 }
 

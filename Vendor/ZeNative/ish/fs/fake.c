@@ -403,6 +403,7 @@ static struct fd *fakefs_open(struct mount *mount, const char *path, int flags, 
         if (flags & O_TRUNC_) real_flags |= O_TRUNC;
         if (flags & O_APPEND_) real_flags |= O_APPEND;
         if (flags & O_NONBLOCK_) real_flags |= O_NONBLOCK;
+        if (flags & O_NOFOLLOW_) real_flags |= O_NOFOLLOW;
         int fd_no = open(host_abs, real_flags, 0666);
         if (fd_no < 0) {
             return ERR_PTR(errno_map());
@@ -540,16 +541,13 @@ static int fakefs_unlink(struct mount *mount, const char *path) {
     /* Auto-create entry if under bind mount so path_unlink won't die */
     if (is_under_bind_mount(path))
         bind_mount_ensure_inode(fs, mount, path);
+    // File Provider operations may wait for network I/O. Never hold the
+    // global metadata transaction while waiting on the external filesystem.
+    if (via_bind && unlink(host_abs) < 0)
+        return errno_map();
     db_begin_write(fs);
-    int err;
-    if (via_bind) {
-        if (unlink(host_abs) < 0) {
-            err = errno_map();
-            db_rollback(fs);
-            return err;
-        }
-    } else {
-        err = realfs.unlink(mount, path);
+    if (!via_bind) {
+        int err = realfs.unlink(mount, path);
         if (err < 0) {
             db_rollback(fs);
             return err;
@@ -578,16 +576,13 @@ static int fakefs_rmdir(struct mount *mount, const char *path) {
     }
     if (is_under_bind_mount(path))
         bind_mount_ensure_inode(fs, mount, path);
+    // File Provider operations may wait for network I/O. Never hold the
+    // global metadata transaction while waiting on the external filesystem.
+    if (via_bind && rmdir(host_abs) < 0)
+        return errno_map();
     db_begin_write(fs);
-    int err;
-    if (via_bind) {
-        if (rmdir(host_abs) < 0) {
-            err = errno_map();
-            db_rollback(fs);
-            return err;
-        }
-    } else {
-        err = realfs.rmdir(mount, path);
+    if (!via_bind) {
+        int err = realfs.rmdir(mount, path);
         if (err < 0) {
             db_rollback(fs);
             return err;
@@ -617,17 +612,12 @@ static int fakefs_rename(struct mount *mount, const char *src, const char *dst) 
         fakefs_record_change(dst, FAKEFS_CHANGE_OP_RENAME);
         return 0;
     }
+    if (src_bind && rename(host_src, host_dst) < 0)
+        return errno_map();
     db_begin_write(fs);
     path_rename(fs, src, dst);
-    int err;
-    if (src_bind) {
-        if (rename(host_src, host_dst) < 0) {
-            err = errno_map();
-            db_rollback(fs);
-            return err;
-        }
-    } else {
-        err = realfs.rename(mount, src, dst);
+    if (!src_bind) {
+        int err = realfs.rename(mount, src, dst);
         if (err < 0) {
             db_rollback(fs);
             return err;
@@ -721,7 +711,11 @@ static int fakefs_stat(struct mount *mount, const char *path, struct statbuf *fa
             return errno_map();
         }
         memset(fake_stat, 0, sizeof(*fake_stat));
+        // stat(path) and fstat(open(path)) must identify the same host inode.
+        fake_stat->dev = dev_fake_from_real(host_stat.st_dev);
         fake_stat->inode = (ino_t)host_stat.st_ino;
+        fake_stat->nlink = host_stat.st_nlink;
+        fake_stat->blksize = host_stat.st_blksize;
         /* Pick a sensible mode: keep host's S_IFMT, default to 0644/0755. */
         mode_t_ type = host_stat.st_mode & S_IFMT;
         fake_stat->mode = type | (S_ISDIR(host_stat.st_mode) ? 0755 : 0644);
@@ -768,11 +762,10 @@ static int fakefs_stat(struct mount *mount, const char *path, struct statbuf *fa
     if (bind_mount_translate_path(path, host_stat_path, sizeof(host_stat_path))) {
         /* For bind-mounted paths, stat the host path directly to avoid
          * AT_SYMLINK_NOFOLLOW returning symlink stats instead of dir stats. */
+        db_commit(fs);
         struct stat real_stat;
-        if (stat(host_stat_path, &real_stat) < 0) {
-            db_commit(fs);
+        if (stat(host_stat_path, &real_stat) < 0)
             return errno_map();
-        }
         /* Copy basic fields from real stat */
         fake_stat->size = real_stat.st_size;
         fake_stat->nlink = real_stat.st_nlink;
@@ -782,8 +775,8 @@ static int fakefs_stat(struct mount *mount, const char *path, struct statbuf *fa
         err = 0;
     } else {
         err = realfs.stat(mount, path, fake_stat);
+        db_commit(fs);
     }
-    db_commit(fs);
     if (err < 0)
         return err;
     fake_stat->inode = inode;
@@ -951,16 +944,13 @@ static int fakefs_mkdir(struct mount *mount, const char *path, mode_t_ mode) {
         fakefs_record_change(path, FAKEFS_CHANGE_OP_WRITE);
         return 0;
     }
+    // File Provider operations may wait for network I/O. Never hold the
+    // global metadata transaction while waiting on the external filesystem.
+    if (via_bind && mkdir(host_abs, 0777) < 0)
+        return errno_map();
     db_begin_write(fs);
-    int err;
-    if (via_bind) {
-        if (mkdir(host_abs, 0777) < 0) {
-            err = errno_map();
-            db_rollback(fs);
-            return err;
-        }
-    } else {
-        err = realfs.mkdir(mount, path, 0777);
+    if (!via_bind) {
+        int err = realfs.mkdir(mount, path, 0777);
         if (err < 0) {
             db_rollback(fs);
             return err;
@@ -1022,7 +1012,7 @@ retry:
     realfs_getpath(fd, entry_path);
 
     /* Debug: log readdir for bind-mounted paths */
-    if (strstr(entry_path, "/var/ze/") != NULL || strstr(entry_path, "Library/ZeChat") != NULL)
+    if (DEBUG_verbose && (strstr(entry_path, "/var/ze/") != NULL || strstr(entry_path, "Library/ZeChat") != NULL))
         fprintf(stderr, "fakefs_readdir: getpath=\"%s\" entry=\"%s\"\n", entry_path, entry->name);
 
     if (strcmp(entry->name, "..") == 0) {

@@ -89,7 +89,7 @@ struct RootfsManagementView: View {
                 } else {
                     Button(action: { viewModel.showResetConfirmation = true }) {
                         Label {
-                            Text("Reset Rootfs")
+                            Text("全新重建 Rootfs")
                         } icon: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 9))
@@ -102,7 +102,7 @@ struct RootfsManagementView: View {
 
                     Button(action: { viewModel.showResetWithBackupConfirmation = true }) {
                         Label {
-                            Text("Reset & Backup User Data")
+                            Text("重建并保留用户数据")
                         } icon: {
                             Image(systemName: "archivebox.fill")
                                 .font(.system(size: 9))
@@ -115,18 +115,9 @@ struct RootfsManagementView: View {
                 }
 
                 if viewModel.hasBackup {
-                    Button(action: { viewModel.restoreBackup() }) {
-                        Label {
-                            Text("Restore User Data")
-                        } icon: {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white)
-                                .frame(width: 21, height: 21)
-                                .background(.teal, in: Circle())
-                        }
-                    }
-                    .disabled(viewModel.isProcessing || !viewModel.isInstalled)
+                    Label("已安排恢复 /root；重启后会在内核启动前自动恢复。", systemImage: "clock.arrow.circlepath")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -153,11 +144,11 @@ struct RootfsManagementView: View {
                     Text("About Rootfs")
                         .font(.headline)
 
-                    Text("The rootfs contains the Alpine Linux filesystem. Resetting will delete all data and restore to factory state.")
+                    Text("重建会安装全新的 Alpine Linux 文件系统。原目录会完整保留在恢复目录中，不会释放其占用的存储空间。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Text("• Reset: Delete everything\n• Backup: Save /root directory\n• Restore: Recover saved data")
+                    Text("• 全新重建：保留原目录，但不自动恢复 /root\n• 保留用户数据：重启后自动恢复 /root\n• 恢复完成后仍保留原备份")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -170,21 +161,21 @@ struct RootfsManagementView: View {
             aojit.prepareIfNeeded()
             dns.apply()
         }
-        .alert("Reset Rootfs?", isPresented: $viewModel.showResetConfirmation) {
+        .alert("重建 Rootfs？", isPresented: $viewModel.showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset", role: .destructive) {
+            Button("全新重建", role: .destructive) {
                 viewModel.resetRootfs(keepUserData: false)
             }
         } message: {
-            Text("This will delete the entire rootfs. All data will be lost. The app will need to restart to reinstall.")
+            Text("重启后安装全新的 rootfs，不自动恢复 /root。原目录会保留，不会释放存储空间。")
         }
-        .alert("Reset with Backup?", isPresented: $viewModel.showResetWithBackupConfirmation) {
+        .alert("重建并保留用户数据？", isPresented: $viewModel.showResetWithBackupConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset & Backup", role: .destructive) {
+            Button("重建并保留用户数据", role: .destructive) {
                 viewModel.resetRootfs(keepUserData: true)
             }
         } message: {
-            Text("This will backup your /root directory, then reset the rootfs. You can restore the backup later.")
+            Text("保留原目录并记录恢复任务。重启后会在内核启动前自动恢复 /root；其他位置的数据仍保留在原目录中。")
         }
         .sheet(isPresented: $showFileBrowser) {
             NavigationStack {
@@ -205,7 +196,6 @@ class RootfsManagementViewModel: ObservableObject {
     @Published var showResetConfirmation = false
     @Published var showResetWithBackupConfirmation = false
 
-    private var backupURL: URL?
 
     var rootfsPath: String {
         RootfsManager.shared.rootfsPath.path
@@ -217,6 +207,7 @@ class RootfsManagementViewModel: ObservableObject {
 
     func refresh() {
         isInstalled = RootfsManager.shared.isInstalled
+        hasBackup = RootfsManager.shared.hasPendingUserDataRestore
 
         if isInstalled {
             DispatchQueue.global(qos: .utility).async {
@@ -259,23 +250,22 @@ class RootfsManagementViewModel: ObservableObject {
 
     func resetRootfs(keepUserData: Bool) {
         isProcessing = true
-        statusMessage = keepUserData ? "Backing up and resetting..." : "Resetting rootfs..."
+        statusMessage = keepUserData ? "正在保留数据并安排恢复…" : "正在保留原目录并重建…"
         resultMessage = nil
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let backup = try RootfsManager.shared.reset(keepUserData: keepUserData)
+                _ = try RootfsManager.shared.reset(keepUserData: keepUserData)
 
                 DispatchQueue.main.async {
                     self.isProcessing = false
                     self.lastOperationSuccess = true
-                    self.backupURL = backup
-                    self.hasBackup = backup != nil
+                    self.hasBackup = RootfsManager.shared.hasPendingUserDataRestore
 
-                    if keepUserData {
-                        self.resultMessage = "✅ Rootfs reset with backup created"
+                    if self.hasBackup {
+                        self.resultMessage = "✅ 已保留原目录。请重启应用，/root 将在内核启动前自动恢复。"
                     } else {
-                        self.resultMessage = "✅ Rootfs reset complete. Restart app to reinstall."
+                        self.resultMessage = "✅ 已保留原目录。请重启应用以全新安装；未释放存储空间。"
                     }
 
                     self.refresh()
@@ -290,35 +280,7 @@ class RootfsManagementViewModel: ObservableObject {
         }
     }
 
-    func restoreBackup() {
-        guard let backupURL = backupURL else {
-            resultMessage = "❌ No backup available"
-            return
-        }
 
-        isProcessing = true
-        statusMessage = "Restoring user data..."
-        resultMessage = nil
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try RootfsManager.shared.restoreUserData(from: backupURL)
-
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                    self.lastOperationSuccess = true
-                    self.resultMessage = "✅ User data restored successfully"
-                    self.refresh()
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                    self.lastOperationSuccess = false
-                    self.resultMessage = "❌ Restore failed: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
 }
 
 #Preview {

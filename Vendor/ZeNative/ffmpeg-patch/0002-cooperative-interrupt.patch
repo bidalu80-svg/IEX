@@ -1,0 +1,24 @@
+--- a/fftools/ffmpeg.c
++++ b/fftools/ffmpeg.c
+@@ -175,6 +175,6 @@
+ }
+ 
+-static volatile int received_sigterm = 0;
+-static volatile int received_nb_signals = 0;
++static atomic_int received_sigterm = 0;
++static atomic_int received_nb_signals = 0;
+ static atomic_int transcode_init_done = ATOMIC_VAR_INIT(0);
+ static volatile int ffmpeg_exited = 0;
+@@ -338,4 +338,12 @@
+ #endif
+     return -1;
++}
++
++// Cooperative cancellation from the owning native handler. Never send a host
++// signal or call sigterm_handler (which can exit the entire iOS process).
++void ffmpeg_request_interrupt(void)
++{
++    atomic_store(&received_sigterm, SIGTERM);
++    atomic_store(&received_nb_signals, 2);
+ }
+ 

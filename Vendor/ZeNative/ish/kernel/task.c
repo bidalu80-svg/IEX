@@ -54,11 +54,18 @@ struct task *task_create_(struct task *parent) {
     list_init(&pid->pgroup);
 
     struct task *task = malloc(sizeof(struct task));
-    if (task == NULL)
+    if (task == NULL) {
+        // Allocation failure must not leave every fork/signal waiting forever.
+        pid->id = 0;
+        pid->task = NULL;
+        unlock(&pids_lock);
         return NULL;
+    }
     *task = (struct task) {};
     if (parent != NULL)
         *task = *parent;
+    atomic_store(&task->native_offload_entry, NULL);
+    atomic_store(&task->native_offload_cancelled, false);
     task->pid = pid->id;
     pid->task = task;
     // [T-ish-exit-valve-progress] Copied from the parent above; a new task has
@@ -166,9 +173,13 @@ static void task_run_tlb_cleanup(void *arg) {
     struct task *self = current;
     if (self != NULL && self->mm_release_deferred && self->mm != NULL) {
         self->mm_release_deferred = false;
-        mm_release(self->mm);
+        lock(&self->general_lock);
+        struct mm *mm = self->mm;
         self->mm = NULL;
         self->mem = NULL;
+        unlock(&self->general_lock);
+        // Procfs readers can no longer acquire a freed memory lock.
+        mm_release(mm);
     }
 }
 

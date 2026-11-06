@@ -16,8 +16,12 @@
 #include <signal.h>
 #include <pthread.h>
 #include <math.h>
+#include <errno.h>
+#include <stdatomic.h>
+#include "kernel/task.h"
 #include "kernel/native_offload.h"
 #include <FFmpeg/FFmpeg.h>
+extern void ffmpeg_request_interrupt(void);
 
 // ── Thread-local stdio redirection (defined in fftools_stdio_redirect.c,
 //    compiled inside FFmpeg.framework) ──
@@ -227,6 +231,7 @@ struct ffmpeg_thread_ctx {
     int out_fd;
     int err_fd;
     int ret;
+    atomic_bool done;
 };
 
 static void *ffmpeg_thread_func(void *arg) {
@@ -237,13 +242,28 @@ static void *ffmpeg_thread_func(void *arg) {
     ctx->ret = ffmpeg_main(ctx->argc, ctx->argv);
     noff_stdout_fd = -1;
     noff_stderr_fd = -1;
+    atomic_store_explicit(&ctx->done, true, memory_order_release);
     return NULL;
+}
+
+// Set only the targeted invocation. No global FFmpeg state is touched here.
+static bool ffmpeg_abort_requested(struct task *task, int sig) {
+    atomic_store_explicit(&task->native_offload_cancelled, sig, memory_order_release);
+    return true;
 }
 
 static int ffmpeg_handler(int argc, char **argv,
                           int stdin_fd, int stdout_fd, int stderr_fd) {
     // ── Serialize: only one ffmpeg_main() at a time ──
-    pthread_mutex_lock(&ffmpeg_mutex);
+    // Waiting calls are cancellable and never interrupt the current owner.
+    while (true) {
+        if (atomic_load_explicit(&current->native_offload_cancelled, memory_order_acquire))
+            return 130;
+        int lock_error = pthread_mutex_trylock(&ffmpeg_mutex);
+        if (lock_error == 0) break;
+        if (lock_error != EBUSY) return 1;
+        usleep(20 * 1000);
+    }
 
     // ── Reset all global state from previous invocation ──
     ffmpeg_reset_globals();
@@ -301,6 +321,8 @@ static int ffmpeg_handler(int argc, char **argv,
         .ret = 1
     };
 
+    atomic_init(&ctx.done, false);
+
     pthread_t thr;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -310,14 +332,20 @@ static int ffmpeg_handler(int argc, char **argv,
     pthread_attr_destroy(&attr);
 
     if (err == 0) {
+        bool interrupt_sent = false;
+        while (!atomic_load_explicit(&ctx.done, memory_order_acquire)) {
+            if (!interrupt_sent && atomic_load_explicit(&current->native_offload_cancelled, memory_order_acquire)) {
+                ffmpeg_request_interrupt();
+                interrupt_sent = true;
+            }
+            usleep(20 * 1000);
+        }
+        // The worker retains argv/fds/global state until it has really stopped.
         pthread_join(thr, NULL);
     } else {
-        // Fallback: run on current thread — set thread-local fds here
-        noff_stdout_fd = stdout_fd;
-        noff_stderr_fd = stderr_fd;
-        ctx.ret = ffmpeg_main(argc, argv);
-        noff_stdout_fd = -1;
-        noff_stderr_fd = -1;
+        // A failed worker allocation must not fall back to an uninterruptible
+        // call on the guest thread. Restore state through the normal teardown.
+        ctx.ret = 1;
     }
 
     // ── Restore av_log callback ──
@@ -342,6 +370,7 @@ static int ffmpeg_handler(int argc, char **argv,
 void ffmpeg_offload_register(void) {
     int err = native_offload_add_handler("ffmpeg", ffmpeg_handler);
     if (err == 0) {
+        native_offload_set_abort_handler("ffmpeg", ffmpeg_abort_requested);
         NSLog(@"NativeOffloads: ffmpeg handler registered");
     } else {
         NSLog(@"NativeOffloads: failed to register ffmpeg handler (err=%d)", err);

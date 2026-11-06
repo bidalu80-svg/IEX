@@ -19,6 +19,9 @@ collect() {
             cp -R "$container/Documents/$kind-verification/." "$evidence/$kind-verification/"
         fi
     done
+    for stream in "$container"/Documents/verification-*.log; do
+        if [ -f "$stream" ]; then cp "$stream" "$evidence/"; fi
+    done
 }
 diagnostics() {
     collect
@@ -33,7 +36,7 @@ for kind in share search; do
     # Delete only this generated result marker; retain earlier artifacts if a
     # fresh run fails, and rely on the fresh success manifest for validation.
     rm -f "$container/Documents/$kind-verification/result.json"
-    xcrun simctl launch --stdout="$evidence/$kind-stdout.log" --stderr="$evidence/$kind-stderr.log" "$device" "$bundle_id" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN "--verify-conversation-$kind"
+    xcrun simctl launch --stdout="$container/Documents/verification-$kind-stdout.log" --stderr="$container/Documents/verification-$kind-stderr.log" "$device" "$bundle_id" -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN "--verify-conversation-$kind"
     for attempt in $(seq 1 150); do
         if [ -f "$container/Documents/$kind-verification/result.json" ]; then break; fi
         sleep 2

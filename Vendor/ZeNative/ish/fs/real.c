@@ -70,6 +70,7 @@ static int open_flags_fake_from_real(int flags) {
     if (flags & O_TRUNC) fake_flags |= O_TRUNC_;
     if (flags & O_APPEND) fake_flags |= O_APPEND_;
     if (flags & O_NONBLOCK) fake_flags |= O_NONBLOCK_;
+    if (flags & O_NOFOLLOW) fake_flags |= O_NOFOLLOW_;
     return fake_flags;
 }
 
@@ -423,12 +424,12 @@ int realfs_getpath(struct fd *fd, char *buf) {
      * Detect and translate back to the Linux path. */
     char linux_path[MAX_PATH];
     if (fakefs_bind_mount_resolve_path(buf, linux_path, sizeof(linux_path))) {
-        if (strstr(buf, "ZeChat") != NULL)
+        if (DEBUG_verbose && strstr(buf, "ZeChat") != NULL)
             fprintf(stderr, "realfs_getpath: bind_mount_resolve OK: \"%s\" -> \"%s\"\n", buf, linux_path);
         strlcpy(buf, linux_path, MAX_PATH);
         return 0;
     }
-    if (strstr(buf, "ZeChat") != NULL)
+    if (DEBUG_verbose && strstr(buf, "ZeChat") != NULL)
         fprintf(stderr, "realfs_getpath: bind_mount_resolve MISS: F_GETPATH=\"%s\" source=\"%s\"\n", buf, fd->mount->source);
 
     if (strcmp(fd->mount->source, "/") != 0 || strcmp(buf, "/") == 0) {

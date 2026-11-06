@@ -63,6 +63,14 @@ typedef int (*native_handler_func)(int argc, char **argv,
 // Returns 0 on success, -1 if registry is full.
 int native_offload_add_handler(const char *guest_name, native_handler_func handler);
 
+// Called on the signalling thread; must never wait on handler-owned locks.
+// Ze passes the target task explicitly so cancelling a queued invocation cannot
+// cancel another invocation of the same handler. Return false from forwarding
+// after invoking this callback so normal guest signal delivery remains intact.
+typedef bool (*native_abort_func)(struct task *task, int sig);
+int native_offload_set_abort_handler(const char *guest_name, native_abort_func abort_fn);
+
+
 // Register a host binary offload (macOS CLI only, uses posix_spawn).
 // spec is "name" or "name=/host/path". Returns 0 on success.
 int native_offload_add(const char *spec);

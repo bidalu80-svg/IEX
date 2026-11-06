@@ -128,6 +128,9 @@ struct task {
     // for a host-native process instead of running emulated code.
     pid_t native_pid;
     bool is_native_proxy;
+    // Published only while an in-process handler is active; registry lives forever.
+    _Atomic(void *) native_offload_entry;
+    atomic_int native_offload_cancelled; // 0 or the terminating guest signal
 
     // current condition/lock, so it can be notified in case of a signal
     cond_t *waiting_cond;

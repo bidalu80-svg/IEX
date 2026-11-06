@@ -20,3 +20,26 @@ Reference: OpenMinis/OpenMinis `1a71df0f381cefde80bf912b723de6f9831bc177`, iOS `
 Ze-specific adapters use its existing assistant avatar, callback message format, tool fold policy and real markdown/block views. Product branding remains Ze. The reference iOS 26 glass surface is compiler-gated; iOS 16–18 use the original material fallback. Existing `SessionShareSheet` API wraps the new selection page, so the menu remains in the same location.
 
 Validation must separate model tests, complete app compilation, actual rendering/export, and installed-device behavior. Source extraction and fixture generation alone do not establish visual equivalence. Actual image/table/code/tool exports and PDF text/page checks are required before delivery.
+
+## Full-page source review
+
+The complete `ChatShareSelectionView.swift` was diffed against the pinned source,
+not only the standalone buttons. Selection navigation title and Cancel/Select All,
+56-point top clearance, leading selection strip, centered floating action row,
+bottom Share bar, preview navigation/share anchor, floating Image/PDF switch,
+four equal-width bottom options, image/PDF 1:1 zoom containers and switch clearance
+retain the reference layout. Compiler guards select the original legacy material
+when the SDK lacks iOS 26 glass APIs. No rearrangement of these pages was needed.
+
+The renderer review found one concrete header mismatch: using the generic chat
+avatar omitted the secondary-background circular disc and rendered emoji at 82%
+instead of the export reference's 55%. `ChatExportHeaderView.avatar` now uses the
+reference 28-point disc, full-size uploaded image, 55%-size glyph and 0.5-point
+ring; Ze's existing image/emoji/logo sources remain the content. Provenance:
+`ChatExportRenderer.swift` `ChatExportHeaderView.avatar` and
+`Agent/Session/SoulStore.swift` `SoulIconView` at the same pinned commit.
+
+A stale drag-start frame after hiding/folding rows could index beyond `cells`;
+the picker now checks the start index before reading it, as it already did for
+the current index. This is a bounded correction to the source interaction, with
+no layout change. Full-app screenshots/rendering remain a separate CI gate.

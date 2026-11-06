@@ -21,3 +21,12 @@ The conversation sharing model, selection/preview controls, export pipeline, in-
 Source: https://github.com/OpenMinis/OpenMinis/tree/1a71df0f381cefde80bf912b723de6f9831bc177/src/ios
 
 The upstream GPL-3.0 license text is preserved in `OpenMinis-LICENSE`. The reference-rendering scripts fetch unmodified declarations from this pinned source and record source hashes. Ze-specific changes adapt state, persistence, queue controls, localization and rendering performance to the existing application.
+
+The browser fixes and standalone regression suites also adapt the same pinned
+application's `Agent/BrowserUse/`, `NativeOffloads/BrowserUseOffload*`,
+`Diagnostics/BrowserResourceMonitor.swift`, `ZeTests/Standalone/Browser*`, and
+`Views/Chat/AIChatView/Composer/ComposerSurface.swift`. Exact source blobs and
+local baseline hashes are recorded in `docs/browser-parity-source-manifest.json`.
+The kernel wrapper comparison and adapted cancellation behavior are documented
+in `docs/kernel-parity-source-manifest.json`; its native dependency is pinned to
+`OpenMinis/ish-arm64@0fd17a135e78b7a0cf08a4f5831217bbb76ed22f`.
