@@ -46,6 +46,8 @@ jobs:
           python3 scripts/test-model-compatibility.py | tee model-compatibility-tests.log
 
       - name: Test browser authorization and provider wire protocols
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: |
           set -euo pipefail
           python3 scripts/test-web-oauth.py | tee web-oauth-tests.log
