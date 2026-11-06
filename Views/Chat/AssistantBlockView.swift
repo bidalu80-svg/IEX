@@ -1228,6 +1228,7 @@ private struct QuestionCardView: View {
             synchronizeState(requestId: card.requestId)
         } else {
             requestIsLive = coordinator.isPending(requestId: card.requestId)
+            synchronizeState(requestId: card.requestId)
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
         }
         isSubmitting = false
@@ -1278,7 +1279,9 @@ private struct QuestionCardView: View {
             do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
             guard block.questionCard?.status == .pending else { return }
             requestIsLive = coordinator.isPending(requestId: card.requestId)
-            if !requestIsLive { synchronizeState(requestId: card.requestId) }
+            if let latest = coordinator.currentState(requestId: card.requestId), latest != block.questionCard {
+                synchronizeState(requestId: card.requestId)
+            }
         }
     }
 

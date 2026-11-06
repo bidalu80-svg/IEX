@@ -12,7 +12,6 @@ private final class ProviderConfigStore {
 private struct SubAgentScreenshot: View {
     let record: ZeSubAgentRecord
     let scheme: ColorScheme
-    let reducedMotion: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -26,8 +25,6 @@ private struct SubAgentScreenshot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(uiColor: .systemGroupedBackground))
         .environment(\.colorScheme, scheme)
-        .environment(\.scenePhase, .active)
-        .environment(\.accessibilityReduceMotion, reducedMotion)
         .ignoresSafeArea()
     }
 }
@@ -50,24 +47,29 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
     @MainActor private func runChecks() async {
         do {
             guard let window else { throw failure("Missing UIWindow") }
+            for _ in 0..<50 {
+                if UIApplication.shared.applicationState == .active { break }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            try require(UIApplication.shared.applicationState == .active, "Harness application did not become active")
             for scheme in [ColorScheme.light, .dark] {
                 for status in [ZeSubAgentStatus.running, .completed] {
-                    try await capture(window: window, scheme: scheme, status: status, reducedMotion: false)
+                    try await capture(window: window, scheme: scheme, status: status, animationDisabledFixture: false)
                 }
-                try await capture(window: window, scheme: scheme, status: .running, reducedMotion: true)
+                try await capture(window: window, scheme: scheme, status: .running, animationDisabledFixture: true)
             }
             try writeResult(["success": true, "renderer": "UIHostingController + visible UIWindow.drawHierarchy", "screenshots": evidence,
-                             "scope": "Production cards, stats, history, narrow layout and Core Animation lifecycle; no device FPS assertion"])
+                             "scope": "Production cards, stats, history, narrow layout and Core Animation lifecycle; static-rim uses a compositor animation-disabled fixture, not OS Reduce Motion; no device FPS assertion"])
         } catch {
             try? writeResult(["success": false, "error": error.localizedDescription, "screenshots": evidence])
         }
     }
 
-    @MainActor private func capture(window: UIWindow, scheme: ColorScheme, status: ZeSubAgentStatus, reducedMotion: Bool) async throws {
+    @MainActor private func capture(window: UIWindow, scheme: ColorScheme, status: ZeSubAgentStatus, animationDisabledFixture: Bool) async throws {
         let record = fixture(status: status)
         let width: CGFloat = 320
         let height: CGFloat = min(window.bounds.height, 800)
-        let host = UIHostingController(rootView: SubAgentScreenshot(record: record, scheme: scheme, reducedMotion: reducedMotion))
+        let host = UIHostingController(rootView: SubAgentScreenshot(record: record, scheme: scheme))
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         window.rootViewController = host
         window.frame.size = CGSize(width: width, height: height)
@@ -88,14 +90,23 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
 
         let layers = allLayers(host.view.layer)
         let rims = layers.compactMap { $0 as? CAGradientLayer }.filter { $0.type == .conic }
+        if animationDisabledFixture {
+            let surfaces = allViews(host.view).compactMap { $0 as? ZeSubAgentRimLayerView }
+            try require(!surfaces.isEmpty, "Static-rim fixture found no production rim surface")
+            for surface in surfaces {
+                surface.animates = false
+                surface.updateAnimation()
+            }
+            CATransaction.flush()
+        }
         let rotations = rims.filter { $0.animation(forKey: "rimRotation") != nil }.count
         if status.isActive {
             try require(!rims.isEmpty, "Running card has no UIKit conic rim")
-            try require(reducedMotion ? rotations == 0 : rotations > 0, "Reduce Motion / active animation contract failed")
+            try require(animationDisabledFixture ? rotations == 0 : rotations > 0, "Compositor disabled-fixture / active animation contract failed")
         } else {
             try require(rims.isEmpty && rotations == 0, "Completed card retained an active rim")
         }
-        let name = "subagent-\(scheme == .dark ? "dark" : "light")-\(status.rawValue)\(reducedMotion ? "-reduced-motion" : "").png"
+        let name = "subagent-\(scheme == .dark ? "dark" : "light")-\(status.rawValue)\(animationDisabledFixture ? "-static-rim" : "").png"
         let format = UIGraphicsImageRendererFormat()
         format.scale = 2
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
@@ -113,7 +124,7 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
         try require(rims.allSatisfy { $0.animation(forKey: "rimRotation") == nil }, "Detached card retained animation")
         evidence.append(["file": name, "width": Double(width), "height": Double(height), "pngBytes": png.count,
                          "statsWidth": Double(fitting.width), "statsHeight": Double(fitting.height),
-                         "conicRims": rims.count, "runningAnimations": rotations, "reducedMotion": reducedMotion,
+                         "conicRims": rims.count, "runningAnimations": rotations, "animationDisabledFixture": animationDisabledFixture,
                          "detachedAnimations": rims.filter { $0.animation(forKey: "rimRotation") != nil }.count])
     }
 
@@ -132,6 +143,9 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
         return record
     }
 
+    private func allViews(_ view: UIView) -> [UIView] {
+        [view] + view.subviews.flatMap(allViews)
+    }
     private func allLayers(_ layer: CALayer) -> [CALayer] {
         [layer] + (layer.sublayers ?? []).flatMap(allLayers)
     }

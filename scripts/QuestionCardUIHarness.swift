@@ -123,7 +123,6 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
         let height = min(UIScreen.main.bounds.height, 844)
         let sample = QuestionScreenshot(block: block, showOther: scenario == "other-sheet")
             .environment(\.colorScheme, scheme)
-            .environment(\.accessibilityReduceMotion, true)
         let host = UIHostingController(rootView: sample)
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
         window.rootViewController = host

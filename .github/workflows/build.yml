@@ -66,6 +66,17 @@ jobs:
           "$RUNNER_TEMP/subagent-card-tests" | tee subagent-card-tests.log
           xcrun swiftc -frontend -parse Views/Chat/ZeSubAgentViews.swift Views/Chat/ToolLiveSheet.swift Views/Chat/AssistantBlockView.swift
 
+      - name: Typecheck production card rendering fixtures
+        run: |
+          set -euo pipefail
+          python3 scripts/extract-question-ui.py "$RUNNER_TEMP/QuestionUIProduction.swift"
+          python3 scripts/extract-subagent-ui.py "$RUNNER_TEMP/SubAgentUIProduction.swift"
+          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift"; do
+            xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library \
+              -target "$(uname -m)-apple-ios16.0-simulator" \
+              -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$source"
+          done
+
       - name: Test consecutive tool grouping and screenshot preservation
         run: |
           set -euo pipefail
