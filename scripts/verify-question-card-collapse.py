@@ -31,7 +31,9 @@ assert "isQuestionCardExpanded" in models
 assert "isQuestionCardExpanded" in layout
 
 # 3. The collapsed header always renders the question.
-assert "card.displayQuestion" in view
+search = Path("Views/Chat/ChatSearch.swift").read_text(encoding="utf-8")
+assert "ChatSearchQuestionText.questionTopic(card)" in view
+assert "card.displayQuestion" in search
 assert "var displayQuestion" in lifecycle
 assert "var chromeTitle" in lifecycle
 assert "var summaryText" in lifecycle

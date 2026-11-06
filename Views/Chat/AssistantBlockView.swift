@@ -199,6 +199,20 @@ private struct ZeSubAgentInlineRow: View {
     }
 }
 
+private struct SearchableToolLabel: View {
+    @ObservedObject var token: ChatSearchHighlightToken
+    let text: String
+    let active: Bool
+    var body: some View {
+        if let state = token.state {
+            Text(SearchHighlightText.attributed(text, searchOffset: 0, state: state, dimmed: false))
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(ChatColors.secondaryText)
+        } else {
+            ChatShimmerText(text: text, font: .system(size: 13, weight: .medium), color: ChatColors.secondaryText, isActive: active, usesIntrinsicWidth: false)
+        }
+    }
+}
+
 // MARK: - Shimmer Overlay (continuous leading-to-trailing shine)
 
 /// Shared sweep timing for the compact chat status rows and the "Ze正在思考中"
@@ -494,17 +508,10 @@ struct ToolCapsuleView: View {
 
                 // Description text with bouncing dots during streaming
                 HStack(spacing: 0) {
-                    if searchCenter != nil {
-                        SearchHighlightText(displayText, blockId: block.id, field: .body, messageId: searchMessageId)
-                            .font(.system(size: 13, weight: .medium)).foregroundStyle(ChatColors.secondaryText)
+                    if let searchCenter, let searchMessageId {
+                        SearchableToolLabel(token: searchCenter.token(for: .init(messageId: searchMessageId, blockId: block.id, field: .body)), text: displayText, active: isActive)
                     } else {
-                    ChatShimmerText(
-                        text: displayText,
-                        font: .system(size: 13, weight: .medium),
-                        color: ChatColors.secondaryText,
-                        isActive: isActive,
-                        usesIntrinsicWidth: false
-                    )
+                        ChatShimmerText(text: displayText, font: .system(size: 13, weight: .medium), color: ChatColors.secondaryText, isActive: isActive, usesIntrinsicWidth: false)
                     }
                     if isStreaming {
                         ForEach(0..<3, id: \.self) { i in
