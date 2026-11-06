@@ -4412,7 +4412,7 @@ extension RawMessage {
                 if tu.name == "ask_user",
                    let data = tu.input.data(using: .utf8),
                    let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let card = QuestionCardParser.state(requestId: tu.toolUseId, arguments: object, timeout: 900) {
+                   let card = QuestionCardParser.restoredState(requestId: tu.toolUseId, arguments: object, timeout: 900) {
                     block.questionCard = card
                     block.isQuestionCardExpanded = QuestionCardExpansionStore.isExpanded(
                         for: card.requestId,

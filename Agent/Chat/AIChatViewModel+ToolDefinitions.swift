@@ -36,10 +36,10 @@ extension AIChatViewModel {
             ),
             AgentToolDefinition(
                 name: "ask_user",
-                description: "Show an interactive question card and pause the agent until the user answers every question. Use this whenever the user must choose, clarify, or confirm something. There is no always-allow or remembered approval. If the user does not answer before timeout, the tool returns confirmed=false and status=unconfirmed; never infer or choose on the user's behalf. `questions` must be newline-separated; each line may use `Question || Option A | Option B | Option C`.",
+                description: "Show an interactive question card and pause the agent until the user answers every question. Use this whenever the user must choose, clarify, or confirm something. There is no always-allow or remembered approval. If the user does not answer before timeout, the tool returns confirmed=false and status=unconfirmed; never infer or choose on the user's behalf. For structured cards, `questions` is a JSON-encoded array of 1-8 objects with question, optional unique id, options (strings or {label, description}), multi_select, or type=confirm with impact/risk. Confirmation cards expose Cancel/Allow; read answers[].decision, since confirmed only means answered. Legacy newline-separated `Question || Option A | Option B` remains accepted.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise title shown on the question card."),
-                    "questions": AgentToolParam(type: .string, description: "One question per line. For choices, append `||` followed by options separated with `|`. Maximum 8 questions."),
+                    "questions": AgentToolParam(type: .string, description: "JSON-encoded array, e.g. [{\"question\":\"Choose features\",\"options\":[\"Search\",\"Export\"],\"multi_select\":true}]. For approval use {\"type\":\"confirm\",\"question\":\"Exact action?\",\"impact\":\"Consequence\",\"risk\":\"medium\"}. Maximum 8 questions with unique ids. Legacy one-question-per-line `Question || A | B` also works."),
                     "timeout_seconds": AgentToolParam(type: .integer, description: "Optional timeout in seconds. Default 900. On timeout the result is unconfirmed."),
                 ],
                 required: ["tool_title", "questions"],

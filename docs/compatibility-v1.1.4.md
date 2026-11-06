@@ -38,6 +38,16 @@ Implemented in Ze's existing runtime and message renderer:
 
 This is adaptation to Ze's tool/runtime architecture. Device-level visual equivalence, scrolling/frame-time measurements, image-preview visual parity and live provider calls still require an installed build; source changes and CI alone do not establish those results.
 
+## Question interaction cards
+
+Reference iOS files: `Views/Chat/UserAskCardView.swift` (blob `a25b5871a124a0f639469c6ef516a530d7fc4239`), `Agent/Chat/UserAskCore.swift`, `UserAskCenter.swift`, and `AIChatViewModel+UserAsk.swift`.
+
+Ze keeps its existing `ask_user` tool name and supports both legacy single-line questions and JSON-encoded structured questions. New structured fields include multiple selection, option descriptions, explicit confirmation, impact and risk. Selection remains a draft until Next/Submit; there is no timed auto-submit. Confirmation cards require an explicit allow/deny action and do not offer delegation or an arbitrary replacement answer.
+
+The compact card has a 12pt radius, lightly tinted background, progress/countdown, a bounded scrolling question body and fixed action area. Other answers and notes open an independent input sheet; drafts survive view changes and navigating to the previous question. Completed cards collapse and can be expanded; inline and tool-sheet surfaces share the same card.
+
+Notification replies are bound to the originating session and exact question index. Registering question actions preserves unrelated notification categories. Saved pending state includes a process identity: a process restart marks an orphaned request expired while preserving partial answers and drafts, rather than claiming the suspended continuation is still alive.
+
 ## Validation and rollback
 
 The existing push-triggered `.github/workflows/build.yml` now also executes:
@@ -45,6 +55,8 @@ The existing push-triggered `.github/workflows/build.yml` now also executes:
 - `scripts/test-model-compatibility.py`: catalog contracts and compiled production thinking-rule behavior.
 - `scripts/SubAgentLifecycleHarness.swift`: production coordinator with fixture dependencies, exercising queue, cancellation, sibling grouping, restoration and legacy decoding.
 - `scripts/SubAgentBlockLinkTests.swift`: compiled production task identity parser, including persisted and malformed results.
+- `scripts/test-question-core.py`: compiled production question schema/state, notification identity and persistence contracts.
+- `scripts/test-subagent-ui.sh` and `scripts/test-question-ui.sh`: real production views hosted in a simulator window, with PNGs and result JSON. Fixtures supply record data and app integration dependencies; microphone capture is not exercised. These are component rendering checks, not full-app device performance measurements.
 
 The normal unsigned iOS build and IPA audit assert version 1.1.4 (build 8). Local Windows checks can validate catalogs, source structure and diffs; Swift and iOS compilation require the macOS workflow. See the delivery's exact commit and workflow URL for the actual result.
 

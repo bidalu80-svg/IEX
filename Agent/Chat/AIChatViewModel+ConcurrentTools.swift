@@ -232,7 +232,7 @@ extension AIChatViewModel {
             let cardBlock: AssistantBlock? = (msgIdx < messages.count && blockIdx < messages[msgIdx].blocks.count)
                 ? messages[msgIdx].blocks[blockIdx]
                 : nil
-            let response = await QuestionCardCoordinator.shared.request(state: state, block: cardBlock)
+            let response = await QuestionCardCoordinator.shared.request(state: state, block: cardBlock, sessionId: sessionId)
             toolOutput = response.json
             toolSuccess = true
             if let cardBlock {

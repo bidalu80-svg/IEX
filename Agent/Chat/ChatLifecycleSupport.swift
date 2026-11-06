@@ -626,12 +626,63 @@ struct QuestionCardQuestion: Codable, Equatable, Identifiable {
     let id: String
     let prompt: String
     let options: [String]
+    var multiSelect: Bool
+    var optionDescriptions: [String?]
+    var isConfirmation: Bool
+    var impact: String?
+    var risk: String?
 
-    init(id: String, prompt: String, options: [String] = []) {
-        self.id = id
-        self.prompt = prompt
-        self.options = options
+    init(id: String, prompt: String, options: [String] = [], multiSelect: Bool = false,
+         optionDescriptions: [String?] = [], isConfirmation: Bool = false,
+         impact: String? = nil, risk: String? = nil) {
+        self.id = id; self.prompt = prompt; self.options = options
+        self.multiSelect = multiSelect; self.optionDescriptions = optionDescriptions
+        self.isConfirmation = isConfirmation; self.impact = impact; self.risk = risk
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, prompt, options, multiSelect, optionDescriptions, isConfirmation, impact, risk
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        options = try c.decodeIfPresent([String].self, forKey: .options) ?? []
+        multiSelect = try c.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? false
+        optionDescriptions = try c.decodeIfPresent([String?].self, forKey: .optionDescriptions) ?? []
+        isConfirmation = try c.decodeIfPresent(Bool.self, forKey: .isConfirmation) ?? false
+        impact = try c.decodeIfPresent(String.self, forKey: .impact)
+        risk = try c.decodeIfPresent(String.self, forKey: .risk)
+    }
+}
+
+/// Input is staged until the user explicitly submits; a suggested option never
+/// becomes an answer merely because a card appeared or its timeout elapsed.
+struct QuestionCardDraft: Codable, Equatable {
+    var selectedIndices: [Int] = []
+    var otherText: String = ""
+    var note: String = ""
+    var delegated: Bool = false
+
+    func answer(for question: QuestionCardQuestion) -> String? {
+        let indices = Array(Set(selectedIndices)).sorted()
+        guard indices.allSatisfy({ question.options.indices.contains($0) }) else { return nil }
+        let other = String(otherText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        let comment = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1000))
+        if question.isConfirmation {
+            guard !delegated, indices.count == 1, other.isEmpty else { return nil }
+        } else if delegated {
+            return comment.isEmpty ? "由你决定" : "由你决定。补充说明：" + comment
+        }
+        guard question.multiSelect || indices.count <= 1 else { return nil }
+        var parts = indices.map { question.options[$0] }
+        if !other.isEmpty { parts.append(question.options.isEmpty ? other : "其他：" + other) }
+        guard !parts.isEmpty else { return nil }
+        if !comment.isEmpty { parts.append("补充说明：" + comment) }
+        return parts.joined(separator: "；")
+    }
+
+    func isComplete(for question: QuestionCardQuestion) -> Bool { answer(for: question) != nil }
 }
 
 enum QuestionCardStatus: String, Codable, Equatable {
@@ -650,6 +701,7 @@ struct QuestionCardState: Codable, Equatable {
     var currentIndex: Int
     var answers: [String?]
     var status: QuestionCardStatus
+    var resolutionSource: String? = nil
 
     init(requestId: String, title: String, questions: [QuestionCardQuestion], timeoutAt: Date, status: QuestionCardStatus = .pending) {
         self.requestId = requestId
@@ -659,6 +711,35 @@ struct QuestionCardState: Codable, Equatable {
         self.currentIndex = 0
         self.answers = Array(repeating: nil, count: questions.count)
         self.status = status
+    }
+
+    mutating func navigate(to index: Int, now: Date = Date()) -> Bool {
+        guard status == .pending, now < timeoutAt, questions.indices.contains(index),
+              index <= currentIndex || (answers.indices.contains(index) && answers[index] != nil) else { return false }
+        currentIndex = index
+        return true
+    }
+
+    /// Validate the displayed question identity before mutating any answer.
+    /// Revisiting an earlier question always advances through the subsequent
+    /// questions again; retained answers never silently submit the whole card.
+    mutating func submit(answer: String, at index: Int, now: Date = Date()) -> Bool {
+        guard status == .pending, now < timeoutAt, index == currentIndex,
+              questions.indices.contains(index) else { return false }
+        let cleaned = String(answer.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
+        guard !cleaned.isEmpty else { return false }
+        let question = questions[index]
+        if question.isConfirmation {
+            guard question.options.contains(where: { cleaned == $0 || cleaned.hasPrefix($0 + "；补充说明：") }) else { return false }
+        }
+        if answers.count < questions.count { answers += Array(repeating: nil, count: questions.count - answers.count) }
+        answers[index] = cleaned
+        if index + 1 < questions.count {
+            currentIndex = index + 1
+        } else if let unanswered = questions.indices.first(where: { answers[$0] == nil }) {
+            currentIndex = unanswered
+        } else { status = .confirmed }
+        return true
     }
 
     /// The question currently on screen. Clamped so a stale `currentIndex`
@@ -701,7 +782,9 @@ struct QuestionCardState: Codable, Equatable {
         switch status {
         case .pending: return String(localized: "Waiting for your answer…")
         case .confirmed: return String(localized: "Answered")
-        case .unconfirmed: return String(localized: "Unconfirmed")
+        case .unconfirmed:
+            if resolutionSource == "interrupted" { return String(localized: "应用重启，提问已过期") }
+            return String(localized: "Unconfirmed")
         }
     }
 
@@ -830,6 +913,7 @@ struct QuestionCardResponse: Codable, Equatable {
         let id: String
         let question: String
         let answer: String?
+        var decision: String? = nil
     }
 
     let confirmed: Bool
@@ -848,6 +932,7 @@ struct QuestionCardResponse: Codable, Equatable {
                     "question": answer.question
                 ]
                 item["answer"] = answer.answer ?? NSNull()
+                if let decision = answer.decision { item["decision"] = decision }
                 return item
             }
         ]
@@ -860,18 +945,82 @@ struct QuestionCardResponse: Codable, Equatable {
     }
 }
 
+/// Snapshots preserve partial answers and drafts. A different launch identity
+/// explicitly expires a pending ask: no continuation survives process death.
+/// A subsequent model execution may create a new live request with the same ID.
+enum QuestionCardPersistence {
+    private static let launchId = UUID().uuidString
+    private struct Snapshot: Codable { var launchId: String; var state: QuestionCardState }
+    static func load(_ id: String) -> QuestionCardState? {
+        guard let data = UserDefaults.standard.data(forKey: "question-card.state." + id) else { return nil }
+        if let saved = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            var state = saved.state
+            if state.status == .pending && saved.launchId != launchId {
+                state.status = .unconfirmed
+                state.resolutionSource = "interrupted"
+            }
+            return state
+        }
+        // Read the old on-disk shape as well; it carried no live-process identity.
+        guard var state = try? JSONDecoder().decode(QuestionCardState.self, from: data) else { return nil }
+        if state.status == .pending { state.status = .unconfirmed; state.resolutionSource = "interrupted" }
+        return state
+    }
+    static func save(_ state: QuestionCardState) {
+        if let data = try? JSONEncoder().encode(Snapshot(launchId: launchId, state: state)) {
+            UserDefaults.standard.set(data, forKey: "question-card.state." + state.requestId)
+        }
+        let keys = UserDefaults.standard.dictionaryRepresentation().keys.filter { $0.hasPrefix("question-card.state.") }
+        if keys.count > 128 {
+            let terminal = keys.filter { key in
+                let id = String(key.dropFirst("question-card.state.".count))
+                return id != state.requestId && load(id)?.status != .pending
+            }
+            for key in terminal.prefix(keys.count - 128) {
+                UserDefaults.standard.removeObject(forKey: key)
+                UserDefaults.standard.removeObject(forKey: key.replacingOccurrences(of: "state.", with: "drafts."))
+            }
+        }
+    }
+    static func draft(requestId: String, questionIndex: Int) -> QuestionCardDraft {
+        drafts(requestId)[String(questionIndex)] ?? QuestionCardDraft()
+    }
+    static func saveDraft(requestId: String, questionIndex: Int, draft: QuestionCardDraft) {
+        var values = drafts(requestId)
+        values[String(questionIndex)] = draft
+        if let data = try? JSONEncoder().encode(values) {
+            UserDefaults.standard.set(data, forKey: "question-card.drafts." + requestId)
+        }
+    }
+    private static func drafts(_ id: String) -> [String: QuestionCardDraft] {
+        guard let data = UserDefaults.standard.data(forKey: "question-card.drafts." + id) else { return [:] }
+        return (try? JSONDecoder().decode([String: QuestionCardDraft].self, from: data)) ?? [:]
+    }
+}
+
 enum QuestionCardParser {
     static func questions(from arguments: [String: Any]) -> [QuestionCardQuestion] {
+        let parsed: [QuestionCardQuestion]
         if let raw = arguments["questions"] as? String {
-            return parse(raw)
-        }
-        if let raw = arguments["questions"] as? [[String: Any]] {
-            return raw.enumerated().compactMap { makeQuestion($0.element, index: $0.offset) }
-        }
-        if let question = arguments["question"] as? String {
-            return parse(question)
-        }
-        return []
+            parsed = parse(raw)
+        } else if let raw = arguments["questions"] as? [[String: Any]] {
+            parsed = raw.enumerated().compactMap { makeQuestion($0.element, index: $0.offset) }
+            guard parsed.count == raw.count else { return [] }
+        } else if let question = arguments["question"] as? String {
+            parsed = parse(question)
+        } else { return [] }
+        // Reject excess/duplicate questions instead of silently dropping a
+        // decision or binding two different answers to the same question ID.
+        guard parsed.count <= 8, Set(parsed.map(\.id)).count == parsed.count else { return [] }
+        return parsed
+    }
+
+    static func restoredState(requestId: String, arguments: [String: Any], timeout: TimeInterval) -> QuestionCardState? {
+        guard var state = state(requestId: requestId, arguments: arguments, timeout: timeout) else { return nil }
+        if let saved = QuestionCardPersistence.load(requestId), saved.questions == state.questions { return saved }
+        state.status = .unconfirmed
+        state.resolutionSource = "interrupted"
+        return state
     }
 
     static func state(requestId: String, arguments: [String: Any], timeout: TimeInterval) -> QuestionCardState? {
@@ -935,14 +1084,13 @@ enum QuestionCardParser {
            let object = try? JSONSerialization.jsonObject(with: data),
            let array = object as? [[String: Any]] {
             let parsed = array.enumerated().compactMap { makeQuestion($0.element, index: $0.offset) }
-            if !parsed.isEmpty { return parsed }
+            return parsed.count == array.count ? parsed : []
         }
 
         return trimmed
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .prefix(8)
             .enumerated()
             .map { index, line in
                 let pieces = line.components(separatedBy: "||")
@@ -1002,10 +1150,31 @@ enum QuestionCardParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return nil }
         let id = (dictionary["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let options = (dictionary["options"] as? [Any] ?? []).compactMap { $0 as? String }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return QuestionCardQuestion(id: id?.isEmpty == false ? id! : "q\(index + 1)", prompt: prompt, options: Array(options.prefix(8)))
+        let confirmation = (dictionary["type"] as? String) == "confirm"
+        let rawOptions = dictionary["options"] as? [Any] ?? []
+        guard rawOptions.count <= 8 else { return nil }
+        var options: [String] = []
+        var descriptions: [String?] = []
+        for value in rawOptions.prefix(8) {
+            let object = value as? [String: Any]
+            let label = (value as? String ?? object?["label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !label.isEmpty else { continue }
+            options.append(label)
+            descriptions.append(object?["description"] as? String)
+        }
+        return QuestionCardQuestion(id: id?.isEmpty == false ? id! : "q\(index + 1)", prompt: prompt,
+                                    options: confirmation ? ["取消", "允许"] : options,
+                                    multiSelect: !confirmation && (dictionary["multi_select"] as? Bool ?? false),
+                                    optionDescriptions: confirmation ? [] : descriptions, isConfirmation: confirmation,
+                                    impact: dictionary["impact"] as? String, risk: dictionary["risk"] as? String)
+    }
+}
+
+enum QuestionCardNotificationIdentity {
+    static func matches(sessionId: String?, questionIndex: Int?, expectedSessionId: String?, expectedIndex: Int) -> Bool {
+        guard let sessionId, let expectedSessionId, !sessionId.isEmpty,
+              let questionIndex else { return false }
+        return sessionId == expectedSessionId && questionIndex == expectedIndex
     }
 }
 
@@ -1025,11 +1194,13 @@ final class QuestionCardCoordinator {
         var continuation: CheckedContinuation<QuestionCardResponse, Never>?
         var timeoutTask: Task<Void, Never>?
         var source = "in_app"
+        let sessionId: String?
 
-        init(id: String, state: QuestionCardState, block: AssistantBlock?) {
+        init(id: String, state: QuestionCardState, block: AssistantBlock?, sessionId: String?) {
             self.id = id
             self.state = state
             self.block = block
+            self.sessionId = sessionId
         }
     }
 
@@ -1060,7 +1231,8 @@ final class QuestionCardCoordinator {
 
     func request(
         state: QuestionCardState,
-        block: AssistantBlock?
+        block: AssistantBlock?,
+        sessionId: String? = nil
     ) async -> QuestionCardResponse {
         let requestId = state.requestId
         return await withTaskCancellationHandler {
@@ -1068,7 +1240,7 @@ final class QuestionCardCoordinator {
                 if pending[requestId] != nil {
                     finish(requestId: requestId, status: .unconfirmed, source: "replaced")
                 }
-                let request = PendingRequest(id: requestId, state: state, block: block)
+                let request = PendingRequest(id: requestId, state: state, block: block, sessionId: sessionId)
                 request.continuation = continuation
                 pending[requestId] = request
                 block?.questionCard = state
@@ -1092,34 +1264,51 @@ final class QuestionCardCoordinator {
         }
     }
 
-    func submitAnswer(requestId: String, answer: String, source: String = "in_app") {
-        guard let request = pending[requestId], request.state.status == .pending else { return }
-        let cleaned = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        if request.state.answers.count < request.state.questions.count {
-            request.state.answers += Array(
-                repeating: nil,
-                count: request.state.questions.count - request.state.answers.count
-            )
+    func currentState(requestId: String) -> QuestionCardState? {
+        pending[requestId]?.state ?? QuestionCardPersistence.load(requestId)
+    }
+
+    func draft(requestId: String, questionIndex: Int) -> QuestionCardDraft {
+        QuestionCardPersistence.draft(requestId: requestId, questionIndex: questionIndex)
+    }
+
+    func saveDraft(requestId: String, questionIndex: Int, draft: QuestionCardDraft) {
+        guard let state = pending[requestId]?.state, state.questions.indices.contains(questionIndex) else { return }
+        QuestionCardPersistence.saveDraft(requestId: requestId, questionIndex: questionIndex, draft: draft)
+    }
+
+    @discardableResult
+    func navigate(requestId: String, index: Int) -> Bool {
+        guard let request = pending[requestId], request.state.navigate(to: index) else { return false }
+        request.block?.questionCard = request.state
+        request.block?.content = request.state.summaryText
+        request.block?.toolSummary = request.state.chromeTitle
+        notifyLayoutChange(for: request.block)
+        persist(request.state)
+        postNotification(for: request)
+        return true
+    }
+
+    @discardableResult
+    func submitAnswer(requestId: String, answer: String, questionIndex: Int? = nil, source: String = "in_app") -> Bool {
+        guard let request = pending[requestId] else { return false }
+        guard Date() < request.state.timeoutAt else {
+            finish(requestId: requestId, status: .unconfirmed, source: "timeout")
+            return false
         }
-        let index = request.state.currentIndex
-        guard request.state.questions.indices.contains(index) else {
-            finish(requestId: requestId, status: .confirmed, source: source)
-            return
-        }
+        guard request.state.submit(answer: answer, at: questionIndex ?? request.state.currentIndex) else { return false }
         request.source = source
-        request.state.answers[index] = cleaned
-        if index + 1 < request.state.questions.count {
-            request.state.currentIndex = index + 1
+        if request.state.status == .confirmed {
+            finish(requestId: requestId, status: .confirmed, source: source)
+        } else {
             request.block?.questionCard = request.state
             request.block?.content = request.state.summaryText
             request.block?.toolSummary = request.state.chromeTitle
             notifyLayoutChange(for: request.block)
             persist(request.state)
             postNotification(for: request)
-            return
         }
-        finish(requestId: requestId, status: .confirmed, source: source)
+        return true
     }
 
     func submitUnconfirmed(requestId: String, source: String = "in_app") {
@@ -1130,11 +1319,23 @@ final class QuestionCardCoordinator {
     func handleNotificationResponse(_ response: UNNotificationResponse) {
         let userInfo = response.notification.request.content.userInfo
         guard let requestId = userInfo["requestId"] as? String else { return }
+        // Legacy notifications lack an index and are deliberately not treated
+        // as answers to whichever question happens to be current now.
+        let questionIndex = (userInfo["questionIndex"] as? NSNumber)?.intValue
+        if response.actionIdentifier == Self.replyActionId || response.actionIdentifier == Self.unconfirmedActionId {
+            guard let request = pending[requestId],
+                  QuestionCardNotificationIdentity.matches(sessionId: userInfo["sessionId"] as? String,
+                                                           questionIndex: questionIndex,
+                                                           expectedSessionId: request.sessionId,
+                                                           expectedIndex: request.state.currentIndex) else { return }
+        }
         switch response.actionIdentifier {
         case Self.replyActionId:
             let text = (response as? UNTextInputNotificationResponse)?.userText ?? ""
-            submitAnswer(requestId: requestId, answer: text, source: "notification")
+            guard let questionIndex else { return }
+            submitAnswer(requestId: requestId, answer: text, questionIndex: questionIndex, source: "notification")
         case Self.unconfirmedActionId:
+            guard let questionIndex, pending[requestId]?.state.currentIndex == questionIndex else { return }
             submitUnconfirmed(requestId: requestId, source: "notification")
         case UNNotificationDefaultActionIdentifier:
             // The shared notification delegate routes a normal tap to the
@@ -1158,6 +1359,7 @@ final class QuestionCardCoordinator {
         guard let request = pending.removeValue(forKey: requestId) else { return }
         request.timeoutTask?.cancel()
         request.state.status = status
+        request.state.resolutionSource = source
         request.block?.questionCard = request.state
         request.block?.isQuestionCardExpanded = false
         QuestionCardExpansionStore.setExpanded(false, for: requestId, status: status)
@@ -1169,7 +1371,8 @@ final class QuestionCardCoordinator {
             QuestionCardResponse.Answer(
                 id: question.id,
                 question: question.prompt,
-                answer: index < request.state.answers.count ? request.state.answers[index] : nil
+                answer: index < request.state.answers.count ? request.state.answers[index] : nil,
+                decision: question.isConfirmation ? confirmationDecision(question: question, answer: index < request.state.answers.count ? request.state.answers[index] : nil) : nil
             )
         }
         let response = QuestionCardResponse(
@@ -1180,20 +1383,20 @@ final class QuestionCardCoordinator {
         )
         request.continuation?.resume(returning: response)
         request.continuation = nil
-        UserDefaults.standard.removeObject(forKey: stateKey(requestId))
+        persist(request.state)
         logger.info("[QuestionCard] RESOLVED id=\(requestId.prefix(20)) status=\(status.rawValue) source=\(source)")
     }
 
+    private func confirmationDecision(question: QuestionCardQuestion, answer: String?) -> String? {
+        guard let answer else { return nil }
+        return answer == "允许" || answer.hasPrefix("允许；补充说明：") ? "allow" : "deny"
+    }
+
     private func persist(_ state: QuestionCardState) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        UserDefaults.standard.set(data, forKey: stateKey(state.requestId))
+        QuestionCardPersistence.save(state)
     }
 
-    private func stateKey(_ requestId: String) -> String {
-        "question-card.state.\(requestId)"
-    }
-
-    private func registerNotificationCategory() {
+    private func notificationCategory() -> UNNotificationCategory {
         let reply = UNTextInputNotificationAction(
             identifier: Self.replyActionId,
             title: String(localized: "Answer"),
@@ -1206,9 +1409,7 @@ final class QuestionCardCoordinator {
             title: String(localized: "Leave unconfirmed"),
             options: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([
-            UNNotificationCategory(identifier: Self.categoryId, actions: [reply, unconfirmed], intentIdentifiers: [])
-        ])
+        return UNNotificationCategory(identifier: Self.categoryId, actions: [reply, unconfirmed], intentIdentifiers: [])
     }
 
     private func postNotificationsForPendingCards() {
@@ -1222,7 +1423,6 @@ final class QuestionCardCoordinator {
         guard UserDefaults.standard.object(forKey: "backgroundNotificationsEnabled") == nil
                 || UserDefaults.standard.bool(forKey: "backgroundNotificationsEnabled") else { return }
         guard request.state.questions.indices.contains(request.state.currentIndex) else { return }
-        registerNotificationCategory()
         let question = request.state.questions[request.state.currentIndex]
         let content = UNMutableNotificationContent()
         content.title = request.state.title
@@ -1232,14 +1432,25 @@ final class QuestionCardCoordinator {
         content.categoryIdentifier = Self.categoryId
         content.userInfo = [
             "requestId": request.id,
-            "sessionId": AIChatViewModel.activeSessionId ?? ""
+            "questionIndex": request.state.currentIndex,
+            "sessionId": request.sessionId ?? ""
         ]
         let notification = UNNotificationRequest(
             identifier: "question-card-\(request.id)",
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(notification)
+        let center = UNUserNotificationCenter.current()
+        let category = notificationCategory()
+        let requestId = request.id
+        let index = request.state.currentIndex
+        center.getNotificationCategories { [weak self] existing in
+            center.setNotificationCategories(Set(existing.filter { $0.identifier != category.identifier }).union([category]))
+            Task { @MainActor [weak self] in
+                guard self?.pending[requestId]?.state.currentIndex == index else { return }
+                center.add(notification)
+            }
+        }
     }
 
     private func removeNotification(requestId: String) {

@@ -36,11 +36,20 @@ assert "var displayQuestion" in lifecycle
 assert "var chromeTitle" in lifecycle
 assert "var summaryText" in lifecycle
 
-# 4. Selecting an option submits (and therefore collapses) without a second
-#    tap, while free text still uses the primary button.
+# 4. Choices are staged. Single/multiple selections require the explicit
+#    primary action; the previous auto-submit timer could confirm a mis-tap.
 assert "private func chooseOption" in view
 assert "submitCurrentAnswer()" in view
-assert "sleep(nanoseconds: 170_000_000)" in view
+choice = view[view.index("private func chooseOption"):view.index("private func actionBar")]
+assert "submitCurrentAnswer()" not in choice
+assert "saveDraft()" in choice
+assert "question.multiSelect" in choice
+assert "QuestionAnswerInputSheet" in view
+assert "coordinator.navigate(requestId:" in view
+assert "questionIndex: card.currentIndex" in view
+assert "if question.isConfirmation" in view
+assert '!question.isConfirmation && !question.options.isEmpty' in view
+assert "question.optionDescriptions" in view
 
 # 5. Wrapped text is measured for the height estimate; no fixed 42pt row.
 estimate = layout[

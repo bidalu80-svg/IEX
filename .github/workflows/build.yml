@@ -45,6 +45,11 @@ jobs:
           set -euo pipefail
           python3 scripts/test-model-compatibility.py | tee model-compatibility-tests.log
 
+      - name: Test question card state and answer validation
+        run: |
+          set -euo pipefail
+          python3 scripts/test-question-core.py | tee question-core-tests.log
+
       - name: Test child agent lifecycle and card identity
         run: |
           set -euo pipefail
@@ -174,6 +179,14 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 5
         run: bash scripts/test-model-picker-header.sh
+
+      - name: Test rendered question cards and answer sheets
+        timeout-minutes: 4
+        run: bash scripts/test-question-ui.sh
+
+      - name: Test rendered child agent cards and animation lifecycle
+        timeout-minutes: 4
+        run: bash scripts/test-subagent-ui.sh
 
       - name: Create ProviderCustomization.xcconfig
         run: |
@@ -777,4 +790,7 @@ jobs:
             api-key-quota-structure.log
             favorites-ui-evidence/
             model-picker-structure.log
+            question-core-tests.log
+            question-ui-evidence/
+            subagent-ui-evidence/
             model-picker-evidence/

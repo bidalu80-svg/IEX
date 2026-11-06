@@ -3790,68 +3790,49 @@ extension CollectionViewMessageListV3 {
         }
 
         static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool, width: CGFloat) -> CGFloat {
-            // `width` is the full collection width. The host adds 16pt on
-            // each side and the card adds another 16pt, so the text column is
-            // narrower than the old char-count estimate assumed. Long options
-            // used to be counted as one 42pt row and then clipped/overlapped
-            // the next cell during a fast scroll; measure the wrapped height
-            // instead and err slightly tall.
-            let textWidth = max(width - 64, 140)
-            let titleFont = UIFont.preferredFont(forTextStyle: .headline)
+            // Match the compact card's 14pt content inset and fixed action bar.
+            // Only its question body scrolls; a long option list must not seed a
+            // multi-screen collection cell and jump when self-sizing catches up.
+            let textWidth = max(width - 32 - 28, 80)
+            let bodyFont = UIFont.preferredFont(forTextStyle: .body)
+            let optionFont = UIFont.preferredFont(forTextStyle: .callout)
             let captionFont = UIFont.preferredFont(forTextStyle: .caption1)
-            let bodyFont = UIFont.preferredFont(forTextStyle: .callout)
-            let smallFont = UIFont.preferredFont(forTextStyle: .footnote)
             let subFont = UIFont.preferredFont(forTextStyle: .subheadline)
-
-            let titleWidth = max(textWidth - 92, 80)
-            let titleLimit = expanded ? 12 : 2
-            let titleHeight = min(
-                questionTextHeight(card.displayQuestion, font: titleFont, width: titleWidth),
-                titleFont.lineHeight * CGFloat(titleLimit)
-            )
-            let eyebrowHeight: CGFloat = 0
-            let headerHeight = max(38, titleHeight + 3 + captionFont.lineHeight + eyebrowHeight)
-
-            // Card padding (16 top + 16 bottom) + host vertical padding (4+4).
-            var total: CGFloat = 32 + 8 + headerHeight
-
+            let headerHeight = max(44, subFont.lineHeight + 3 + captionFont.lineHeight)
+            var total: CGFloat = 24 + 8 + headerHeight
             guard expanded else { return total }
 
-            total += 14
-            if card.questions.count > 1 { total += 3 + 14 }
-
             if card.status == .pending, let question = card.currentQuestion {
-                if !question.options.isEmpty {
-                    for option in question.options {
-                        let optionHeight = questionTextHeight(option, font: bodyFont, width: max(textWidth - 56, 60))
-                        total += max(44, optionHeight + 24) + 8
-                    }
-                    total += 6
+                var body = questionTextHeight(question.prompt, font: bodyFont, width: textWidth) + 8
+                if question.multiSelect { body += captionFont.lineHeight + 4 }
+                for detail in [question.impact, question.risk].compactMap({ $0 }) where !detail.isEmpty {
+                    body += questionTextHeight(detail, font: optionFont, width: textWidth) + 12
                 }
-                // Field (50) + gap + primary button (46) + gap + skip row (44).
-                total += 50 + 14 + 46 + 14 + 44
-            } else {
-                if card.status == .unconfirmed { total += 40 + 12 }
-                if card.status == .confirmed || card.answeredCount > 0 || card.questions.count > 1 {
-                    for (index, question) in card.questions.enumerated() {
-                        total += 12
-                        if card.questions.count > 1 {
-                            total += questionTextHeight(
-                                question.prompt,
-                                font: smallFont,
-                                width: max(textWidth - 48, 60)
-                            )
-                        }
-                        let answer = (index < card.answers.count ? card.answers[index] : nil)?
-                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        let answerText = answer.isEmpty ? String(localized: "No answer") : answer
-                        total += 8 + questionTextHeight(
-                            answerText,
-                            font: subFont,
-                            width: max(textWidth - 48, 60)
-                        )
-                        total += 12
+                for (index, option) in question.options.enumerated() {
+                    var row = questionTextHeight(option, font: optionFont, width: max(textWidth - 31, 40))
+                    if index < question.optionDescriptions.count, let description = question.optionDescriptions[index] {
+                        row += 3 + questionTextHeight(description, font: captionFont, width: max(textWidth - 31, 40))
                     }
+                    body += max(44, row + 16) + 4
+                }
+                // Other answer and delegation are absent on confirmation cards.
+                if !question.isConfirmation {
+                    body += 48
+                    if !question.options.isEmpty { body += 48 }
+                }
+                body += 48 // Optional note entry.
+                total += 10 + min(body, UIScreen.main.bounds.height * 0.45) + 10 + 92
+                if card.questions.count > 1 { total += 3 + 10 }
+            } else {
+                total += 12
+                for (index, question) in card.questions.enumerated() {
+                    total += 12
+                    if card.questions.count > 1 {
+                        total += questionTextHeight(question.prompt, font: captionFont, width: textWidth)
+                    }
+                    let answer = index < card.answers.count ? card.answers[index] : nil
+                    total += 8 + questionTextHeight(answer ?? String(localized: "No answer"), font: subFont, width: textWidth)
+                    total += 12
                 }
             }
             return min(total * 1.10 + 4, 5_000)
