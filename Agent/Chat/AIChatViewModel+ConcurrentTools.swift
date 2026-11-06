@@ -112,6 +112,19 @@ extension AIChatViewModel {
             )
         }
 
+        // A time-budget wrap-up can arrive while the model is streaming its
+        // next tool batch. Pair every call with a result without executing it.
+        if zeSubAgentWrapUpRequested {
+            let content = "时间预算已到，本工具未执行。请根据已有结果直接完成最终答复。"
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].toolStatus = .cancelled
+                messages[msgIdx].blocks[blockIdx].content = content
+            }
+            return ToolExecOutcome(toolId: tu.id, toolName: tu.name,
+                                   resultPart: .toolResult(id: tu.id, name: tu.name, content: content, isError: true),
+                                   snapshotEntry: nil, snapshotItem: nil, cancelled: false)
+        }
+
         var toolOutput: String = ""
         var toolSuccess: Bool = false
         var toolImageData: Data?
@@ -692,12 +705,14 @@ extension AIChatViewModel {
             let message = toolArgs["message"] as? String ?? ""
             let forkContext = toolArgs["fork_context"] as? Bool ?? false
             let nickname = toolArgs["nickname"] as? String ?? ""
-            let record = ZeSubAgentCoordinator.shared.spawn(from: self, message: message, forkContext: forkContext, nickname: nickname)
+            let budgetMinutes = toolArgs["max_minutes"] as? Int ?? ZeSubAgentCoordinator.defaultBudgetMinutes
+            let record = ZeSubAgentCoordinator.shared.spawn(from: self, message: message, forkContext: forkContext,
+                                                          nickname: nickname, budgetMinutes: budgetMinutes)
             if let error = record.error {
                 toolOutput = error
                 toolSuccess = false
             } else {
-                toolOutput = "子代理已排队：id=\(record.id)，名称=\(record.nickname)，层级=\(record.depth)。它会与当前任务并发运行；使用 wait_agent 查询结果。"
+                toolOutput = "子代理已排队：id=\(record.id)，名称=\(record.nickname)，层级=\(record.depth)。空闲时自动开始，结束后结果会送回当前会话。无需反复轮询；需要同步等待时可用 wait_agent。"
                 toolSuccess = true
             }
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count { messages[msgIdx].blocks[blockIdx].content = toolOutput }

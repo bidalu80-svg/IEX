@@ -7,11 +7,17 @@ struct AppLogger {
     func info(_ message: String) {}
     func error(_ message: String) { print(message) }
 }
-struct ModelEntry { var id = "model"; var model = "fixture" }
+struct FixtureModel { var id = "fixture"; var displayName = "Fixture Model" }
+struct ModelEntry { var id = "model"; var model = FixtureModel() }
 @MainActor final class ProviderConfigStore {
     static let shared = ProviderConfigStore()
     func entry(for id: String) -> ModelEntry? { nil }
 }
+@MainActor final class ViewModelCache {
+    static let shared = ViewModelCache()
+    func get(for sessionId: String) -> AIChatViewModel? { nil }
+}
+
 enum Role { case user, assistant }
 enum AgentContentPart {
     case text(String), toolUse(String, String, String)
@@ -27,13 +33,15 @@ struct AgentMessage {
 }
 enum BlockKind: Equatable {
     case text, thinking, shellTool, fileReadTool, fileWriteTool, fileEditTool
-    case browserTool, readImageTool, memoryTool, info
+    case browserTool, readImageTool, memoryTool(String), info
 }
 enum BlockStatus { case streaming, running, success, failed, cancelled }
 final class TestBlock {
     let id = UUID()
     var kind: BlockKind = .shellTool
     var toolDescription = "fixture tool"
+    var toolSummary: String?
+    var toolUseId: String?
     var toolStatus: BlockStatus? = .running
     var content = "first"
     var toolDuration: TimeInterval? = nil
@@ -52,7 +60,7 @@ struct QueuedPrompt { let id = UUID(); let text: String }
     var workspaceSessionId: String?
     var fileSystemSessionId: String? { workspaceSessionId ?? sessionId }
     var preferredModelEntryReference: String?
-    var selectedModel = "fixture"
+    var selectedModel = FixtureModel()
     var initialGroupId: String?
     var memoryEnabled = false
     var autoCompactEnabled = true
@@ -71,7 +79,17 @@ struct QueuedPrompt { let id = UUID(); let text: String }
     var sessionCacheReadTokens = 0
     var promptQueue: [QueuedPrompt] = []
     var currentTask: Task<Void, Never>?
+    var zeSubAgentWrapUpRequested = false
+    var stoppedTools = 0
+    var receivedResults: [String] = []
     var sendCount = 0
+    func discardQueuedSubAgentResults() {}
+    func stopCurrentCommand() { stoppedTools += 1 }
+    func submitSubAgentResult(_ text: String) -> Bool {
+        guard !userDidCancel, !canResume else { return false }
+        receivedResults.append(text)
+        return true
+    }
     var loadedSession: String?
     var sentInputs: [String] = []
     func resolveCurrentEntry() -> ModelEntry? { nil }
@@ -118,7 +136,8 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         defer { try? FileManager.default.removeItem(at: folder) }
         UserDefaults.standard.set(true, forKey: ZeSubAgentPreferences.enabledKey)
         var made: [AIChatViewModel] = []
-        let coordinator = ZeSubAgentCoordinator(storageDirectory: folder) {
+        var testNow = Date()
+        let coordinator = ZeSubAgentCoordinator(storageDirectory: folder, now: { testNow }) {
             let child = AIChatViewModel()
             made.append(child)
             return child
@@ -183,8 +202,69 @@ struct QueuedPrompt { let id = UUID(); let text: String }
             active.append(entry.id)
         }
         let overflow = coordinator.spawn(from: parent, message: "seventh concurrent task")
-        check(overflow.status == .failed && overflow.error != nil, "six active children enforce concurrency bound")
+        let waitingChild = made.last!
+        check(overflow.status == .queued && overflow.error == nil && waitingChild.sendCount == 0,
+              "seventh concurrent task queues without starting")
+        check(overflow.startedAt == nil, "queued task budget has not started")
+        coordinator.cancel(id: active.removeFirst())
+        await tick()
+        check(waitingChild.sendCount == 1, "queued child starts automatically when a slot frees")
+        check(coordinator.record(id: overflow.id)?.startedAt != nil, "budget starts only at dispatch")
         for id in active { coordinator.cancel(id: id) }
+        coordinator.cancel(id: overflow.id)
+
+        let budgeted = coordinator.spawn(from: parent, message: "bounded work", budgetMinutes: 1)
+        let budgetChild = made.last!
+        testNow = testNow.addingTimeInterval(61)
+        await tick()
+        check(budgetChild.zeSubAgentWrapUpRequested && budgetChild.isProcessing, "budget requests final answer before cancellation")
+        testNow = testNow.addingTimeInterval(21)
+        await tick()
+        check(budgetChild.stoppedTools == 1, "budget stops a lingering tool after twenty seconds")
+        testNow = testNow.addingTimeInterval(70)
+        await tick()
+        check(coordinator.record(id: budgeted.id)?.status == .timedOut && !budgetChild.isProcessing,
+              "budget hard stop remains timeout rather than user cancellation")
+        await tick()
+        check(coordinator.record(id: budgeted.id)?.deliveryState == "delivered", "terminal timeout reaches parent exactly once")
+        let deliveredCount = parent.receivedResults.count
+        await tick()
+        check(parent.receivedResults.count == deliveredCount, "completion delivery is not duplicated on subsequent polls")
+
+        let awaited = coordinator.spawn(from: parent, message: "wait for final result")
+        let awaitedChild = made.last!
+        let waiter = Task { @MainActor in await coordinator.wait(ids: [awaited.id], timeout: 2) }
+        await Task.yield()
+        let finalText = String(repeating: "final answer ", count: 4000)
+        awaitedChild.agentHistory = [AgentMessage(role: .assistant, parts: [.text(finalText)])]
+        awaitedChild.isProcessing = false
+        let waited = await waiter.value
+        check(waited.first?.deliveryState == "pending" || waited.first?.deliveryState == "inline", "wait receives terminal result")
+        check(coordinator.record(id: awaited.id)?.deliveryState == "inline", "explicit wait consumes completion inline")
+        check(coordinator.record(id: awaited.id)?.output == finalText.trimmingCharacters(in: .whitespacesAndNewlines), "final answer is preserved beyond preview limit")
+        check(parent.receivedResults.count == deliveredCount, "inline wait does not duplicate parent callback")
+
+        let cancellable = coordinator.spawn(from: parent, message: "cancel only wait")
+        let cancelledWait = Task { @MainActor in await coordinator.wait(ids: [cancellable.id], timeout: 300) }
+        await Task.yield()
+        cancelledWait.cancel()
+        _ = await cancelledWait.value
+        check(coordinator.record(id: cancellable.id)?.status.isActive == true, "cancelling wait leaves child running and exits promptly")
+        coordinator.cancel(id: cancellable.id)
+
+        check(!ZeSubAgentCoordinator.hasFinalAnswer([AgentMessage(role: .assistant, parts: [.text("working"), .toolUse("t", "shell_execute", "{}")])]),
+              "tool narration is not a final answer")
+        check(!ZeSubAgentCoordinator.hasFinalAnswer([AgentMessage(role: .user, parts: [.text("tool result")])]),
+              "tool result alone is not a final answer")
+
+        let modelRun = coordinator.spawn(from: parent, message: "track fallback model")
+        coordinator.recordRequest(from: made.last!, modelId: "fallback-id", modelName: "Fallback Model", provider: "Fixture Provider")
+        check(coordinator.record(id: modelRun.id)?.requestModelId == "fallback-id", "real request route identity is recorded")
+        coordinator.parentDidCancel(parent)
+        check(coordinator.record(id: modelRun.id)?.status == .cancelled, "parent Stop cancels owned live children")
+        made.last?.isProcessing = false
+        await tick()
+        check(parent.receivedResults.count == deliveredCount, "cancelled parent is never revived by child result")
 
         // Persistence writes occur on a serial background queue. Wait for its
         // terminal snapshot, then build a fresh coordinator as after relaunch.
@@ -202,6 +282,7 @@ struct QueuedPrompt { let id = UUID(); let text: String }
               "resume rehydrates original child session before sending")
         check(restoredChildren.first?.agentHistory.count == 2, "resume retains saved conversation history")
         check(restoredChildren.first?.sendCount == 1, "resume dispatches exactly one continuation")
+        check(restoredChildren.first?.sentInputs.first?.contains("shell") == true, "resume explains lost browser and process state")
         restored.cancel(id: first.id)
 
         check(ZeSubAgentCoordinator.runtimeStatus(processing: false, suspended: false, cancelled: true,
@@ -217,7 +298,7 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         legacy.parentTurnId = nil
         check(!ZeSubAgentCoordinator.belongsToRunGroup(second, selected: legacy), "legacy records never guess sibling ownership")
         var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(first)) as! [String: Any]
-        for key in ["pendingInputCount", "cacheReadTokens", "turnCount", "parentTurnId"] { json.removeValue(forKey: key) }
+        for key in ["pendingInputCount", "cacheReadTokens", "turnCount", "parentTurnId", "startedAt", "finishedAt", "budgetMinutes", "requestedModel", "requestModelId", "requestModelName", "requestProviderName", "deliveryState", "wrapUpStartedAt"] { json.removeValue(forKey: key) }
         let old = try JSONDecoder().decode(ZeSubAgentRecord.self, from: JSONSerialization.data(withJSONObject: json))
         check(old.pendingInputCount == nil && old.parentTurnId == nil, "legacy saved records decode without new metrics")
         await tick()

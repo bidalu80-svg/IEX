@@ -1586,7 +1586,8 @@ extension CollectionViewMessageListV3 {
                layout.cachedHeight(at: indexPath.item) == nil,
                !layout.hasPrecalcHeight(at: indexPath.item) {
                 let est = Self.estimateItemHeight(item, messages: messages,
-                                                  width: viewController?.collectionView.bounds.width ?? 390)
+                                                  width: viewController?.collectionView.bounds.width ?? 390,
+                                                  maxContentWidth: maxContentWidth)
                 layout.setEstimatedHeight(est, at: indexPath.item)
             }
         }
@@ -3146,7 +3147,7 @@ extension CollectionViewMessageListV3 {
                                 // The +4 padding compensation now lives inside
                                 // estimateTextBlockHeight, so all estimate paths
                                 // agree — no per-call-site fudge here.
-                                let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth)
+                                let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth, maxContentWidth: maxContentWidth)
                                 layout.setEstimatedHeight(est, at: i)
                             }
                         case .thinking:
@@ -3154,7 +3155,7 @@ extension CollectionViewMessageListV3 {
                             // or header + capped content height when expanded. Hard-coded 88
                             // caused a -48pt correction per cell on first render, producing a
                             // contentSize-shrink jitter chain when scrolling through history.
-                            let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth)
+                            let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth, maxContentWidth: maxContentWidth)
                             layout.setEstimatedHeight(est, at: i)
                         case .readImageTool:
                             // In V3 block cells, readImageTool renders as a
@@ -3213,11 +3214,11 @@ extension CollectionViewMessageListV3 {
                             } else {
                                 // empty text (attachment-only) — coarse estimate
                                 layout.setEstimatedHeight(
-                                    Self.estimateItemHeight(item, messages: messages, width: cvWidth), at: i)
+                                    Self.estimateItemHeight(item, messages: messages, width: cvWidth, maxContentWidth: maxContentWidth), at: i)
                             }
                         } else {
                             // compactDivider / systemInfo — coarse estimate is fine
-                            let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth)
+                            let est = Self.estimateItemHeight(item, messages: messages, width: cvWidth, maxContentWidth: maxContentWidth)
                             layout.setEstimatedHeight(est, at: i)
                         }
                     }
@@ -3674,7 +3675,8 @@ extension CollectionViewMessageListV3 {
             }
         }
 
-        static func estimateItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat) -> CGFloat {
+        static func estimateItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat,
+                                       maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil) -> CGFloat {
             let scale = FontSettings.shared.scaledMessage(16)
             let lineHeight = scale * 1.4
             let hPad: CGFloat = 80
@@ -3777,7 +3779,8 @@ extension CollectionViewMessageListV3 {
                     return Self.estimateQuestionCardHeight(
                         card,
                         expanded: block.isQuestionCardExpanded,
-                        width: width
+                        width: questionContainerWidth ?? width,
+                        maxContentWidth: maxContentWidth
                     )
                 case .info:
                     let lineCount = max(1, block.content.components(separatedBy: "\n").count)
@@ -3789,13 +3792,21 @@ extension CollectionViewMessageListV3 {
             }
         }
 
-        static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool, width: CGFloat) -> CGFloat {
+        static func questionCardContentWidth(containerWidth: CGFloat, maxContentWidth: CGFloat) -> CGFloat {
+            // BridgedAssistantBlockV3 applies outer padding before its bounded
+            // frame; the card's own horizontal padding is inside that frame.
+            let available = max(containerWidth - 32, 0)
+            let cardWidth = maxContentWidth > 0 ? min(available, maxContentWidth) : available
+            return max(cardWidth - 28, 1)
+        }
+
+        static func estimateQuestionCardHeight(_ card: QuestionCardState, expanded: Bool, width: CGFloat, maxContentWidth: CGFloat) -> CGFloat {
             let t = QuestionAskTypography.current
-            let textWidth = max(width - 32 - 28, 80)
+            let textWidth = questionCardContentWidth(containerWidth: width, maxContentWidth: maxContentWidth)
             if card.status == .pending, let question = card.currentQuestion {
                 let key = QuestionPendingLayoutCache.key(card.requestId, card.currentIndex)
                 let cap = max(160, UIScreen.main.bounds.height * 0.5 - 120)
-                let cached = QuestionPendingLayoutCache.bodyHeight(key)
+                let cached = QuestionPendingLayoutCache.bodyHeight(key, width: textWidth, bodyFont: t.body)
                 let chrome: CGFloat = 24 + 28 + 20 + 44
                 if cached > 0 { return chrome + min(cached, cap) }
                 let font = question.isConfirmation
@@ -5132,7 +5143,9 @@ extension CollectionViewMessageListV3 {
                       !layout.hasPrecalcHeight(at: index) else { continue }
                 guard index < previousSnapshotIds.count else { continue }
                 let item = previousSnapshotIds[index]
-                let est = Self.estimateItemHeight(item, messages: messages, width: width)
+                let est = Self.estimateItemHeight(item, messages: messages, width: width,
+                                                  maxContentWidth: maxContentWidth,
+                                                  questionContainerWidth: collectionView.bounds.width)
                 layout.setEstimatedHeight(est, at: index)
             }
         }

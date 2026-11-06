@@ -82,6 +82,43 @@ extension AIChatViewModel {
         dumpQueueSnapshot("after-enqueue")
     }
 
+    /// Programmatic child results use the existing prompt queue without
+    /// overwriting the user's composer or attaching the user's unsent files.
+    @discardableResult
+    func submitSubAgentResult(_ text: String) -> Bool {
+        guard remoteDeviceId == nil, !text.isEmpty, !userDidCancel, !canResume, !zeSubAgentWrapUpRequested else { return false }
+        if isProcessing {
+            zeSubAgentResultPromptIds.formIntersection(Set(promptQueue.map(\.id)))
+            let prompt = QueuedPrompt(text: text, attachments: [])
+            zeSubAgentResultPromptIds.insert(prompt.id)
+            promptQueue.append(prompt)
+            let row = ChatMessage(role: .user, content: text, isQueued: true)
+            row.queuedPromptId = prompt.id
+            messages.append(row)
+            scrollToBottomSignal.send()
+            return true
+        }
+        guard !isCompacting, editingMessageIndex == nil,
+              !showCompactBeforeSendPrompt, !showContextExhaustedPrompt else { return false }
+        // Background results must not open a context-management modal over
+        // an unrelated user flow. The durable child record keeps the result.
+        guard case .ok = checkContextBeforeSend() else { return false }
+        let savedText = inputText
+        let savedAttachments = attachments
+        defer { inputText = savedText; attachments = savedAttachments }
+        inputText = text
+        attachments = []
+        send()
+        return isProcessing || isCompacting
+    }
+
+    /// Stop must discard already-accepted child callbacks as well as future
+    /// deliveries; normal user queued prompts retain their existing semantics.
+    func discardQueuedSubAgentResults() {
+        for id in zeSubAgentResultPromptIds { removeQueuedPrompt(id: id) }
+        zeSubAgentResultPromptIds.removeAll()
+    }
+
     /// Remove a queued prompt by ID and its corresponding chat message.
     func removeQueuedPrompt(id: UUID) {
         promptQueue.removeAll { $0.id == id }

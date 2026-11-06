@@ -92,7 +92,7 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
 
         let stats = UIHostingController(rootView: ZeSubAgentRunStats(record: record))
         let fitting = stats.sizeThatFits(in: CGSize(width: width - 24, height: 1000))
-        try require(fitting.width <= width - 24 + 1, "Long model chip exceeds narrow content width: \(fitting)")
+        try require(fitting.width <= width - 24 + 1, "Stats chips exceed narrow content width: \(fitting)")
         try require(fitting.height > 0 && fitting.height < 500, "Invalid stats layout: \(fitting)")
 
         let layers = allLayers(host.view.layer)
@@ -136,15 +136,21 @@ private final class SubAgentUIHarness: UIResponder, UIApplicationDelegate {
     }
 
     private func fixture(status: ZeSubAgentStatus) -> ZeSubAgentRecord {
+        let capturedAt = Date()
+        let startedAt = capturedAt.addingTimeInterval(-1)
         let steps = [
-            ZeSubAgentStep(id: "read", title: "读取文件 · 配置", icon: "doc.text.magnifyingglass", content: "检查配置与依赖，发现 3 个待更新项目。", state: "success", duration: 0.3),
-            ZeSubAgentStep(id: "edit", title: "编辑文件 · 请求适配", icon: "pencil.line", content: "已保存协议适配变更。", state: "success", duration: 1.2),
-            ZeSubAgentStep(id: "test", title: "命令 · 执行回归验证", icon: "terminal", content: status.isActive ? "正在检查模型请求参数…" : "11 项回归检查完成。", state: status.isActive ? "running" : "success", duration: status.isActive ? nil : 2.4),
+            ZeSubAgentStep(id: "read", title: "配置", icon: "doc.text", content: "检查配置与依赖，发现 3 个待更新项目。", state: "success", duration: 0.3, toolName: "file_read"),
+            ZeSubAgentStep(id: "edit", title: "请求适配", icon: "square.and.pencil", content: "已保存协议适配变更。", state: "success", duration: 1.2, toolName: "file_edit"),
+            ZeSubAgentStep(id: "test", title: "执行回归验证", icon: "terminal", content: status.isActive ? "正在检查模型请求参数…" : "11 项回归检查完成。", state: status.isActive ? "running" : "success", duration: status.isActive ? nil : 2.4, toolName: "shell_execute"),
         ]
         var record = ZeSubAgentRecord(id: "fixture-agent", parentId: "fixture-parent", rootSessionId: "fixture-root", nickname: "兼容性验证", depth: 1,
-                                      status: status, revision: 1, createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 1),
+                                      status: status, revision: 1, createdAt: startedAt, updatedAt: capturedAt,
                                       prompt: "检查请求兼容性并报告验证结果", output: "", error: nil, childSessionId: "fixture-child",
                                       inputTokens: 12345, outputTokens: 2345, modelEntryReference: "long-model-layout", steps: steps)
+        record.startedAt = startedAt
+        record.finishedAt = status.isActive ? nil : capturedAt
+        record.requestModelId = "gpt-5.4"
+        record.requestModelName = "gpt-5.4"
         record.turnCount = 3
         record.cacheReadTokens = 4096
         return record

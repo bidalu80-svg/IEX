@@ -921,23 +921,33 @@ extension QuestionAskTypography {
 }
 
 enum QuestionPendingLayoutCache {
-    private static var bodyHeights: [String: CGFloat] = [:]
+    private struct Measurement {
+        let height: CGFloat
+        let width: CGFloat
+        let bodyFont: CGFloat
+    }
+    private static var bodyHeights: [String: Measurement] = [:]
     private static var expanded: Set<String> = []
-    /// A pending ask has a handful of questions; this only bounds a long
-    /// session's leftovers.
     private static let limit = 256
 
     static func key(_ requestId: String, _ index: Int) -> String { "\(requestId)#\(index)" }
 
-    static func bodyHeight(_ key: String) -> CGFloat { bodyHeights[key] ?? 0 }
-    static func setBodyHeight(_ height: CGFloat, _ key: String) {
-        if bodyHeights.count >= limit { bodyHeights.removeAll() }
-        bodyHeights[key] = height
+    /// Width is the actual scroll content proposal, before any question-only
+    /// padding. Neither the host sheet nor a split-screen window is assumed.
+    static func bodyHeight(_ key: String, width: CGFloat, bodyFont: CGFloat) -> CGFloat {
+        guard let value = bodyHeights[key], abs(value.width - width) <= 0.5,
+              abs(value.bodyFont - bodyFont) <= 0.01 else { return 0 }
+        return value.height
+    }
+    static func setBodyHeight(_ height: CGFloat, _ key: String, width: CGFloat, bodyFont: CGFloat) {
+        guard height > 0, width > 0 else { return }
+        if bodyHeights[key] == nil && bodyHeights.count >= limit { bodyHeights.removeAll() }
+        bodyHeights[key] = Measurement(height: height, width: width, bodyFont: bodyFont)
     }
 
     static func isExpanded(_ key: String) -> Bool { expanded.contains(key) }
     static func setExpanded(_ value: Bool, _ key: String) {
-        if expanded.count >= limit { expanded.removeAll() }
+        if !expanded.contains(key) && expanded.count >= limit { expanded.removeAll() }
         if value { expanded.insert(key) } else { expanded.remove(key) }
     }
 }
@@ -1128,7 +1138,8 @@ private struct QuestionPendingCard: View {
     let blockId: UUID
     @ObservedObject private var fonts = FontSettings.shared
     private var t: QuestionAskTypography { .current }
-    @State private var bodyHeight: CGFloat
+    @State private var measuredBody: CGSize = .zero
+    @State private var measuredFont: CGFloat = 0
     @State private var questionExpanded: Bool
     /// [T-user-ask-expand-measured] Heights of the question laid out with the
     /// 3-line limit and without it (hidden probes, see `questionText`). The
@@ -1146,10 +1157,9 @@ private struct QuestionPendingCard: View {
         self.onPrevious = onPrevious; self.onInput = onInput
         self.ask = ask
         self.blockId = blockId
-        // [T-user-ask-pending-reuse] Start from what this question last
-        // measured, so a recycled cell does not render a 1pt body first.
+        // Restore per-question disclosure independently from the geometry cache.
+        // The custom layout validates geometry against its actual width proposal.
         let key = QuestionPendingLayoutCache.key(ask.requestId, min(ask.currentIndex, ask.questions.count - 1))
-        _bodyHeight = State(initialValue: QuestionPendingLayoutCache.bodyHeight(key))
         _questionExpanded = State(initialValue: QuestionPendingLayoutCache.isExpanded(key))
     }
 
@@ -1166,17 +1176,23 @@ private struct QuestionPendingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
-            ScrollView(.vertical, showsIndicators: bodyHeight > bodyCap) {
-                content
-                    .background(GeometryReader { g in
-                        Color.clear.preference(key: QuestionBodyHeightKey.self, value: g.size.height)
-                    })
+            QuestionPendingBodyLayout(key: layoutKey, bodyFont: t.body, cap: bodyCap, measuredBody: measuredBody) {
+                ScrollView(.vertical, showsIndicators: measuredBody.height > bodyCap) {
+                    content
+                        .background(GeometryReader { g in
+                            Color.clear.preference(key: QuestionBodyHeightKey.self,
+                                                   value: QuestionBodyMeasurement(size: g.size, bodyFont: t.body))
+                        })
+                }
             }
-            .frame(height: min(max(bodyHeight, 1), bodyCap))
-            .onPreferenceChange(QuestionBodyHeightKey.self) { h in
-                guard abs(h - bodyHeight) > 0.5 else { return }
-                bodyHeight = h
-                QuestionPendingLayoutCache.setBodyHeight(h, layoutKey)
+            .onPreferenceChange(QuestionBodyHeightKey.self) { measurement in
+                let size = measurement.size
+                let font = measurement.bodyFont
+                guard size.width > 0, size.height > 0 else { return }
+                guard abs(size.height - measuredBody.height) > 0.5 || abs(size.width - measuredBody.width) > 0.5 || abs(font - measuredFont) > 0.01 else { return }
+                measuredBody = size
+                measuredFont = font
+                QuestionPendingLayoutCache.setBodyHeight(size.height, layoutKey, width: size.width, bodyFont: font)
                 DispatchQueue.main.async { NotificationCenter.default.post(name: .questionCardToggled, object: blockId) }
             }
             actionBar
@@ -1189,7 +1205,8 @@ private struct QuestionPendingCard: View {
             // The new question starts from its own remembered state (collapsed
             // unless the user opened it earlier in this card).
             questionExpanded = QuestionPendingLayoutCache.isExpanded(layoutKey)
-            bodyHeight = QuestionPendingLayoutCache.bodyHeight(layoutKey)
+            measuredBody = .zero
+            measuredFont = 0
             DispatchQueue.main.async { NotificationCenter.default.post(name: .questionCardToggled, object: blockId) }
         }
     }
@@ -1593,9 +1610,38 @@ private struct QuestionFullHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+/// Uses SwiftUI's actual width proposal to validate the cached natural height.
+/// On a new width/font, measure at the cap once rather than reuse stale geometry.
+private struct QuestionPendingBodyLayout: Layout {
+    let key: String
+    let bodyFont: CGFloat
+    let cap: CGFloat
+    let measuredBody: CGSize
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? max(measuredBody.width, 1)
+        let natural = QuestionPendingLayoutCache.bodyHeight(key, width: width, bodyFont: bodyFont)
+        return CGSize(width: width, height: natural > 0 ? min(natural, cap) : cap)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for view in subviews {
+            view.place(at: bounds.origin, anchor: .topLeading,
+                       proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        }
+    }
+}
+
+private struct QuestionBodyMeasurement: Equatable {
+    var size: CGSize = .zero
+    var bodyFont: CGFloat = 0
+}
+
 private struct QuestionBodyHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    static var defaultValue = QuestionBodyMeasurement()
+    static func reduce(value: inout QuestionBodyMeasurement, nextValue: () -> QuestionBodyMeasurement) {
+        let next = nextValue()
+        if next.size.width > 0 && next.size.height > 0 { value = next }
+    }
 }
 
 private struct QuestionAskButtonStyle: ButtonStyle {

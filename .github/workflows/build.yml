@@ -75,7 +75,8 @@ jobs:
           python3 scripts/extract-question-ui.py "$RUNNER_TEMP/QuestionUIProduction.swift"
           python3 scripts/extract-subagent-ui.py "$RUNNER_TEMP/SubAgentUIProduction.swift"
           python3 scripts/extract-question-reference.py "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/ZeQuestionReferenceHarness.app" question-reference-evidence
-          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift"; do
+          python3 scripts/extract-subagent-reference.py "$RUNNER_TEMP/SubAgentReferenceProduction.swift" "$RUNNER_TEMP/ZeSubAgentReferenceHarness.app" subagent-reference-evidence
+          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/SubAgentReferenceProduction.swift"; do
             xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library \
               -target "$(uname -m)-apple-ios16.0-simulator" \
               -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$source"
@@ -211,6 +212,29 @@ jobs:
       - name: Test rendered child agent cards and animation lifecycle
         timeout-minutes: 4
         run: bash scripts/test-subagent-ui.sh
+
+      - name: Render pinned reference child cards and comparison images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/test-subagent-reference-ui.sh
+          python3 scripts/compare-subagent-ui.py
+
+      - name: Upload rendered card review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-card-review
+          path: |
+            question-ui-evidence/
+            question-reference-evidence/
+            question-comparison-evidence/
+            subagent-ui-evidence/
+            subagent-reference-evidence/
+            subagent-comparison-evidence/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Create ProviderCustomization.xcconfig
         run: |
@@ -820,4 +844,6 @@ jobs:
             question-reference-evidence/
             question-comparison-evidence/
             subagent-ui-evidence/
+            subagent-reference-evidence/
+            subagent-comparison-evidence/
             model-picker-evidence/

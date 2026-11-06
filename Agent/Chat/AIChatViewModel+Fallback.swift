@@ -56,6 +56,8 @@ extension AIChatViewModel {
                 if let entry = resolveCurrentEntry() {
                     thinkLvl = min(thinkLvl, entry.effectiveMaxThinkingLevel)
                 }
+                ZeSubAgentCoordinator.shared.recordRequest(from: self, modelId: currentProvider.model.id,
+                                                           modelName: currentProvider.model.displayName, provider: currentProvider.name)
                 let stream = try await currentProvider.streamAgentMessage(
                     messages: messages,
                     systemPrompt: systemPrompt,
@@ -134,6 +136,8 @@ extension AIChatViewModel {
                 if let eid = currentEntryId, let entry = ProviderConfigStore.shared.entry(for: eid) {
                     thinkLvl = min(thinkLvl, entry.effectiveMaxThinkingLevel)
                 }
+                ZeSubAgentCoordinator.shared.recordRequest(from: self, modelId: currentProvider.model.id,
+                                                           modelName: currentProvider.model.displayName, provider: currentProvider.name)
                 let stream = try await currentProvider.streamAgentMessage(
                     messages: messages,
                     systemPrompt: currentSystemPrompt,

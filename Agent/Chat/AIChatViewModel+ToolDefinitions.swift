@@ -124,15 +124,16 @@ extension AIChatViewModel {
             tools.append(contentsOf: [
             AgentToolDefinition(
                 name: "spawn_agent",
-                description: "Start an independent child agent asynchronously. It inherits the current model and permissions, uses the shared workspace, and returns immediately with an agent ID. Use for bounded independent tasks; maximum 6 open children per conversation and depth 3.",
+                description: "Start an independent child agent asynchronously. It inherits the current model and permissions, uses the shared workspace, and returns immediately with an agent ID. Use for bounded independent tasks; at most 6 run concurrently per conversation, with up to 24 more queued and depth 3. Queued children start automatically as slots free. Results arrive as a new parent message unless wait_agent already received them. No polling is required. Default time budget 10 minutes, maximum 60, followed by a bounded final-answer grace period.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise summary shown in the tool timeline."),
                     "message": AgentToolParam(type: .string, description: "The concrete, bounded task for the child agent."),
                     "fork_context": AgentToolParam(type: .boolean, description: "Copy a bounded slice of the current conversation context."),
                     "nickname": AgentToolParam(type: .string, description: "Short display name for the child agent."),
+                    "max_minutes": AgentToolParam(type: .integer, description: "Execution budget in minutes, 1-60; default 10. The child gets one final-answer grace period after expiry."),
                 ],
                 required: ["tool_title", "message"],
-                propertyOrdering: ["tool_title", "message", "fork_context", "nickname"]
+                propertyOrdering: ["tool_title", "message", "fork_context", "nickname", "max_minutes"]
             ),
             AgentToolDefinition(
                 name: "send_input",

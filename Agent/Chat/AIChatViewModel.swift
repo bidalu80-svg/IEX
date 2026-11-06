@@ -2034,6 +2034,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Set by cancel() so the task's error handler knows this was a user stop.
     /// Internal-access so concurrent tool extensions can read it. [T-concurrent-tools]
     var userDidCancel = false
+    /// Budget expiry requests one final answer at the next completed-tool boundary.
+    var zeSubAgentWrapUpRequested = false
+    var zeSubAgentResultPromptIds: Set<UUID> = []
     /// Reentrancy guard for `drainQueuedPrompts()`. After a Stop with queued
     /// prompts, `cancel()` hands off to a fresh Task via `resumeQueueAfterCancel()`,
     /// but the original (superseded) send/retry/resume Task ALSO reaches its own
@@ -3557,6 +3560,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     }
 
     func cancel() {
+        ZeSubAgentCoordinator.shared.parentDidCancel(self)
         let lastBlocks = (messages.last?.role == .assistant) ? messages.last!.blocks.count : -1
         let lastRole = messages.last.map { $0.role == .assistant ? "assistant" : "user" } ?? "nil"
         logger.info("⏹️ cancel() START session=\(self.sessionId ?? "nil") isProcessing=\(self.isProcessing) lastRole=\(lastRole) lastBlocks=\(lastBlocks) currentTask=\(self.currentTask != nil)")
@@ -4389,7 +4393,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 activeGroupId = gid
             }
         }
-        let tools = makeAgentTools()
+        var tools = makeAgentTools()
 
         var userSystemPrompt = baseSystemPrompt
         let activeModel = ProviderConfigStore.shared.entry(for: entry.id)?.model ?? selectedModel
@@ -4601,9 +4605,20 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // that keeps hitting the threshold can't compact forever; when the cap
         // is reached and we're still near capacity, the loop stops as exhausted.
         var compactionsThisLoop = 0
+        var subAgentWrapUpInjected = false
         loopLabel: while turnCount < Self.maxAgentTurns {
             defer { turnCount += 1 }
             try Task.checkCancellation()
+            if zeSubAgentWrapUpRequested && !subAgentWrapUpInjected {
+                subAgentWrapUpInjected = true
+                tools = []
+                let pendingCorrections = promptQueue.map(\.text).joined(separator: "\n")
+                for prompt in promptQueue { removeQueuedPrompt(id: prompt.id) }
+                let closingText = "时间预算已到。当前工具结果已保留，本轮不再提供工具。请立即根据已有信息写出完整最终交付物，明确未完成和未验证的部分，不要再调用工具或要求延长时间。"
+                let closing = AgentMessage(role: .user, parts: [.text(closingText + (pendingCorrections.isEmpty ? "" : "\n待处理补充：\n" + pendingCorrections))])
+                agentHistory.append(closing)
+                _ = await persistAgentMessage(closing)
+            }
             if let sid = self.sessionId {
                 SessionActivityTracker.shared.updateLoopIteration(sid, iteration: turnCount + 1)
             }
@@ -5520,12 +5535,21 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
             // If user cancelled during tool execution, commit everything and stop.
             // History is now properly paired: assistant(tool_use) + user(tool_result).
-            if cancelledDuringToolExecution || self.userDidCancel {
+            if (cancelledDuringToolExecution && (!zeSubAgentWrapUpRequested || Task.isCancelled)) || self.userDidCancel {
                 logger.info("⏹️ User cancelled during tool execution — committed \(toolResultParts.count) tool result(s), stopping agent loop")
                 self.prevCommittedBlockCount = self.committedBlockCount
                 committedBlockCount = messages[msgIdx].blocks.count
                 self.committedBlockCount = committedBlockCount
                 messages[msgIdx].usage = turnUsage
+                hitTurnLimit = false
+                break
+            }
+
+            if subAgentWrapUpInjected {
+                // The final request still returned tool calls despite tools=[].
+                // Their paired rejection results are persisted above; do not loop.
+                messages[msgIdx].error = "收尾请求仍返回工具调用，没有最终交付内容。"
+                canResume = true
                 hitTurnLimit = false
                 break
             }

@@ -51,7 +51,8 @@ assert "case .options: optionsBody" in view
 assert "case .confirm: confirmBody" in view
 assert "raw.optionDescriptions" in view
 assert "max(160, UIScreen.main.bounds.height * 0.5 - 120)" in view
-assert "QuestionPendingLayoutCache.bodyHeight(key)" in view
+assert "QuestionPendingBodyLayout" in view
+assert "QuestionPendingLayoutCache.bodyHeight(key, width: width, bodyFont: bodyFont)" in view
 assert "QuestionAskLocalized(\"Recommended\")" in view
 assert "questionFullHeight > questionClampedHeight + 1" in view
 assert "ViewThatFits(in: .horizontal)" in view

@@ -21,7 +21,7 @@ enum ZeSubAgentPreferences {
 
 enum ZeSubAgentStatus: String, Codable, CaseIterable, Sendable {
     case idle, queued, running, awaitingApproval = "awaiting_approval", cancelling
-    case completed, failed, cancelled, interrupted, closed
+    case completed, failed, cancelled, interrupted, closed, timedOut = "timed_out"
 
     var isActive: Bool {
         switch self {
@@ -42,6 +42,7 @@ enum ZeSubAgentStatus: String, Codable, CaseIterable, Sendable {
         case .cancelled: return String(localized: "已停止")
         case .interrupted: return String(localized: "已中断")
         case .closed: return String(localized: "已关闭")
+        case .timedOut: return String(localized: "已超时")
         }
     }
 }
@@ -56,6 +57,7 @@ struct ZeSubAgentStep: Identifiable, Codable, Equatable, Sendable {
     let state: String
     var duration: TimeInterval? = nil
     var imageFilePath: String? = nil
+    var toolName: String? = nil
 }
 
 struct ZeSubAgentRecord: Identifiable, Codable, Equatable, Sendable {
@@ -84,6 +86,16 @@ struct ZeSubAgentRecord: Identifiable, Codable, Equatable, Sendable {
     var turnCount: Int? = nil
     /// Identifies the delegating assistant turn, so Stop never reaches unrelated work.
     var parentTurnId: String? = nil
+    var startedAt: Date? = nil
+    var finishedAt: Date? = nil
+    var budgetMinutes: Int? = nil
+    var requestedModel: String? = nil
+    var modelPinUnavailable: Bool? = nil
+    var requestModelId: String? = nil
+    var requestModelName: String? = nil
+    var requestProviderName: String? = nil
+    var deliveryState: String? = nil
+    var wrapUpStartedAt: Date? = nil
 
     var shortPrompt: String {
         let value = prompt.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +114,16 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
     static let maxAgentsPerRoot = 6
     static let maxDepth = 3
+    static let maxQueuedPerRoot = 24
+    static let defaultBudgetMinutes = 10
+    static let maxBudgetMinutes = 60
+    static let wrapUpGraceSeconds: TimeInterval = 90
+    static let wrapUpToolPatience: TimeInterval = 20
+
+    private final class ParentReference {
+        weak var value: AIChatViewModel?
+        init(_ value: AIChatViewModel) { self.value = value }
+    }
 
     /// A single cheap scalar invalidates the dock; records themselves stay in
     /// private dictionaries so SwiftUI never deep-compares every session row.
@@ -111,11 +133,21 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private var loadedRoots: Set<String> = []
     private var children: [String: AIChatViewModel] = [:]
     private var childAgentIds: [ObjectIdentifier: String] = [:]
+    private var parents: [String: ParentReference] = [:]
+    private var queuedStarts: [String: [String]] = [:]
+    private var queuedInputs: [String: [String]] = [:]
+    private var deliveryTasks: [String: Task<Void, Never>] = [:]
+    private var mutedDeliveries: Set<String> = []
+    private var inlineWaiters: [String: Int] = [:]
+    private var budgetToolStopped: Set<String> = []
+    private let now: () -> Date
     private var pollTasks: [String: Task<Void, Never>] = [:]
     private var launchTasks: [String: Task<Void, Never>] = [:]
     private var finishingTasks: [String: Task<Void, Never>] = [:]
     private var loadTasks: [String: Task<Void, Never>] = [:]
     private var launchInputs: [String: [String]] = [:]
+    private var toolNameHistoryCounts: [String: Int] = [:]
+    private var cachedToolNames: [String: [String: String]] = [:]
     private var completedSteps: [String: [UUID: [ZeSubAgentStep]]] = [:]
     private var completedToolSteps: [String: [UUID: ZeSubAgentStep]] = [:]
     private var lastPersistedAt: [String: Date] = [:]
@@ -128,9 +160,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private let makeChild: @MainActor () -> AIChatViewModel
     private let storageDirectory: URL?
 
-    init(storageDirectory: URL? = nil, makeChild: @escaping @MainActor () -> AIChatViewModel = { AIChatViewModel() }) {
+    init(storageDirectory: URL? = nil, now: @escaping () -> Date = Date.init,
+         makeChild: @escaping @MainActor () -> AIChatViewModel = { AIChatViewModel() }) {
         self.storageDirectory = storageDirectory
         self.makeChild = makeChild
+        self.now = now
     }
 
     func records(for rootSessionId: String) -> [ZeSubAgentRecord] {
@@ -161,7 +195,9 @@ final class ZeSubAgentCoordinator: ObservableObject {
         loadRootIfNeeded(root)
         guard let location = locate(id: id), location.root == root else { return false }
         let owner = childAgentIds[ObjectIdentifier(parent)] ?? root
-        return location.record.parentId == owner
+        let owned = location.record.parentId == owner
+        if owned { parents[id] = ParentReference(parent) }
+        return owned
     }
 
     @discardableResult
@@ -170,7 +206,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
         message: String,
         forkContext: Bool = false,
         nickname: String = "",
-        modelEntryReference: String? = nil
+        modelEntryReference: String? = nil,
+        budgetMinutes: Int = ZeSubAgentCoordinator.defaultBudgetMinutes
     ) -> ZeSubAgentRecord {
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let root = rootSessionId(for: parent)
@@ -180,8 +217,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
         loadRootIfNeeded(root)
         let existing = recordsByRoot[root, default: [:]].values
         guard !prompt.isEmpty else { return failedRecord(root: root, parent: parent, message: "子代理任务不能为空") }
-        guard existing.filter({ $0.status.isActive }).count < Self.maxAgentsPerRoot else {
-            return failedRecord(root: root, parent: parent, message: "已达到当前会话同时运行的子代理上限（6）")
+        guard queuedStarts[root, default: []].count < Self.maxQueuedPerRoot else {
+            return failedRecord(root: root, parent: parent, message: "当前会话已有 24 个子代理排队，请等待部分任务结束。")
         }
 
         let parentId = childAgentIds[ObjectIdentifier(parent)] ?? root
@@ -217,6 +254,12 @@ final class ZeSubAgentCoordinator: ObservableObject {
             steps: []
         )
         record.parentTurnId = parent.messages.last(where: { $0.role == .assistant })?.id.uuidString
+        record.budgetMinutes = min(Self.maxBudgetMinutes, max(1, budgetMinutes))
+        record.modelPinUnavailable = requestedModelReference != nil && configuredEntry == nil
+        record.requestedModel = configuredEntry?.model.displayName ?? requestedModelReference
+            ?? effectiveEntry?.model.displayName ?? parent.selectedModel.displayName
+        record.deliveryState = "pending"
+        parents[id] = ParentReference(parent)
         recordsByRoot[root, default: [:]][id] = record
         persist(root)
         publish()
@@ -238,11 +281,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
         }
         children[id] = child
         childAgentIds[ObjectIdentifier(child)] = id
-        child.inputText = prompt
-        child.send()
+        queuedInputs[id] = [prompt]
+        queuedStarts[root, default: []].append(id)
+        drainQueuedStarts(root: root)
         logger.info("[SubAgent] spawn id=\(id.prefix(8)) root=\(root.prefix(8)) depth=\(record.depth) fork=\(forkContext)")
-        startPolling(id: id, root: root)
-        return record
+        return self.record(id: id, rootSessionId: root) ?? record
     }
 
     @discardableResult
@@ -267,6 +310,13 @@ final class ZeSubAgentCoordinator: ObservableObject {
         guard let location = locate(id: id), var record = record(id: id, rootSessionId: location.root) else { return nil }
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, record.status != .closed, record.status != .cancelling else { return nil }
+        guard !record.status.isActive || record.wrapUpStartedAt == nil || interrupt else { return nil }
+        if queuedInputs[id] != nil {
+            queuedInputs[id, default: []].append(text)
+            record.pendingInputCount = max(0, queuedInputs[id, default: []].count - 1)
+            update(record, root: location.root)
+            return record
+        }
         if launchTasks[id] != nil {
             launchInputs[id, default: []].append(text)
             record.pendingInputCount = launchInputs[id]?.count
@@ -290,6 +340,12 @@ final class ZeSubAgentCoordinator: ObservableObject {
         let previousTask = finishingTasks[id]
         record.status = .queued
         record.error = nil
+        record.startedAt = nil
+        record.finishedAt = nil
+        record.wrapUpStartedAt = nil
+        record.deliveryState = "pending"
+        mutedDeliveries.remove(id)
+        deliveryTasks.removeValue(forKey: id)?.cancel()
         record.revision += 1
         record.updatedAt = Date()
         record.pendingInputCount = 1
@@ -313,9 +369,9 @@ final class ZeSubAgentCoordinator: ObservableObject {
             current.output = ""
             current.steps = []
             self.update(current, root: location.root)
-            child.inputText = inputs.joined(separator: "\n\n")
-            child.send()
-            self.startPolling(id: id, root: location.root)
+            self.queuedInputs[id] = inputs
+            self.queuedStarts[location.root, default: []].append(id)
+            self.drainQueuedStarts(root: location.root)
         }
         return record
     }
@@ -356,6 +412,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private func stopChild(id: String) {
         launchTasks.removeValue(forKey: id)?.cancel()
         launchInputs[id] = nil
+        queuedInputs[id] = nil
+        if let root = locate(id: id)?.root { queuedStarts[root]?.removeAll { $0 == id } }
         guard let child = children[id] else { return }
         // cancel() normally resumes queued chat prompts. A child Stop means
         // stop the whole task, including corrections that have not run yet.
@@ -383,14 +441,26 @@ final class ZeSubAgentCoordinator: ObservableObject {
         record.status = .cancelled
         record.error = nil
         record.pendingInputCount = 0
+        record.finishedAt = now()
+        mutedDeliveries.insert(id)
+        deliveryTasks.removeValue(forKey: id)?.cancel()
+        record.deliveryState = "suppressed"
         record.steps = record.steps?.map { step in
             guard step.state == "running" else { return step }
             return ZeSubAgentStep(id: step.id, title: step.title, icon: step.icon,
-                                  content: step.content, state: "cancelled", duration: step.duration, imageFilePath: step.imageFilePath)
+                                  content: step.content, state: "cancelled", duration: step.duration, imageFilePath: step.imageFilePath, toolName: step.toolName)
         }
         record.revision += 1
         record.updatedAt = Date()
         update(record, root: location.root)
+        let revision = record.revision
+        let finishing = finishingTasks[id]
+        Task { @MainActor [weak self] in
+            await finishing?.value
+            guard let self, self.record(id: id)?.revision == revision else { return }
+            self.finishingTasks[id] = nil
+            self.drainQueuedStarts(root: location.root)
+        }
     }
 
     /// The detail card's Stop covers siblings from this exact delegating turn.
@@ -435,10 +505,11 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
     func resume(id: String) -> ZeSubAgentRecord? {
         guard var record = record(id: id) else { return nil }
-        guard [.closed, .interrupted, .failed, .cancelled].contains(record.status) else { return record }
+        guard [.closed, .interrupted, .failed, .cancelled, .timedOut].contains(record.status) else { return record }
         let continuation = record.childSessionId == nil && record.output.isEmpty
             ? record.prompt
-            : "继续此前未完成的任务，保留已经完成的工作，并报告最终结果。"
+            : "此前任务已中断，现在继续。已有对话和工作区文件仍有效，但浏览器标签、运行中的 shell 进程和未保存状态可能已丢失。按已有结果继续，需要时重新打开页面或运行命令，不要假定旧进程仍在运行。完成后报告最终结果。"
+        mutedDeliveries.remove(id)
         record.status = .idle
         update(record, root: record.rootSessionId)
         return sendInput(id: id, message: continuation)
@@ -446,14 +517,27 @@ final class ZeSubAgentCoordinator: ObservableObject {
 
     func wait(ids: [String], timeout: TimeInterval = 30) async -> [ZeSubAgentRecord] {
         let wanted = Set(ids.filter { !$0.isEmpty })
+        for id in wanted { deliveryTasks.removeValue(forKey: id)?.cancel() }
+        for id in wanted { inlineWaiters[id, default: 0] += 1 }
+        defer {
+            for id in wanted {
+                let remaining = max(0, inlineWaiters[id, default: 1] - 1)
+                inlineWaiters[id] = remaining == 0 ? nil : remaining
+                guard let record = record(id: id), !record.status.isActive,
+                      record.deliveryState == "pending" else { continue }
+                if Task.isCancelled { deliverResult(record) }
+                else { markDelivery(id: id, revision: record.revision, state: "inline") }
+            }
+        }
         let deadline = Date().addingTimeInterval(min(max(timeout, 0), 300))
-        while Date() < deadline {
+        while !Task.isCancelled && Date() < deadline {
             let current = wanted.compactMap { id -> ZeSubAgentRecord? in
                 guard let loc = locate(id: id) else { return nil }
                 return record(id: id, rootSessionId: loc.root)
             }
             if current.isEmpty || current.allSatisfy({ !$0.status.isActive }) { return current }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            do { try await Task.sleep(nanoseconds: 250_000_000) }
+            catch { break }
         }
         return wanted.compactMap { id -> ZeSubAgentRecord? in
             guard let loc = locate(id: id) else { return nil }
@@ -466,17 +550,153 @@ final class ZeSubAgentCoordinator: ObservableObject {
         return "\(record.nickname) [\(record.status.displayName)]\(record.output.isEmpty ? "" : "\n\(String(record.output.suffix(1200)))")"
     }
 
+    /// Called from the real provider route for each attempted model, including
+    /// fallback. This is request identity, never inferred server identity.
+    func recordRequest(from child: AIChatViewModel, modelId: String, modelName: String, provider: String) {
+        guard let id = childAgentIds[ObjectIdentifier(child)], let location = locate(id: id) else { return }
+        var record = location.record
+        guard record.requestModelId != modelId || record.requestProviderName != provider else { return }
+        record.requestModelId = modelId
+        record.requestModelName = modelName
+        record.requestProviderName = provider
+        update(record, root: location.root)
+    }
+
+    /// Stop is a lasting veto for results belonging to that run, even after
+    /// the parent's cancellation handler resets userDidCancel for a new turn.
+    func parentDidCancel(_ parent: AIChatViewModel) {
+        parent.discardQueuedSubAgentResults()
+        let root = rootSessionId(for: parent)
+        let owner = childAgentIds[ObjectIdentifier(parent)] ?? root
+        let owned = Set(parents.compactMap { $0.value.value === parent ? $0.key : nil })
+            .union(recordsByRoot[root, default: [:]].values.filter { $0.parentId == owner }.map(\.id))
+        for id in owned {
+            mutedDeliveries.insert(id)
+            deliveryTasks.removeValue(forKey: id)?.cancel()
+        }
+        for id in owned where record(id: id)?.status.isActive == true { cancel(id: id) }
+    }
+
+    private func runningSlots(root: String) -> Int {
+        recordsByRoot[root, default: [:]].values.filter {
+            ($0.status.isActive && $0.startedAt != nil && queuedInputs[$0.id] == nil)
+                || finishingTasks[$0.id] != nil
+        }.count
+    }
+
+    private func drainQueuedStarts(root: String) {
+        while runningSlots(root: root) < Self.maxAgentsPerRoot,
+              let id = queuedStarts[root]?.first {
+            queuedStarts[root]?.removeFirst()
+            guard var record = record(id: id, rootSessionId: root), record.status == .queued,
+                  let child = children[id], let inputs = queuedInputs.removeValue(forKey: id) else { continue }
+            record.startedAt = now()
+            record.finishedAt = nil
+            record.wrapUpStartedAt = nil
+            record.deliveryState = "pending"
+            record.pendingInputCount = 0
+            budgetToolStopped.remove(id)
+            child.zeSubAgentWrapUpRequested = false
+            update(record, root: root)
+            child.inputText = inputs.joined(separator: "\n\n")
+            child.send()
+            startPolling(id: id, root: root)
+        }
+    }
+
+    enum BudgetAction: Equatable { case none, wrapUp, stopTool, timeout }
+    static func budgetAction(startedAt: Date?, budgetMinutes: Int?, wrapUpAt: Date?,
+                             stoppedTool: Bool, now: Date) -> BudgetAction {
+        guard let startedAt, let budgetMinutes,
+              now.timeIntervalSince(startedAt) >= Double(budgetMinutes * 60) else { return .none }
+        guard let wrapUpAt else { return .wrapUp }
+        let grace = now.timeIntervalSince(wrapUpAt)
+        if grace >= wrapUpGraceSeconds { return .timeout }
+        if grace >= wrapUpToolPatience && !stoppedTool { return .stopTool }
+        return .none
+    }
+
+    private func markDelivery(id: String, revision: Int, state: String) {
+        guard let location = locate(id: id), location.record.revision == revision else { return }
+        var record = location.record
+        record.deliveryState = state
+        update(record, root: location.root)
+    }
+
+    private func deliverResult(_ record: ZeSubAgentRecord) {
+        guard record.deliveryState == "pending", inlineWaiters[record.id, default: 0] == 0,
+              deliveryTasks[record.id] == nil else { return }
+        guard !mutedDeliveries.contains(record.id),
+              let parent = parents[record.id]?.value ?? children[record.parentId]
+                ?? (record.parentId == record.rootSessionId ? ViewModelCache.shared.get(for: record.parentId) : nil),
+              record.rootSessionId != ZeSubAgentPreferences.settingsRootSessionId else {
+            markDelivery(id: record.id, revision: record.revision, state: "suppressed")
+            return
+        }
+        parents[record.id] = ParentReference(parent)
+        let parentTask = parent.isProcessing ? nil : parent.currentTask
+        deliveryTasks[record.id] = Task { @MainActor [weak self, weak parent] in
+            await parentTask?.value
+            guard let self else { return }
+            // A cancelled older delivery must never erase a newer revision's task.
+            guard !Task.isCancelled else { return }
+            defer { self.deliveryTasks[record.id] = nil }
+            guard let parent, !self.mutedDeliveries.contains(record.id),
+                  self.inlineWaiters[record.id, default: 0] == 0,
+                  let current = self.record(id: record.id), current.revision == record.revision,
+                  current.deliveryState == "pending" else { return }
+            let body = record.output.isEmpty ? (record.error ?? "没有最终输出，请检查子代理记录。") : record.output
+            let text = "[子代理任务结束 · \(record.nickname) · \(record.status.displayName) · id=\(record.id)]\n" + body
+            let accepted = parent.submitSubAgentResult(text)
+            self.markDelivery(id: record.id, revision: record.revision, state: accepted ? "delivered" : "unavailable")
+        }
+    }
+
     // MARK: - Runtime
 
     private func startPolling(id: String, root: String) {
         pollTasks[id]?.cancel()
         completedSteps[id] = [:]
         completedToolSteps[id] = [:]
+        toolNameHistoryCounts[id] = nil
+        cachedToolNames[id] = nil
         pollTasks[id] = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled, let child = self.children[id] {
                 guard let current = self.record(id: id, rootSessionId: root) else { return }
                 var next = current
+                if child.isProcessing {
+                    switch Self.budgetAction(startedAt: current.startedAt, budgetMinutes: current.budgetMinutes,
+                                             wrapUpAt: current.wrapUpStartedAt, stoppedTool: self.budgetToolStopped.contains(id), now: self.now()) {
+                    case .none: break
+                    case .wrapUp:
+                        next.wrapUpStartedAt = self.now()
+                        child.zeSubAgentWrapUpRequested = true
+                    case .stopTool:
+                        self.budgetToolStopped.insert(id)
+                        child.stopCurrentCommand()
+                    case .timeout:
+                        self.stopChild(id: id)
+                        next.status = .timedOut
+                        next.error = "已达到时间预算及 90 秒收尾宽限。"
+                        next.output = self.output(from: child)
+                        next.steps = self.steps(from: child, id: id)
+                        next.finishedAt = self.now()
+                        next.updatedAt = self.now()
+                        self.update(next, root: root)
+                        self.pollTasks[id] = nil
+                        self.deliverResult(next)
+                        let finishing = self.finishingTasks[id]
+                        let revision = next.revision
+                        Task { @MainActor [weak self] in
+                            await finishing?.value
+                            guard let self, self.record(id: id)?.revision == revision else { return }
+                            self.finishingTasks[id] = nil
+                            self.drainQueuedStarts(root: root)
+                        }
+                        return
+                    }
+                }
                 next.error = child.errorMessage ?? child.messages.last(where: { $0.role == .assistant })?.error
                 next.status = Self.runtimeStatus(processing: child.isProcessing, suspended: child.isSuspended,
                                                  cancelled: child.userDidCancel, resumable: child.canResume,
@@ -491,6 +711,17 @@ final class ZeSubAgentCoordinator: ObservableObject {
                 next.cacheReadTokens = child.sessionCacheReadTokens
                 next.turnCount = child.agentHistory.lazy.filter { $0.role == .assistant }.count
                 next.pendingInputCount = child.promptQueue.count
+                if !next.status.isActive { next.finishedAt = self.now() }
+                if next.status == .completed, Self.hasFinalAnswer(child.agentHistory), let final = child.agentHistory.last {
+                    next.output = final.parts.compactMap { part -> String? in
+                        if case .text(let text) = part { return text }
+                        return nil
+                    }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if next.status == .completed && !Self.hasFinalAnswer(child.agentHistory) {
+                    next.status = .failed
+                    next.error = "子代理结束，但没有返回最终交付内容。"
+                }
                 if next != current {
                     next.updatedAt = Date()
                     self.update(next, root: root, immediate: next.status != current.status || !next.status.isActive)
@@ -499,12 +730,36 @@ final class ZeSubAgentCoordinator: ObservableObject {
                     self.pollTasks[id] = nil
                     self.completedSteps[id] = nil
                     self.completedToolSteps[id] = nil
+                    self.deliverResult(next)
+                    let finishing = child.currentTask
+                    self.finishingTasks[id] = finishing
+                    let revision = next.revision
+                    Task { @MainActor [weak self] in
+                        await finishing?.value
+                        guard let self, self.record(id: id)?.revision == revision else { return }
+                        self.finishingTasks[id] = nil
+                        self.drainQueuedStarts(root: root)
+                    }
                     return
                 }
                 do { try await Task.sleep(nanoseconds: 350_000_000) }
                 catch { return }
             }
         }
+    }
+
+    static func hasFinalAnswer(_ history: [AgentMessage]) -> Bool {
+        guard let last = history.last, last.role == .assistant else { return false }
+        var hasText = false
+        for part in last.parts {
+            switch part {
+            case .toolUse: return false
+            case .text(let text):
+                hasText = hasText || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default: break
+            }
+        }
+        return hasText
     }
 
     static func runtimeStatus(processing: Bool, suspended: Bool, cancelled: Bool,
@@ -519,6 +774,16 @@ final class ZeSubAgentCoordinator: ObservableObject {
     private func steps(from child: AIChatViewModel, id: String) -> [ZeSubAgentStep] {
         let messages = child.messages.filter { $0.role == .assistant }
         let liveId = messages.last?.id
+        var toolNames = cachedToolNames[id, default: [:]]
+        var knownCount = toolNameHistoryCounts[id, default: 0]
+        if knownCount > child.agentHistory.count { knownCount = 0; toolNames = [:] }
+        for message in child.agentHistory.dropFirst(knownCount) {
+            for part in message.parts {
+                if case .toolUse(let toolId, let name, _) = part { toolNames[toolId] = name }
+            }
+        }
+        toolNameHistoryCounts[id] = child.agentHistory.count
+        cachedToolNames[id] = toolNames
         var cache = completedSteps[id, default: [:]]
         var toolCache = completedToolSteps[id, default: [:]]
         let validIds = Set(messages.map(\.id))
@@ -533,8 +798,9 @@ final class ZeSubAgentCoordinator: ObservableObject {
                 // visible frame drops while a child model is thinking.
                 guard block.kind != .thinking else { return nil }
                 if let cached = toolCache[block.id] { return cached }
-                let title: String
+                var title: String
                 let icon: String
+                var toolName: String? = nil
                 switch block.kind {
                 case .text:
                     guard !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -542,22 +808,31 @@ final class ZeSubAgentCoordinator: ObservableObject {
                 case .thinking:
                     title = "正在思考"; icon = "brain.head.profile"
                 case .shellTool:
+                    toolName = "shell_execute"
                     title = "命令 · \(block.toolDescription)"; icon = "terminal"
                 case .fileReadTool:
+                    toolName = "file_read"
                     title = "读取文件 · \(block.toolDescription)"; icon = "doc.text.magnifyingglass"
                 case .fileWriteTool:
+                    toolName = "file_write"
                     title = "写入文件 · \(block.toolDescription)"; icon = "square.and.pencil"
                 case .fileEditTool:
+                    toolName = "file_edit"
                     title = "编辑文件 · \(block.toolDescription)"; icon = "pencil.line"
                 case .browserTool:
+                    toolName = "browser_use"
                     title = "浏览器 · \(block.toolDescription)"; icon = "safari"
                 case .readImageTool:
+                    toolName = "read_image"
                     title = "查看图片 · \(block.toolDescription)"; icon = "photo"
-                case .memoryTool:
+                case .memoryTool(let action):
+                    toolName = action
                     title = "代理工具 · \(block.toolDescription)"; icon = "square.stack.3d.up"
                 case .info:
                     title = "进度"; icon = "info.circle"
                 }
+                if let id = block.toolUseId, let actualName = toolNames[id] { toolName = actualName }
+                if toolName != nil { title = block.toolSummary ?? block.toolDescription }
                 let state: String
                 switch block.toolStatus {
                 case .streaming, .running: state = "running"
@@ -574,7 +849,8 @@ final class ZeSubAgentCoordinator: ObservableObject {
                     content: String(detail.suffix(1600)),
                     state: state,
                     duration: block.toolDuration,
-                    imageFilePath: block.imageFilePath
+                    imageFilePath: block.imageFilePath,
+                    toolName: toolName
                 )
                 if block.toolDuration != nil && ["success", "failed", "cancelled"].contains(state) {
                     toolCache[block.id] = step

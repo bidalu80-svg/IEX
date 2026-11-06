@@ -512,7 +512,7 @@ struct ToolLiveSheet: View {
                             ZeSubAgentDetailContent(recordId: record.id)
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 16)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

@@ -37,6 +37,10 @@ Implemented in Ze's existing runtime and message renderer:
 - Tool sheets embed the detail content directly. Sections use the reference 10pt corner radius, separate gray header, divider and 0.5pt outline. Recent tools show the latest eight calls without an expanding output log. Completed output uses Markdown; the latest screenshot is asynchronously downsampled. Transcript opens the actual `CollectionViewMessageListV3` renderer with Stop and 0.35/medium/large detents.
 - Active rim uses Core Animation instead of per-frame SwiftUI updates; animations stop off-window, in background and for Reduce Motion. Output previews are bounded, historic tool snapshots cached, writes throttled on a serial background queue, list order stable, and live expanded output avoids Markdown reparse.
 
+Runtime correction after the UI review adds FIFO admission (six executing, up to 24 queued), a default ten-minute budget capped at sixty, a tool-boundary final-answer request and a ninety-second grace limit. User Stop suppresses future callbacks and removes already queued child-result messages. Results use the existing parent prompt queue without replacing the user's composer or attachments; explicit wait consumption prevents duplicate delivery. Request model identity is captured at the actual provider call, including fallback, and is labelled as request identity rather than server-confirmed identity. Restored children explicitly receive a warning that browser/process state may have been lost.
+
+Remaining architecture differences are explicit: Ze keeps its three-level child tree; periodic 15/60-second progress callbacks are not implemented; completion is delivered through the existing visible message queue rather than rewriting the original delegation tool result; the twenty-second soft interruption uses Ze's existing shell/browser/delay cancellation, with the ninety-second final cancellation covering the remaining run. Pending questions after process restart expire instead of restoring an upstream deferred continuation.
+
 This is adaptation to Ze's tool/runtime architecture. Device-level visual equivalence, scrolling/frame-time measurements, image-preview visual parity and live provider calls still require an installed build; source changes and CI alone do not establish those results.
 
 ## Question interaction cards
@@ -61,6 +65,7 @@ The existing push-triggered `.github/workflows/build.yml` now also executes:
 - `scripts/test-question-core.py`: compiled production question schema/state, notification identity and persistence contracts.
 - `scripts/test-question-layout.py`: compiled production typography and per-question layout cache.
 - `scripts/test-question-reference-ui.sh` and `scripts/compare-question-ui.py`: pinned upstream declarations rendered separately and paired with Ze at identical dimensions.
+- `scripts/test-subagent-reference-ui.sh` and `scripts/compare-subagent-ui.py`: original upstream inline/thumbnail Views and original digest-based stats/timeline sections, paired with the corresponding production surfaces. This does not by itself verify the entire detail page or runtime controls.
 - `scripts/test-subagent-ui.sh` and `scripts/test-question-ui.sh`: real production views hosted in a simulator window, with PNGs and result JSON. Fixtures supply record data and app integration dependencies; microphone capture is not exercised. These are component rendering checks, not full-app device performance measurements.
 
 The normal unsigned iOS build and IPA audit assert version 1.1.4 (build 8). Local Windows checks can validate catalogs, source structure and diffs; Swift and iOS compilation require the macOS workflow. See the delivery's exact commit and workflow URL for the actual result.
