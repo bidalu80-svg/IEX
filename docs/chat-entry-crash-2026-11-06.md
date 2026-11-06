@@ -68,3 +68,13 @@ after compilation lets compiler evidence be produced even when export fails.
 IPA upload additionally requires the same Actions run's complete application
 runtime job to finish successfully. A compiled package from a run with failed
 chat, share or search assertions is not offered as a downloadable IPA.
+
+## First repair build: b5a0e98
+
+Actions 42212609421 failed simulator compilation at AIChatView.swift:995:
+`the compiler is unable to type-check this expression in reasonable time`.
+The media presentation expression still combined many modifiers. No new-chat
+runtime result was produced. Split that expression into six erased groups
+(image events, file previews, browser previews, session sheets, capture and
+photo/document picking), preserving the exact concatenated modifier content.
+This is a compile repair, not evidence of device crash resolution.

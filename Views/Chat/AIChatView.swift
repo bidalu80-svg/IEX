@@ -991,7 +991,7 @@ struct AIChatView: View {
         )
     }
 
-    private var chatMediaPresentation: AnyView {
+    private var chatImagePresentation: AnyView {
         AnyView(
         chatPresentations
         .fullScreenCover(item: $imageGallery) { presentation in
@@ -1012,6 +1012,12 @@ struct AIChatView: View {
         .fullScreenCover(item: $previewVideoFile) { fileURL in
             ZeVideoFullscreenPlayer(fileURL: fileURL)
         }
+        )
+    }
+
+    private var chatFilePresentation: AnyView {
+        AnyView(
+        chatImagePresentation
         .sheet(item: $previewAudioFile) { fileURL in
             ZeAudioPreviewView(fileURL: fileURL)
                 .presentationDetents([.large])
@@ -1029,6 +1035,12 @@ struct AIChatView: View {
         .sheet(item: $shareFile) { fileURL in
             ZeShareSheet(url: fileURL)
         }
+        )
+    }
+
+    private var chatBrowserPresentation: AnyView {
+        AnyView(
+        chatFilePresentation
         .sheet(item: $safariURL) { url in
             ZeLinkPreviewView(url: url, browserPool: vm.browserTabPool, onExpand: { _ in
                 fullBrowserIsLocal = false
@@ -1103,6 +1115,12 @@ struct AIChatView: View {
                 vm.browserTakeoverActive = true
             })
         }
+        )
+    }
+
+    private var chatSessionPresentation: AnyView {
+        AnyView(
+        chatBrowserPresentation
         .sheet(isPresented: $showModelPicker) {
             NavigationStack {
                 SessionModelPicker(sessionId: vm.sessionId) {
@@ -1144,6 +1162,12 @@ struct AIChatView: View {
         .sheet(isPresented: $showSessionMemory) {
             SessionMemoryView(vm: cached.vm)
         }
+        )
+    }
+
+    private var chatCapturePresentation: AnyView {
+        AnyView(
+        chatSessionPresentation
         .sheet(isPresented: $showMoveToSheet) {
             MoveToSessionSheet(currentSessionId: vm.sessionId) { targetId in
                 // Stash current input into ViewModelCache
@@ -1213,6 +1237,12 @@ struct AIChatView: View {
                 }
             )
         }
+        )
+    }
+
+    private var chatMediaPresentation: AnyView {
+        AnyView(
+        chatCapturePresentation
         .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItems,
                       maxSelectionCount: 50, matching: .any(of: [.images, .videos]))
         .onChange(of: selectedPhotoItems) { items in
