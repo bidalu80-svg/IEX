@@ -25,6 +25,8 @@ private struct SubAgentScreenshot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(uiColor: .systemGroupedBackground))
         .environment(\.colorScheme, scheme)
+        // UIKit hosts do not supply a SwiftUI App scene; model the active scene explicitly.
+        .environment(\.scenePhase, .active)
         .ignoresSafeArea()
     }
 }

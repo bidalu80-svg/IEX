@@ -41,6 +41,8 @@ cat > "$APP/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>ZeSubAgentHarness</string>
 <key>CFBundleName</key><string>ZeSubAgentHarness</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+<key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>MinimumOSVersion</key><string>16.0</string>
@@ -48,6 +50,7 @@ cat > "$APP/Info.plist" <<'PLIST'
 <key>UILaunchScreen</key><dict/>
 </dict></plist>
 PLIST
+python3 scripts/prepare-ui-harness-localization.py "$APP" subagent-ui-evidence
 codesign --force --sign - "$APP"
 DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import sys,json; d=json.load(sys.stdin); candidates=[x for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["name"].startswith("iPhone")]; print(next((x["udid"] for x in candidates if x["state"]=="Booted"), candidates[0]["udid"]))')
 xcrun simctl boot "$DEVICE" || true
@@ -69,7 +72,7 @@ import pathlib, sys
 for p in pathlib.Path(sys.argv[1]).glob('subagent-*'):
     if p.is_file() and p.suffix in ('.png', '.json'): p.unlink()
 PY
-xcrun simctl launch "$DEVICE" com.ze.subagent-harness
+xcrun simctl launch "$DEVICE" com.ze.subagent-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN
 for attempt in $(seq 1 40); do
   if [ -f "$CONTAINER/Documents/subagent-ui-result.json" ]; then break; fi
   sleep 1

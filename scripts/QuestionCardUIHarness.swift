@@ -167,7 +167,7 @@ private final class QuestionCardUIHarness: UIResponder, UIApplicationDelegate {
                                            optionDescriptions: multi ? ["检查模型参数和能力映射", "检查后台任务的生命周期", "检查实时预览和操作入口"] : [nil, nil],
                                            isConfirmation: confirmation,
                                            impact: confirmation ? "构建成功后生成待安装的软件包。" : nil,
-                                           risk: confirmation ? "需要确认验证结果。" : nil)
+                                           risk: confirmation ? "high" : nil)
         var card = QuestionCardState(requestId: UUID().uuidString, title: "更新验证", questions: [question], timeoutAt: Date().addingTimeInterval(600))
         if scenario == "resolved" {
             card.status = .confirmed
