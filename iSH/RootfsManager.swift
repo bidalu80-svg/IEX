@@ -139,21 +139,40 @@ class RootfsManager {
             try self.unzipFile(at: zipURL, to: staging)
             // Validate SQLite before publishing the new tree or writing its install marker.
             var db: OpaquePointer?
-            guard sqlite3_open_v2(staging.appendingPathComponent("meta.db").path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+            // fakefsify ships a checkpointed WAL-mode database without -wal/-shm.
+            // Let SQLite initialize its WAL control files in this disposable,
+            // writable staging tree, just as fake_db_init does at kernel mount.
+            // No CREATE: a missing database must still fail validation.
+            guard sqlite3_open_v2(staging.appendingPathComponent("meta.db").path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
                   let openedDB = db else {
+                let detail = db.map { "SQLite \(sqlite3_extended_errcode($0)): \(String(cString: sqlite3_errmsg($0)))" } ?? "no database handle"
                 if let db { sqlite3_close(db) }
-                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata is invalid."])
+                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata open failed: \(detail)"])
             }
             defer { sqlite3_close(openedDB) }
+            func validationFailure(_ phase: String, detail: String? = nil) -> NSError {
+                NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                    "Extracted rootfs metadata \(phase) failed (SQLite \(sqlite3_extended_errcode(openedDB))): \(detail ?? String(cString: sqlite3_errmsg(openedDB)))"])
+            }
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(openedDB, "PRAGMA quick_check", -1, &statement, nil) == SQLITE_OK, let statement else {
-                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata check failed."])
+                let failure = validationFailure("quick_check prepare")
+                if let statement { sqlite3_finalize(statement) }
+                throw failure
             }
             defer { sqlite3_finalize(statement) }
-            guard sqlite3_step(statement) == SQLITE_ROW, let result = sqlite3_column_text(statement, 0),
-                  String(cString: result) == "ok",
-                  sqlite3_exec(openedDB, "SELECT path, inode FROM paths LIMIT 1; SELECT inode, stat FROM stats LIMIT 1;", nil, nil, nil) == SQLITE_OK else {
-                throw NSError(domain: "RootfsManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Extracted rootfs metadata is corrupt."])
+            guard sqlite3_step(statement) == SQLITE_ROW, let result = sqlite3_column_text(statement, 0) else {
+                throw validationFailure("quick_check step")
+            }
+            let integrityResult = String(cString: result)
+            guard integrityResult == "ok" else {
+                throw validationFailure("integrity", detail: integrityResult)
+            }
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw validationFailure("quick_check completion")
+            }
+            guard sqlite3_exec(openedDB, "SELECT path, inode FROM paths LIMIT 1; SELECT inode, stat FROM stats LIMIT 1; SELECT db_inode FROM meta LIMIT 1;", nil, nil, nil) == SQLITE_OK else {
+                throw validationFailure("schema")
             }
             try self.currentArch.write(to: staging.appendingPathComponent(".arch"), atomically: true, encoding: .utf8)
             if let reason = self.installationDiagnostic(at: staging) {

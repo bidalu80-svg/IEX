@@ -988,4 +988,5 @@ jobs:
             share-search-simulator-build.log
             share-search-simulator-resolve.log
             share-search-simulator-app-path.txt
+            bundled-rootfs-evidence/
           retention-days: 7

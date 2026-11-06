@@ -24,8 +24,8 @@ import UIKit
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
-    private static func waitFor(_ description: String, condition: () -> Bool) async throws {
-        for _ in 0..<100 {
+    private static func waitFor(_ description: String, timeout: Double = 10, condition: () -> Bool) async throws {
+        for _ in 0..<Int(timeout * 10) {
             if condition() { return }
             await settle(0.1)
         }
@@ -123,7 +123,12 @@ import UIKit
             try checkpoint("open-first-new-chat")
             NotificationCenter.default.post(name: .newChatRequested, object: nil)
             try await waitFor("new chat actual composer") { composer(in: window) != nil }
+            try checkpoint("await-real-kernel-boot")
+            try await waitFor("real bundled rootfs installation and kernel boot", timeout: 90) {
+                ISHKernel.shared.isBooted
+            }
             await settle(0.7)
+            try require(ISHKernel.shared.isBooted, "Real bundled rootfs boots before chat interaction")
             try require(window.rootViewController === originalRoot, "New chat preserves production root")
             try require(!renderedHistory(historyMarker, in: window), "New chat has no history fixture")
             try capture("01-new-chat.png", window: window)
@@ -132,7 +137,8 @@ import UIKit
             guard let firstComposer = composer(in: window) else {
                 throw NSError(domain: "ConversationChatVerification", code: -3)
             }
-            try require(firstComposer.becomeFirstResponder(), "Actual new-chat composer accepts focus")
+            try await waitFor("new-chat automatic production focus") { firstComposer.isFirstResponder }
+            try require(firstComposer.isFirstResponder, "Actual new-chat composer accepts automatic focus")
             firstComposer.insertText("新对话输入验证")
             await settle(0.5)
             try require(firstComposer.text.contains("新对话输入验证"), "Actual new-chat composer accepts typed text")
@@ -146,17 +152,29 @@ import UIKit
                 composer(in: window) != nil && renderedHistory(historyMarker, in: window)
             }
             await settle(0.5)
+            try require(ISHKernel.shared.isBooted, "Historical chat retains the running kernel")
             try require(window.rootViewController === originalRoot, "History preserves production root")
             guard let historyVM = ViewModelCache.shared.get(for: session.id),
                   let historyComposer = composer(in: window) else {
                 throw NSError(domain: "ConversationChatVerification", code: -4,
                               userInfo: [NSLocalizedDescriptionKey: "History VM or actual composer missing"])
             }
+            try await waitFor("history kernel overlay dismissal") {
+                if case .booted = historyVM.kernelStatus { return true }
+                return false
+            }
             try require(historyVM.sessionId == session.id, "Visible history uses persisted session VM")
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
             try checkpoint("type-in-history")
-            try require(historyComposer.becomeFirstResponder(), "Historical composer accepts focus")
+            // Use the shipping focus-intent signal. PastableUITextView deliberately
+            // rejects unsolicited UIKit first-responder promotion until an actual
+            // tap or SwiftUI focus request opens its allowsFirstResponder gate.
+            historyVM.requestComposerFocusSignal.send()
+            try await waitFor("historical composer focus through production binding") {
+                historyComposer.isFirstResponder
+            }
+            try require(historyComposer.isFirstResponder, "Historical composer accepts production focus intent")
             historyComposer.insertText("历史输入绑定验证")
             try await waitFor("actual history composer binding") { historyVM.inputText.contains("历史输入绑定验证") }
             try require(historyVM.inputText.contains("历史输入绑定验证"), "History input reaches production VM binding")

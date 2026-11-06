@@ -976,11 +976,12 @@ final class ChatExportRenderer {
         }
     }
 
-    /// Emit complete shaped lines rather than TextKit's separate punctuation drawing
-    /// operations. PDFKit sorted the independently drawn underscore below its word
-    /// ("SHARE\nBEGIN\n_"). CoreText keeps each contiguous text span together.
-    /// TextKit still chooses the line breaks and exact baseline; attachment views
-    /// retain their own geometry and are drawn by the background pass above.
+    /// Draw only the current page's laid-out lines. TextKit chooses line breaks
+    /// and baseline positions; CoreText draws copied attributed spans so PDF-only
+    /// compatibility adjustments never mutate the screen or PNG layout. CoreText
+    /// alone does not prevent PDFKit from splitting SF proportional underscores;
+    /// the measured correction below keeps their visible glyph within its word.
+    /// Attachment views retain their geometry in the background pass above.
     private func drawPDFText(_ textView: UITextView, in ctx: CGContext, clip: CGRect) {
         let lm = textView.layoutManager
         let storage = textView.textStorage
@@ -998,6 +999,21 @@ final class ChatExportRenderer {
                 guard end > start else { return }
                 let span = NSMutableAttributedString(attributedString: storage.attributedSubstring(
                     from: NSRange(location: start, length: end - start)))
+                // Real UIKit/PDFKit matrix: SF proportional "SHARE_BEGIN" was
+                // extracted as "SHARE\nBEGIN\n_". Raising only its underscore by
+                // 2pt makes findString match while preserving the font, advance,
+                // original line baseline, and any authored baseline offset.
+                // SF Mono already searches correctly and must stay untouched.
+                let spanText = span.string as NSString
+                for index in 0..<span.length where spanText.character(at: index) == 0x5F {
+                    guard let font = span.attribute(.font, at: index, effectiveRange: nil) as? UIFont,
+                          font.fontName.hasPrefix(".SF"),
+                          !font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace),
+                          !font.fontName.localizedCaseInsensitiveContains("mono") else { continue }
+                    let existing = (span.attribute(.baselineOffset, at: index, effectiveRange: nil) as? NSNumber)?.doubleValue ?? 0
+                    span.addAttribute(.baselineOffset, value: existing + 2,
+                                      range: NSRange(location: index, length: 1))
+                }
                 // CoreText requires CGColor rather than UIKit dynamic UIColor.
                 span.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: span.length)) { value, range, _ in
                     let color = (value as? UIColor) ?? textView.textColor ?? .label

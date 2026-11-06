@@ -14,6 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', default='pdf-vector-evidence')
 parser.add_argument('--extract-only', action='store_true')
+parser.add_argument('--diagnostic-matrix', action='store_true', help='Run the optional font/baseline diagnostic candidates')
 args = parser.parse_args()
 output = (ROOT / args.output).resolve()
 output.mkdir(parents=True, exist_ok=True)
@@ -68,7 +69,7 @@ result_dir = container / 'Documents/pdf-vector-harness'
 marker = result_dir / 'result.json'
 marker.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'simctl', 'terminate', device, bundle], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-run(['xcrun', 'simctl', 'launch', device, bundle])
+run(['xcrun', 'simctl', 'launch', device, bundle] + (['--diagnostic-matrix'] if args.diagnostic_matrix else []))
 for attempt in range(60):
     if marker.exists():
         break

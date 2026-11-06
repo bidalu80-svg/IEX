@@ -4,7 +4,7 @@ Only Documents/Bundle lookups and app logger/kernel boundaries are fixture subst
 --prepare-only produces source + hashes on Windows without claiming Swift execution.
 """
 from pathlib import Path
-import hashlib, json, os, sqlite3, subprocess, sys, tempfile, zipfile
+import hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, zipfile
 
 root = Path(__file__).resolve().parents[1]
 out = Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir())) / 'ze-rootfs-tests'
@@ -18,9 +18,18 @@ source = source.replace(documents, 'RootfsFixture.documents').replace(archive, '
 (out / 'RootfsManager.swift').write_text(source, encoding='utf-8')
 database = out / 'fixture-meta.db'
 if database.exists(): database.unlink()
-with sqlite3.connect(database) as db:
-    db.executescript('CREATE TABLE paths(path BLOB, inode INTEGER); CREATE TABLE stats(inode INTEGER PRIMARY KEY, stat BLOB);')
-with zipfile.ZipFile(out / 'valid.zip', 'w', compression=zipfile.ZIP_STORED) as z:
+# Use the schema shipped by the actual fakefsify producer, including meta,
+# indexes, version and WAL mode. A toy DELETE-mode database missed the real
+# archive's WAL bootstrap during readonly installation validation.
+producer = (root / 'Vendor/ZeNative/ish/tools/fakefs.c').read_text(encoding='utf-8')
+schema = producer.split('static const char *schema = Q(', 1)[1].split('\n);', 1)[0]
+schema = re.sub(r'//[^\n]*', '', schema)
+db = sqlite3.connect(database)
+db.execute('PRAGMA journal_mode=WAL')
+db.executescript(schema)
+db.close()
+assert database.read_bytes()[18:20] == b'\x02\x02'
+with zipfile.ZipFile(out / 'valid.zip', 'w', compression=zipfile.ZIP_DEFLATED) as z:
     z.writestr('alpine-rootfs/data/', '')
     z.writestr('alpine-rootfs/data/root/', '')
     z.writestr('alpine-rootfs/data/root/bundled.txt', 'fresh')
@@ -29,6 +38,14 @@ with zipfile.ZipFile(out / 'valid.zip', 'w', compression=zipfile.ZIP_STORED) as 
 with zipfile.ZipFile(out / 'bad-metadata.zip', 'w') as z:
     z.writestr('alpine-rootfs/data/', '')
     z.writestr('alpine-rootfs/meta.db', 'not sqlite')
+wrong_schema = out / 'wrong-schema.db'
+if wrong_schema.exists(): wrong_schema.unlink()
+wrong_db = sqlite3.connect(wrong_schema)
+wrong_db.execute('CREATE TABLE unrelated(value TEXT)')
+wrong_db.close()
+with zipfile.ZipFile(out / 'wrong-schema.zip', 'w', compression=zipfile.ZIP_DEFLATED) as z:
+    z.writestr('alpine-rootfs/data/', '')
+    z.write(wrong_schema, 'alpine-rootfs/meta.db')
 with zipfile.ZipFile(out / 'traversal.zip', 'w') as z:
     z.writestr('alpine-rootfs/../escaped.txt', 'escape')
 
@@ -47,7 +64,8 @@ struct AppLogger {
 final class ISHKernel { static let shared = ISHKernel(); var isBooted = false }
 enum RootfsFixture {
     static let fixtures = URL(fileURLWithPath: CommandLine.arguments[1])
-    static let documents = CommandLine.arguments.count > 2 ? URL(fileURLWithPath: CommandLine.arguments[2]) : fixtures.appendingPathComponent("runtime-" + UUID().uuidString)
+    static let documents = CommandLine.arguments.count > 2 && CommandLine.arguments[2] != "--archive"
+        ? URL(fileURLWithPath: CommandLine.arguments[2]) : fixtures.appendingPathComponent("runtime-" + UUID().uuidString)
     static var archive: URL? = fixtures.appendingPathComponent("valid.zip")
 }
 @main struct RootfsRecoveryTests {
@@ -77,6 +95,19 @@ enum RootfsFixture {
         do { try body(); fatalError("Expected failure") } catch { print("Expected error: \(error)") }
     }
     static func main() throws {
+        if CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "--archive" {
+            let supplied = URL(fileURLWithPath: CommandLine.arguments[3])
+            RootfsFixture.archive = supplied
+            let manager = RootfsManager.shared
+            try fm.createDirectory(at: RootfsFixture.documents, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: RootfsFixture.documents) }
+            try manager.installIfNeeded()
+            precondition(manager.isInstalled)
+            precondition(fm.fileExists(atPath: manager.dataPath.appendingPathComponent("bin/busybox").path))
+            precondition(fm.fileExists(atPath: manager.dataPath.appendingPathComponent("bin/sh").path))
+            print("PASS: complete production ZIP reader and installation validate actual bundled Alpine archive")
+            return
+        }
         if CommandLine.arguments.count > 2 {
             // A genuinely new process: no inherited singleton/boot-state or view-model backup URL.
             let manager = RootfsManager.shared
@@ -101,7 +132,7 @@ enum RootfsFixture {
         print("PASS: real ZIP/SQLite installation and healthy reinstall no-op")
 
         try write("wrong-arch", active.appendingPathComponent(".arch"))
-        for name in ["short.zip", "bad-metadata.zip", "traversal.zip"] {
+        for name in ["short.zip", "bad-metadata.zip", "wrong-schema.zip", "traversal.zip"] {
             RootfsFixture.archive = RootfsFixture.fixtures.appendingPathComponent(name)
             fail { try manager.installIfNeeded() }
             check(try read(user) == "user-data")
@@ -236,8 +267,14 @@ enum RootfsFixture {
 '''
 (out / 'Tests.swift').write_text(harness, encoding='utf-8')
 (out / 'manifest.json').write_text(json.dumps({'production_sha256': original_hash,
+    'schema_producer_sha256': hashlib.sha256(producer.encode()).hexdigest(),
+    'fixture_journal_mode': 'wal',
     'substitutions': ['Documents directory URL', 'Bundle archive URL', 'AppLogger and ISHKernel fixture boundaries']}, indent=2)+'\n')
 print('Prepared production RootfsManager fixture:', out)
 if '--prepare-only' not in sys.argv:
     subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library',str(out/'RootfsManager.swift'),str(out/'Tests.swift'),'-o',str(out/'test-rootfs')], check=True)
     subprocess.run([str(out/'test-rootfs'),str(out)], check=True)
+    if actual_archive := os.environ.get('ZE_ROOTFS_VERIFY_ARCHIVE'):
+        archive_path = Path(actual_archive).resolve(strict=True)
+        print('Actual archive SHA256:', hashlib.sha256(archive_path.read_bytes()).hexdigest())
+        subprocess.run([str(out/'test-rootfs'),str(out),'--archive',str(archive_path)], check=True)

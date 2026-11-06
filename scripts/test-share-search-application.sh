@@ -75,7 +75,7 @@ print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['success'],result
 if sys.argv[2] == 'chat':
     assert result['lastStage'] == 'complete', result
-    assert len(result['checks']) >= 19, result
+    assert len(result['checks']) >= 21, result
     assert len(result['screenshots']) >= 10, result
     assert result['systemVersion'], result
     for stage in ('open-first-new-chat', 'open-persisted-history', 'open-second-new-chat',

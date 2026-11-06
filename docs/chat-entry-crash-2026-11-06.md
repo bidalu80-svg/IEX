@@ -78,3 +78,30 @@ runtime result was produced. Split that expression into six erased groups
 (image events, file previews, browser previews, session sheets, capture and
 photo/document picking), preserving the exact concatenated modifier content.
 This is a compile repair, not evidence of device crash resolution.
+
+## Runtime evidence: 162fb24 / 42215553877
+
+Both simulator and device application compilation succeeded. On iOS 18.5 the
+new full-page harness progressed through new-chat construction, typing, and
+history hydration without the supplied iOS 18.1 metadata crash. However the
+screenshots show a full-screen `Extracted rootfs metadata check failed` overlay.
+The original UIView traversal counted underlying collection text as visible;
+it did not prove the page was usable. This is a failed acceptance result.
+
+The historical focus assertion also called becomeFirstResponder directly,
+which PastableUITextView intentionally refuses until a touch or the existing
+SwiftUI focus signal opens its gate. The corrected test uses
+requestComposerFocusSignal, requires real rootfs/kernel boot and waits for the
+history VM's booted state before interaction. No focus guard is removed.
+
+The production metadata validator now opens only its unpublished staging DB
+read/write (without CREATE), retaining quick_check/schema checks and adding
+SQLite extended error details. fakefsify produces WAL databases; the old fixture
+used DELETE journaling and missed this difference. The exact readonly/WAL
+failure mechanism remains unconfirmed until Apple runtime evidence is captured.
+The simulator build now tests and saves the actual newly generated Alpine ZIP,
+using the production Swift extraction/installation code before compiling the app.
+
+Search component checks passed 21 assertions; sharing still failed the exact
+PDFKit underscore search requirement. No IPA was uploaded. Physical iOS 18.1
+and iOS 16 runtime verification remain outstanding.

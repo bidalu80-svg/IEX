@@ -61,6 +61,13 @@ for name in set(re.findall(r'\.\./\.\./build/frameworks/([^";]+\.framework)', te
     (root/'build/frameworks'/name).mkdir(parents=True,exist_ok=True)
 PY
 ZE_NATIVE_SDK=iphonesimulator bash "$repo_root/scripts/prepare-ze-native-deps.sh" "$sim_root/deps"
+# Validate the exact generated rootfs with the production Swift ZIP reader,
+# not just a synthetic database fixture. Preserve it for failure diagnosis.
+mkdir -p "$repo_root/bundled-rootfs-evidence"
+cp "$sim_root/deps/resources/alpine-rootfs.zip" "$repo_root/bundled-rootfs-evidence/alpine-rootfs.zip"
+ZE_ROOTFS_VERIFY_ARCHIVE="$sim_root/deps/resources/alpine-rootfs.zip" \
+    python3 "$repo_root/scripts/test-rootfs-recovery.py" 2>&1 | tee "$repo_root/bundled-rootfs-evidence/installation.log"
+
 for framework in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
     bundle="$sim_root/deps/frameworks/$framework.framework"
     test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$bundle/Info.plist")" = iPhoneSimulator

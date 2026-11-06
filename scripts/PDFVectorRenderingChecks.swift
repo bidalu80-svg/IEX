@@ -100,6 +100,49 @@
         return pdf
     }
 
+    private func verifyStyledText() throws -> [String: Any] {
+        let root = UIView(frame: CGRect(x: 0, y: 0, width: 680, height: 1200))
+        root.backgroundColor = .white
+        root.overrideUserInterfaceStyle = .light
+        let specifications: [(String, UIFont, [NSAttributedString.Key: Any])] = [
+            ("BODY_SMALL", .systemFont(ofSize: 14), [:]),
+            ("BODY_NORMAL", .systemFont(ofSize: 16.5), [:]),
+            ("TITLE_MEDIUM", .systemFont(ofSize: 24.75), [:]),
+            ("TITLE_LARGE", .systemFont(ofSize: 33), [:]),
+            ("BOLD_MARKER", .boldSystemFont(ofSize: 16.5), [:]),
+            ("ITALIC_MARKER", .italicSystemFont(ofSize: 16.5), [:]),
+            ("LINK_MARKER", .systemFont(ofSize: 16.5), [.link: URL(string: "https://example.com")!, .foregroundColor: UIColor.blue]),
+            ("OFFSET_MARKER", .systemFont(ofSize: 16.5), [.baselineOffset: 3]),
+            ("MONO_MARKER", .monospacedSystemFont(ofSize: 16.5, weight: .regular), [:]),
+            ("OTHER_MARKER", UIFont(name: "Helvetica", size: 16.5)!, [:])
+        ]
+        var originals: [(UITextView, NSAttributedString, CGRect)] = []
+        for (index, spec) in specifications.enumerated() {
+            let text = UITextView(usingTextLayoutManager: false)
+            text.backgroundColor = .clear
+            text.isScrollEnabled = false
+            text.textContainerInset = .zero
+            text.textContainer.lineFragmentPadding = 0
+            var attrs: [NSAttributedString.Key: Any] = [.font: spec.1, .foregroundColor: UIColor.black]
+            attrs.merge(spec.2) { _, new in new }
+            text.attributedText = NSAttributedString(string: spec.0 + " 正文", attributes: attrs)
+            text.frame = CGRect(x: 20, y: 20 + CGFloat(index) * 50, width: 640, height: 48)
+            text.layoutManager.ensureLayout(for: text.textContainer)
+            root.addSubview(text)
+            originals.append((text, NSAttributedString(attributedString: text.attributedText), text.frame))
+        }
+        let pdf = try render(root, fixed: true, outputName: "styled")
+        let counts = Dictionary(uniqueKeysWithValues: specifications.map { ($0.0, pdf.findString($0.0, withOptions: []).count) })
+        let unchanged = originals.allSatisfy { $0.0.attributedText.isEqual(to: $0.1) && $0.0.frame == $0.2 }
+        let report: [String: Any] = ["search": counts, "originalStorageAndFrameUnchanged": unchanged,
+                                     "text": pdf.string ?? "<nil>"]
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("styled-result.json"), options: .atomic)
+        guard unchanged else { throw error("PDF drawing mutated original text storage or frame") }
+        guard counts.values.allSatisfy({ $0 == 1 }) else { throw error("Styled PDF markers must each remain searchable exactly once") }
+        return report
+    }
+
     private func error(_ message: String) -> NSError {
         NSError(domain: "PDFVectorHarness", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -119,12 +162,14 @@
                 ($0, fixed.findString($0, withOptions: []).count)
             })
             report["fixedSearch"] = hits
+            report["styledText"] = try verifyStyledText()
             // Run every candidate before enforcing the unchanged acceptance check,
             // so one simulator launch diagnoses both punctuation and pagination.
             var matrix: [[String: Any]] = []
-            let variants = ["original", "offset:1", "offset:2", "offset:-1", "offset:-2",
-                            "underscore:Helvetica", "underscore:ArialMT", "underscore:mono",
-                            "font:Helvetica", "font:ArialMT", "font:mono"]
+            let variants = ProcessInfo.processInfo.arguments.contains("--diagnostic-matrix")
+                ? ["original", "offset:1", "offset:2", "offset:-1", "offset:-2",
+                   "underscore:Helvetica", "underscore:ArialMT", "underscore:mono",
+                   "font:Helvetica", "font:ArialMT", "font:mono"] : []
             for variant in variants {
                 for coreText in [false, true] {
                     let name = "matrix-" + variant.replacingOccurrences(of: ":", with: "-") + (coreText ? "-coretext" : "-textkit")
