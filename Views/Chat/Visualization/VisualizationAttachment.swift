@@ -672,6 +672,7 @@ final class ZeCustomVisualizationPreview: UIView {
     let component: ZeVisualizationComponent
     private let interaction: ZeVisualizationInteractionState
     private let picture = UIImageView()
+    var renderedImage: UIImage? { picture.image }
     private let summary = UILabel()
     private var requestedKey: String?
     private(set) var isPending = false

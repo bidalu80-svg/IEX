@@ -262,7 +262,7 @@ import WebKit
         }
         let card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
         try check(card != nil, "Custom design is integrated in real chat Markdown")
-        let previewImages = descendants(host.view).compactMap { ($0 as? UIImageView)?.image }
+        let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
         try check(!previewImages.isEmpty, "Custom HTML/SVG renders a real inline image")
         try check(!descendants(host.view).contains { $0 is WKWebView }, "Inline chat does not retain a web view per card")
         card?.subviews.compactMap { $0 as? UIButton }.first?.sendActions(for: .touchUpInside)
@@ -287,14 +287,31 @@ import WebKit
         }
         try check(block.visualizationSelections.values.contains { $0.customStateJSON?.contains("75") == true }, "Closing atomically captures custom state and preview")
         try await Task.sleep(nanoseconds: 350_000_000)
-        let liveImage = descendants(host.view).compactMap { ($0 as? UIImageView)?.image?.pngData() }.first
+        let livePreview = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }.first
+        try livePreview?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-live.png"))
+        try check(livePreview.map { $0.size.width >= 300 && $0.size.height >= 180 } == true, "Custom capture has document dimensions, not a toolbar icon")
+        if let cg = livePreview?.cgImage {
+            var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+            let count = pixels.withUnsafeMutableBytes { buffer -> Int in
+                guard let ctx = CGContext(data: buffer.baseAddress, width: cg.width, height: cg.height,
+                    bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+                let data = buffer.bindMemory(to: UInt8.self)
+                return stride(from: 0, to: data.count, by: 4).filter { i in
+                    data[i] < 100 && data[i + 1] > 140 && data[i + 2] > 100 && data[i + 3] > 200
+                }.count
+            }
+            try check(count > 500, "Custom snapshot contains the actual teal SVG geometry")
+        } else { try check(false, "Custom snapshot has pixels") }
+        let liveImage = livePreview?.pngData()
         try liveImage?.write(to: directory.appendingPathComponent("visualization-custom-live.png"))
         let frozen = ChatShareSnapshot.copy(message)
         let share = UIHostingController(rootView: content(frozen, snapshot: true))
         window.rootViewController = share
         try await Task.sleep(nanoseconds: 250_000_000)
         share.view.layoutIfNeeded()
-        let sharedImage = descendants(share.view).compactMap { ($0 as? UIImageView)?.image?.pngData() }.first
+        let sharedImage = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage?.pngData() }.first
         try check(liveImage != nil && sharedImage == liveImage, "Custom live/share previews use identical captured pixels")
         try sharedImage?.write(to: directory.appendingPathComponent("visualization-custom-share.png"))
         ZeCustomVisualizationRenderer.shared.clear()
