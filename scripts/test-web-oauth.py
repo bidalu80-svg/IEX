@@ -15,7 +15,9 @@ enum LLMError: Error { case providerError(message: String) }
 '''
 checks = r'''
 var count = 0
-func check(_ value: Bool) { precondition(value); count += 1 }
+func check(_ value: Bool, file: StaticString = #filePath, line: UInt = #line) {
+    precondition(value, "Failed callback/token fixture", file: file, line: line); count += 1
+}
 func rejects(_ block: () throws -> Void) {
     do { try block(); fatalError("unexpected acceptance") } catch { count += 1 }
 }
@@ -38,7 +40,9 @@ let invalidCallbackAddresses = [
     "http://platform.openai.com/auth/callback", "https://platform.openai.com.attacker.invalid/auth/callback",
     "https://platform.openai.com:8443/auth/callback", "https://user@platform.openai.com/auth/callback",
     "https://user:password@platform.openai.com/auth/callback", "https://platform.openai.com/auth/callback/other",
-    "https://platform.openai.com/auth/callback/", "https://platform.openai.com/other/auth/callback"
+    "https://platform.openai.com/auth/callback/", "https://platform.openai.com/other/auth/callback",
+    "https://platform.openai.com/auth/callback%2F", "https://platform.openai.com/auth%2Fcallback",
+    "https://platform.openai.com/auth/%63allback"
 ]
 for address in invalidCallbackAddresses {
     let callback = URL(string: address + "?code=ABC&state=S#_=_")!

@@ -201,7 +201,9 @@ enum ChatGPTWebAuthProtocol {
         url.scheme == "https" && url.host == "platform.openai.com"
             && (url.port == nil || url.port == 443)
             && url.user == nil && url.password == nil
-            && url.path == "/auth/callback"
+            // URL.path applies filesystem-style normalization on Foundation
+            // (notably a trailing slash). Match the actual encoded URL path.
+            && URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath == "/auth/callback"
     }
 
     static func callbackCode(_ url: URL, expectedState: String) throws -> String {
