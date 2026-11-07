@@ -55,6 +55,19 @@ import PDFKit
                 control.selectedSegmentIndex = 1; control.sendActions(for: .valueChanged)
                 try check(control.selectedSegmentIndex == 1, "Range control action delivered")
             }
+            let metricLabels = descendants(cards[0]).compactMap { $0 as? UILabel }.filter { $0.accessibilityIdentifier?.hasPrefix("ze.visualization.value.") == true }
+            try check(metricLabels.count == 4 && metricLabels.allSatisfy { $0.bounds.width > 20 && $0.bounds.height > 15 }, "Metric value labels have actual visible frames")
+            for label in metricLabels {
+                let rect = label.convert(label.bounds, to: cards[0])
+                try check(cards[0].bounds.contains(rect), "Metric label lies inside card")
+            }
+            // Capture the body before opening any detail sheet.
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            try image.pngData()?.write(to: directory.appendingPathComponent("visualization-\(dark ? "dark" : "light").png"))
+            for card in cards {
+                let shot = UIGraphicsImageRenderer(bounds: card.bounds).image { _ in card.drawHierarchy(in: card.bounds, afterScreenUpdates: true) }
+                try shot.pngData()?.write(to: directory.appendingPathComponent("visualization-\(card.component.id)-\(dark ? "dark" : "light").png"))
+            }
             if let tableCard = cards.first(where: { $0.component.type == .table }),
                let button = tableCard.subviews.compactMap({ $0 as? UIButton }).first {
                 button.sendActions(for: .touchUpInside)
@@ -70,9 +83,8 @@ import PDFKit
                     try check(UIPasteboard.general.string?.contains("VISUAL_LAST") == true, "Copy row preserves original value")
                 }
                 host.dismiss(animated: false)
+                try await Task.sleep(nanoseconds: 150_000_000)
             } else { try check(false, "Table expand control missing") }
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
-            try image.pngData()?.write(to: directory.appendingPathComponent("visualization-\(dark ? "dark" : "light").png"))
             ZeVisualizationCache.shared.clear()
             SelectableMarkdownView.clearVisualizationCaches()
             try check(ZeVisualizationCache.shared.statistics.count == 0, "Explicit cache clear")
@@ -96,6 +108,13 @@ import PDFKit
         for marker in ["VISUAL_BEGIN", "VISUAL_LAST", "VISUAL_SOURCE", "VISUAL_DETAIL"] {
             try check(pdf?.string?.contains(marker) == true, "PDF includes searchable \(marker)")
         }
+        let firstPage = pdf?.page(at: 0)
+        let numericSelections = pdf?.findString("8.91", withOptions: []) ?? []
+        try check(numericSelections.contains { selection in
+            guard let firstPage, selection.pages.contains(firstPage) else { return false }
+            // Card lies above the text appendix. PDF coordinates grow upward.
+            return selection.bounds(for: firstPage).midY > firstPage.bounds(for: .mediaBox).height * 0.42
+        }, "PDF contains the metric inside the card, not only its appendix")
         try Data(contentsOf: result.url).write(to: directory.appendingPathComponent("visualization.pdf"))
         let report: [String: Any] = ["success": true, "checks": checks, "elapsedSeconds": CFAbsoluteTimeGetCurrent() - started,
                                     "systemVersion": UIDevice.current.systemVersion, "cacheCount": ZeVisualizationCache.shared.statistics.count]

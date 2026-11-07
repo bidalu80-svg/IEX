@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Chart" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Chart"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"图表"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"圖表"}}}},
+    "Sort" : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Sort"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"排序"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"排序"}}}},
     "Visualization data is incomplete." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Visualization data is incomplete."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可视化数据尚未完整接收。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"視覺化資料尚未完整接收。"}}}},
     "Visualization data could not be displayed. Ask for a text table instead." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Visualization data could not be displayed. Ask for a text table instead."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可视化数据格式有误，请让助手改用文字表格。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"視覺化資料格式有誤，請讓助手改用文字表格。"}}}},
     "Visualization is too large. Ask for a smaller data range." : {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Visualization is too large. Ask for a smaller data range."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"可视化数据过大，请缩小数据范围。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"視覺化資料過大，請縮小資料範圍。"}}}},

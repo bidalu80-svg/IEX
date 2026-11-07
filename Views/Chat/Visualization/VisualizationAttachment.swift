@@ -57,7 +57,7 @@ final class ZeVisualizationCardView: UIView {
     private let fontSize: CGFloat
     private let heading = UILabel()
     private let action = UIButton(type: .system)
-    private let bodyStack = UIStackView()
+    private let bodyContainer = UIView()
     private var chart: ZeVisualizationPlotView?
     private var lastWidth: CGFloat = 0
     private var metricLabels: [UILabel] = []
@@ -86,9 +86,7 @@ final class ZeVisualizationCardView: UIView {
         action.accessibilityLabel = String(localized: "Open visualization details")
         action.addAction(UIAction { [weak self] _ in self?.openDetails() }, for: .touchUpInside)
         addSubview(action)
-        bodyStack.axis = .vertical
-        bodyStack.spacing = 8
-        addSubview(bodyStack)
+        addSubview(bodyContainer)
         if component.type.isChart {
             let plot = ZeVisualizationPlotView(component: component, fontSize: fontSize, interaction: interaction)
             chart = plot
@@ -107,7 +105,7 @@ final class ZeVisualizationCardView: UIView {
         action.frame = CGRect(x: bounds.width - 52, y: 10, width: 44, height: 44)
         let top = heading.frame.maxY + 8
         chart?.frame = CGRect(x: 12, y: top, width: bounds.width - 24, height: bounds.height - top - 12)
-        bodyStack.frame = CGRect(x: 16, y: top, width: bounds.width - 32, height: bounds.height - top - 14)
+        bodyContainer.frame = CGRect(x: 16, y: top, width: bounds.width - 32, height: bounds.height - top - 14)
         if abs(lastWidth - bounds.width) > 0.5 {
             lastWidth = bounds.width
             rebuildBody()
@@ -122,35 +120,46 @@ final class ZeVisualizationCardView: UIView {
     }
     private func rebuildBody() {
         guard !component.type.isChart else { return }
-        bodyStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        bodyContainer.subviews.forEach { $0.removeFromSuperview() }
         metricLabels.removeAll()
-        bodyStack.distribution = .fillEqually
+        let width = bodyContainer.bounds.width
+        let height = bodyContainer.bounds.height
+        guard width > 0, height > 0 else { return }
         if component.type == .table {
-            for (index, cells) in ([component.headers ?? []] + (component.rows ?? []).prefix(5).map { $0.map(\.text) }).enumerated() {
-                let row = UIStackView(); row.distribution = .fillEqually; row.spacing = 8
-                for text in cells.prefix(3) { row.addArrangedSubview(label(text, size: fontSize * 0.8, weight: index == 0 ? .semibold : .regular)) }
-                bodyStack.addArrangedSubview(row)
+            let rows = [component.headers ?? []] + (component.rows ?? []).prefix(5).map { $0.map(\.text) }
+            let rowHeight = height / CGFloat(max(1, rows.count))
+            for (rowIndex, cells) in rows.enumerated() {
+                let columns = min(3, cells.count)
+                let columnWidth = (width - CGFloat(max(0, columns - 1)) * 8) / CGFloat(max(1, columns))
+                for (column, text) in cells.prefix(3).enumerated() {
+                    let value = label(text, size: fontSize * 0.8, weight: rowIndex == 0 ? .semibold : .regular)
+                    value.frame = CGRect(x: CGFloat(column) * (columnWidth + 8), y: CGFloat(rowIndex) * rowHeight,
+                                         width: columnWidth, height: rowHeight - 4)
+                    bodyContainer.addSubview(value)
+                }
             }
             return
         }
         let items = Array((component.items ?? []).prefix(6))
         let columns = bounds.width < 260 || fontSize > 25 || component.type == .info ? 1 : 2
-        for start in stride(from: 0, to: items.count, by: columns) {
-            let row = UIStackView(); row.distribution = .fillEqually; row.spacing = 16
-            for offset in 0..<columns {
-                guard start + offset < items.count else { row.addArrangedSubview(UIView()); continue }
-                let item = items[start + offset]
-                let cell = UIStackView(); cell.axis = .vertical; cell.spacing = 3
-                let name = label(item.label, size: fontSize * 0.85, secondary: true)
-                let value = label(item.displayValue, size: component.type == .info ? fontSize : fontSize * 1.65, weight: .semibold)
-                cell.addArrangedSubview(name); cell.addArrangedSubview(value)
-                cell.isAccessibilityElement = true
-                cell.accessibilityLabel = "\(item.label), \(item.displayValue), \(component.unit ?? "")"
-                cell.accessibilityTraits = .staticText
-                row.addArrangedSubview(cell)
-                metricLabels += [name, value]
-            }
-            bodyStack.addArrangedSubview(row)
+        let rows = (items.count + columns - 1) / columns
+        let rowHeight = height / CGFloat(max(1, rows))
+        let columnWidth = (width - CGFloat(columns - 1) * 16) / CGFloat(columns)
+        for (index, item) in items.enumerated() {
+            let cell = UIView(frame: CGRect(x: CGFloat(index % columns) * (columnWidth + 16), y: CGFloat(index / columns) * rowHeight,
+                                            width: columnWidth, height: rowHeight - 6))
+            let name = label(item.label, size: fontSize * 0.85, secondary: true)
+            let value = label(item.displayValue, size: component.type == .info ? fontSize : fontSize * 1.65, weight: .semibold)
+            let nameHeight = min(cell.bounds.height * 0.4, fontSize * 1.8)
+            name.frame = CGRect(x: 0, y: 0, width: columnWidth, height: nameHeight)
+            value.frame = CGRect(x: 0, y: nameHeight + 2, width: columnWidth, height: max(1, cell.bounds.height - nameHeight - 2))
+            value.accessibilityIdentifier = "ze.visualization.value.\(item.id)"
+            cell.addSubview(name); cell.addSubview(value)
+            cell.isAccessibilityElement = true
+            cell.accessibilityLabel = "\(item.label), \(item.displayValue), \(component.unit ?? "")"
+            cell.accessibilityTraits = .staticText
+            bodyContainer.addSubview(cell)
+            metricLabels += [name, value]
         }
     }
     private func openDetails() {
