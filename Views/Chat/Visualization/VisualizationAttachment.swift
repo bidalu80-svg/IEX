@@ -653,7 +653,7 @@ final class ZeVisualizationDetailController: UITableViewController, UISearchResu
         Task { [weak self, weak webView] in
             try? await Task.sleep(nanoseconds: 100_000_000)
             guard let self, let webView, self.web === webView, token == self.generation else { return }
-            let config = WKSnapshotConfiguration(); config.snapshotWidth = 540
+            let config = WKSnapshotConfiguration(); config.snapshotWidth = NSNumber(value: Double(540 / webView.traitCollection.displayScale))
             webView.takeSnapshot(with: config) { [weak self, weak webView] image, _ in
                 guard let self, self.web === webView, token == self.generation else { return }
                 self.finish(image)
@@ -780,7 +780,7 @@ final class ZeCustomVisualizationController: UIViewController, WKNavigationDeleg
                   (try? JSONSerialization.jsonObject(with: Data(state.utf8))) != nil else {
                 self.releaseWeb(); self.dismiss(animated: true); return
             }
-            let config = WKSnapshotConfiguration(); config.snapshotWidth = 540
+            let config = WKSnapshotConfiguration(); config.snapshotWidth = NSNumber(value: Double(540 / web.traitCollection.displayScale))
             web.takeSnapshot(with: config) { [weak self, weak web] image, _ in
                 guard let self, self.web === web else { return }
                 if let image {

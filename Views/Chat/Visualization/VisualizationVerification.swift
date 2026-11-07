@@ -289,7 +289,7 @@ import WebKit
         try await Task.sleep(nanoseconds: 350_000_000)
         let livePreview = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }.first
         try livePreview?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-live.png"))
-        try check(livePreview.map { $0.size.width >= 300 && $0.size.height >= 180 } == true, "Custom capture has document dimensions, not a toolbar icon")
+        try check(livePreview?.cgImage.map { (500...600).contains($0.width) && $0.height >= 180 } == true, "Custom capture has bounded physical pixels, not a toolbar icon")
         if let cg = livePreview?.cgImage {
             var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
             let count = pixels.withUnsafeMutableBytes { buffer -> Int in
@@ -312,8 +312,8 @@ import WebKit
         try await Task.sleep(nanoseconds: 250_000_000)
         share.view.layoutIfNeeded()
         let sharedImage = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage?.pngData() }.first
-        try check(liveImage != nil && sharedImage == liveImage, "Custom live/share previews use identical captured pixels")
         try sharedImage?.write(to: directory.appendingPathComponent("visualization-custom-share.png"))
+        try check(liveImage != nil && sharedImage == liveImage, "Custom live/share previews use identical captured pixels")
         ZeCustomVisualizationRenderer.shared.clear()
         try check(ZeCustomVisualizationRenderer.shared.cacheCount == 0, "Custom preview cache releases all derived images")
         return checks
