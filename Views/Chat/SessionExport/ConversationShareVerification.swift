@@ -40,6 +40,8 @@ import PDFKit
             defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = oldStyle }
             window.overrideUserInterfaceStyle = .light
             let vm = AIChatViewModel()
+            checkpoint("Verifying native visualizations")
+            try await ZeVisualizationVerification.run(window: window, directory: directory)
             checkpoint("Creating production fixture")
             let messages = try fixture()
             let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)

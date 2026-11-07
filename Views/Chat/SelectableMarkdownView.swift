@@ -422,6 +422,10 @@ fileprivate final class MarkdownNSRenderer {
     var mathAttachmentCache: [String: MathAttachment] = [:]
     private var codeBlockIndex = 0
     private var tableIndex = 0
+    private var visualizationIndex = 0
+    var visualizationSnapshot = false
+    func clearVisualizationSlots() { visualizationSlots.removeAll() }
+    private var visualizationSlots: [String: (raw: String, font: CGFloat, attachments: [ZeVisualizationAttachment])] = [:]
 
     private struct RenderedBlock {
         let attributed: NSAttributedString
@@ -438,6 +442,7 @@ fileprivate final class MarkdownNSRenderer {
     }
 
     func render(blocks: [BlockNode]) -> NSAttributedString {
+        visualizationIndex = 0
         codeBlockIndex = 0
         tableIndex = 0
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -472,6 +477,10 @@ fileprivate final class MarkdownNSRenderer {
         case .heading(let level, let content):
             return renderHeading(level: level, content: content, quoteDepth: quoteDepth)
         case .codeBlock(let fenceInfo, let content):
+            if ZeVisualizationParser.isFence(fenceInfo) { return renderVisualization(content) }
+            if fenceInfo == "ze-visualization-pending" {
+                return RenderedBlock(attributed: NSAttributedString(string: ZeVisualizationError.incomplete.text, attributes: baseAttributes(quoteDepth: quoteDepth)), topMargin: 8, bottomMargin: 8)
+            }
             return renderCodeBlockAttachment(fenceInfo: fenceInfo, content: content, quoteDepth: quoteDepth)
         case .blockquote(let children):
             return renderBlockquote(children: children, listDepth: listDepth, quoteDepth: quoteDepth)
@@ -830,6 +839,58 @@ fileprivate final class MarkdownNSRenderer {
 
             cursor = NSMaxRange(paragraphRange)
         }
+    }
+
+    private func renderVisualization(_ raw: String) -> RenderedBlock {
+        let slot = "\(messageId?.uuidString ?? "_"):\(blockId?.uuidString ?? "_"):\(visualizationIndex)"
+        visualizationIndex += 1
+        guard visualizationIndex <= 4 else {
+            return RenderedBlock(attributed: NSAttributedString(string: ZeVisualizationError.limit.text, attributes: baseAttributes(quoteDepth: 0)), topMargin: 8, bottomMargin: 8)
+        }
+        let result = NSMutableAttributedString()
+        switch ZeVisualizationCache.shared.parse(raw) {
+        case .failure(let error):
+            result.append(NSAttributedString(string: error.text, attributes: baseAttributes(quoteDepth: 0)))
+        case .success(let document):
+            let attachments: [ZeVisualizationAttachment]
+            if let cached = visualizationSlots[slot], cached.raw == raw, cached.font == theme.baseFontSize {
+                attachments = cached.attachments
+            } else {
+                attachments = document.components.map { ZeVisualizationAttachment(component: $0, fontSize: theme.baseFontSize) }
+                let retainedBytes = visualizationSlots.values.reduce(0) { $0 + $1.raw.utf8.count * 6 }
+                if visualizationSlots.count >= 4 || retainedBytes + raw.utf8.count * 6 > 1_048_576 {
+                    visualizationSlots.removeAll()
+                }
+                if raw.utf8.count * 6 <= 1_048_576 {
+                    visualizationSlots[slot] = (raw, theme.baseFontSize, attachments)
+                }
+            }
+            var heading = baseAttributes(quoteDepth: 0)
+            heading[.font] = UIFont.systemFont(ofSize: theme.baseFontSize * 1.2, weight: .semibold)
+            result.append(NSAttributedString(string: document.title + "\n", attributes: heading))
+            if let subtitle = document.subtitle {
+                var attrs = baseAttributes(quoteDepth: 0); attrs[.foregroundColor] = UIColor.secondaryLabel
+                result.append(NSAttributedString(string: subtitle + "\n", attributes: attrs))
+            }
+            let separator: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 0.01)]
+            for attachment in attachments {
+                result.append(NSAttributedString(string: "\u{2028}", attributes: separator))
+                result.append(NSAttributedString(attachment: attachment))
+                result.append(NSAttributedString(string: "\u{2028}", attributes: separator))
+                if visualizationSnapshot {
+                    // Static exports include all original values, not only the capped preview.
+                    result.append(NSAttributedString(string: attachment.plainText + "\n", attributes: baseAttributes(quoteDepth: 0)))
+                }
+            }
+            for source in document.sources ?? [] {
+                var attrs = baseAttributes(quoteDepth: 0)
+                attrs[.font] = UIFont.systemFont(ofSize: theme.baseFontSize * 0.8)
+                attrs[.foregroundColor] = UIColor.secondaryLabel
+                if let rawURL = source.url, let url = URL(string: rawURL) { attrs[.link] = url }
+                result.append(NSAttributedString(string: source.plainText + "\n", attributes: attrs))
+            }
+        }
+        return RenderedBlock(attributed: result, topMargin: 8, bottomMargin: 12, isBlockAttachment: true)
     }
 
     // MARK: Table (NSTextAttachment)
@@ -5369,7 +5430,9 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
         }
         var out = ""
         attr.enumerateAttribute(.attachment, in: range, options: []) { value, subRange, _ in
-            if let table = value as? TableAttachment {
+            if let visualization = value as? ZeVisualizationAttachment {
+                out += visualization.plainText
+            } else if let table = value as? TableAttachment {
                 out += table.plainText()
             } else if let math = value as? MathAttachment {
                 // [T-ios-math-copy-latex-delimiters] Emit LaTeX with $...$ / $$...$$.
@@ -5832,6 +5895,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                     view = codeBlock.makeView(width: boundingRect.width)
                 }
                 codeBlockViewCache[codeBlock.blockIndex] = view
+            } else if let visualization = attachment as? ZeVisualizationAttachment {
+                view = visualization.makeView(width: boundingRect.width)
             } else if let table = attachment as? TableAttachment {
                 // Re-wire every render: the prior closure may have captured a
                 // since-deallocated coordinator (`[weak self] → nil`), in which
@@ -5879,6 +5944,11 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 view = mathAttach.makeView(width: boundingRect.width)
             } else {
                 return
+            }
+
+            if attachment is ZeVisualizationAttachment {
+                view.frame = boundingRect
+                view.setNeedsLayout()
             }
 
             // [T-attachment-zero-origin 2026-05-23] Per-attachment retry: even
@@ -6132,6 +6202,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
                     if let table = value as? TableAttachment {
                         table.invalidateCachedLayoutForWidthChange()
+                        ranges.append(range)
+                    } else if value is ZeVisualizationAttachment {
                         ranges.append(range)
                     }
                 }
@@ -6604,26 +6676,30 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // fresh TableAttachment objects → layoutManager sees attachments
         // with no identity continuity and keeps the early-stream glyph
         // rects cached.
-        if !snapshotRendering, let mid = messageId, let existing = SelectableMarkdownView.rendererCache[mid] {
-            coord.renderer = existing
-        } else if !snapshotRendering, let mid = messageId {
-            SelectableMarkdownView.rendererCache[mid] = coord.renderer
+        if !snapshotRendering, let mid = messageId {
+            let key = "\(mid.uuidString):\(blockId?.uuidString ?? "_")"
+            if let existing = Self.rendererCache[key] { coord.renderer = existing }
+            Self.rendererCache[key] = coord.renderer
+            Self.rendererLRU.removeAll { $0 == key }
+            Self.rendererLRU.append(key)
+            while Self.rendererLRU.count > 24 {
+                Self.rendererCache.removeValue(forKey: Self.rendererLRU.removeFirst())
+            }
         }
+        coord.renderer.visualizationSnapshot = snapshotRendering
         return coord
     }
 
-    /// [TableIdentityFix] Per-message renderer cache: keyed by `messageId`,
-    /// kept across Coordinator recreations so TableAttachment identity (and
-    /// the streaming `update(...)` path) survives SwiftUI body re-evaluations
-    /// / cell reuses that throw away the previous Coordinator. Without this
-    /// we observed up to 6 distinct Coordinators (each with its own renderer
-    /// + fresh attachments) inside a single streaming response — every
-    /// throwaway one writing new attachments into textStorage and leaving
-    /// the layout manager with stale glyph rects for the early small-table
-    /// state. The cache uses a regular dictionary because the keys are
-    /// stable across the chat session and entries are cheap; in practice
-    /// it grows at the rate of unique assistant messages in the live chat.
-    @MainActor private static var rendererCache: [UUID: MarkdownNSRenderer] = [:]
+    /// Bounded per-block LRU; released on memory pressure/background/manual clear.
+    /// Live coordinators retain their renderer while visible, avoiding a redraw
+    /// storm during cache eviction. No persistent message data lives here.
+    @MainActor private static var rendererCache: [String: MarkdownNSRenderer] = [:]
+    @MainActor private static var rendererLRU: [String] = []
+    @MainActor static func clearVisualizationCaches() {
+        rendererCache.values.forEach { $0.clearVisualizationSlots() }
+        rendererCache.removeAll()
+        rendererLRU.removeAll()
+    }
 
     func makeUIView(context: Context) -> SelectableMarkdownTextView {
         let textView = SelectableMarkdownTextView()
@@ -6651,6 +6727,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
 
     func updateUIView(_ textView: SelectableMarkdownTextView, context: Context) {
         let updateStart = CFAbsoluteTimeGetCurrent()
+        context.coordinator.renderer.visualizationSnapshot = snapshotRendering
         context.coordinator.openURL = openURL
         textView.onTapBlank = onTapBlank
         textView.onCopyScreenshot = onCopyScreenshot
@@ -6700,6 +6777,8 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length), options: []) { value, range, _ in
                     if let table = value as? TableAttachment {
                         table.invalidateCachedLayoutForWidthChange()
+                        ranges.append(range)
+                    } else if value is ZeVisualizationAttachment {
                         ranges.append(range)
                     }
                 }
@@ -6923,7 +7002,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             guard let prebuilt = cachedAttributedString, prebuilt.length > 0 else { return false }
             var found = false
             prebuilt.enumerateAttribute(.attachment, in: NSRange(location: 0, length: prebuilt.length), options: []) { value, _, stop in
-                if value is TableAttachment {
+                if value is TableAttachment || value is ZeVisualizationAttachment {
                     found = true
                     stop.pointee = true
                 }
@@ -7463,7 +7542,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 guard let pre = cachedAttributedString, pre.length > 0 else { return false }
                 var found = false
                 pre.enumerateAttribute(.attachment, in: NSRange(location: 0, length: pre.length), options: []) { value, _, stop in
-                    if value is TableAttachment { found = true; stop.pointee = true }
+                    if value is TableAttachment || value is ZeVisualizationAttachment { found = true; stop.pointee = true }
                 }
                 return found
             }()
@@ -8046,7 +8125,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             if #available(iOS 19, *) {
                 // iOS 19+: default behavior, no change.
             } else if case .textAttachment(let attachment) = textItem.content,
-                      attachment is TableAttachment {
+                      (attachment is TableAttachment || attachment is ZeVisualizationAttachment) {
                 return UIAction { _ in }
             }
             return defaultAction
@@ -8272,7 +8351,9 @@ struct ChatSearchComposite {
                 return
             }
             let text: String
-            if let code = value as? CodeBlockAttachment {
+            if let visualization = value as? ZeVisualizationAttachment {
+                text = visualization.plainText
+            } else if let code = value as? CodeBlockAttachment {
                 text = code.code
             } else if let table = value as? TableAttachment {
                 text = ChatSearchMarkdownText.tableText(rows: table.rows, columnCount: table.alignments.count)

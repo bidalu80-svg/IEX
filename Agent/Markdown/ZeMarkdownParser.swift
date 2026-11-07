@@ -110,7 +110,7 @@ struct MarkdownContent: Hashable {
     let blocks: [BlockNode]
 
     init(_ markdown: String) {
-        let (cleaned, mathSpans) = MarkdownMathExtractor.extract(from: markdown)
+        let (cleaned, mathSpans) = MarkdownMathExtractor.extract(from: ZeVisualizationStreaming.prepare(markdown))
         let parsed = [BlockNode](markdown: cleaned)
         if mathSpans.isEmpty {
             self.blocks = parsed
@@ -519,7 +519,10 @@ extension BlockNode {
                 }
             }
         case .codeBlock:
-            self = .codeBlock(fenceInfo: unsafeNode.fenceInfo, content: unsafeNode.literal ?? "")
+            let info = unsafeNode.fenceInfo
+            let content = unsafeNode.literal ?? ""
+            if ZeVisualizationParser.isFence(info) { _ = ZeVisualizationCache.shared.parse(content) }
+            self = .codeBlock(fenceInfo: info, content: content)
         case .htmlBlock:
             self = .htmlBlock(content: unsafeNode.literal ?? "")
         case .paragraph:

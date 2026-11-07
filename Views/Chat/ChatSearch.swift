@@ -284,8 +284,15 @@ enum ChatSearchMarkdownText {
         switch block {
         case .paragraph(let content), .heading(_, let content):
             appendNormalized(inlineText(content), to: &out)
-        case .codeBlock(_, let content):
-            out += codeText(content)
+        case .codeBlock(let info, let content):
+            if ZeVisualizationParser.isFence(info) {
+                switch ZeVisualizationCache.shared.parse(content) {
+                case .success(let document): out += document.plainText
+                case .failure(let error): out += error.text
+                }
+            } else if info == "ze-visualization-pending" {
+                out += ZeVisualizationError.incomplete.text
+            } else { out += codeText(content) }
         case .blockquote(let children):
             appendSequence(children, listDepth: listDepth, to: &out)
         case .bulletedList(_, let items):

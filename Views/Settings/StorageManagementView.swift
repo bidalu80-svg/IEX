@@ -113,6 +113,7 @@ class StorageManagementViewModel: ObservableObject {
 struct StorageManagementView: View {
     @StateObject private var vm = StorageManagementViewModel()
     @State private var sessionToDelete: StorageManagementViewModel.SessionStorage?
+    @State private var visualizationCacheBytes = ZeVisualizationCache.shared.statistics.cost
 
     var body: some View {
         List {
@@ -120,6 +121,17 @@ struct StorageManagementView: View {
                 storageRow(icon: "terminal", color: .gray, label: "Shell 容器", value: vm.format(vm.shellContainerSize))
                 storageRow(icon: "cylinder", color: .blue, label: "聊天数据库", value: vm.format(vm.chatDatabaseSize))
                 storageRow(icon: "doc", color: .indigo, label: "会话文件", value: vm.format(vm.totalSessionSize))
+            }
+
+            Section {
+                storageRow(icon: "chart.bar", color: .teal, label: String(localized: "Visualization cache"), value: vm.format(Int64(visualizationCacheBytes)))
+                Button(String(localized: "Clear visualization cache")) {
+                    ZeVisualizationCache.shared.clear()
+                    SelectableMarkdownView.clearVisualizationCaches()
+                    visualizationCacheBytes = 0
+                }
+            } footer: {
+                Text("Temporary decoded data only. Chat history is preserved. The cache is also released in the background or on memory pressure.")
             }
 
             Section("会话") {
@@ -158,7 +170,7 @@ struct StorageManagementView: View {
         }
         .navigationTitle("存储")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { vm.load() }
+        .onAppear { vm.load(); visualizationCacheBytes = ZeVisualizationCache.shared.statistics.cost }
         .alert(item: $sessionToDelete) { session in
             Alert(
                 title: Text("删除会话？"),

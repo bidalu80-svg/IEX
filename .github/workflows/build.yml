@@ -63,6 +63,11 @@ jobs:
           "$RUNNER_TEMP/provider-tool-capability-tests"
           xcrun swiftc -frontend -parse Providers/OpenAI/ChatGPTWeb/*.swift Providers/WorkBuddy/*.swift
 
+      - name: Test visualization data, cache and iOS 16 components
+        run: |
+          set -euo pipefail
+          python3 scripts/test-visualization.py | tee visualization-tests.log
+
       - name: Test question card state and answer validation
         run: |
           set -euo pipefail
@@ -980,6 +985,7 @@ jobs:
             api-key-quota-structure.log
             favorites-ui-evidence/
             model-picker-structure.log
+            visualization-tests.log
             question-core-tests.log
             question-layout-tests.log
             question-ui-evidence/

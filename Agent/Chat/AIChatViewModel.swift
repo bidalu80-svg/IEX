@@ -4405,7 +4405,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
         var tools = makeAgentTools()
 
-        var userSystemPrompt = baseSystemPrompt
+        var userSystemPrompt = baseSystemPrompt + "\n\n" + ZeVisualizationPrompt.instructions
         let activeModel = ProviderConfigStore.shared.entry(for: entry.id)?.model ?? selectedModel
         if let capFragment = activeModel.capabilityPromptFragment {
             userSystemPrompt += "\n\n" + capFragment
