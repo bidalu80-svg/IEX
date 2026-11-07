@@ -134,6 +134,12 @@ struct QueuedPrompt { let id = UUID(); let text: String }
             print("PASS \(message)")
         }
         func tick() async { try? await Task.sleep(nanoseconds: 450_000_000) }
+        func waitFor(_ condition: () -> Bool) async {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition(), Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ze-subagent-test-\(UUID())")
         defer { try? FileManager.default.removeItem(at: folder) }
         UserDefaults.standard.set(true, forKey: ZeSubAgentPreferences.enabledKey)
@@ -218,16 +224,16 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         let budgeted = coordinator.spawn(from: parent, message: "bounded work", budgetMinutes: 1)
         let budgetChild = made.last!
         testNow = testNow.addingTimeInterval(61)
-        await tick()
+        await waitFor { budgetChild.zeSubAgentWrapUpRequested }
         check(budgetChild.zeSubAgentWrapUpRequested && budgetChild.isProcessing, "budget requests final answer before cancellation")
         testNow = testNow.addingTimeInterval(21)
-        await tick()
+        await waitFor { budgetChild.stoppedTools == 1 }
         check(budgetChild.stoppedTools == 1, "budget stops a lingering tool after twenty seconds")
         testNow = testNow.addingTimeInterval(70)
-        await tick()
+        await waitFor { coordinator.record(id: budgeted.id)?.status == .timedOut && !budgetChild.isProcessing }
         check(coordinator.record(id: budgeted.id)?.status == .timedOut && !budgetChild.isProcessing,
               "budget hard stop remains timeout rather than user cancellation")
-        await tick()
+        await waitFor { coordinator.record(id: budgeted.id)?.deliveryState == "delivered" }
         check(coordinator.record(id: budgeted.id)?.deliveryState == "delivered", "terminal timeout reaches parent exactly once")
         let deliveredCount = parent.receivedResults.count
         await tick()

@@ -5743,6 +5743,12 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             guard let attachment = value as? NSTextAttachment else { return }
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: self.textContainer)
+            if attachment is ZeVisualizationAttachment {
+                // Glyph coordinates are relative to the text container, whereas
+                // the attached view is positioned in UITextView coordinates.
+                boundingRect.origin.x += textContainerInset.left
+                boundingRect.origin.y += textContainerInset.top
+            }
             let existingView = previousViewMap[ObjectIdentifier(attachment)]
             // TextKit may return zero-width rects when layout is invalidated but
             // not yet recalculated (e.g. during refreshAttachmentViews after an
