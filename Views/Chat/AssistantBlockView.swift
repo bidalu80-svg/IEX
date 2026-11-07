@@ -143,7 +143,8 @@ struct AssistantBlockView: View {
             onCopyScreenshot: onCopyScreenshot,
             onReadAloud: onReadAloud,
             onSpeakText: onSpeakText,
-            allowsSearchHighlight: true
+            allowsSearchHighlight: true,
+            visualizationOwner: block
         )
         .fixedSize(horizontal: false, vertical: true)
         .modifier(ZeOpenURLHandler())

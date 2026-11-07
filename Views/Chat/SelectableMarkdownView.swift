@@ -423,7 +423,7 @@ fileprivate final class MarkdownNSRenderer {
     private var codeBlockIndex = 0
     private var tableIndex = 0
     private var visualizationIndex = 0
-    var visualizationSnapshot = false
+    weak var visualizationOwner: AssistantBlock?
     func clearVisualizationSlots() { visualizationSlots.removeAll() }
     private var visualizationSlots: [String: (raw: String, font: CGFloat, attachments: [ZeVisualizationAttachment])] = [:]
 
@@ -479,7 +479,12 @@ fileprivate final class MarkdownNSRenderer {
         case .codeBlock(let fenceInfo, let content):
             if ZeVisualizationParser.isFence(fenceInfo) { return renderVisualization(content) }
             if fenceInfo == "ze-visualization-pending" {
-                return RenderedBlock(attributed: NSAttributedString(string: ZeVisualizationError.incomplete.text, attributes: baseAttributes(quoteDepth: quoteDepth)), topMargin: 8, bottomMargin: 8)
+                // The conversation already shows its streaming indicator. A
+                // partial payload is normal, not a user-facing error/code card.
+                return RenderedBlock(attributed: NSAttributedString(string: ""), topMargin: 0, bottomMargin: 0)
+            }
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return RenderedBlock(attributed: NSAttributedString(string: ""), topMargin: 0, bottomMargin: 0)
             }
             return renderCodeBlockAttachment(fenceInfo: fenceInfo, content: content, quoteDepth: quoteDepth)
         case .blockquote(let children):
@@ -856,7 +861,21 @@ fileprivate final class MarkdownNSRenderer {
             if let cached = visualizationSlots[slot], cached.raw == raw, cached.font == theme.baseFontSize {
                 attachments = cached.attachments
             } else {
-                attachments = document.components.map { ZeVisualizationAttachment(component: $0, fontSize: theme.baseFontSize) }
+                attachments = document.components.enumerated().map { index, component in
+                    // Include the validated content fingerprint to avoid applying
+                    // choices to a later dataset that reused the same document ID.
+                    let key = "\(visualizationIndex - 1):\(index):\(component.hashValue)"
+                    let owner = visualizationOwner
+                    return ZeVisualizationAttachment(component: component, fontSize: theme.baseFontSize,
+                        selection: owner?.visualizationSelections[key] ?? ZeVisualizationSelection(),
+                        onChange: { [weak owner] value in
+                            guard let owner else { return }
+                            if owner.visualizationSelections[key] == nil && owner.visualizationSelections.count >= 48 {
+                                owner.visualizationSelections.removeAll(keepingCapacity: true)
+                            }
+                            owner.visualizationSelections[key] = value
+                        })
+                }
                 let retainedBytes = visualizationSlots.values.reduce(0) { $0 + $1.raw.utf8.count * 6 }
                 if visualizationSlots.count >= 4 || retainedBytes + raw.utf8.count * 6 > 1_048_576 {
                     visualizationSlots.removeAll()
@@ -867,6 +886,9 @@ fileprivate final class MarkdownNSRenderer {
             }
             var heading = baseAttributes(quoteDepth: 0)
             heading[.font] = UIFont.systemFont(ofSize: theme.baseFontSize * 1.2, weight: .semibold)
+            let headingStyle = NSMutableParagraphStyle()
+            headingStyle.paragraphSpacing = 4
+            heading[.paragraphStyle] = headingStyle
             result.append(NSAttributedString(string: document.title + "\n", attributes: heading))
             if let subtitle = document.subtitle {
                 var attrs = baseAttributes(quoteDepth: 0); attrs[.foregroundColor] = UIColor.secondaryLabel
@@ -877,10 +899,6 @@ fileprivate final class MarkdownNSRenderer {
                 result.append(NSAttributedString(string: "\u{2028}", attributes: separator))
                 result.append(NSAttributedString(attachment: attachment))
                 result.append(NSAttributedString(string: "\u{2028}", attributes: separator))
-                if visualizationSnapshot {
-                    // Static exports include all original values, not only the capped preview.
-                    result.append(NSAttributedString(string: attachment.plainText + "\n", attributes: baseAttributes(quoteDepth: 0)))
-                }
             }
             for source in document.sources ?? [] {
                 var attrs = baseAttributes(quoteDepth: 0)
@@ -5780,6 +5798,9 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                     if videoAttach.thumbnail != nil {
                         stale = !existingView.subviews.contains(where: { $0 is UIImageView || ($0.subviews.contains(where: { $0 is UIImageView })) })
                     }
+                } else if let visualization = attachment as? ZeVisualizationAttachment {
+                    let height = ZeVisualizationCardView.height(visualization.component, width: boundingRect.width, font: visualization.fontSize) + ZeVisualizationAttachment.verticalInset * 2
+                    existingView.frame.size = CGSize(width: boundingRect.width, height: height)
                 } else if let mathAttach = attachment as? MathAttachment {
                     mathAttach.onLoad = { [weak self] in
                         self?.scheduleCoalescedMathRefresh()
@@ -6665,6 +6686,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
     /// painting matches there made the search look like it covered content it
     /// never indexed.
     var allowsSearchHighlight: Bool = false
+    var visualizationOwner: AssistantBlock?
     @Environment(\.openURL) private var openURL
 
     func makeCoordinator() -> Coordinator {
@@ -6686,7 +6708,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 Self.rendererCache.removeValue(forKey: Self.rendererLRU.removeFirst())
             }
         }
-        coord.renderer.visualizationSnapshot = snapshotRendering
+        coord.renderer.visualizationOwner = visualizationOwner
         return coord
     }
 
@@ -6696,6 +6718,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
     @MainActor private static var rendererCache: [String: MarkdownNSRenderer] = [:]
     @MainActor private static var rendererLRU: [String] = []
     @MainActor static func clearVisualizationCaches() {
+        ZeCustomVisualizationRenderer.shared.clear()
         rendererCache.values.forEach { $0.clearVisualizationSlots() }
         rendererCache.removeAll()
         rendererLRU.removeAll()
@@ -6727,7 +6750,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
 
     func updateUIView(_ textView: SelectableMarkdownTextView, context: Context) {
         let updateStart = CFAbsoluteTimeGetCurrent()
-        context.coordinator.renderer.visualizationSnapshot = snapshotRendering
+        context.coordinator.renderer.visualizationOwner = visualizationOwner
         context.coordinator.openURL = openURL
         textView.onTapBlank = onTapBlank
         textView.onCopyScreenshot = onCopyScreenshot

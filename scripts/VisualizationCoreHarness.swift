@@ -10,6 +10,10 @@ import Foundation
     static func accepted(_ s: String) -> Bool { if case .success = ZeVisualizationParser.parse(s) { return true }; return false }
     static func main() throws {
         require(accepted(fixture), "valid metrics")
+        let custom = #"{"schemaVersion":1,"id":"free","title":"Custom","components":[{"id":"c","type":"custom","height":300,"fallbackText":"User supplied values","html":"<svg viewBox='0 0 100 100'><path d='M10 90 L50 10 L90 90 Z'/></svg>"}]}"#
+        require(accepted(custom), "model-authored HTML/SVG is accepted without a fixed chart shape")
+        require(!accepted(custom.replacingOccurrences(of: "\"height\":300", with: "\"height\":9000")), "custom height bounded")
+        require(!accepted(custom.replacingOccurrences(of: "User supplied values", with: "")), "custom accessible fallback required")
         let document = try ZeVisualizationParser.parse(fixture).get()
         require(document.plainText.contains("Missing"), "missing is not zero")
         let encoded = String(decoding: try JSONEncoder().encode(document), as: UTF8.self)
@@ -52,6 +56,14 @@ import Foundation
         require(!ZeVisualizationStreaming.prepare(bare, readable: true).contains("schemaVersion"), "bare copy hides envelope")
         let generic = "```json\n" + fixture + "\n```"
         require(ZeVisualizationStreaming.prepare(generic).contains("```ze-visualization"), "generic JSON fence recovered")
+        for fence in ["```ze-visualization", "```json", "```"] {
+            let streamed = fence + "\n" + fixture + "\n```"
+            for end in streamed.indices {
+                let prefix = String(streamed[..<end])
+                let prepared = ZeVisualizationStreaming.prepare(prefix)
+                require(!prepared.contains("schemaVersion") || prepared.contains("```ze-visualization\n"), "partial envelope never leaks JSON")
+            }
+        }
         require(ZeVisualizationStreaming.prepare("```\n" + fixture + "\n```").contains("```ze-visualization"), "untyped fence recovered")
         let example = "```swift\n" + fixture + "\n```"
         require(ZeVisualizationStreaming.prepare(example) == example, "explicit code example preserved")

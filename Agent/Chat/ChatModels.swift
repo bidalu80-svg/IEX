@@ -233,6 +233,10 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// as a cheap diagnostic sequence.
     var contentUpdateSeq: Int = 0
 
+    /// Bounded transient chart choices; deliberately not published, so a chart
+    /// tap never invalidates the message list. Data remains in `content`.
+    var visualizationSelections: [String: ZeVisualizationSelection] = [:]
+
     /// Non-published buffer for thinking content. During streaming the SSE handler
     /// appends here; `@Published content` is only flushed periodically or when the
     /// user expands the block, so collapsed thinking blocks don't trigger per-token

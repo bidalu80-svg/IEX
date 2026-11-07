@@ -1,5 +1,15 @@
 import Foundation
 
+/// Small, transient UI values. No datasets, views, bitmaps or disk cache.
+/// A share request copies these values independently of the live conversation.
+struct ZeVisualizationSelection: Equatable {
+    var seriesIndex: Int?
+    var lastHalf = false
+    var selectedText: String?
+    var selectedPointIndex: Int?
+    var customStateJSON: String?
+}
+
 /// Immutable, provider-independent snapshots. JSON stays in the existing message
 /// store; derived caches never own the only copy of a user's data.
 struct ZeVisualizationDocument: Codable, Hashable {
@@ -26,7 +36,7 @@ struct ZeVisualizationSource: Codable, Hashable {
 }
 
 enum ZeVisualizationKind: String, Codable, Hashable {
-    case metricGrid = "metric_grid", line, bar, area, pie, donut, table, info
+    case metricGrid = "metric_grid", line, bar, area, pie, donut, table, info, custom
     var isChart: Bool { [.line, .bar, .area, .pie, .donut].contains(self) }
 }
 
@@ -42,8 +52,13 @@ struct ZeVisualizationComponent: Codable, Hashable {
     var xAxis: String?
     var headers: [String]?
     var rows: [[ZeVisualizationCell]]?
+    /// Self-contained model-authored interface; no remote scripts/resources.
+    var html: String?
+    var height: Int?
+    var fallbackText: String?
     var plainText: String {
         var parts = [title ?? "", unit ?? ""].filter { !$0.isEmpty }
+        if let fallbackText { parts.append(fallbackText) }
         parts += (items ?? []).map { [$0.label, $0.displayValue, $0.detail ?? ""].filter { !$0.isEmpty }.joined(separator: ": ") }
         for series in series ?? [] {
             parts.append(series.label)
@@ -151,6 +166,7 @@ enum ZeVisualizationParser {
             }
         }
         var totalPoints = 0
+        guard d.components.filter({ $0.type == .custom }).count <= 2 else { return .failure(.limit) }
         for c in d.components {
             guard text(c.title), text(c.unit), (c.sourceIDs ?? []).allSatisfy(sourceIDs.contains),
                   [nil, "numeric", "time", "category"].contains(c.xAxis),
@@ -182,6 +198,10 @@ enum ZeVisualizationParser {
                 }
             }
             switch c.type {
+            case .custom:
+                guard let html = c.html, !html.isEmpty, html.utf8.count <= 131_072,
+                      let fallback = c.fallbackText, !fallback.isEmpty, text(fallback),
+                      (180...600).contains(c.height ?? 360) else { return .failure(.invalid) }
             case .metricGrid, .info, .pie, .donut: guard !(c.items ?? []).isEmpty else { return .failure(.invalid) }
             case .line, .bar, .area: guard !(c.series ?? []).isEmpty else { return .failure(.invalid) }
             case .table: guard !headers.isEmpty else { return .failure(.invalid) }
@@ -229,7 +249,7 @@ enum ZeVisualizationStreaming {
     /// envelope. Ordinary JSON, inline code and explicitly typed code examples are
     /// left alone. Strings/escapes are scanned, never matched with a brace regex.
     static func normalizeEnvelopes(_ markdown: String) -> String {
-        guard markdown.contains("\"schemaVersion\"") else { return markdown }
+        guard markdown.contains("{") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
         var output: [String] = []
         var index = 0
@@ -285,7 +305,9 @@ enum ZeVisualizationStreaming {
             }
             let raw = payload.joined(separator: "\n")
             let signature = raw.prefix(512)
-            let likelyEnvelope = signature.contains("\"schemaVersion\"") && signature.contains("\"id\"") && signature.contains("\"title\"")
+            let compactSignature = signature.filter { !$0.isWhitespace }
+            let likelyEnvelope = signature.contains("\"schemaVersion\"")
+                || "{\"schemaVersion\"".hasPrefix(compactSignature)
             var after = end
             var genericClosed = !isFence
             if isFence {
@@ -301,11 +323,11 @@ enum ZeVisualizationStreaming {
                case .success = ZeVisualizationCache.shared.parse(raw) {
                 output.append("\n```ze-visualization\n" + raw + "\n```\n")
                 recovered += 1; index = isFence ? after : end
-            } else if !complete, likelyEnvelope, end == lines.count, bytes <= ZeVisualizationParser.maxBytes {
+            } else if likelyEnvelope, (!complete && end == lines.count || isFence && !genericClosed && (after == lines.count || after == lines.count - 1 && lines[after].allSatisfy { $0 == first || $0.isWhitespace })), bytes <= ZeVisualizationParser.maxBytes {
                 // Stable placeholder until the remaining stream arrives. No
                 // decoding or partial chart redraw on every arriving token.
                 output.append("```ze-visualization-pending\n\n```")
-                index = end
+                index = lines.count
             } else {
                 // Consume scanned candidates once: no quadratic rescan of nested
                 // JSON lines. A nonvisual generic fence remains an ordinary fence.
@@ -321,7 +343,20 @@ enum ZeVisualizationStreaming {
     /// an unfinished visualization payload before cmark sees its growing JSON.
     /// Four complete blocks per message bounds retained attachment data as well.
     static func prepare(_ markdown: String, readable: Bool = false) -> String {
-        let markdown = normalizeEnvelopes(markdown)
+        // A fence label itself arrives token by token. Do not briefly mount a
+        // code card for an empty/partial visualization opening fence.
+        var input = markdown
+        if let tail = input.split(separator: "\n", omittingEmptySubsequences: false).last {
+            let trimmed = tail.trimmingCharacters(in: .whitespaces)
+            if let ch = trimmed.first, ch == "`" || ch == "~" {
+                let run = trimmed.prefix(while: { $0 == ch }).count
+                let info = trimmed.dropFirst(run).trimmingCharacters(in: .whitespaces)
+                if run >= 3, !info.isEmpty, "ze-visualization".hasPrefix(info), info != "ze-visualization" {
+                    input.removeLast(tail.count)
+                }
+            }
+        }
+        let markdown = normalizeEnvelopes(input)
         guard markdown.contains("ze-visualization") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
         var output: [String] = []
@@ -376,8 +411,9 @@ enum ZeVisualizationStreaming {
 
 enum ZeVisualizationPrompt {
     static let instructions = #"""
-    Inline visualizations: when a user benefits from metrics, charts or sortable data, you may include a fenced `ze-visualization` JSON block among normal prose. Use only actual user/tool data, never invent current prices, historical points or sources. Prefer plain text for simple answers or when requested. No HTML/JS or remote data_source identifiers. Each block must be complete valid JSON, schemaVersion 1, at most 12 components, 2000 total points, 200 table rows, 12 table columns, 48 metric items, 8 series, 256 KiB; at most 4 blocks in a response. Large datasets should be summarized explicitly and original files linked. Missing values are null, not zero. Charts need real ordered distinct x values. Sources must include id,label and actual http(s) url, observedAt/retrievedAt if known; cite sourceIDs from components. All labels and explanatory text use the user's language.
-    IMPORTANT: A visualization is drawn by the app, not by shell/image generation tools. Never install plotting packages just to display these native cards. Always include the literal opening and closing fence shown below; raw JSON or a generic json fence is not the intended output. "Inline/in the body" means this fenced block, not raw JSON text.
+    Inline visualizations: when a user benefits from metrics, charts or sortable data, you may include a fenced `ze-visualization` JSON block among normal prose. Use only actual user/tool data, never invent current prices, historical points or sources. Prefer plain text for simple answers or when requested. Use HTML/JS only in the custom component described below; never use remote data_source identifiers. Each block must be complete valid JSON, schemaVersion 1, at most 12 components, 2000 total points, 200 table rows, 12 table columns, 48 metric items, 8 series, 256 KiB; at most 4 blocks in a response. Large datasets should be summarized explicitly and original files linked. Missing values are null, not zero. Charts need real ordered distinct x values. Sources must include id,label and actual http(s) url, observedAt/retrievedAt if known; cite sourceIDs from components. All labels and explanatory text use the user's language.
+    IMPORTANT: A visualization is drawn by the app, not by shell/image generation tools. Never install plotting packages just to display these cards. Always include the literal opening and closing fence shown below; raw JSON or a generic json fence is not the intended output. "Inline/in the body" means this fenced block, not raw JSON text.
+    For a custom design, unusual chart, interactive explanation, diagram, calculator or dashboard, use type "custom" instead of forcing it into the standard chart types. You design its complete layout and behavior with self-contained HTML/CSS/inline JavaScript/SVG/Canvas. Shape: {"id":"design","type":"custom","title":"...","height":360,"fallbackText":"Accessible text summary of actual values and conclusions","html":"<style>...</style><main>...</main><script>...</script>"}. Max 2 custom components per document, 128 KiB HTML each, height 180...600. No external libraries, requests, fonts, images, navigation, iframes or permissions; the runtime is offline. Use responsive width:100%, SVG viewBox or Canvas devicePixelRatio sizing, readable labels and prefers-color-scheme. A static preview appears inline; opening it runs your controls. Use window.ZeVisualization.state to restore your JSON state before rendering; call window.ZeVisualization.setState({...}) after interactions. HTML inputs are also restored automatically. Avoid randomness, automatic animation, timers or expensive loops; repaint only on input. The current view is captured when closing and shared with the conversation. Describe the real interaction, not capabilities you did not implement. Standard native components remain useful for simple tables/metrics; custom designs are not restricted to their layouts.
     Complete metric example (including the required fences):
     ```ze-visualization
     {"schemaVersion":1,"id":"summary","title":"Budget","subtitle":"User-provided figures · USD","components":[{"id":"totals","type":"metric_grid","unit":"USD","items":[{"id":"income","label":"Income","value":3000,"precision":2},{"id":"cost","label":"Cost","value":2000,"precision":2}]}]}

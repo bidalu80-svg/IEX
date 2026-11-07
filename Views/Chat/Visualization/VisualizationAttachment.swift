@@ -1,9 +1,15 @@
 import UIKit
+import WebKit
 
 final class ZeVisualizationInteractionState {
-    var seriesIndex: Int?
-    var lastHalf = false
-    var selectedText: String?
+    var value: ZeVisualizationSelection { didSet { onChange?(value) } }
+    var onChange: ((ZeVisualizationSelection) -> Void)?
+    init(value: ZeVisualizationSelection = ZeVisualizationSelection(), onChange: ((ZeVisualizationSelection) -> Void)? = nil) {
+        self.value = value; self.onChange = onChange
+    }
+    var seriesIndex: Int? { get { value.seriesIndex } set { value.seriesIndex = newValue } }
+    var lastHalf: Bool { get { value.lastHalf } set { value.lastHalf = newValue } }
+    var selectedText: String? { get { value.selectedText } set { value.selectedText = newValue } }
 }
 
 /// One bounded component per attachment keeps TextKit's line fragments small.
@@ -11,11 +17,13 @@ final class ZeVisualizationInteractionState {
 final class ZeVisualizationAttachment: NSTextAttachment {
     let component: ZeVisualizationComponent
     let fontSize: CGFloat
-    private let interaction = ZeVisualizationInteractionState()
+    private let interaction: ZeVisualizationInteractionState
+    static let verticalInset: CGFloat = 8
     var plainText: String { component.plainText }
-    init(component: ZeVisualizationComponent, fontSize: CGFloat) {
+    init(component: ZeVisualizationComponent, fontSize: CGFloat, selection: ZeVisualizationSelection = ZeVisualizationSelection(), onChange: ((ZeVisualizationSelection) -> Void)? = nil) {
         self.component = component
         self.fontSize = fontSize
+        self.interaction = ZeVisualizationInteractionState(value: selection, onChange: onChange)
         super.init(data: nil, ofType: nil)
         image = Self.blank
         _ = ZeVisualizationLifecycle.shared
@@ -25,12 +33,16 @@ final class ZeVisualizationAttachment: NSTextAttachment {
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect,
                                    glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         let width = max(1, min(lineFrag.width, textContainer?.size.width ?? lineFrag.width))
-        return CGRect(x: 0, y: 0, width: width, height: ZeVisualizationCardView.height(component, width: width, font: fontSize))
+        return CGRect(x: 0, y: 0, width: width, height: ZeVisualizationCardView.height(component, width: width, font: fontSize) + Self.verticalInset * 2)
     }
     func makeView(width: CGFloat) -> UIView {
+        let height = ZeVisualizationCardView.height(component, width: width, font: fontSize)
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: height + Self.verticalInset * 2))
         let view = ZeVisualizationCardView(component: component, fontSize: fontSize, interaction: interaction)
-        view.frame = CGRect(x: 0, y: 0, width: width, height: ZeVisualizationCardView.height(component, width: width, font: fontSize))
-        return view
+        view.frame = CGRect(x: 0, y: Self.verticalInset, width: width, height: height)
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(view)
+        return container
     }
 }
 
@@ -43,7 +55,9 @@ final class ZeVisualizationLifecycle {
         for name in [UIApplication.didReceiveMemoryWarningNotification, UIApplication.didEnterBackgroundNotification, Notification.Name("sessionDidDelete")] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in
                 ZeVisualizationCache.shared.clear()
-                Task { @MainActor in SelectableMarkdownView.clearVisualizationCaches() }
+                Task { @MainActor in
+                    SelectableMarkdownView.clearVisualizationCaches()
+                }
             })
         }
     }
@@ -61,8 +75,11 @@ final class ZeVisualizationCardView: UIView {
     private var chart: ZeVisualizationPlotView?
     private var lastWidth: CGFloat = 0
     private var metricLabels: [UILabel] = []
+    private var custom: ZeCustomVisualizationPreview?
+    private let interaction: ZeVisualizationInteractionState
     static func height(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> CGFloat {
         let scale = max(1, font / 16.5)
+        if c.type == .custom { return CGFloat(c.height ?? 360) + 74 * scale }
         if c.type.isChart { return 350 * scale }
         if c.type == .table { return (106 + CGFloat(min(5, c.rows?.count ?? 0)) * 36) * scale }
         let columns = width < 260 || font > 25 || c.type == .info ? 1 : 2
@@ -72,6 +89,7 @@ final class ZeVisualizationCardView: UIView {
     init(component: ZeVisualizationComponent, fontSize: CGFloat, interaction: ZeVisualizationInteractionState = ZeVisualizationInteractionState()) {
         self.component = component
         self.fontSize = fontSize
+        self.interaction = interaction
         super.init(frame: .zero)
         backgroundColor = .secondarySystemGroupedBackground
         layer.cornerRadius = 16
@@ -87,6 +105,10 @@ final class ZeVisualizationCardView: UIView {
         action.addAction(UIAction { [weak self] _ in self?.openDetails() }, for: .touchUpInside)
         addSubview(action)
         addSubview(bodyContainer)
+        if component.type == .custom {
+            let preview = ZeCustomVisualizationPreview(component: component, interaction: interaction)
+            custom = preview; addSubview(preview)
+        }
         if component.type.isChart {
             let plot = ZeVisualizationPlotView(component: component, fontSize: fontSize, interaction: interaction)
             chart = plot
@@ -106,6 +128,7 @@ final class ZeVisualizationCardView: UIView {
         let top = heading.frame.maxY + 8
         chart?.frame = CGRect(x: 12, y: top, width: bounds.width - 24, height: bounds.height - top - 12)
         bodyContainer.frame = CGRect(x: 16, y: top, width: bounds.width - 32, height: bounds.height - top - 14)
+        custom?.frame = bodyContainer.frame
         if abs(lastWidth - bounds.width) > 0.5 {
             lastWidth = bounds.width
             rebuildBody()
@@ -119,7 +142,7 @@ final class ZeVisualizationCardView: UIView {
         return l
     }
     private func rebuildBody() {
-        guard !component.type.isChart else { return }
+        guard !component.type.isChart, component.type != .custom else { return }
         bodyContainer.subviews.forEach { $0.removeFromSuperview() }
         metricLabels.removeAll()
         let width = bodyContainer.bounds.width
@@ -167,7 +190,11 @@ final class ZeVisualizationCardView: UIView {
         while let r = responder {
             if let vc = r as? UIViewController {
                 guard vc.presentedViewController == nil else { return }
-                vc.present(UINavigationController(rootViewController: ZeVisualizationDetailController(component: component)), animated: true)
+                let detail: UIViewController
+                if component.type == .custom {
+                    detail = ZeCustomVisualizationController(component: component, interaction: interaction, preview: custom)
+                } else { detail = ZeVisualizationDetailController(component: component) }
+                vc.present(UINavigationController(rootViewController: detail), animated: true)
                 return
             }
             responder = r.next
@@ -199,8 +226,14 @@ final class ZeVisualizationPlotView: UIView {
         drawing.component = component
         drawing.seriesIndex = interaction.seriesIndex
         drawing.lastHalf = interaction.lastHalf
+        drawing.selectedPointIndex = interaction.value.selectedPointIndex
         if let selected = interaction.selectedText { readout.text = selected }
-        drawing.onSelection = { [weak self] text in self?.readout.text = text; self?.interaction.selectedText = text }
+        drawing.onSelection = { [weak self] text in
+            guard let self else { return }
+            self.readout.text = text
+            self.interaction.value.selectedPointIndex = self.drawing.selectedPointIndex
+            self.interaction.selectedText = text
+        }
         drawing.accessibilityLabel = component.title ?? String(localized: "Chart")
         drawing.accessibilityHint = String(localized: "Open details for all data values")
         let series = component.series ?? []
@@ -214,6 +247,7 @@ final class ZeVisualizationPlotView: UIView {
                 self.drawing.seriesIndex = self.selectedSeries
                 self.interaction.seriesIndex = self.selectedSeries
                 self.interaction.selectedText = nil
+                self.interaction.value.selectedPointIndex = nil
                 self.readout.text = String(localized: "Tap the chart to inspect a value")
             }, for: .valueChanged)
             addSubview(legend)
@@ -226,12 +260,13 @@ final class ZeVisualizationPlotView: UIView {
                 self.drawing.lastHalf = self.half
                 self.interaction.lastHalf = self.half
                 self.interaction.selectedText = nil
+                self.interaction.value.selectedPointIndex = nil
                 self.readout.text = String(localized: "Tap the chart to inspect a value")
             }, for: .valueChanged)
             addSubview(range)
         } else if component.type == .pie || component.type == .donut {
             // Labels remain available without relying on color or sight.
-            readout.text = (component.items ?? []).prefix(4).map { "\($0.label): \($0.displayValue)" }.joined(separator: " · ")
+            readout.text = interaction.selectedText ?? (component.items ?? []).prefix(4).map { "\($0.label): \($0.displayValue)" }.joined(separator: " · ")
         }
     }
     required init?(coder: NSCoder) { return nil }
@@ -248,12 +283,13 @@ final class ZeVisualizationPlotView: UIView {
 
 final class ZeVisualizationPlotCanvas: UIView {
     var component: ZeVisualizationComponent? { didSet { setNeedsDisplay() } }
-    var seriesIndex: Int? { didSet { selected = nil; setNeedsDisplay() } }
-    var lastHalf = false { didSet { selected = nil; setNeedsDisplay() } }
+    var seriesIndex: Int? { didSet { selectedPointIndex = nil; setNeedsDisplay() } }
+    var lastHalf = false { didSet { selectedPointIndex = nil; setNeedsDisplay() } }
     var onSelection: ((String) -> Void)?
     private var hits: [(CGPoint, String)] = []
     private var sectors: [(CGFloat, CGFloat, String)] = []
-    private var selected: CGPoint?
+    // Index into the filtered data, not a view coordinate: survives new widths.
+    var selectedPointIndex: Int? { didSet { setNeedsDisplay() } }
     private let colors: [UIColor] = [.systemBlue, .systemOrange, .systemGreen, .systemPurple, .systemPink, .systemTeal, .systemIndigo, .systemBrown]
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -329,7 +365,10 @@ final class ZeVisualizationPlotCanvas: UIView {
             }
             fillRun(); color.setStroke(); path.stroke()
         }
-        if let selected { UIColor.label.setStroke(); let p = UIBezierPath(ovalIn: CGRect(x: selected.x - 5, y: selected.y - 5, width: 10, height: 10)); p.lineWidth = 2; p.stroke() }
+        if let index = selectedPointIndex, hits.indices.contains(index) {
+            let selected = hits[index].0
+            UIColor.label.setStroke(); let p = UIBezierPath(ovalIn: CGRect(x: selected.x - 5, y: selected.y - 5, width: 10, height: 10)); p.lineWidth = 2; p.stroke()
+        }
     }
     private func drawPie(_ c: ZeVisualizationComponent) {
         let items = (c.items ?? []).filter { ($0.value ?? 0) > 0 }
@@ -362,8 +401,8 @@ final class ZeVisualizationPlotCanvas: UIView {
             guard distance <= radius, component?.type != .donut || distance >= radius * 0.55 else { return }
             var angle = atan2(dy, dx); if angle < -.pi / 2 { angle += .pi * 2 }
             if let sector = sectors.first(where: { angle >= $0.0 && angle <= $0.1 }) { onSelection?(sector.2); accessibilityValue = sector.2 }
-        } else if let hit = hits.min(by: { hypot($0.0.x - p.x, $0.0.y - p.y) < hypot($1.0.x - p.x, $1.0.y - p.y) }) {
-            selected = hit.0; onSelection?(hit.1); accessibilityValue = hit.1; setNeedsDisplay()
+        } else if let hit = hits.enumerated().min(by: { hypot($0.element.0.x - p.x, $0.element.0.y - p.y) < hypot($1.element.0.x - p.x, $1.element.0.y - p.y) }) {
+            selectedPointIndex = hit.offset; onSelection?(hit.element.1); accessibilityValue = hit.element.1
         }
     }
 }
@@ -463,4 +502,274 @@ final class ZeVisualizationDetailController: UITableViewController, UISearchResu
         vc.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItems?.first
         present(vc, animated: true)
     }
+}
+
+// MARK: - Model-authored visualizations
+
+/// Generated interfaces run without the app's browser sessions, network or native
+/// tool bridge. The CSP is installed before model markup and cannot be relaxed by it.
+@MainActor enum ZeCustomVisualizationRuntime {
+    static let width: CGFloat = 360
+    static func webView(component: ZeVisualizationComponent, state: String?, dark: Bool) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let encodedState = (state.flatMap { $0.data(using: .utf8) }).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [:]
+        let stateData = (try? JSONSerialization.data(withJSONObject: encodedState, options: [.fragmentsAllowed])) ?? Data("{}".utf8)
+        let base64 = stateData.base64EncodedString()
+        let bootstrap = """
+        (() => {
+          const saved = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob('\(base64)'), c => c.charCodeAt(0))));
+          let value = saved.value || {};
+          Object.defineProperty(window, 'ZeVisualization', {value: Object.freeze({
+            get state() { return value; },
+            setState(next) { const json=JSON.stringify(next); if(json.length<=16384) value=JSON.parse(json); }
+          })});
+          window.__zeCapture = () => JSON.stringify({value, inputs:Array.from(document.querySelectorAll('input,select,textarea')).slice(0,100).map((el,i)=>({i,value:el.value,checked:el.checked}))});
+          window.addEventListener('DOMContentLoaded', () => {
+            const fields=document.querySelectorAll('input,select,textarea');
+            for(const s of saved.inputs || []) { const el=fields[s.i]; if(!el) continue;
+              el.value=s.value; if('checked' in el) el.checked=!!s.checked;
+              el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+            }
+          }, {once:true});
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: CGFloat(component.height ?? 360)), configuration: configuration)
+        web.overrideUserInterfaceStyle = dark ? .dark : .light
+        web.isOpaque = false
+        web.backgroundColor = .secondarySystemGroupedBackground
+        web.scrollView.backgroundColor = .clear
+        web.scrollView.isScrollEnabled = false
+        web.scrollView.bounces = false
+        web.accessibilityLabel = component.fallbackText
+        return web
+    }
+    static func html(_ component: ZeVisualizationComponent) -> String {
+        """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <style>:root{color-scheme:light dark}*{box-sizing:border-box}html,body{margin:0;width:100%;font:15px -apple-system,sans-serif;overflow:hidden}body{padding:10px}svg,canvas{max-width:100%}button,input,select{font:inherit}*:focus-visible{outline:2px solid #1685fb}</style>
+        </head><body>\(component.html ?? "")</body></html>
+        """
+    }
+    static func key(_ component: ZeVisualizationComponent, state: String?, dark: Bool) -> String {
+        "\(component.hashValue):\(state ?? "{}"): \(dark)"
+    }
+}
+
+/// One preview web process at a time, at most eight queued cards, eight cached
+/// images / 8 MiB decoded cost. Cells retain UIImage previews, never web views.
+@MainActor final class ZeCustomVisualizationRenderer: NSObject, WKNavigationDelegate {
+    static let shared = ZeCustomVisualizationRenderer()
+    private struct Job {
+        let component: ZeVisualizationComponent
+        let state: String?
+        let dark: Bool
+        let completion: (UIImage?) -> Void
+    }
+    private var queue: [Job] = []
+    private var current: Job?
+    private var web: WKWebView?
+    private var timeout: Task<Void, Never>?
+    private var cache: [String: UIImage] = [:]
+    private var order: [String] = []
+    private var generation = 0
+    var cacheCount: Int { cache.count }
+    func cached(_ component: ZeVisualizationComponent, state: String?, dark: Bool) -> UIImage? {
+        cache[ZeCustomVisualizationRuntime.key(component, state: state, dark: dark)]
+    }
+    func store(_ image: UIImage, component: ZeVisualizationComponent, state: String?, dark: Bool) {
+        let key = ZeCustomVisualizationRuntime.key(component, state: state, dark: dark)
+        cache[key] = image; order.removeAll { $0 == key }; order.append(key)
+        func bytes() -> Int { cache.values.reduce(0) { $0 + ($1.cgImage.map { $0.bytesPerRow * $0.height } ?? 0) } }
+        while order.count > 8 || bytes() > 8 * 1024 * 1024 {
+            cache.removeValue(forKey: order.removeFirst())
+        }
+    }
+    func render(component: ZeVisualizationComponent, state: String?, dark: Bool, completion: @escaping (UIImage?) -> Void) {
+        if let image = cached(component, state: state, dark: dark) { completion(image); return }
+        guard queue.count < 8 else { completion(nil); return }
+        queue.append(Job(component: component, state: state, dark: dark, completion: completion))
+        startNext()
+    }
+    func clear() {
+        generation += 1
+        timeout?.cancel(); timeout = nil
+        web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil
+        let pending = queue; queue.removeAll()
+        let active = current; current = nil
+        cache.removeAll(); order.removeAll()
+        active?.completion(nil); pending.forEach { $0.completion(nil) }
+    }
+    private func startNext() {
+        guard current == nil, !queue.isEmpty else { return }
+        let job = queue.removeFirst(); current = job
+        guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow) else { finish(nil); return }
+        let view = ZeCustomVisualizationRuntime.webView(component: job.component, state: job.state, dark: job.dark)
+        web = view; view.navigationDelegate = self
+        view.frame.origin = CGPoint(x: -20000, y: 0)
+        window.addSubview(view)
+        let token = generation
+        timeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled, let self, token == self.generation else { return }
+            self.finish(nil)
+        }
+        view.loadHTMLString(ZeCustomVisualizationRuntime.html(job.component), baseURL: nil)
+    }
+    private func finish(_ image: UIImage?) {
+        guard let job = current else { return }
+        generation += 1
+        timeout?.cancel(); timeout = nil
+        web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil
+        current = nil
+        if let image { store(image, component: job.component, state: job.state, dark: job.dark) }
+        job.completion(image)
+        startNext()
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let token = generation
+        Task { [weak self, weak webView] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard let self, let webView, self.web === webView, token == self.generation else { return }
+            let config = WKSnapshotConfiguration(); config.snapshotWidth = 540
+            webView.takeSnapshot(with: config) { [weak self, weak webView] image, _ in
+                guard let self, self.web === webView, token == self.generation else { return }
+                self.finish(image)
+            }
+        }
+    }
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(navigationAction.navigationType == .other && navigationAction.request.url?.absoluteString == "about:blank" ? .allow : .cancel)
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if web === webView { finish(nil) } }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { if web === webView { finish(nil) } }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { if web === webView { finish(nil) } }
+}
+
+final class ZeCustomVisualizationPreview: UIView {
+    let component: ZeVisualizationComponent
+    private let interaction: ZeVisualizationInteractionState
+    private let picture = UIImageView()
+    private let summary = UILabel()
+    private var requestedKey: String?
+    private(set) var isPending = false
+    init(component: ZeVisualizationComponent, interaction: ZeVisualizationInteractionState) {
+        self.component = component; self.interaction = interaction
+        super.init(frame: .zero)
+        picture.contentMode = .scaleAspectFit
+        summary.text = component.fallbackText; summary.numberOfLines = 0; summary.font = .systemFont(ofSize: 14); summary.textColor = .secondaryLabel
+        addSubview(picture); addSubview(summary)
+        accessibilityLabel = component.fallbackText
+    }
+    required init?(coder: NSCoder) { return nil }
+    override func layoutSubviews() { super.layoutSubviews(); picture.frame = bounds; summary.frame = bounds.insetBy(dx: 12, dy: 12) }
+    override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { prepare() } }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) { super.traitCollectionDidChange(previousTraitCollection); if window != nil { prepare() } }
+    func prepare() {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        let state = interaction.value.customStateJSON
+        let key = ZeCustomVisualizationRuntime.key(component, state: state, dark: dark)
+        guard requestedKey != key else { return }
+        requestedKey = key; isPending = true
+        ZeCustomVisualizationRenderer.shared.render(component: component, state: state, dark: dark) { [weak self] image in
+            guard let self, self.requestedKey == key else { return }
+            self.isPending = false
+            self.picture.image = image; self.summary.isHidden = image != nil
+            if image == nil { self.requestedKey = nil }
+        }
+    }
+    func apply(_ image: UIImage) {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        ZeCustomVisualizationRenderer.shared.store(image, component: component, state: interaction.value.customStateJSON, dark: dark)
+        requestedKey = ZeCustomVisualizationRuntime.key(component, state: interaction.value.customStateJSON, dark: dark)
+        picture.image = image; summary.isHidden = true; isPending = false
+    }
+}
+
+/// Only the expanded card owns an interactive WKWebView. Closing waits for state
+/// and screenshot together so the inline preview and a subsequent share agree.
+final class ZeCustomVisualizationController: UIViewController, WKNavigationDelegate, UIAdaptivePresentationControllerDelegate {
+    let component: ZeVisualizationComponent
+    private let interaction: ZeVisualizationInteractionState
+    private weak var preview: ZeCustomVisualizationPreview?
+    private var web: WKWebView?
+    private var deadline: Task<Void, Never>?
+    private var observers: [NSObjectProtocol] = []
+    private var closing = false
+    init(component: ZeVisualizationComponent, interaction: ZeVisualizationInteractionState, preview: ZeCustomVisualizationPreview?) {
+        self.component = component; self.interaction = interaction; self.preview = preview
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { return nil }
+    override func viewDidLoad() {
+        super.viewDidLoad(); title = component.title
+        view.backgroundColor = .systemBackground
+        isModalInPresentation = true
+        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(done))
+        let web = ZeCustomVisualizationRuntime.webView(component: component, state: interaction.value.customStateJSON, dark: traitCollection.userInterfaceStyle == .dark)
+        self.web = web; web.navigationDelegate = self; view.addSubview(web)
+        web.loadHTMLString(ZeCustomVisualizationRuntime.html(component), baseURL: nil)
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didReceiveMemoryWarningNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.releaseWeb(); self?.dismiss(animated: false) }
+            })
+        }
+        deadline = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.releaseWeb(); self?.showFallback()
+        }
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let web else { return }
+        let scale = min(1.6, max(0.5, (view.bounds.width - 32) / ZeCustomVisualizationRuntime.width))
+        web.transform = .identity
+        web.frame = CGRect(x: 0, y: 0, width: ZeCustomVisualizationRuntime.width, height: CGFloat(component.height ?? 360))
+        web.transform = CGAffineTransform(scaleX: scale, y: scale)
+        web.center = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + 16 + web.bounds.height * scale / 2)
+    }
+    private func showFallback() {
+        let label = UILabel(frame: view.bounds.insetBy(dx: 24, dy: 100)); label.numberOfLines = 0
+        label.text = component.fallbackText; label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; view.addSubview(label)
+    }
+    private func releaseWeb() { deadline?.cancel(); deadline = nil; web?.stopLoading(); web?.navigationDelegate = nil; web?.removeFromSuperview(); web = nil }
+    @objc func done() {
+        guard !closing else { return }; closing = true
+        guard let web else { dismiss(animated: true); return }
+        navigationItem.leftBarButtonItem?.isEnabled = false
+        deadline?.cancel()
+        deadline = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.releaseWeb(); self?.dismiss(animated: true)
+        }
+        web.evaluateJavaScript("window.__zeCapture()") { [weak self, weak web] result, _ in
+            guard let self, let web, self.web === web else { return }
+            guard let state = result as? String, state.utf8.count <= 32768,
+                  (try? JSONSerialization.jsonObject(with: Data(state.utf8))) != nil else {
+                self.releaseWeb(); self.dismiss(animated: true); return
+            }
+            let config = WKSnapshotConfiguration(); config.snapshotWidth = 540
+            web.takeSnapshot(with: config) { [weak self, weak web] image, _ in
+                guard let self, self.web === web else { return }
+                if let image {
+                    self.interaction.value.customStateJSON = state
+                    self.preview?.apply(image)
+                }
+                self.releaseWeb(); self.dismiss(animated: true)
+            }
+        }
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { deadline?.cancel(); deadline = nil }
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(navigationAction.navigationType == .other && navigationAction.request.url?.absoluteString == "about:blank" ? .allow : .cancel)
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { releaseWeb(); showFallback() }
+    override func viewDidDisappear(_ animated: Bool) { super.viewDidDisappear(animated); releaseWeb() }
+    deinit { deadline?.cancel(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
 }

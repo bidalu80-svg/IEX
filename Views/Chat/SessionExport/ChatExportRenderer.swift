@@ -44,6 +44,7 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
             let block = AssistantBlock(kind: source.kind, content: source.content,
                                        toolStatus: source.toolStatus, toolUseId: source.toolUseId, id: source.id)
             block.imageFilePath = source.imageFilePath
+            block.visualizationSelections = source.visualizationSelections
             block.browserURL = source.browserURL
             block.toolSummary = source.toolSummary
             block.toolDuration = source.toolDuration
@@ -158,6 +159,12 @@ enum ChatExportContent {
     /// (then it renders exactly as in the chat).
     @MainActor
     static func tableChunks(_ markdown: String, contentWidth: CGFloat, base: CGFloat) -> [ChatShareTableChunk]? {
+        // Keep visualization slot identities and their frozen selections intact
+        // when a reply also contains ordinary Markdown tables.
+        if MarkdownContent(markdown).blocks.contains(where: { block in
+            if case .codeBlock(let info, _) = block { return ZeVisualizationParser.isFence(info) }
+            return false
+        }) { return nil }
         let chunks = ChatShareMarkdownChunker.split(markdown)
         guard chunks.contains(where: \.isTable) else { return nil }
         let theme = SelectableMarkdownTheme(baseFontSize: FontSettings.shared.scaledMessage(16.5))
@@ -580,6 +587,7 @@ final class ChatExportRenderer {
 
     private func prepareAttachments(in view: UIView) -> Int {
         var pending = 0
+        if let custom = view as? ZeCustomVisualizationPreview, custom.isPending { pending += 1 }
         if let text = view as? UITextView {
             text.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.textStorage.length)) { value, range, _ in
                 if let image = value as? ImageAttachment, image.loadedImage == nil { pending += 1 }
