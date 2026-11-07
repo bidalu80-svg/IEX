@@ -262,7 +262,7 @@ def logged(command: list[str], path: Path, timeout: int) -> int:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            output.write("\nDriver command exceeded its bounded timeout.\n")
+            output.write(f"\nDriver command exceeded its bounded timeout ({timeout} seconds).\n")
             code = 124
     print(path.read_text(encoding="utf-8", errors="replace")[-18000:], flush=True)
     return code
@@ -278,7 +278,10 @@ def prepare(args: argparse.Namespace) -> int:
         "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={args.device}",
         "-derivedDataPath", str(args.work / "DerivedData"), "CODE_SIGNING_ALLOWED=NO",
         "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY=", "DEVELOPMENT_TEAM=", "ONLY_ACTIVE_ARCH=YES",
-    ], args.work / "build.log", 120)
+    # A cold simulator SDK module cache can exceed two minutes on the shared
+    # macOS runner. This bounds compilation only; runtime/UI deadlines and all
+    # verification assertions remain unchanged.
+    ], args.work / "build.log", 300)
 
 
 def test_targets(run: dict):
