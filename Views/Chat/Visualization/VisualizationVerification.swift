@@ -75,6 +75,7 @@ import WebKit
                 }.background(Color(uiColor: .systemBackground)).environment(\.chatSnapshotRendering, snapshot)
             }
             let host = UIHostingController(rootView: content(liveMessage, snapshot: false))
+            host.view.tintAdjustmentMode = .normal
             window.rootViewController = host
             try await Task.sleep(nanoseconds: 350_000_000)
             host.view.layoutIfNeeded()
@@ -142,6 +143,7 @@ import WebKit
             try check(!capturedSelections.isEmpty && frozen.blocks[0].visualizationSelections == capturedSelections, "Share freezes selections independently of later live changes")
             liveBlock.visualizationSelections = capturedSelections
             let shareHost = UIHostingController(rootView: content(frozen, snapshot: true))
+            shareHost.view.tintAdjustmentMode = .normal
             window.rootViewController = shareHost
             try await Task.sleep(nanoseconds: 350_000_000)
             shareHost.view.layoutIfNeeded()
@@ -160,6 +162,7 @@ import WebKit
             let shareShot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             try shareShot.pngData()?.write(to: directory.appendingPathComponent("visualization-share-\(dark ? "dark" : "light").png"))
             let remount = UIHostingController(rootView: content(liveMessage, snapshot: false))
+            remount.view.tintAdjustmentMode = .normal
             window.rootViewController = remount
             try await Task.sleep(nanoseconds: 250_000_000)
             remount.view.layoutIfNeeded()

@@ -101,6 +101,7 @@ final class ZeVisualizationCardView: UIView {
         heading.numberOfLines = 2
         addSubview(heading)
         action.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right"), for: .normal)
+        action.tintColor = .systemBlue
         action.accessibilityLabel = String(localized: "Open visualization details")
         action.addAction(UIAction { [weak self] _ in self?.openDetails() }, for: .touchUpInside)
         addSubview(action)
