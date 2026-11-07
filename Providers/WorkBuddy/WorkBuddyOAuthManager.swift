@@ -60,7 +60,11 @@ final class WorkBuddyOAuthManager: ObservableObject {
     private var loginTasks: [String: Task<Void, Error>] = [:]
     private var refreshTasks: [String: (id: UUID, task: Task<WorkBuddyTokenStorage, Error>)] = [:]
 
-    private init() {}
+    private let httpSession: URLSession?
+
+    init(configuration: URLSessionConfiguration? = nil) {
+        httpSession = configuration.map { WorkBuddyHTTP.makeSession(configuration: $0) }
+    }
 
     func isAuthenticated(instanceId: String) -> Bool {
         guard let token = load(instanceId: instanceId) else { return false }
@@ -105,7 +109,7 @@ final class WorkBuddyOAuthManager: ObservableObject {
         generations[instanceId] = generation
         let task = Task { @MainActor in
             let stateData = try await WorkBuddyHTTP.data(realm: realm, path: "/v2/plugin/auth/state", method: "POST",
-                query: [URLQueryItem(name: "platform", value: "CLI")], body: Data("{}".utf8), login: true)
+                query: [URLQueryItem(name: "platform", value: "CLI")], body: Data("{}".utf8), login: true, session: httpSession)
             let state = try JSONDecoder().decode(LoginState.self, from: stateData)
             guard !state.state.isEmpty, let url = URL(string: state.authUrl), url.scheme == "https",
                   let host = url.host?.lowercased(), Self.isAuthorizationHost(host, realm: realm),
@@ -119,7 +123,7 @@ final class WorkBuddyOAuthManager: ObservableObject {
                 try self.checkGeneration(instanceId, generation)
                 let tokenData: Data
                 do {
-                    tokenData = try await WorkBuddyHTTP.data(realm: realm, path: "/v2/plugin/auth/token", query: [URLQueryItem(name: "state", value: state.state)], login: true)
+                    tokenData = try await WorkBuddyHTTP.data(realm: realm, path: "/v2/plugin/auth/token", query: [URLQueryItem(name: "state", value: state.state)], login: true, session: httpSession)
                 } catch WorkBuddyError.authorizationPending {
                     try await Task.sleep(nanoseconds: 3_000_000_000)
                     continue
@@ -127,7 +131,7 @@ final class WorkBuddyOAuthManager: ObservableObject {
                 let token = try JSONDecoder().decode(Token.self, from: tokenData)
                 guard !token.accessToken.isEmpty else { throw WorkBuddyError.message("WorkBuddy 未返回访问令牌。") }
                 let accountData = try await WorkBuddyHTTP.data(realm: realm, path: "/v2/plugin/login/account",
-                    query: [URLQueryItem(name: "state", value: state.state)], headers: ["Authorization": "Bearer \(token.accessToken)"], login: true)
+                    query: [URLQueryItem(name: "state", value: state.state)], headers: ["Authorization": "Bearer \(token.accessToken)"], login: true, session: httpSession)
                 let account = try JSONDecoder().decode(Account.self, from: accountData)
                 guard !account.uid.isEmpty else { throw WorkBuddyError.message("WorkBuddy 未返回账号信息。") }
                 let storage = WorkBuddyTokenStorage(accessToken: token.accessToken, refreshToken: token.refreshToken ?? "",
@@ -170,7 +174,7 @@ final class WorkBuddyOAuthManager: ObservableObject {
         let task = Task { @MainActor in
             var headers = ["X-Refresh-Token": stored.refreshToken, "X-Auth-Refresh-Source": "plugin"]
             if let enterprise = stored.enterpriseID, !enterprise.isEmpty { headers["X-Enterprise-Id"] = enterprise }
-            let data = try await WorkBuddyHTTP.data(realm: stored.realm, path: "/v2/plugin/auth/token/refresh", method: "POST", headers: headers)
+            let data = try await WorkBuddyHTTP.data(realm: stored.realm, path: "/v2/plugin/auth/token/refresh", method: "POST", headers: headers, session: httpSession)
             let response = try JSONDecoder().decode(Token.self, from: data)
             guard !response.accessToken.isEmpty else { throw WorkBuddyError.message("WorkBuddy 令牌刷新失败，请重新登录。") }
             try self.checkGeneration(instanceId, generation)
@@ -234,12 +238,15 @@ enum WorkBuddyHTTP {
             completionHandler(nil)
         }
     }
-    private static let session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 45
-        return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
-    }()
+    private static let session = makeSession(configuration: .ephemeral)
+
+    // Explicit configuration also makes isolated protocol fixtures deterministic.
+    // All sessions, including injected fixtures, retain the redirect rejection.
+    static func makeSession(configuration: URLSessionConfiguration) -> URLSession {
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 45
+        return URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+    }
 
     static func commonHeaders(realm: WorkBuddyRealm, login: Bool = false) -> [String: String] {
         let platform = realm == .cn ? "WorkBuddy" : "WorkBuddy AI"
@@ -250,7 +257,7 @@ enum WorkBuddyHTTP {
     }
 
     static func data(realm: WorkBuddyRealm, path: String, method: String = "GET", query: [URLQueryItem] = [],
-                     body: Data? = nil, headers: [String: String] = [:], login: Bool = false) async throws -> Data {
+                     body: Data? = nil, headers: [String: String] = [:], login: Bool = false, session: URLSession? = nil) async throws -> Data {
         guard var components = URLComponents(string: realm.baseURL) else { throw WorkBuddyError.message("WorkBuddy 地址配置错误。") }
         components.path = path
         components.queryItems = query.isEmpty ? nil : query
@@ -261,7 +268,7 @@ enum WorkBuddyHTTP {
         for (key, value) in commonHeaders(realm: realm, login: login).merging(headers, uniquingKeysWith: { _, new in new }) {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await (session ?? Self.session).data(for: request)
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw WorkBuddyError.message("WorkBuddy 未返回 HTTP 响应。") }
         guard (200..<300).contains(http.statusCode) else { throw WorkBuddyError.http(http.statusCode) }

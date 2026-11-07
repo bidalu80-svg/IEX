@@ -17,7 +17,7 @@ if swift is None:
 SUPPORT = r'''
 import Foundation
 /// Intercept every URL, including unexpected ones: fixtures never fall back to
-/// real HTTP. Registration is verified with a non-network scheme before login.
+/// real HTTP. The session explicitly installs this protocol; no global registration is used.
 final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
     enum Scenario { case login, cancel, stateFailure }
     private static let lock = NSLock()
@@ -40,7 +40,6 @@ final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static func response(for request: URLRequest) throws -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         guard let url = request.url else { throw URLError(.badURL) }
-        if url.scheme == "ze-workbuddy-fixture" { return ["fixture": true] }
         guard url.scheme == "https", ["copilot.tencent.com", "www.workbuddy.ai"].contains(url.host ?? "") else {
             throw URLError(.unsupportedURL)
         }
@@ -115,48 +114,41 @@ func modelDisplayName(from id: String) -> String { id }
         func expectFailure(_ message: String, _ operation: () throws -> Void) {
             do { try operation(); preconditionFailure(message) } catch {}
         }
-        check(URLProtocol.registerClass(WorkBuddyFixtureProtocol.self), "register offline HTTP fixture")
-        defer { URLProtocol.unregisterClass(WorkBuddyFixtureProtocol.self) }
-        // Same ephemeral configuration as production. If Foundation ignores
-        // global registration, stop at an unsupported custom scheme; do not
-        // proceed to any real service host.
-        let probe = URLSession(configuration:.ephemeral)
-        let (probeData, _) = try await probe.data(from:URL(string:"ze-workbuddy-fixture://probe")!)
-        probe.invalidateAndCancel()
-        let probeJSON = try JSONSerialization.jsonObject(with:probeData) as? [String:Bool]
-        check(probeJSON?["fixture"] == true, "ephemeral URLSession honors offline protocol registration")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WorkBuddyFixtureProtocol.self]
+        let loginManager = WorkBuddyOAuthManager(configuration: configuration)
 
         for realm in WorkBuddyRealm.allCases {
             WorkBuddyFixtureProtocol.reset(.login)
             let id = "http-login-\(realm.rawValue)"
             var presented = false
-            try await WorkBuddyOAuthManager.shared.login(instanceId:id, realm:realm) { _ in presented = true }
+            try await loginManager.login(instanceId:id, realm:realm) { _ in presented = true }
             check(presented, "real manager presents authorization URL")
             check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/state") == 1, "one state request")
             check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 3, "real loop survives two 11217 responses")
             check(WorkBuddyFixtureProtocol.count("/v2/plugin/login/account") == 1, "account lookup follows successful token")
             let saved = ProviderKeychainHelper.loadOAuthToken(instanceId:id, as:WorkBuddyTokenStorage.self)
             check(saved?.uid == "fixture-login-user" && saved?.realm == realm, "successful login persists matching account")
-            WorkBuddyOAuthManager.shared.logout(instanceId:id)
+            loginManager.logout(instanceId:id)
         }
         WorkBuddyFixtureProtocol.reset(.cancel)
         do {
-            try await WorkBuddyOAuthManager.shared.login(instanceId:"http-cancel") { _ in
-                WorkBuddyOAuthManager.shared.cancelLogin(instanceId:"http-cancel")
+            try await loginManager.login(instanceId:"http-cancel") { _ in
+                loginManager.cancelLogin(instanceId:"http-cancel")
             }
             preconditionFailure("present-time cancellation must stop real login")
         } catch is CancellationError {}
         check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 0, "cancelled login never polls")
-        check(!WorkBuddyOAuthManager.shared.isAuthenticated(instanceId:"http-cancel"), "cancelled login never saves")
+        check(!loginManager.isAuthenticated(instanceId:"http-cancel"), "cancelled login never saves")
         WorkBuddyFixtureProtocol.reset(.stateFailure)
         do {
-            try await WorkBuddyOAuthManager.shared.login(instanceId:"http-state-failure") { _ in
+            try await loginManager.login(instanceId:"http-state-failure") { _ in
                 preconditionFailure("failed state must not present authorization")
             }
             preconditionFailure("11217 at state endpoint must fail")
         } catch WorkBuddyError.business(let code, _) { check(code == 11217, "state failure code") }
         check(WorkBuddyFixtureProtocol.count("/v2/plugin/auth/token") == 0, "state business failure does not start polling")
-        check(!WorkBuddyOAuthManager.shared.isAuthenticated(instanceId:"http-state-failure"), "failed state never saves")
+        check(!loginManager.isAuthenticated(instanceId:"http-state-failure"), "failed state never saves")
         check(WorkBuddyOAuthManager.isPending("login ing"), "pending response")
         check(WorkBuddyOAuthManager.isPending("login ing..."), "observed CN/global pending punctuation")
         check(WorkBuddyOAuthManager.isPending("login ing…"), "pending Unicode ellipsis")
