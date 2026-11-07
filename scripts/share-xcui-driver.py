@@ -81,6 +81,26 @@ final class ShareDriver: XCTestCase {
     }
 
     private func exchange(_ path: String, body: [String: Any]? = nil) throws -> Data {
+        // The simulator's first loopback request can time out while XCTest is
+        // establishing its automation session. Retry only read-only polling,
+        // never taps, dismissals, acknowledgments or failed app assertions.
+        let attempts = body == nil ? 3 : 1
+        for attempt in 1...attempts {
+            do { return try exchangeOnce(path, body: body) }
+            catch {
+                let failure = error as NSError
+                let transient = (failure.domain == NSURLErrorDomain &&
+                    [NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost].contains(failure.code)) ||
+                    (failure.domain == "ShareDriver" && failure.code == 3)
+                guard transient, attempt < attempts else { throw error }
+                print("Share driver loopback read retry \(attempt)/\(attempts), error \(failure.code)")
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        throw NSError(domain: "ShareDriver", code: 8)
+    }
+
+    private func exchangeOnce(_ path: String, body: [String: Any]? = nil) throws -> Data {
         let environment = ProcessInfo.processInfo.environment
         guard let base = environment["ZE_SHARE_DRIVER_BRIDGE"],
               let secret = environment["ZE_SHARE_DRIVER_SECRET"],
