@@ -124,23 +124,6 @@ import WebKit
                 let shot = UIGraphicsImageRenderer(bounds: card.bounds).image { _ in card.drawHierarchy(in: card.bounds, afterScreenUpdates: true) }
                 try shot.pngData()?.write(to: directory.appendingPathComponent("visualization-\(card.component.id)-\(dark ? "dark" : "light").png"))
             }
-            if let tableCard = cards.first(where: { $0.component.type == .table }),
-               let button = tableCard.subviews.compactMap({ $0 as? UIButton }).first {
-                button.sendActions(for: .touchUpInside)
-                try await Task.sleep(nanoseconds: 400_000_000)
-                let navigation = host.presentedViewController as? UINavigationController
-                let detail = navigation?.topViewController as? ZeVisualizationDetailController
-                try check(detail != nil, "Expand opens real detail controller")
-                if let detail, let search = detail.navigationItem.searchController {
-                    search.searchBar.text = "VISUAL_LAST"
-                    detail.updateSearchResults(for: search)
-                    try check(detail.tableView.numberOfRows(inSection: 0) == 1, "Detail filter finds non-preview row")
-                    detail.tableView(detail.tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
-                    try check(UIPasteboard.general.string?.contains("VISUAL_LAST") == true, "Copy row preserves original value")
-                }
-                host.dismiss(animated: false)
-                try await Task.sleep(nanoseconds: 150_000_000)
-            } else { try check(false, "Table expand control missing") }
             ZeVisualizationCache.shared.clear()
             SelectableMarkdownView.clearVisualizationCaches()
             try check(ZeVisualizationCache.shared.statistics.count == 0, "Explicit cache clear")
@@ -185,6 +168,26 @@ import WebKit
             for card in remounted {
                 try check(pixels(card) == livePixels[card.component.id]!, "Cache eviction preserves visible selection for \(card.component.id)")
             }
+            // Open the modal only after live/share pixel comparisons. UIKit
+            // dims the presenting controller's controls while a sheet is up;
+            // that transient modal appearance is not the conversation snapshot.
+            if let tableCard = remounted.first(where: { $0.component.type == .table }),
+               let button = tableCard.subviews.compactMap({ $0 as? UIButton }).first {
+                button.sendActions(for: .touchUpInside)
+                try await Task.sleep(nanoseconds: 400_000_000)
+                let navigation = remount.presentedViewController as? UINavigationController
+                let detail = navigation?.topViewController as? ZeVisualizationDetailController
+                try check(detail != nil, "Expand opens real detail controller")
+                if let detail, let search = detail.navigationItem.searchController {
+                    search.searchBar.text = "VISUAL_LAST"
+                    detail.updateSearchResults(for: search)
+                    try check(detail.tableView.numberOfRows(inSection: 0) == 1, "Detail filter finds non-preview row")
+                    detail.tableView(detail.tableView, didSelectRowAt: IndexPath(row: 0, section: 0))
+                    try check(UIPasteboard.general.string?.contains("VISUAL_LAST") == true, "Copy row preserves original value")
+                }
+                remount.dismiss(animated: false)
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } else { try check(false, "Table expand control missing") }
             for width: CGFloat in [240, 390, 700] {
                 let card = cards[0]
                 card.frame.size = CGSize(width: width, height: ZeVisualizationCardView.height(card.component, width: width, font: 16.5))
