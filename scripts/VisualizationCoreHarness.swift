@@ -43,6 +43,30 @@ import Foundation
         let ordinary = "```swift\nlet x = \"ze-visualization\"\n```"
         require(ZeVisualizationStreaming.prepare(ordinary) == ordinary, "ordinary code intact")
         require(ZeVisualizationStreaming.prepare("~~~ze-visualization\n" + fixture + "\n~~~").contains(fixture), "tilde fences")
+        let bare = "可以，直接在正文里给你：\n\n" + fixture + "\n\n数据说明。"
+        let recovered = ZeVisualizationStreaming.prepare(bare)
+        require(recovered.contains("```ze-visualization\n" + fixture), "bare envelope becomes native visualization")
+        require(recovered.contains("数据说明。"), "surrounding prose preserved")
+        require(ZeVisualizationStreaming.prepare(recovered) == recovered, "normalization is idempotent")
+        require(ZeVisualizationStreaming.prepare(bare, readable: true).contains("Missing"), "bare copy gets readable data")
+        require(!ZeVisualizationStreaming.prepare(bare, readable: true).contains("schemaVersion"), "bare copy hides envelope")
+        let generic = "```json\n" + fixture + "\n```"
+        require(ZeVisualizationStreaming.prepare(generic).contains("```ze-visualization"), "generic JSON fence recovered")
+        require(ZeVisualizationStreaming.prepare("```\n" + fixture + "\n```").contains("```ze-visualization"), "untyped fence recovered")
+        let example = "```swift\n" + fixture + "\n```"
+        require(ZeVisualizationStreaming.prepare(example) == example, "explicit code example preserved")
+        let ordinaryJSON = "```json\n{\"schemaVersion\":1,\"id\":\"settings\",\"title\":\"Config\"}\n```"
+        require(ZeVisualizationStreaming.prepare(ordinaryJSON) == ordinaryJSON, "ordinary JSON preserved")
+        let braces = fixture.replacingOccurrences(of: "Metrics", with: #"Metrics {quoted \"value\"} \\ path"#)
+        require(accepted(braces) && ZeVisualizationStreaming.prepare(braces).contains("```ze-visualization"), "quoted braces and escapes")
+        let unfinished = String(fixture.dropLast(20))
+        require(ZeVisualizationStreaming.prepare(unfinished).contains("pending"), "bare partial envelope held")
+        require(!ZeVisualizationStreaming.prepare(unfinished).contains("schemaVersion"), "bare partial protocol hidden")
+        require(!ZeVisualizationStreaming.prepare(unfinished, readable: true).contains("```"), "partial readable fallback")
+        let pretty = String(decoding: try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: Data(fixture.utf8)), options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
+        require(ZeVisualizationStreaming.prepare(pretty).contains("```ze-visualization"), "multiline reordered keys")
+        require(ZeVisualizationStreaming.prepare("prefix `" + fixture + "` suffix") == "prefix `" + fixture + "` suffix", "inline code untouched")
+        require(!ZeVisualizationStreaming.prepare(fixture + " trailing text").contains("```ze-visualization"), "ambiguous line preserved")
         let cache = ZeVisualizationCache()
         for i in 0..<100 { _ = cache.parse(fixture.replacingOccurrences(of: "Metrics", with: "Metrics \(i)")) }
         require(cache.statistics.count <= cache.countLimit && cache.statistics.cost <= cache.costLimit, "LRU bounded")

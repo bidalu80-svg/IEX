@@ -27,7 +27,18 @@ import PDFKit
         }
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
         let document = try ZeVisualizationParser.parse(fixture).get()
-        let markdown = "```ze-visualization\n" + fixture + "\n```"
+        // The device incident returned a valid envelope as prose, without a
+        // visualization fence. Exercise that actual boundary, not just ideal JSON.
+        let markdown = "可以，直接在正文里给你：\n\n" + fixture + "\n\n数据说明。"
+        let genericMarkdown = "```json\n" + fixture + "\n```"
+        let explicitMarkdown = "```ze-visualization\n" + fixture + "\n```"
+        for input in [markdown, genericMarkdown, explicitMarkdown] {
+            let parsed = MarkdownContent(input)
+            try check(parsed.blocks.contains { block in
+                if case .codeBlock(let info, _) = block { return ZeVisualizationParser.isFence(info) }
+                return false
+            }, "Production Markdown parser recognizes bare, generic and explicit envelopes")
+        }
         let previous = window.rootViewController
         let previousStyle = window.overrideUserInterfaceStyle
         defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = previousStyle }
@@ -35,7 +46,7 @@ import PDFKit
         for dark in [false, true] {
             window.overrideUserInterfaceStyle = dark ? .dark : .light
             let host = UIHostingController(rootView: ScrollView {
-                SelectableMarkdownView(markdown: markdown).padding(16)
+                SelectableMarkdownView(markdown: dark ? genericMarkdown : markdown).padding(16)
             }.background(Color(uiColor: .systemBackground)))
             window.rootViewController = host
             try await Task.sleep(nanoseconds: 350_000_000)

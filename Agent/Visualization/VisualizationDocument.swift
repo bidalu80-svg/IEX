@@ -225,10 +225,103 @@ final class ZeVisualizationCache: @unchecked Sendable {
 }
 
 enum ZeVisualizationStreaming {
+    /// Recover an omitted/wrong fence only for a complete validated visualization
+    /// envelope. Ordinary JSON, inline code and explicitly typed code examples are
+    /// left alone. Strings/escapes are scanned, never matched with a brace regex.
+    static func normalizeEnvelopes(_ markdown: String) -> String {
+        guard markdown.contains("\"schemaVersion\"") else { return markdown }
+        let lines = markdown.components(separatedBy: "\n")
+        var output: [String] = []
+        var index = 0
+        var typedFence: Character?
+        var typedLength = 0
+        var recovered = 0
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let first = trimmed.first
+            let run = first.map { ch in trimmed.prefix(while: { $0 == ch }).count } ?? 0
+            if let fence = typedFence {
+                output.append(line); index += 1
+                if first == fence, run >= typedLength, trimmed.dropFirst(run).trimmingCharacters(in: .whitespaces).isEmpty {
+                    typedFence = nil
+                }
+                continue
+            }
+            let isFence = (first == "`" || first == "~") && run >= 3
+            let info = isFence ? trimmed.dropFirst(run).trimmingCharacters(in: .whitespaces).lowercased() : ""
+            if isFence && info != "json" && !info.isEmpty {
+                typedFence = first; typedLength = run
+                output.append(line); index += 1; continue
+            }
+            let start = isFence ? index + 1 : index
+            guard start < lines.count, lines[start].trimmingCharacters(in: .whitespaces).hasPrefix("{") else {
+                if isFence { typedFence = first; typedLength = run }
+                output.append(line); index += 1; continue
+            }
+            var payload: [String] = []
+            var depth = 0, bytes = 0, end = start
+            var quoted = false, escaped = false, complete = false, invalidTail = false
+            while end < lines.count && bytes <= ZeVisualizationParser.maxBytes {
+                let candidate = lines[end]
+                // Stop at the generic fence even when JSON has been interrupted.
+                if isFence && candidate.trimmingCharacters(in: .whitespaces).hasPrefix(String(repeating: String(first!), count: run)) { break }
+                payload.append(candidate); bytes += candidate.utf8.count + 1
+                for character in candidate {
+                    if complete {
+                        if !character.isWhitespace { invalidTail = true }
+                        continue
+                    }
+                    if quoted {
+                        if escaped { escaped = false }
+                        else if character == "\\" { escaped = true }
+                        else if character == "\"" { quoted = false }
+                    } else if character == "\"" { quoted = true }
+                    else if character == "{" || character == "[" { depth += 1 }
+                    else if character == "}" || character == "]" { depth -= 1; if depth == 0 { complete = true } }
+                }
+                end += 1
+                if complete { break }
+            }
+            let raw = payload.joined(separator: "\n")
+            let signature = raw.prefix(512)
+            let likelyEnvelope = signature.contains("\"schemaVersion\"") && signature.contains("\"id\"") && signature.contains("\"title\"")
+            var after = end
+            var genericClosed = !isFence
+            if isFence {
+                while after < lines.count && lines[after].trimmingCharacters(in: .whitespaces).isEmpty { after += 1 }
+                if after < lines.count {
+                    let closing = lines[after].trimmingCharacters(in: .whitespaces)
+                    let closingRun = closing.prefix(while: { $0 == first }).count
+                    genericClosed = closingRun >= run && closing.dropFirst(closingRun).isEmpty
+                    if genericClosed { after += 1 }
+                }
+            }
+            if complete, !invalidTail, genericClosed, recovered < 4,
+               case .success = ZeVisualizationCache.shared.parse(raw) {
+                output.append("\n```ze-visualization\n" + raw + "\n```\n")
+                recovered += 1; index = isFence ? after : end
+            } else if !complete, likelyEnvelope, end == lines.count, bytes <= ZeVisualizationParser.maxBytes {
+                // Stable placeholder until the remaining stream arrives. No
+                // decoding or partial chart redraw on every arriving token.
+                output.append("```ze-visualization-pending\n\n```")
+                index = end
+            } else {
+                // Consume scanned candidates once: no quadratic rescan of nested
+                // JSON lines. A nonvisual generic fence remains an ordinary fence.
+                if isFence { typedFence = first; typedLength = run; output.append(line) }
+                if end > start { output.append(contentsOf: lines[start..<end]); index = end }
+                else { if !isFence { output.append(line) }; index += 1 }
+            }
+        }
+        return output.joined(separator: "\n")
+    }
+
     /// Linear scan of fenced lines, preserving ordinary code examples. Replace
     /// an unfinished visualization payload before cmark sees its growing JSON.
     /// Four complete blocks per message bounds retained attachment data as well.
     static func prepare(_ markdown: String, readable: Bool = false) -> String {
+        let markdown = normalizeEnvelopes(markdown)
         guard markdown.contains("ze-visualization") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
         var output: [String] = []
@@ -271,7 +364,8 @@ enum ZeVisualizationStreaming {
                 } else { output.append(line) }
             } else if (first == "`" || first == "~"), run >= 3 {
                 fence = first; length = run
-                visual = ZeVisualizationParser.isFence(String(trimmed.dropFirst(run)))
+                let info = String(trimmed.dropFirst(run)).trimmingCharacters(in: .whitespacesAndNewlines)
+                visual = ZeVisualizationParser.isFence(info) || (readable && info == "ze-visualization-pending")
                 if visual { count += 1; bytes = 0 } else { output.append(line) }
             } else { output.append(line) }
         }
@@ -283,8 +377,11 @@ enum ZeVisualizationStreaming {
 enum ZeVisualizationPrompt {
     static let instructions = #"""
     Inline visualizations: when a user benefits from metrics, charts or sortable data, you may include a fenced `ze-visualization` JSON block among normal prose. Use only actual user/tool data, never invent current prices, historical points or sources. Prefer plain text for simple answers or when requested. No HTML/JS or remote data_source identifiers. Each block must be complete valid JSON, schemaVersion 1, at most 12 components, 2000 total points, 200 table rows, 12 table columns, 48 metric items, 8 series, 256 KiB; at most 4 blocks in a response. Large datasets should be summarized explicitly and original files linked. Missing values are null, not zero. Charts need real ordered distinct x values. Sources must include id,label and actual http(s) url, observedAt/retrievedAt if known; cite sourceIDs from components. All labels and explanatory text use the user's language.
-    Metric example:
+    IMPORTANT: A visualization is drawn by the app, not by shell/image generation tools. Never install plotting packages just to display these native cards. Always include the literal opening and closing fence shown below; raw JSON or a generic json fence is not the intended output. "Inline/in the body" means this fenced block, not raw JSON text.
+    Complete metric example (including the required fences):
+    ```ze-visualization
     {"schemaVersion":1,"id":"summary","title":"Budget","subtitle":"User-provided figures · USD","components":[{"id":"totals","type":"metric_grid","unit":"USD","items":[{"id":"income","label":"Income","value":3000,"precision":2},{"id":"cost","label":"Cost","value":2000,"precision":2}]}]}
+    ```
     Other component shapes (same envelope):
     {"id":"trend","type":"line","title":"Trend","unit":"USD","xAxis":"numeric","series":[{"id":"a","label":"Series A","points":[{"x":1,"y":10,"label":"Day 1"},{"x":2,"y":null,"label":"Day 2"},{"x":3,"y":14,"label":"Day 3"}]}]}
     Chart type can be line,bar,area; xAxis numeric,time (Unix seconds),category (numeric category index + label). Include multiple series for comparisons. Pie/donut use type pie or donut with items like metrics, only nonnegative part-to-whole values. Info uses type info and items with id,label,text,detail. Table uses {"id":"table","type":"table","headers":["Name","Value"],"rows":[["A",10],["B",null]]}; cells are strings, numbers or null, every row matches header length. Metric items support detail and missingReason; number precision 0...6. Do not use this example data as real-world facts. Do not claim automatic refresh; stored cards are snapshots with local interactions.
