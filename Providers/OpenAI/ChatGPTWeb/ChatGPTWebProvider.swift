@@ -195,14 +195,16 @@ final class ChatGPTWebProvider: LLMProvider, AgentProvider {
         var turnstile = ""
         if let challenge = prepared["turnstile"] as? [String: Any], challenge["required"] as? Bool == true {
             guard let dx = challenge["dx"] as? String, !dx.isEmpty else {
-                throw ChatGPTWebError.challengeProtocolChanged
+                throw ChatGPTWebError.challengeProtocolChanged(.init(stage: .missing))
             }
             do {
                 turnstile = try await ChatGPTWebChallenge.token(dx: dx, source: source)
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let failure as ChatGPTWebChallenge.Failure {
+                throw ChatGPTWebError.challengeProtocolChanged(failure)
             } catch {
-                throw ChatGPTWebError.challengeProtocolChanged
+                throw ChatGPTWebError.challengeProtocolChanged(.init(stage: .unexpected))
             }
         }
         var proof = ""

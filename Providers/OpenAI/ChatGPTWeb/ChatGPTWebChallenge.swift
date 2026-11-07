@@ -4,6 +4,19 @@ import Foundation
 /// basketikun/chatgpt2api@92dd80e91543157d36a4ddad60e765c5293760e9/utils/turnstile.py.
 /// No JavaScript, dynamic evaluation, network, filesystem or actual browser objects.
 enum ChatGPTWebChallenge {
+    /// Only local enum labels and counters are exposed; never remote operands,
+    /// challenge strings, tokens, URLs or account data.
+    struct Failure: Error {
+        enum Stage: String { case missing = "MISSING", encoding = "ENCODING", program = "PROGRAM", budget = "BUDGET", result = "RESULT", unexpected = "INTERNAL" }
+        let stage: Stage
+        var instruction: Int? = nil
+        var skipped: Int = 0
+        var code: String {
+            let location = instruction.map { "-I\($0)" } ?? ""
+            return "WEB-DX-\(stage.rawValue)\(location)-S\(skipped)"
+        }
+    }
+
     enum ChallengeError: Error, LocalizedError {
         case malformed, unsupported, limitExceeded, noResult
         var errorDescription: String? {
@@ -26,27 +39,50 @@ enum ChatGPTWebChallenge {
                          timeBudget: TimeInterval = 1) throws -> String {
         guard dx.utf8.count <= 512_000, source.utf8.count <= 32_768,
               let bytes = Data(base64Encoded: dx), bytes.count <= 384_000,
-              let decoded = String(data: bytes, encoding: .utf8) else { throw ChallengeError.malformed }
+              let decoded = String(data: bytes, encoding: .utf8) else { throw Failure(stage: .encoding) }
         let machine = Machine(maxSteps: min(max(0, maxSteps), 20_000), timeBudget: min(max(0, timeBudget), 2))
-        try machine.tick()
-        let plain = try machine.xor(decoded, source)
-        let program = try machine.parse(plain)
-        guard case .array(let instructions) = program, instructions.count <= 4096 else { throw ChallengeError.malformed }
+        let program: Value
+        do {
+            try machine.tick()
+            let plain = try machine.xor(decoded, source)
+            program = try machine.parse(plain)
+        } catch is CancellationError { throw CancellationError() }
+        catch ChallengeError.limitExceeded { throw Failure(stage: .budget) }
+        catch { throw Failure(stage: .program) }
+        guard case .array(let instructions) = program, instructions.count <= 4096 else { throw Failure(stage: .program) }
         for opcode in [1, 2, 3, 5, 6, 7, 8, 14, 15, 17, 18, 19, 20, 21, 23, 24] {
             machine.registers[String(opcode)] = .operation(opcode)
         }
         machine.registers["9"] = program
         machine.registers["10"] = .string("window")
         machine.registers["16"] = .string(source)
-        for instruction in instructions {
-            try machine.tick()
-            guard case .array(let fields) = instruction, !fields.isEmpty, fields.count <= 65 else { throw ChallengeError.malformed }
-            let operation = try machine.read(fields[0])
-            guard case .operation(let opcode) = operation else { throw ChallengeError.unsupported }
-            _ = try machine.invoke(opcode, Array(fields.dropFirst()), depth: 0)
+        var skipped = 0
+        var lastSkipped: Int?
+        for (index, instruction) in instructions.enumerated() {
+            do {
+                try machine.tick()
+                guard case .array(let fields) = instruction, !fields.isEmpty, fields.count <= 65 else { throw ChallengeError.malformed }
+                let operation = try machine.read(fields[0])
+                guard case .operation(let opcode) = operation else { throw ChallengeError.unsupported }
+                _ = try machine.invoke(opcode, Array(fields.dropFirst()), depth: 0)
+            } catch is CancellationError { throw CancellationError() }
+            catch ChallengeError.limitExceeded {
+                // Local execution limits are not recoverable protocol exceptions.
+                throw Failure(stage: .budget, instruction: index, skipped: skipped)
+            } catch {
+                // The pinned protocol catches errors per instruction. A missing
+                // browser property or unsupported call must not discard a later
+                // valid result. No arbitrary code is executed by this interpreter.
+                skipped += 1
+                lastSkipped = index
+            }
         }
-        try machine.tick()
-        guard let result = machine.result, !result.isEmpty else { throw ChallengeError.noResult }
+        do { try machine.tick() }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw Failure(stage: .budget, skipped: skipped) }
+        guard let result = machine.result, !result.isEmpty else {
+            throw Failure(stage: .result, instruction: lastSkipped, skipped: skipped)
+        }
         return result
     }
 

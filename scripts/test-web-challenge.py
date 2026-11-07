@@ -56,6 +56,15 @@ def vectors():
         ("list-coercion-raw", [[2, 40, ["window.Math", "b"]], [19, 40], [7, 3, 40]], output(output("window.Math,b"))),
         ("list-mixed-coercion", [[2, 40, [1, None, "a"]], [19, 40], [7, 3, 40]], output(output("[1, None, 'a']"))),
         ("ordered-map-alias", [[2, 40, "window.Object.create"], [17, 41, 40], [8, 42, 41], [2, 43, "window.Reflect.set"], [2, 44, "key"], [2, 45, "value"], [7, 43, 41, 44, 45], [2, 46, "same"], [20, 41, 42, 3, 46]], output("same")),
+        ("missing-register-then-result", [[7, 3, 999], [3, "recovered"]], output("recovered")),
+        ("unknown-op-then-result", [[999, "ignored"], [3, "recovered"]], output("recovered")),
+        ("non-callable-then-result", [[2, 40, "not callable"], [40, "ignored"], [3, "recovered"]], output("recovered")),
+        ("unsupported-property-then-result", [[2, 40, "window.unavailable"], [17, 41, 40], [3, "recovered"]], output("recovered")),
+        ("bad-base64-then-result", [[2, 40, "!"], [18, 40], [3, "recovered"]], output("recovered")),
+        ("bad-json-then-result", [[2, 40, "{"], [14, 41, 40], [3, "recovered"]], output("recovered")),
+        ("wrong-arity-then-result", [[3, "bad", "extra"], [3, "recovered"]], output("recovered")),
+        ("result-before-optional-failure", [[3, "preserved"], [7, 3, 999]], output("preserved")),
+        ("result-after-malformed-instruction", [None, [], [3, "recovered"]], output("recovered")),
     ]
     local_keys = ["STATSIG_LOCAL_STORAGE_INTERNAL_STORE_V4", "STATSIG_LOCAL_STORAGE_STABLE_ID", "client-correlated-secret", "oai/apps/capExpiresAt", "oai-did", "STATSIG_LOCAL_STORAGE_LOGGING_REQUEST", "UiState.isNavigationCollapsed.1"]
     cases.append(("localStorage-keys", [[2, 40, "window.Object.keys"], [2, 41, "window.localStorage"], [17, 42, 40, 41], [15, 43, 42], [7, 3, 43]], output(json.dumps(local_keys))))
@@ -108,6 +117,21 @@ func rejects(_ label: String, _ run: () throws -> Void) {
         rejects("allocation budget") { _ = try ChatGPTWebChallenge.evaluate(dx: encode(expansion),source:"fixture-key") }
         let nested = String(repeating:"[",count:40) + "0" + String(repeating:"]",count:40)
         rejects("JSON depth") { _ = try ChatGPTWebChallenge.evaluate(dx: encode([[2,40,nested],[14,41,40]]),source:"fixture-key") }
+        // A later valid result must never recover cancellation or local limits.
+        rejects("depth limit before result") { _ = try ChatGPTWebChallenge.evaluate(dx: encode([[2,40,nested],[14,41,40],[3,"forbidden"]]),source:"fixture-key") }
+        rejects("allocation limit before result") { _ = try ChatGPTWebChallenge.evaluate(dx: encode(expansion + [[3,"forbidden"]]),source:"fixture-key") }
+        do {
+            _ = try ChatGPTWebChallenge.evaluate(dx: encode([[7,3,999]]),source:"fixture-key")
+            fatalError("Missing result accepted")
+        } catch let failure as ChatGPTWebChallenge.Failure {
+            precondition(failure.code == "WEB-DX-RESULT-I0-S1")
+        }
+        do {
+            _ = try ChatGPTWebChallenge.evaluate(dx:"!",source:"private-fixture-source")
+            fatalError("Encoding accepted")
+        } catch let failure as ChatGPTWebChallenge.Failure {
+            precondition(failure.code == "WEB-DX-ENCODING-S0" && !failure.code.contains("private"))
+        }
         // op23 passes raw trailing addresses, including the function's own address.
         let recursion: [[Any]] = [[2,40,true],[8,41,23],[23,40,41,40,41,40,41,40,41]]
         rejects("malformed recursive call") { _ = try ChatGPTWebChallenge.evaluate(dx: encode(recursion),source:"fixture-key") }

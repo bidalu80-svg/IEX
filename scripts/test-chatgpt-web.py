@@ -94,15 +94,21 @@ final class FixtureProtocol: URLProtocol {
         case "/": body = "<html data-build=\"fixture\"><script src=\"/sdk.js\"></script></html>"; contentType = "text/html"
         case "/backend-api/sentinel/chat-requirements/prepare":
             body = mode == "challenge" ? #"{"turnstile":{"required":true},"prepare_token":"fixture-prepare"}"# : #"{"prepare_token":"fixture-prepare"}"#
-            if mode == "dx" || mode == "bad-dx" {
+            if ["dx", "bad-dx", "recoverable-dx", "no-result-dx", "budget-dx"].contains(mode) {
                 let payload = try! JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
                 let source = Array((payload["p"] as! String).unicodeScalars)
                 // Opcode 2 stores a literal; opcode 7 calls result opcode 3 with its value.
-                let instructions = #"[[2,100,"fixture-challenge"],[7,3,100]]"#
+                var instructions = #"[[2,100,"fixture-challenge"],[7,3,100]]"#
+                if mode == "recoverable-dx" { instructions = #"[[7,3,999],[2,100,"fixture-challenge"],[7,3,100],[999]]"# }
+                if mode == "no-result-dx" { instructions = #"[[7,3,999]]"# }
+                if mode == "budget-dx" {
+                    let nested = String(repeating: "[", count: 40) + "0" + String(repeating: "]", count: 40)
+                    instructions = try! encoded([[2, 100, nested], [14, 101, 100], [3, "forbidden"]])
+                }
                 let encrypted = String(String.UnicodeScalarView(instructions.unicodeScalars.enumerated().map {
                     Unicode.Scalar($0.element.value ^ source[$0.offset % source.count].value)!
                 }))
-                let dx = mode == "dx" ? Data(encrypted.utf8).base64EncodedString() : "invalid!"
+                let dx = mode == "bad-dx" ? "invalid!" : Data(encrypted.utf8).base64EncodedString()
                 body = try! encoded(["turnstile": ["required": true, "dx": dx], "prepare_token": "fixture-prepare"])
             } else if mode == "arkose" {
                 body = #"{"arkose":{"required":true},"prepare_token":"fixture-prepare"}"#
@@ -110,7 +116,7 @@ final class FixtureProtocol: URLProtocol {
         case "/backend-api/sentinel/chat-requirements/finalize":
             let payload = try! JSONSerialization.jsonObject(with: Self.body(request)) as! [String: Any]
             precondition(payload["prepare_token"] as? String == "fixture-prepare")
-            precondition(payload["turnstile_token"] as? String == (mode == "dx" ? Data("fixture-challenge".utf8).base64EncodedString() : ""))
+            precondition(payload["turnstile_token"] as? String == (["dx", "recoverable-dx"].contains(mode) ? Data("fixture-challenge".utf8).base64EncodedString() : ""))
             body = #"{"token":"fixture-requirement","so_token":"fixture-so"}"#
         case "/backend-api/conversation":
             contentType = "text/event-stream"
@@ -231,7 +237,9 @@ final class FixtureProtocol: URLProtocol {
         do {
             _ = try await provider.sendMessage(messages: [LLMMessage(role: .user, content: "x")], systemPrompt: nil, maxTokens: 1, temperature: nil)
             fatalError("Browser challenge ignored")
-        } catch ChatGPTWebError.challengeProtocolChanged {}
+        } catch ChatGPTWebError.challengeProtocolChanged(let failure) {
+            precondition(failure.stage == .missing)
+        }
         precondition(FixtureProtocol.collectedRequests().count == 2)
         FixtureProtocol.setMode("dx")
         let challenged = try await provider.sendMessage(messages: [LLMMessage(role: .user, content: "x")], systemPrompt: nil, maxTokens: 1, temperature: nil)
@@ -243,8 +251,27 @@ final class FixtureProtocol: URLProtocol {
         do {
             _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)
             fatalError("Malformed challenge accepted")
-        } catch ChatGPTWebError.challengeProtocolChanged {}
+        } catch ChatGPTWebError.challengeProtocolChanged(let failure) {
+            precondition(failure.stage == .encoding)
+        }
         precondition(FixtureProtocol.collectedRequests().count == 2)
+        FixtureProtocol.setMode("recoverable-dx")
+        let recovered = try await provider.sendMessage(messages: [LLMMessage(role: .user, content: "x")], systemPrompt: nil, maxTokens: 1, temperature: nil)
+        precondition(recovered.text == "Hello world")
+        precondition(FixtureProtocol.collectedRequests().count == 4)
+        precondition(FixtureProtocol.collectedRequests().last!.value(forHTTPHeaderField: "OpenAI-Sentinel-Turnstile-Token") == Data("fixture-challenge".utf8).base64EncodedString())
+        for (mode, expected) in [("no-result-dx", ChatGPTWebChallenge.Failure.Stage.result), ("budget-dx", .budget)] {
+            FixtureProtocol.setMode(mode)
+            do {
+                _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)
+                fatalError("Failed challenge reached conversation")
+            } catch ChatGPTWebError.challengeProtocolChanged(let failure) {
+                precondition(failure.stage == expected)
+                let description = ChatGPTWebError.challengeProtocolChanged(failure).errorDescription ?? ""
+                precondition(description.contains(failure.code) && !description.contains("fixture-access"))
+            }
+            precondition(FixtureProtocol.collectedRequests().count == 2)
+        }
         FixtureProtocol.setMode("arkose")
         do {
             _ = try await provider.sendMessage(messages: [], systemPrompt: nil, maxTokens: 1, temperature: nil)

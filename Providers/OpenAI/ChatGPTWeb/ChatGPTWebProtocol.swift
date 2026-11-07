@@ -12,7 +12,7 @@ enum ChatGPTWebError: LocalizedError {
     case authenticationExpired
     case browserVerificationRequired(ChatGPTWebRequestStage)
     case interactiveVerificationRequired
-    case challengeProtocolChanged
+    case challengeProtocolChanged(ChatGPTWebChallenge.Failure)
     case unsupportedAttachment
     case unsupportedTools
     case malformedResponse
@@ -29,8 +29,8 @@ enum ChatGPTWebError: LocalizedError {
             return "ChatGPT 网页请求被拒绝（\(stage.rawValue)-403）。网页登录与聊天验证是不同步骤；反复登录未必有效。实验直连尚未通过此阶段的网页检查。"
         case .interactiveVerificationRequired:
             return "ChatGPT 要求额外的交互验证（WEB-ARKOSE），本次直连未完成该验证。请暂时使用官方网页聊天；重新进行 OAuth 登录不会补上这一验证。"
-        case .challengeProtocolChanged:
-            return "ChatGPT 网页验证数据暂未适配（WEB-DX）。本次请求已停止，请反馈此错误码；重复登录通常不会解决。"
+        case .challengeProtocolChanged(let failure):
+            return "ChatGPT 网页验证未完成（\(failure.code)）。请反馈此错误码；重复登录通常不会解决。"
         case .unsupportedAttachment:
             return "ChatGPT 网页实验直连目前仅接入文字对话，请移除附件或选择其他服务商。"
         case .unsupportedTools:

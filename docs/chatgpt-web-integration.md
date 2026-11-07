@@ -22,7 +22,7 @@ README/feature-status 与代码存在差异，以固定版本源码为依据。
 
 - OpenAI 服务商新增 `chatGPTWeb` 凭据类型，原 `oauth` 继续表示 Codex。新凭据有必须存在的 schema discriminator，防止误解码旧 token。
 - 文字聊天走 `https://chatgpt.com/backend-api/conversation`，按网页消息/SSE 协议解析；模型目录读取 `/backend-api/models`，默认 `auto`，不套用 API 模型 ID。
-- requirements prepare/finalize 及有界 proof 计算在后台执行。2026-11-07 补充参考 `utils/turnstile.py` 的受限 dx 指令计算：结果同时进入 finalize 的 `turnstile_token` 和对话请求的 `OpenAI-Sentinel-Turnstile-Token`。未知指令、无效输入及超限必须停止，不能提交空结果假装完成验证。Arkose 交互验证及 HTTP 403 仍可能阻断；原生 URLSession 不等同于浏览器会话，不保证账号或网络环境被接受。
+- requirements prepare/finalize 及有界 proof 计算在后台执行。2026-11-07 补充参考 `utils/turnstile.py` 的受限 dx 指令计算：结果同时进入 finalize 的 `turnstile_token` 和对话请求的 `OpenAI-Sentinel-Turnstile-Token`。整体编码或程序格式错误、执行超限和最终无结果必须停止；单条指令的普通执行错误按参考实现跳过，继续处理后续指令。不得提交空结果假装完成验证。Arkose 交互验证及 HTTP 403 仍可能阻断；原生 URLSession 不等同于浏览器会话，不保证账号或网络环境被接受。
 - 首版为文字对话；不宣称图片、音频、Ze 本地工具或子代理支持。网页原生工具调用不等于 API function calling。包含工具历史或附件的请求明确提示切换服务商。
 - API token usage 未在网页响应中出现时保持未知。网页请求不伪造 API 采样参数、max_tokens 或费用。
 - 每个实例独立 Keychain，刷新合并并发请求，保留未轮换的 refresh token；取消/退出后用 generation 防止晚到结果重新保存凭据。
@@ -53,3 +53,13 @@ README/feature-status 与代码存在差异，以固定版本源码为依据。
 `scripts/test-web-challenge.py` 验证独立解释器的固定向量与资源上限；`scripts/test-chatgpt-web.py` 在生产传输上验证 prepare 的 source → dx → finalize body → conversation header → SSE，并覆盖缺失/损坏 dx、Arkose 与各阶段403。全部为隔离 fixture，不声称真实服务已接受 dx 或真人对话成功。
 
 验收分三层记录：生产 Swift fixture、iOS16 部署目标的完整构建/既有运行回归、真人账号登录及连续对话。最后一层仍待安装最终构建后验证，不能以能列出模型替代。
+
+## 真机 WEB-DX 反馈后的兼容修正
+
+2026-11-07 用户确认 WorkBuddy 已可登录和使用；ChatGPT 快速文字测试显示 WEB-DX。这个旧错误码证明请求已通过首页和 prepare，且本地验证处理在 finalize 前停止，但没有记录具体失败类别，不能据此断言真人失败由哪条指令造成。
+
+重新逐行对照固定参考 `utils/turnstile.py`：其顶层循环对单条指令异常执行 `continue`，Ze 首次移植却将任意指令异常传播为整体验证失败。修正为保持参考的逐条恢复语义；未知指令不执行，缺失寄存器、无效调用、局部解码失败等普通指令错误允许后续有效结果继续产生。取消、深度、时间、步数和分配预算仍立即中止；整体解码/JSON失败、最终无结果仍禁止 finalize 和发送消息。
+
+新增9个固定期望向量覆盖异常指令前后仍存在有效结果，与固定Python参考对照；传输fixture覆盖恢复后真正发送验证字段和流式回复，以及无结果/预算超限时不发finalize。诊断只显示本地阶段名、从0开始的指令序号及跳过数量（例如 WEB-DX-RESULT-I0-S1），不记录或展示原始challenge、source、token、账号或URL。阶段包括 MISSING、ENCODING、PROGRAM、BUDGET、RESULT、INTERNAL。
+
+此修正证明已知协议语义差异，不证明截图中的真人请求已恢复。新IPA的实际账号聊天仍待设备验证。按实际失败码定位后续问题，不要求反复退出登录。
