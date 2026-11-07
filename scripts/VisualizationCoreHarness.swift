@@ -10,6 +10,12 @@ import Foundation
     static func accepted(_ s: String) -> Bool { if case .success = ZeVisualizationParser.parse(s) { return true }; return false }
     static func main() throws {
         require(accepted(fixture), "valid metrics")
+        // The examples sent to every provider must obey the actual wire schema.
+        let examples = ZeVisualizationPrompt.instructions.components(separatedBy: "```ze-visualization\n").dropFirst()
+        for example in examples {
+            let json = example.components(separatedBy: "\n```")[0]
+            require(accepted(json), "system prompt example validates against production schema")
+        }
         let custom = #"{"schemaVersion":1,"id":"free","title":"Custom","components":[{"id":"c","type":"custom","height":300,"fallbackText":"User supplied values","html":"<svg viewBox='0 0 100 100'><path d='M10 90 L50 10 L90 90 Z'/></svg>"}]}"#
         require(accepted(custom), "model-authored HTML/SVG is accepted without a fixed chart shape")
         require(!accepted(custom.replacingOccurrences(of: "\"height\":300", with: "\"height\":9000")), "custom height bounded")
