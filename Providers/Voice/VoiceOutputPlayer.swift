@@ -251,7 +251,7 @@ final class VoiceOutputPlayer: NSObject, ObservableObject {
     /// preview / "Read Selected" — same splitting as live streaming TTS.
     /// Non-session callers pass `VoiceOutputPlayer.manualOwnerId`.
     func enqueueSegmented(_ rawText: String, sessionId: String) {
-        let sanitized = VoiceTextSanitizer.sanitize(rawText)
+        let sanitized = VoiceTextSanitizer.sanitize(ZeVisualizationStreaming.prepare(rawText, readable: true))
         guard !sanitized.isEmpty else { return }
         let segments = AIChatViewModel.splitIntoSpeechSegments(sanitized)
         for s in segments { enqueue(s, sessionId: sessionId) }

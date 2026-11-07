@@ -642,7 +642,7 @@ struct ChatMessageRow: View {
                         isActive: isActiveMessage
                     )) {
                         Button {
-                            UIPasteboard.general.string = fullReplyText
+                            UIPasteboard.general.string = ZeVisualizationStreaming.prepare(fullReplyText, readable: true)
                         } label: {
                             Label("Copy All", systemImage: "doc.on.doc")
                         }

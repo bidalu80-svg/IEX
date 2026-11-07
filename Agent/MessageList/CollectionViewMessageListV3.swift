@@ -332,7 +332,7 @@ fileprivate struct BridgedAssistantBlockV3: View {
                         let text = message.blocks
                             .filter { if case .text = $0.kind { return true }; return false }
                             .map(\.content).joined(separator: "\n\n")
-                        UIPasteboard.general.string = text
+                        UIPasteboard.general.string = ZeVisualizationStreaming.prepare(text, readable: true)
                     } label: {
                         Label(String(localized: "Copy All"), systemImage: "doc.on.doc")
                     }
@@ -513,7 +513,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
                         let text = message.blocks
                             .filter { if case .text = $0.kind { return true }; return false }
                             .map(\.content).joined(separator: "\n\n")
-                        UIPasteboard.general.string = text
+                        UIPasteboard.general.string = ZeVisualizationStreaming.prepare(text, readable: true)
                     } label: {
                         Label(String(localized: "Copy All"), systemImage: "doc.on.doc")
                     }
@@ -579,7 +579,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
                 selectedColor: .green,
                 accessibilityLabel: String(localized: "Copy")
                 ) {
-                    UIPasteboard.general.string = replyText
+                    UIPasteboard.general.string = ZeVisualizationStreaming.prepare(replyText, readable: true)
                     flashCompletionAction(.copy)
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }

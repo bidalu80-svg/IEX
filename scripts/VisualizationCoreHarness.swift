@@ -37,6 +37,9 @@ import Foundation
         require(waiting.contains("ze-visualization-pending") && !waiting.contains("8.91"), "no partial rendering")
         let closed = open + "\n```\nafter"
         require(ZeVisualizationStreaming.prepare(closed) == closed, "closed fence intact")
+        let readable = ZeVisualizationStreaming.prepare(closed, readable: true)
+        require(readable.contains("Missing") && !readable.contains("schemaVersion"), "whole reply copy and speech use values")
+        require(ZeVisualizationStreaming.prepare(open, readable: true).contains("8.91") == false, "unfinished copy does not expose protocol")
         let ordinary = "```swift\nlet x = \"ze-visualization\"\n```"
         require(ZeVisualizationStreaming.prepare(ordinary) == ordinary, "ordinary code intact")
         require(ZeVisualizationStreaming.prepare("~~~ze-visualization\n" + fixture + "\n~~~").contains(fixture), "tilde fences")

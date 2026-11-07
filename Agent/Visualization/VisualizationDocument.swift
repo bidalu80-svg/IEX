@@ -228,7 +228,7 @@ enum ZeVisualizationStreaming {
     /// Linear scan of fenced lines, preserving ordinary code examples. Replace
     /// an unfinished visualization payload before cmark sees its growing JSON.
     /// Four complete blocks per message bounds retained attachment data as well.
-    static func prepare(_ markdown: String) -> String {
+    static func prepare(_ markdown: String, readable: Bool = false) -> String {
         guard markdown.contains("ze-visualization") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
         var output: [String] = []
@@ -240,13 +240,20 @@ enum ZeVisualizationStreaming {
         var count = 0
         func finish(_ closed: Bool) {
             if closed, bytes <= ZeVisualizationParser.maxBytes, count <= 4 {
-                output.append("```ze-visualization")
-                output.append(contentsOf: payload)
-                output.append("```")
+                if readable {
+                    switch ZeVisualizationCache.shared.parse(payload.joined(separator: "\n")) {
+                    case .success(let document): output.append(document.plainText)
+                    case .failure(let error): output.append(error.text)
+                    }
+                } else {
+                    output.append("```ze-visualization")
+                    output.append(contentsOf: payload)
+                    output.append("```")
+                }
             } else if closed {
                 output.append(ZeVisualizationError.limit.text)
             } else {
-                output.append("```ze-visualization-pending\n\n```")
+                output.append(readable ? ZeVisualizationError.incomplete.text : "```ze-visualization-pending\n\n```")
             }
             payload.removeAll(keepingCapacity: false)
         }
