@@ -231,7 +231,13 @@ import WebKit
     private static func runCustom(window: UIWindow, directory: URL) async throws -> [String] {
         var checks: [String] = []
         func check(_ ok: Bool, _ text: String) throws {
-            guard ok else { throw NSError(domain: "CustomVisualization", code: checks.count, userInfo: [NSLocalizedDescriptionKey: text]) }
+            guard ok else {
+                let shot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                try? shot.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-failure.png"))
+                try? JSONSerialization.data(withJSONObject: ["success": false, "checks": checks, "error": text], options: [.prettyPrinted])
+                    .write(to: directory.appendingPathComponent("visualization-custom-result.json"))
+                throw NSError(domain: "CustomVisualization", code: checks.count, userInfo: [NSLocalizedDescriptionKey: text])
+            }
             checks.append(text)
         }
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
@@ -239,10 +245,14 @@ import WebKit
         <style>body{background:#13243d;color:#fff}h2{margin:8px 0}label{display:block}svg{width:100%;height:170px}button{border:0;border-radius:10px;padding:8px}</style>
         <h2>自由布局 · 交互几何</h2><label>角度 <input id="angle" type="range" min="10" max="90" value="30"></label><output id="value">30</output>
         <svg viewBox="0 0 340 170"><path id="shape" fill="#2bc9ac" stroke="#ffbd55" stroke-width="4" d="M20 145 L170 30 L320 145 Z"/><text x="20" y="165" fill="white">非固定图表组件</text></svg>
+        <section style="line-height:1.6;padding:8px 0"><p>这是用于检查正文高度的多行中文说明。完整来源应当出现在图形下方，不能因为模型低估高度而被裁切。</p><p>数据来自验收样例，数值仅用于交互测试，并非实时价格。展开页可以滚动查看所有说明。</p><p>图形、刻度、日期和来源都属于同一个内容区域。分享时应保留全部末行文字。</p></section>
+        <svg id="edge-chart" viewBox="0 0 340 40" style="height:48px"><text x="320" y="30" fill="white">2026-11-07</text></svg>
+        <footer id="last-source" style="line-height:1.6">完整来源：用户提供的验证数据。最后一行必须保留。SOURCE_END</footer>
+        <div id="end-marker" style="height:6px;background:#ff00ff;margin-top:6px"></div>
         <script>const slider=document.getElementById('angle');const output=document.getElementById('value');const shape=document.getElementById('shape');function draw(){output.textContent=slider.value;shape.setAttribute('d',`M20 145 L170 ${slider.value} L320 145 Z`);ZeVisualization.setState({angle:Number(slider.value),label:'角度'});}slider.value=ZeVisualization.state.angle||30;slider.addEventListener('input',draw);draw();window.networkBlocked=false;fetch('https://example.com/').catch(()=>window.networkBlocked=true);</script>
         """##
         let data = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "custom-fixture", "title": "模型自由绘制",
-            "components": [["id": "free", "type": "custom", "height": 320, "fallbackText": "可调角度的自定义三角形", "html": html]]])
+            "components": [["id": "free", "type": "custom", "height": 180, "fallbackText": "可调角度的自定义三角形", "html": html]]])
         let markdown = "```ze-visualization\n" + String(decoding: data, as: UTF8.self) + "\n```"
         let block = AssistantBlock(kind: .text, content: markdown)
         let message = ChatMessage(role: .assistant, content: "", blocks: [block])
@@ -260,6 +270,8 @@ import WebKit
             if descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first?.isPending == false { break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        host.view.layoutIfNeeded()
         let card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
         try check(card != nil, "Custom design is integrated in real chat Markdown")
         let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
@@ -274,6 +286,12 @@ import WebKit
                 if !web.isLoading { break }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
+            let actualHeight = try await web.evaluateJavaScript(ZeCustomVisualizationRuntime.measureScript)
+            try check(((actualHeight as? NSNumber)?.doubleValue ?? 0) > 500, "Long document exceeds the model's initial height hint")
+            try check(web.scrollView.isScrollEnabled, "Expanded custom content allows scrolling")
+            let edgeFits = try await web.evaluateJavaScript("(() => {const s=document.getElementById('edge-chart'), b=s.getBBox(), v=s.viewBox.baseVal;return b.x+b.width<=v.x+v.width && b.y+b.height<=v.y+v.height})()")
+            try check(edgeFits as? Bool == true, "Rightmost SVG date fits inside the captured viewBox")
+            _ = try await web.evaluateJavaScript("window.scrollTo(0,document.body.scrollHeight);true")
             let blocked = try await web.evaluateJavaScript("window.networkBlocked")
             try check(blocked as? Bool == true, "Generated runtime blocks external network requests")
             _ = try await web.evaluateJavaScript("document.getElementById('angle').value='75';document.getElementById('angle').dispatchEvent(new Event('input'));true")
@@ -304,6 +322,32 @@ import WebKit
             }
             try check(count > 500, "Custom snapshot contains the actual teal SVG geometry")
         } else { try check(false, "Custom snapshot has pixels") }
+        if let preview = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
+           let card = descendants(host.view).compactMap({ $0 as? ZeVisualizationCardView }).first,
+           let image = preview.renderedImage {
+            let expected = preview.bounds.width * image.size.height / image.size.width
+            try check(abs(preview.bounds.height - expected) < 2, "Custom body follows image aspect without centered vertical blank space")
+            try check(preview.frame.minY <= 76 && card.bounds.maxY - preview.frame.maxY <= 13,
+                      "Custom card has compact heading and bottom insets")
+            let naturalHeight = image.size.height / image.size.width * 360
+            try check(naturalHeight > 500 && naturalHeight < 1200, "Complete multiline document is captured beyond the height hint")
+            if let cg = image.cgImage {
+                var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+                let marker = pixels.withUnsafeMutableBytes { buffer -> Int in
+                    guard let ctx = CGContext(data: buffer.baseAddress, width: cg.width, height: cg.height,
+                        bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+                    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+                    let bytes = buffer.bindMemory(to: UInt8.self)
+                    return stride(from: 0, to: bytes.count, by: 4).filter { i in
+                        bytes[i] > 220 && bytes[i + 1] < 40 && bytes[i + 2] > 220 && bytes[i + 3] > 220
+                    }.count
+                }
+                try check(marker > 500, "Snapshot includes the final marker below all source text")
+            }
+        } else { try check(false, "Measured custom card remains mounted") }
+        let cardShot = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+        try cardShot.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-layout.png"))
         let liveImage = livePreview?.pngData()
         try liveImage?.write(to: directory.appendingPathComponent("visualization-custom-live.png"))
         let frozen = ChatShareSnapshot.copy(message)
@@ -314,6 +358,16 @@ import WebKit
         let sharedImage = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage?.pngData() }.first
         try sharedImage?.write(to: directory.appendingPathComponent("visualization-custom-share.png"))
         try check(liveImage != nil && sharedImage == liveImage, "Custom live/share previews use identical captured pixels")
+        let compactData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "compact", "title": "Compact",
+            "components": [["id": "small", "type": "custom", "height": 600, "fallbackText": "Short content",
+                            "html": "<p style='margin:0;line-height:24px'>Short content with a 600px hint</p>"]]])
+        let compact = try ZeVisualizationParser.parse(String(decoding: compactData, as: UTF8.self)).get().components[0]
+        let compactImage: UIImage? = await withCheckedContinuation { continuation in
+            ZeCustomVisualizationRenderer.shared.render(component: compact, state: nil, dark: true) { continuation.resume(returning: $0) }
+        }
+        try check(compactImage.map { $0.size.height / $0.size.width * 360 < 100 } == true,
+                  "Overestimated height hint does not create an empty 600px viewport")
+        try compactImage?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-compact.png"))
         ZeCustomVisualizationRenderer.shared.clear()
         try check(ZeCustomVisualizationRenderer.shared.cacheCount == 0, "Custom preview cache releases all derived images")
         return checks

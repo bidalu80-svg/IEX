@@ -5799,7 +5799,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                         stale = !existingView.subviews.contains(where: { $0 is UIImageView || ($0.subviews.contains(where: { $0 is UIImageView })) })
                     }
                 } else if let visualization = attachment as? ZeVisualizationAttachment {
-                    let height = ZeVisualizationCardView.height(visualization.component, width: boundingRect.width, font: visualization.fontSize) + ZeVisualizationAttachment.verticalInset * 2
+                    visualization.onLayoutChange = { [weak self] in self?.scheduleCoalescedMathRefresh() }
+                    let height = visualization.cardHeight(width: boundingRect.width) + ZeVisualizationAttachment.verticalInset * 2
                     existingView.frame.size = CGSize(width: boundingRect.width, height: height)
                 } else if let mathAttach = attachment as? MathAttachment {
                     mathAttach.onLoad = { [weak self] in
@@ -5917,6 +5918,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 }
                 codeBlockViewCache[codeBlock.blockIndex] = view
             } else if let visualization = attachment as? ZeVisualizationAttachment {
+                visualization.onLayoutChange = { [weak self] in self?.scheduleCoalescedMathRefresh() }
                 view = visualization.makeView(width: boundingRect.width)
             } else if let table = attachment as? TableAttachment {
                 // Re-wire every render: the prior closure may have captured a
