@@ -537,6 +537,7 @@ final class ZeVisualizationDetailController: UITableViewController, UISearchResu
         """
         configuration.userContentController.addUserScript(WKUserScript(source: bootstrap, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: CGFloat(component.height ?? 360)), configuration: configuration)
+        web.uiDelegate = ZeCustomVisualizationUIDelegate.shared
         web.overrideUserInterfaceStyle = dark ? .dark : .light
         web.isOpaque = false
         web.backgroundColor = .secondarySystemGroupedBackground
@@ -558,6 +559,22 @@ final class ZeVisualizationDetailController: UITableViewController, UISearchResu
     static func key(_ component: ZeVisualizationComponent, state: String?, dark: Bool) -> String {
         "\(component.hashValue):\(state ?? "{}"): \(dark)"
     }
+}
+
+/// Generated content has no permission prompts, popups or blocking JS dialogs.
+@MainActor final class ZeCustomVisualizationUIDelegate: NSObject, WKUIDelegate {
+    static let shared = ZeCustomVisualizationUIDelegate()
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) { completionHandler() }
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) { completionHandler(false) }
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) { completionHandler(nil) }
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
 }
 
 /// One preview web process at a time, at most eight queued cards, eight cached
@@ -733,6 +750,13 @@ final class ZeCustomVisualizationController: UIViewController, WKNavigationDeleg
         web.transform = CGAffineTransform(scaleX: scale, y: scale)
         web.center = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + 16 + web.bounds.height * scale / 2)
     }
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        navigationController?.isModalInPresentation = true
+        navigationController?.presentationController?.delegate = self
+    }
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool { false }
+    func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) { done() }
     private func showFallback() {
         let label = UILabel(frame: view.bounds.insetBy(dx: 24, dy: 100)); label.numberOfLines = 0
         label.text = component.fallbackText; label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; view.addSubview(label)

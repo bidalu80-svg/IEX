@@ -5743,12 +5743,6 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             guard let attachment = value as? NSTextAttachment else { return }
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: self.textContainer)
-            if attachment is ZeVisualizationAttachment {
-                // Glyph coordinates are relative to the text container, whereas
-                // the attached view is positioned in UITextView coordinates.
-                boundingRect.origin.x += textContainerInset.left
-                boundingRect.origin.y += textContainerInset.top
-            }
             let existingView = previousViewMap[ObjectIdentifier(attachment)]
             // TextKit may return zero-width rects when layout is invalidated but
             // not yet recalculated (e.g. during refreshAttachmentViews after an
@@ -5996,6 +5990,10 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 if retry.origin != .zero {
                     boundingRect = retry
                 }
+            }
+            if attachment is ZeVisualizationAttachment {
+                boundingRect.origin.x += textContainerInset.left
+                boundingRect.origin.y += textContainerInset.top
             }
             view.frame.origin = boundingRect.origin
             if view.superview !== self {
@@ -6293,6 +6291,10 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             // Only reposition if boundingRect has a valid origin (non-zero rect).
             // A zero rect means layout hasn't been computed yet — keep current position.
             if boundingRect.origin != .zero || view.frame.origin == .zero {
+                if attachment is ZeVisualizationAttachment {
+                    boundingRect.origin.x += textContainerInset.left
+                    boundingRect.origin.y += textContainerInset.top
+                }
                 if view.frame.origin != boundingRect.origin {
                     view.frame.origin = boundingRect.origin
                 }

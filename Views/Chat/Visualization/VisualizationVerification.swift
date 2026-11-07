@@ -23,7 +23,13 @@ import WebKit
     static func run(window: UIWindow, directory: URL) async throws {
         var checks: [String] = []
         func check(_ condition: Bool, _ message: String) throws {
-            guard condition else { throw NSError(domain: "VisualizationVerification", code: checks.count, userInfo: [NSLocalizedDescriptionKey: message]) }
+            guard condition else {
+                let shot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                try? shot.pngData()?.write(to: directory.appendingPathComponent("visualization-failure.png"))
+                let report: [String: Any] = ["success": false, "checks": checks, "error": message]
+                try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted]).write(to: directory.appendingPathComponent("visualization-result.json"))
+                throw NSError(domain: "VisualizationVerification", code: checks.count, userInfo: [NSLocalizedDescriptionKey: message])
+            }
             checks.append(message)
         }
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
@@ -87,7 +93,7 @@ import WebKit
                 var rect = tv.layoutManager.boundingRect(forGlyphRange: glyphs, in: tv.textContainer)
                 rect.origin.y += tv.textContainerInset.top
                 let gap = first.convert(first.bounds, to: tv).minY - rect.maxY
-                try check(gap >= 7, "Subtitle is separated from first card")
+                try check(gap >= 7, "Subtitle is separated from first card (gap=\(gap), subtitle=\(rect), card=\(first.convert(first.bounds, to: tv)))")
             }
             try check(textViews.contains { ChatSearchComposite.build($0.textStorage).text.contains("VISUAL_LAST") }, "Search projection includes data outside inline preview")
             try check(!textViews.contains { ChatSearchComposite.build($0.textStorage).text.contains("schemaVersion") }, "Search does not expose protocol JSON")
@@ -160,8 +166,11 @@ import WebKit
             try check(sharedCards.count == cards.count, "Share contains exactly the live cards")
             for card in sharedCards {
                 let shared = pixels(card)
-                try check(shared != nil && shared == livePixels[card.component.id]!, "Live/share pixels match for \(card.component.id) in \(dark ? "dark" : "light")")
                 try shared?.write(to: directory.appendingPathComponent("visualization-share-\(card.component.id)-\(dark ? "dark" : "light").png"))
+                if let entry = livePixels[card.component.id], let data = entry {
+                    try data.write(to: directory.appendingPathComponent("visualization-live-\(card.component.id)-\(dark ? "dark" : "light").png"))
+                }
+                try check(shared != nil && shared == livePixels[card.component.id]!, "Live/share pixels match for \(card.component.id) in \(dark ? "dark" : "light")")
             }
             let sharedText = descendants(shareHost.view).compactMap { $0 as? SelectableMarkdownTextView }.map { $0.textStorage.string }.joined()
             try check(!sharedText.contains("VISUAL_LAST") && !sharedText.contains("VISUAL_DETAIL"), "Share does not append invisible detail data")

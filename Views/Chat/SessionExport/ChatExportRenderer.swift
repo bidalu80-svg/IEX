@@ -562,8 +562,14 @@ final class ChatExportRenderer {
         // Wait for actual asynchronous attachments and two stable layout passes.
         // Missing images produce an explicit retryable error rather than a blank export.
         var stable = 0
+        // Custom previews use one bounded serial renderer. Give each queued
+        // component its own four-second deadline before declaring export ready.
+        func customCount(_ view: UIView) -> Int {
+            (view is ZeCustomVisualizationPreview ? 1 : 0) + view.subviews.reduce(0) { $0 + customCount($1) }
+        }
+        let attachmentPasses = 100 + min(8, customCount(host.view)) * 80
         do {
-            for pass in 0..<100 {
+            for pass in 0..<attachmentPasses {
                 try Task.checkCancellation()
                 try await Task.sleep(nanoseconds: 50_000_000)
                 let pending = prepareAttachments(in: host.view)
@@ -574,7 +580,7 @@ final class ChatExportRenderer {
                 host.view.setNeedsLayout()
                 host.view.layoutIfNeeded()
                 if stable >= 2 { break }
-                if pass == 99, pending > 0 { throw ChatExportError.attachmentNotReady }
+                if pass == attachmentPasses - 1, pending > 0 { throw ChatExportError.attachmentNotReady }
             }
         } catch {
             host.view.removeFromSuperview()

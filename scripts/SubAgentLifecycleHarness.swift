@@ -282,14 +282,14 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         await tick()
         check(progressParent.receivedResults.isEmpty, "frequent progress does not report before fifteen seconds")
         testNow = testNow.addingTimeInterval(1)
-        await tick()
+        await waitFor { progressParent.receivedResults.count >= 1 }
         check(progressParent.receivedResults.count == 1, "frequent progress reports first activity after fifteen seconds")
         testNow = testNow.addingTimeInterval(15)
         await tick()
         check(progressParent.receivedResults.count == 1, "unchanged frequent progress is suppressed")
         frequentChild.agentHistory.append(AgentMessage(role: .assistant, parts: [.text("new turn")]))
         testNow = testNow.addingTimeInterval(15)
-        await tick()
+        await waitFor { progressParent.receivedResults.count >= 2 }
         check(progressParent.receivedResults.count == 2, "changed turn produces next frequent report")
         coordinator.cancel(id: frequent.id)
         let moderate = coordinator.spawn(from: progressParent, message: "moderate updates", progressReport: "moderate")
@@ -297,10 +297,10 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         await tick()
         check(progressParent.receivedResults.count == 2, "moderate progress waits sixty seconds")
         testNow = testNow.addingTimeInterval(1)
-        await tick()
+        await waitFor { progressParent.receivedResults.count >= 3 }
         check(progressParent.receivedResults.count == 3, "moderate progress reports at sixty seconds")
         testNow = testNow.addingTimeInterval(60)
-        await tick()
+        await waitFor { progressParent.receivedResults.count >= 4 }
         check(progressParent.receivedResults.count == 4, "moderate progress repeats unchanged state at next interval")
         coordinator.parentDidCancel(progressParent)
         testNow = testNow.addingTimeInterval(60)
