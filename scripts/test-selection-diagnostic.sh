@@ -57,10 +57,11 @@ python3 scripts/selection-diagnostic-driver.py --work "$diagnostic_root/driver" 
   --app "$diagnostic_app" --device "$diagnostic_device" --evidence "$diagnostic_evidence"
 collect_diagnostics
 python3 - "$diagnostic_evidence" <<'PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 folder = pathlib.Path(sys.argv[1])
-names = ['native-long', 'native-double', 'combined-long', 'combined-double',
-         'attachment-long', 'attachment-double', 'production-long', 'production-double']
+names = ['native-long', 'native-double', 'attachment-long', 'attachment-double',
+         'nativechild-long', 'nativechild-double', 'scroll-nativechild-long', 'scroll-nativechild-double']
+names = os.environ.get('ZE_SELECTION_CASES', '').split(',') if os.environ.get('ZE_SELECTION_CASES') else names
 results = {name: json.loads((folder / f'selection-diagnostic-{name}.json').read_text()) for name in names}
 (folder / 'comparison.json').write_text(json.dumps(results, ensure_ascii=False, indent=2))
 print(json.dumps({name: {key: result.get(key) for key in

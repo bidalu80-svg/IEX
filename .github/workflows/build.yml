@@ -11,6 +11,10 @@ on:
         description: 'Run isolated text-selection diagnostics without building an IPA'
         type: boolean
         default: false
+      selection_cases:
+        description: 'Comma-separated cases for isolated selection diagnosis'
+        type: string
+        default: ''
       application_only:
         description: 'Run complete application verification with diagnostic simulator artifacts'
         type: boolean
@@ -1071,6 +1075,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compile production visualization components and drive real selection gestures
+        env:
+          ZE_SELECTION_CASES: ${{ inputs.selection_cases }}
         run: bash scripts/test-selection-diagnostic.sh
       - name: Upload selection diagnostic evidence
         if: always()

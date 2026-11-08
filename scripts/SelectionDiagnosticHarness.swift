@@ -118,6 +118,19 @@ import SwiftUI
     func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
+@MainActor final class SelectionDiagnosticNoMenuDelegate: NSObject, UITextViewDelegate {
+    private(set) var calls = 0
+    @available(iOS 17.0, *)
+    func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem,
+                  defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
+        calls += 1
+        if case .textAttachment(let attachment) = textItem.content,
+           let visualization = attachment as? ZeVisualizationAttachment,
+           visualization.component.type == .custom { return nil }
+        return UITextItem.MenuConfiguration(preview: nil, menu: defaultMenu)
+    }
+}
+
 @MainActor final class SelectionDiagnosticController: UIViewController {
     private let caseName: String
     private var preview: ZeCustomVisualizationPreview?
@@ -127,6 +140,8 @@ import SwiftUI
     private var samples: [[String: Any]] = []
     private var started = false
     private let startedAt = ProcessInfo.processInfo.systemUptime
+    private let noMenuDelegate = SelectionDiagnosticNoMenuDelegate()
+    private var attachmentGeometry: [String: Any] = [:]
 
     init(caseName: String) { self.caseName = caseName; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { return nil }
@@ -156,8 +171,11 @@ import SwiftUI
         }
 
         let parent: UIView
-        let realAttachment = caseName.hasPrefix("attachment-") || caseName.hasPrefix("production-")
-        let combinedAttachment = caseName.hasPrefix("production-")
+        let nativeChild = caseName.hasPrefix("nativechild-") || caseName.hasPrefix("scroll-nativechild-")
+        let noImage = caseName.hasPrefix("noimage-")
+        let returnNilMenu = caseName.hasPrefix("delegate-returnnil-")
+        let realAttachment = caseName.hasPrefix("attachment-") || caseName.hasPrefix("production-") || nativeChild || noImage || returnNilMenu
+        let combinedAttachment = caseName.hasPrefix("production-") || caseName.hasPrefix("scroll-nativechild-")
         let tracked = caseName.hasPrefix("tracked-") || caseName.hasPrefix("combined-") || combinedAttachment
         let swiftUIScroll = caseName.hasPrefix("swiftui-") || caseName.hasPrefix("combined-") || combinedAttachment
         let dragDisabled = caseName.hasPrefix("nodrag-") || caseName.hasPrefix("combined-") || combinedAttachment
@@ -173,6 +191,7 @@ import SwiftUI
             text.textContainerInset = .zero
             text.textContainer.lineFragmentPadding = 0
             if dragDisabled { text.textDragInteraction?.isEnabled = false }
+            if returnNilMenu { text.delegate = noMenuDelegate }
             if !realAttachment {
                 let attachment = NSTextAttachment()
                 attachment.bounds = CGRect(x: 0, y: 0, width: 360, height: 180)
@@ -199,6 +218,7 @@ import SwiftUI
                 // Actual shipping attachment: transparent image placeholder,
                 // real attachment container, card, and custom preview subtree.
                 let attachment = ZeVisualizationAttachment(component: component, fontSize: 16.5)
+                if noImage { attachment.image = nil }
                 text.attributedText = NSAttributedString(attachment: attachment)
                 let attachmentView = attachment.makeView(width: 360)
                 attachmentView.frame.origin = .zero
@@ -213,12 +233,32 @@ import SwiftUI
                 attachmentView.setNeedsLayout()
                 attachmentView.layoutIfNeeded()
                 text.frame.size.height = attachmentView.bounds.height + 8
+                attachmentGeometry = ["hasPlaceholderImage": attachment.image != nil,
+                    "attachmentBounds": NSCoder.string(for: attachment.attachmentBounds(for: text.textContainer,
+                        proposedLineFragment: CGRect(x: 0, y: 0, width: 360, height: 300),
+                        glyphPosition: .zero, characterIndex: 0)),
+                    "attachmentView": NSCoder.string(for: attachmentView.frame),
+                    "preview": self.preview.map { NSCoder.string(for: $0.frame) } ?? "missing",
+                    "hasPreviewPixels": self.preview?.renderedImage != nil]
             } else {
                 let preview = ZeCustomVisualizationPreview(component: component, interaction: state)
                 preview.frame = CGRect(x: 0, y: 0, width: 360, height: 180)
                 preview.apply(snapshot)
                 parent.addSubview(preview)
                 self.preview = preview
+            }
+            if nativeChild, let preview = self.preview {
+                // Structural comparison only: keep production image, captured
+                // geometry, attachment placeholder, card and parent policies.
+                // UIKit's native child text view receives the actual gesture.
+                for gesture in preview.gestureRecognizers ?? [] { gesture.isEnabled = false }
+                let selection = ZeCustomVisualizationSelectionTextView(layout: snapshot.textLayout)
+                selection.frame = preview.imageDisplayRect
+                selection.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                selection.accessibilityIdentifier = "ze.selection.nativechild"
+                preview.isAccessibilityElement = false
+                preview.addSubview(selection)
+                native = selection
             }
             if swiftUIScroll {
                 let host = UIHostingController(rootView: ScrollView {
@@ -309,7 +349,7 @@ import SwiftUI
     }
 
     private func sample(_ label: String) {
-        let selected = (preview?.activeSelectionView as UITextView?) ?? native
+        let selected = native ?? (preview?.activeSelectionView as UITextView?)
         samples.append(["label": label, "time": ProcessInfo.processInfo.systemUptime - startedAt,
             "gestures": observed.map(describe), "hasSelectionView": preview?.activeSelectionView != nil,
             "firstResponder": selected?.isFirstResponder ?? false,
@@ -319,7 +359,7 @@ import SwiftUI
     private func finish() {
         observeGestureChain()
         sample("final")
-        let selected = (preview?.activeSelectionView as UITextView?) ?? native
+        let selected = native ?? (preview?.activeSelectionView as UITextView?)
         let range = selected?.selectedRange ?? NSRange(location: 0, length: 0)
         let text = (selected?.text ?? "") as NSString
         let selectedText = range.location <= text.length && range.length <= text.length - range.location
@@ -332,6 +372,7 @@ import SwiftUI
             "selectedText": selectedText, "selectedRange": "\(range)",
             "gestureEvents": preview?.verificationGestureEvents ?? [],
             "targetActions": events, "samples": samples,
+            "attachmentGeometry": attachmentGeometry, "menuDelegateCalls": noMenuDelegate.calls,
             "targetFrame": target.map { NSCoder.string(for: $0.frame) } ?? "missing",
             "hitView": point.map { String(describing: view.window?.hitTest($0, with: nil)) } ?? "missing",
             "systemVersion": UIDevice.current.systemVersion]

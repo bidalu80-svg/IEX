@@ -9,6 +9,7 @@ from pathlib import Path
 import argparse
 import importlib.util
 import json
+import os
 import plistlib
 
 
@@ -18,13 +19,16 @@ final class SelectionDiagnosticDriver: XCTestCase {
     @MainActor
     func testRealGesturesInEachContainer() throws {
         continueAfterFailure = false
-        let cases = ["native-long", "native-double", "combined-long", "combined-double",
-                     "attachment-long", "attachment-double", "production-long", "production-double"]
+        let cases = ["native-long", "native-double", "attachment-long", "attachment-double",
+                     "nativechild-long", "nativechild-double", "scroll-nativechild-long", "scroll-nativechild-double"]
+        let configuredCases = ProcessInfo.processInfo.environment["ZE_SELECTION_CASES"] ?? ""
+        let requested = configuredCases.isEmpty ? cases : configuredCases.split(separator: ",").map(String.init)
         let app = XCUIApplication(bundleIdentifier: "com.ze.selection-diagnostic")
-        for name in cases {
+        for name in requested {
             app.launchArguments = ["--case", name]
             app.launch()
-            let identifier = name.hasPrefix("native-") ? "ze.selection.native" : "ze.visualization.custom.preview"
+            let identifier = name.contains("nativechild-") ? "ze.selection.nativechild"
+                : name.hasPrefix("native-") ? "ze.selection.native" : "ze.visualization.custom.preview"
             let target = app.descendants(matching: .any)[identifier].firstMatch
             XCTAssertTrue(target.waitForExistence(timeout: 5), "Missing target for \(name)")
             let point = target.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 28, dy: 28))
@@ -79,6 +83,7 @@ def main():
         raise RuntimeError(f'Expected one UI test target, found {len(targets)}')
     targets[0]['UITargetAppPath'] = str(args.app.resolve())
     targets[0]['UITargetAppBundleIdentifier'] = 'com.ze.selection-diagnostic'
+    targets[0].setdefault('EnvironmentVariables', {})['ZE_SELECTION_CASES'] = os.environ.get('ZE_SELECTION_CASES', '')
     # Xcode resolves __TESTROOT__ relative to this file. Keep the configured
     # descriptor beside the original products, as the full-app driver does.
     configured = descriptors[0].with_name('SelectionDiagnostic-Configured.xctestrun')
