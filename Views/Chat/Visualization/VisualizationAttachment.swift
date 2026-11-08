@@ -1322,7 +1322,7 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         }
         return true
     }
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         !selectionGestures.contains(where: { $0 === gestureRecognizer }) || activeSelectionView == nil
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
