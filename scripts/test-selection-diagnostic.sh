@@ -59,9 +59,8 @@ collect_diagnostics
 python3 - "$diagnostic_evidence" <<'PY'
 import json, pathlib, sys
 folder = pathlib.Path(sys.argv[1])
-names = ['textview-long', 'textview-double', 'native-long', 'native-double',
-         'tracked-long', 'tracked-double', 'nodrag-long', 'nodrag-double',
-         'swiftui-long', 'swiftui-double', 'combined-long', 'combined-double']
+names = ['native-long', 'native-double', 'combined-long', 'combined-double',
+         'attachment-long', 'attachment-double', 'production-long', 'production-double']
 results = {name: json.loads((folder / f'selection-diagnostic-{name}.json').read_text()) for name in names}
 (folder / 'comparison.json').write_text(json.dumps(results, ensure_ascii=False, indent=2))
 print(json.dumps({name: {key: result.get(key) for key in

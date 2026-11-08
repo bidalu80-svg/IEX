@@ -156,10 +156,12 @@ import SwiftUI
         }
 
         let parent: UIView
-        let tracked = caseName.hasPrefix("tracked-") || caseName.hasPrefix("combined-")
-        let swiftUIScroll = caseName.hasPrefix("swiftui-") || caseName.hasPrefix("combined-")
-        let dragDisabled = caseName.hasPrefix("nodrag-") || caseName.hasPrefix("combined-")
-        if caseName.hasPrefix("textview-") || caseName.hasPrefix("guarded-") || tracked || swiftUIScroll || dragDisabled {
+        let realAttachment = caseName.hasPrefix("attachment-") || caseName.hasPrefix("production-")
+        let combinedAttachment = caseName.hasPrefix("production-")
+        let tracked = caseName.hasPrefix("tracked-") || caseName.hasPrefix("combined-") || combinedAttachment
+        let swiftUIScroll = caseName.hasPrefix("swiftui-") || caseName.hasPrefix("combined-") || combinedAttachment
+        let dragDisabled = caseName.hasPrefix("nodrag-") || caseName.hasPrefix("combined-") || combinedAttachment
+        if caseName.hasPrefix("textview-") || caseName.hasPrefix("guarded-") || tracked || swiftUIScroll || dragDisabled || realAttachment {
             let text: UITextView
             if tracked { text = SelectionDiagnosticTrackedTextView(usingTextLayoutManager: false) }
             else if caseName.hasPrefix("guarded-") { text = SelectionDiagnosticGuardedTextView(usingTextLayoutManager: false) }
@@ -171,9 +173,11 @@ import SwiftUI
             text.textContainerInset = .zero
             text.textContainer.lineFragmentPadding = 0
             if dragDisabled { text.textDragInteraction?.isEnabled = false }
-            let attachment = NSTextAttachment()
-            attachment.bounds = CGRect(x: 0, y: 0, width: 360, height: 180)
-            text.attributedText = NSAttributedString(attachment: attachment)
+            if !realAttachment {
+                let attachment = NSTextAttachment()
+                attachment.bounds = CGRect(x: 0, y: 0, width: 360, height: 180)
+                text.attributedText = NSAttributedString(attachment: attachment)
+            }
             parent = text
         } else if caseName.hasPrefix("scroll-") {
             let scroll = UIScrollView()
@@ -191,14 +195,34 @@ import SwiftUI
             let snapshot = Self.makeSnapshot()
             // Seed before mounting so this test never creates a WKWebView.
             ZeCustomVisualizationRenderer.shared.store(snapshot, component: component, state: nil, dark: false)
-            let preview = ZeCustomVisualizationPreview(component: component, interaction: state)
-            preview.frame = CGRect(x: 0, y: 0, width: 360, height: 180)
-            preview.apply(snapshot)
-            parent.addSubview(preview)
-            self.preview = preview
+            if realAttachment, let text = parent as? UITextView {
+                // Actual shipping attachment: transparent image placeholder,
+                // real attachment container, card, and custom preview subtree.
+                let attachment = ZeVisualizationAttachment(component: component, fontSize: 16.5)
+                text.attributedText = NSAttributedString(attachment: attachment)
+                let attachmentView = attachment.makeView(width: 360)
+                attachmentView.frame.origin = .zero
+                text.addSubview(attachmentView)
+                attachmentView.setNeedsLayout()
+                attachmentView.layoutIfNeeded()
+                func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+                self.preview = descendants(attachmentView).compactMap { $0 as? ZeCustomVisualizationPreview }.first
+                self.preview?.apply(snapshot)
+                let height = attachment.cardHeight(width: 360) + ZeVisualizationAttachment.verticalInset * 2
+                attachmentView.frame.size.height = height
+                attachmentView.setNeedsLayout()
+                attachmentView.layoutIfNeeded()
+                text.frame.size.height = attachmentView.bounds.height + 8
+            } else {
+                let preview = ZeCustomVisualizationPreview(component: component, interaction: state)
+                preview.frame = CGRect(x: 0, y: 0, width: 360, height: 180)
+                preview.apply(snapshot)
+                parent.addSubview(preview)
+                self.preview = preview
+            }
             if swiftUIScroll {
                 let host = UIHostingController(rootView: ScrollView {
-                    SelectionDiagnosticContainer(content: parent).frame(width: 360, height: 220)
+                    SelectionDiagnosticContainer(content: parent).frame(width: 360, height: realAttachment ? parent.bounds.height : 220)
                     Color.clear.frame(height: 700)
                 })
                 addChild(host)

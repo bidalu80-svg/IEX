@@ -1216,26 +1216,47 @@ final class ZeCustomVisualizationSelectionTextView: UITextView {
     }
 }
 
+/// The enclosing Markdown view selects its attachment glyph through UIKit text
+/// interactions. A custom preview owns the text inside those captured pixels.
+/// Preserve scroll-pan arbitration and selection-handle gestures on descendants.
+private func customSelectionKeepsPriority(_ gesture: UIGestureRecognizer,
+                                          over other: UIGestureRecognizer) -> Bool {
+    guard !(other is UIPanGestureRecognizer), let owner = gesture.view,
+          let textView = other.view as? UITextView else { return false }
+    return owner !== textView && owner.isDescendant(of: textView)
+}
+
+final class ZeCustomVisualizationHoldGesture: UILongPressGestureRecognizer {
 #if DEBUG
-/// Observes the recognizer arbitration without changing UIKit's decisions.
-final class ZeCustomVisualizationDiagnosticHold: UILongPressGestureRecognizer {
     var record: ((String) -> Void)?
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
         let decision = super.canPrevent(preventedGestureRecognizer)
-        record?("canPrevent \(type(of: preventedGestureRecognizer)) state=\(preventedGestureRecognizer.state.rawValue) view=\(String(describing: preventedGestureRecognizer.view)) decision=\(decision)")
+        record?("canPrevent \(type(of: preventedGestureRecognizer)) id=\(ObjectIdentifier(preventedGestureRecognizer)) name=\(preventedGestureRecognizer.name ?? "") state=\(preventedGestureRecognizer.state.rawValue) view=\(String(describing: preventedGestureRecognizer.view)) decision=\(decision)")
         return decision
     }
+#endif
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
-        let decision = super.canBePrevented(by: preventingGestureRecognizer)
-        record?("canBePreventedBy \(type(of: preventingGestureRecognizer)) state=\(preventingGestureRecognizer.state.rawValue) view=\(String(describing: preventingGestureRecognizer.view)) decision=\(decision)")
+        let decision = customSelectionKeepsPriority(self, over: preventingGestureRecognizer)
+            ? false : super.canBePrevented(by: preventingGestureRecognizer)
+#if DEBUG
+        record?("canBePreventedBy \(type(of: preventingGestureRecognizer)) id=\(ObjectIdentifier(preventingGestureRecognizer)) name=\(preventingGestureRecognizer.name ?? "") state=\(preventingGestureRecognizer.state.rawValue) view=\(String(describing: preventingGestureRecognizer.view)) decision=\(decision)")
+#endif
         return decision
     }
+#if DEBUG
     override func reset() {
         record?("reset state=\(state.rawValue)")
         super.reset()
     }
-}
 #endif
+}
+
+final class ZeCustomVisualizationDoubleTapGesture: UITapGestureRecognizer {
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        customSelectionKeepsPriority(self, over: preventingGestureRecognizer)
+            ? false : super.canBePrevented(by: preventingGestureRecognizer)
+    }
+}
 
 final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
 #if DEBUG
@@ -1266,14 +1287,12 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         summary.text = component.fallbackText; summary.numberOfLines = 0; summary.font = .systemFont(ofSize: 14); summary.textColor = .secondaryLabel
         addSubview(picture); addSubview(summary)
         accessibilityLabel = component.fallbackText
+        let press = ZeCustomVisualizationHoldGesture(target: self, action: #selector(selectByPress(_:)))
 #if DEBUG
-        let press = ZeCustomVisualizationDiagnosticHold(target: self, action: #selector(selectByPress(_:)))
         press.record = { [weak self] in self?.recordGesture($0) }
-#else
-        let press = UILongPressGestureRecognizer(target: self, action: #selector(selectByPress(_:)))
 #endif
         press.minimumPressDuration = 0.4; press.delegate = self; addGestureRecognizer(press)
-        let double = UITapGestureRecognizer(target: self, action: #selector(selectByTap(_:)))
+        let double = ZeCustomVisualizationDoubleTapGesture(target: self, action: #selector(selectByTap(_:)))
         double.numberOfTapsRequired = 2; double.delegate = self; addGestureRecognizer(double)
         selectionGestures = [press, double]
     }

@@ -345,6 +345,9 @@ import WebKit
         window.rootViewController = host
         try await Task.sleep(nanoseconds: 200_000_000)
         host.view.layoutIfNeeded()
+        let initialMarkdown = descendants(host.view).compactMap { $0 as? SelectableMarkdownTextView }.first
+        let initialMeasureCount = (initialMarkdown?.delegate as? SelectableMarkdownView.Coordinator)?.sizeThatFitsCallCount ?? 0
+        let initialMarkdownHeight = initialMarkdown?.bounds.height ?? 0
         let renderWaits = Int((ZeCustomVisualizationRenderer.maximumRenderSeconds + 1) / 0.1)
         for _ in 0..<renderWaits {
             if descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first?.isPending == false { break }
@@ -352,8 +355,31 @@ import WebKit
         }
         try await Task.sleep(nanoseconds: 200_000_000)
         host.view.layoutIfNeeded()
+        // The child can have the correct natural height while a stale
+        // UIViewRepresentable size still clips it. Check the actual non-scrolling
+        // Markdown host, independently of the outer scroll view's viewport.
+        for _ in 0..<10 {
+            let markdown = descendants(host.view).compactMap { $0 as? SelectableMarkdownTextView }.first
+            let customCard = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
+            if let markdown, let customCard,
+               customCard.convert(customCard.bounds, to: markdown).maxY <= markdown.bounds.maxY + 2 { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            host.view.layoutIfNeeded()
+        }
         var card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
         try check(card != nil, "Custom design is integrated in real chat Markdown")
+        var customHostContainsCard = false
+        if let markdown = descendants(host.view).compactMap({ $0 as? SelectableMarkdownTextView }).first, let card {
+            let frame = card.convert(card.bounds, to: markdown)
+            let measures = (markdown.delegate as? SelectableMarkdownView.Coordinator)?.sizeThatFitsCallCount ?? 0
+            try JSONSerialization.data(withJSONObject: [
+                "initialHeight": initialMarkdownHeight, "height": markdown.bounds.height,
+                "initialMeasureCount": initialMeasureCount, "measureCount": measures,
+                "cardInMarkdown": NSCoder.string(for: frame), "markdownBounds": NSCoder.string(for: markdown.bounds)
+            ], options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("visualization-custom-host-layout.json"))
+            customHostContainsCard = frame.minY >= markdown.bounds.minY - 2 && frame.maxY <= markdown.bounds.maxY + 2
+        } else { try check(false, "Custom content has a real Markdown host") }
         let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
         try check(!previewImages.isEmpty, "Custom HTML/SVG renders a real inline image")
         try previewImages.first?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-initial.png"))
@@ -416,6 +442,8 @@ import WebKit
             preselection["previewInWindowAfter"] = NSCoder.string(for: preview.convert(preview.bounds, to: window))
             try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
+            try check(customHostContainsCard,
+                      "Custom content grows its real Markdown host without clipping the last lines")
             try check(preview.window === window && preview.activeSelectionView?.isFirstResponder == true,
                       "Actual long press starts native text selection over custom pixels (active=\(preview.activeSelectionView != nil), mounted=\(preview.window === window), original=\(originalIdentity), current=\(ObjectIdentifier(preview)), bounds=\(preview.bounds), image=\(imageRect))")
             try check(abs(imageRect.minY) < 1 && abs(imageRect.height - initialImageHeight) < 2 && abs(preview.bounds.height - imageRect.height) < 2,

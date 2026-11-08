@@ -6530,6 +6530,17 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             coord.cachedSizeMarkdownCount = bindingLenForKey
         }
 
+        // Ordinary SwiftUI hosts have no collection cell to invalidate. An
+        // async attachment can grow without changing the Markdown binding;
+        // publish its new intrinsic size after the fresh cache is committed.
+        // The fingerprint above bounds this to actual measured height changes.
+        if cvOpt == nil {
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+            superview?.setNeedsLayout()
+            return
+        }
+
         // First measurement (previousHeight == 0): normally the layout queries
         // the cell naturally during the initial pass and no invalidation is
         // needed. BUT if the host cell has ALREADY committed a conflicting
