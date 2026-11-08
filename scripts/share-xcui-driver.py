@@ -45,38 +45,51 @@ final class ShareDriver: XCTestCase {
     private func dismissSystemShareSheet(_ app: XCUIApplication) throws -> String {
         let dismissNames = NSPredicate(format: "label IN %@ OR identifier IN %@",
             ["Close", "关闭", "Cancel", "取消"], ["Close", "关闭", "Cancel", "取消"])
-        let sheets = app.sheets.allElementsBoundByIndex
-        let activity = app.otherElements["ActivityListView"].firstMatch
-        let scopes = activity.exists ? [activity] + sheets : sheets
-        for scope in scopes where scope.exists {
-            let candidates = scope.buttons.matching(dismissNames).allElementsBoundByIndex.filter { $0.isHittable }
-            if candidates.count == 1 {
-                candidates[0].tap()
-                return "system-sheet-dismiss-button"
+        // The activity controller can be presented before its remote system
+        // content publishes accessible controls. Re-query only; never repeat a
+        // tap or drag, and preserve the same unambiguous-target safety rules.
+        let deadline = Date().addingTimeInterval(12)
+        var loggedWaiting = false
+        repeat {
+            let sheets = app.sheets.allElementsBoundByIndex
+            let activity = app.otherElements["ActivityListView"].firstMatch
+            let scopes = activity.exists ? [activity] + sheets : sheets
+            for scope in scopes where scope.exists {
+                let candidates = scope.buttons.matching(dismissNames).allElementsBoundByIndex.filter { $0.isHittable }
+                if candidates.count == 1 {
+                    candidates[0].tap()
+                    return "system-sheet-dismiss-button"
+                }
             }
-        }
-        // Some OS versions expose the activity view without a Sheet ancestor.
-        // Only Close is safe globally: Cancel also belongs to the underlying preview.
-        let close = NSPredicate(format: "label IN %@ OR identifier IN %@", ["Close", "关闭"], ["Close", "关闭"])
-        let closeButtons = app.buttons.matching(close).allElementsBoundByIndex.filter { $0.isHittable }
-        let export = app.buttons["chatShare.export"].firstMatch
-        if closeButtons.count == 1 && (!export.exists || !export.isHittable) {
-            closeButtons[0].tap()
-            return "unique-system-close-button"
-        }
-        // Bounds must come from an actual XCUI sheet, never the application's
-        // full-screen presentation wrapper. Refuse a status-bar-origin drag.
-        let screen = app.frame.size
-        for sheet in sheets where sheet.exists {
-            let frame = sheet.frame
-            guard frame.width > screen.width * 0.5, frame.height > 150,
-                  frame.minY > 44, frame.minY < screen.height - 180,
-                  frame.maxY <= screen.height + 2 else { continue }
-            let start = sheet.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.width / 2, dy: 12))
-            let end = start.withOffset(CGVector(dx: 0, dy: screen.height - frame.minY - 30))
-            start.press(forDuration: 0.1, thenDragTo: end)
-            return "xcui-sheet-bounds-drag"
-        }
+            // Some OS versions expose the activity view without a Sheet ancestor.
+            // Only Close is safe globally: Cancel also belongs to the underlying preview.
+            let close = NSPredicate(format: "label IN %@ OR identifier IN %@", ["Close", "关闭"], ["Close", "关闭"])
+            let closeButtons = app.buttons.matching(close).allElementsBoundByIndex.filter { $0.isHittable }
+            let export = app.buttons["chatShare.export"].firstMatch
+            if closeButtons.count == 1 && (!export.exists || !export.isHittable) {
+                closeButtons[0].tap()
+                return "unique-system-close-button"
+            }
+            // Bounds must come from an actual XCUI sheet, never the application's
+            // full-screen presentation wrapper. Refuse a status-bar-origin drag.
+            let screen = app.frame.size
+            for sheet in sheets where sheet.exists {
+                let frame = sheet.frame
+                guard frame.width > screen.width * 0.5, frame.height > 150,
+                      frame.minY > 44, frame.minY < screen.height - 180,
+                      frame.maxY <= screen.height + 2 else { continue }
+                let start = sheet.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.width / 2, dy: 12))
+                let end = start.withOffset(CGVector(dx: 0, dy: screen.height - frame.minY - 30))
+                start.press(forDuration: 0.1, thenDragTo: end)
+                return "xcui-sheet-bounds-drag"
+            }
+            if Date() >= deadline { break }
+            if !loggedWaiting {
+                print("Waiting for system-share accessibility controls (up to 12 seconds)")
+                loggedWaiting = true
+            }
+            Thread.sleep(forTimeInterval: min(0.2, max(0, deadline.timeIntervalSinceNow)))
+        } while Date() < deadline
         throw NSError(domain: "ShareDriver", code: 6, userInfo: [NSLocalizedDescriptionKey:
             "No unambiguous system-share Close/Cancel control or actual sheet bounds; AX tree and screen recorded, no blind gesture used"])
     }
