@@ -1305,6 +1305,9 @@ struct PastableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: PastableUITextView, context: Context) {
+        // SwiftUI can reuse the UIKit composer when the visible session changes.
+        // Delegate edits must reach the current session's bindings and callbacks.
+        context.coordinator.parent = self
         if tv.text != text, tv.markedTextRange == nil || text.isEmpty {
             // [T-ios-composer-residual-text-33549] Clearing the composer
             // post-send is the race-prone path: an in-flight IME
