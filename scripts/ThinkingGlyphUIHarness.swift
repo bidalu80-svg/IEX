@@ -32,7 +32,6 @@ private struct ThinkingGlyphSamples: View {
         .foregroundColor(dark ? .white : .black)
         .background(dark ? Color.black : Color.white)
         .environment(\.colorScheme, dark ? .dark : .light)
-        .environment(\.accessibilityReduceMotion, false)
     }
 }
 
