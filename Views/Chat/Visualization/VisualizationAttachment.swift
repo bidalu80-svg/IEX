@@ -1216,6 +1216,27 @@ final class ZeCustomVisualizationSelectionTextView: UITextView {
     }
 }
 
+#if DEBUG
+/// Observes the recognizer arbitration without changing UIKit's decisions.
+final class ZeCustomVisualizationDiagnosticHold: UILongPressGestureRecognizer {
+    var record: ((String) -> Void)?
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        let decision = super.canPrevent(preventedGestureRecognizer)
+        record?("canPrevent \(type(of: preventedGestureRecognizer)) state=\(preventedGestureRecognizer.state.rawValue) view=\(String(describing: preventedGestureRecognizer.view)) decision=\(decision)")
+        return decision
+    }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        let decision = super.canBePrevented(by: preventingGestureRecognizer)
+        record?("canBePreventedBy \(type(of: preventingGestureRecognizer)) state=\(preventingGestureRecognizer.state.rawValue) view=\(String(describing: preventingGestureRecognizer.view)) decision=\(decision)")
+        return decision
+    }
+    override func reset() {
+        record?("reset state=\(state.rawValue)")
+        super.reset()
+    }
+}
+#endif
+
 final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
 #if DEBUG
     private(set) var verificationGestureEvents: [String] = []
@@ -1245,7 +1266,12 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         summary.text = component.fallbackText; summary.numberOfLines = 0; summary.font = .systemFont(ofSize: 14); summary.textColor = .secondaryLabel
         addSubview(picture); addSubview(summary)
         accessibilityLabel = component.fallbackText
+#if DEBUG
+        let press = ZeCustomVisualizationDiagnosticHold(target: self, action: #selector(selectByPress(_:)))
+        press.record = { [weak self] in self?.recordGesture($0) }
+#else
         let press = UILongPressGestureRecognizer(target: self, action: #selector(selectByPress(_:)))
+#endif
         press.minimumPressDuration = 0.4; press.delegate = self; addGestureRecognizer(press)
         let double = UITapGestureRecognizer(target: self, action: #selector(selectByTap(_:)))
         double.numberOfTapsRequired = 2; double.delegate = self; addGestureRecognizer(double)

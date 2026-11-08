@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "**" ]
   workflow_dispatch:
+    inputs:
+      selection_only:
+        description: 'Run isolated text-selection diagnostics without building an IPA'
+        type: boolean
+        default: false
 
 concurrency:
   # Keep only the newest build for a branch. Rapid feature pushes should not
@@ -15,6 +20,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ inputs.selection_only != true }}
     name: Build Ze.app
     runs-on: macos-15
 
@@ -1019,6 +1025,7 @@ jobs:
 
 
   conversation-application:
+    if: ${{ inputs.selection_only != true }}
     name: Verify chat lifecycle, sharing and search in application
     runs-on: macos-15
     timeout-minutes: 60
@@ -1040,4 +1047,21 @@ jobs:
             share-search-simulator-resolve.log
             share-search-simulator-app-path.txt
             bundled-rootfs-evidence/
+          retention-days: 7
+
+  selection-diagnostic:
+    if: ${{ inputs.selection_only == true }}
+    name: Diagnose visualization selection in isolated UIKit containers
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile production visualization components and drive real selection gestures
+        run: bash scripts/test-selection-diagnostic.sh
+      - name: Upload selection diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selection-diagnostic
+          path: selection-diagnostic-evidence/
           retention-days: 7
