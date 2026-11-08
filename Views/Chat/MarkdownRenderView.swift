@@ -527,7 +527,7 @@ final class MarkdownRenderView: UIView, UIGestureRecognizerDelegate {
             textStorage.attribute(.inlineCodeText, at: charIndex, effectiveRange: &effectiveRange)
             let codeText = (textStorage.string as NSString).substring(with: effectiveRange)
             UIPasteboard.general.string = codeText
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            AppFeedback.haptic()
             showCopiedFeedback(at: charIndex, range: effectiveRange)
             return
         }

@@ -25,8 +25,10 @@ struct ChatShareRequest: Identifiable {
     /// [T-share-fold-tools] The same rows with tool runs folded as the chat
     /// folds them.
     var foldedCells: [ChatShareCell]? = nil
-    /// Whether the picker opens folded (the chat's own setting), and
-    /// `initialSelection` refers to `foldedCells` then.
+    /// Frozen per-turn disclosure, including a mixture of open and closed turns.
+    var initialCells: [ChatShareCell]? = nil
+    /// Whether any captured turn starts folded. `initialSelection` always
+    /// refers to `initialCells` when supplied, preserving mixed disclosures.
     var startsFolded = false
     /// The chat's messages when the picker opened (a snapshot: a reply still streaming
     /// is shared as it was then).
@@ -57,6 +59,8 @@ private struct ChatShareRowFrameKey: PreferenceKey {
 
 struct ChatShareSelectionView: View {
     let request: ChatShareRequest
+    /// Allows the full-app runtime verifier to observe the resulting projection.
+    var onDisclosureChanged: (([ChatShareCell]) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Set<String> = []
     @State private var showOptions = false
@@ -65,11 +69,12 @@ struct ChatShareSelectionView: View {
     /// deselects, and the selection before it began (so dragging back undoes).
     @State private var drag: (start: Int, on: Bool, base: Set<String>)?
 
-    /// [T-share-fold-tools] Tool runs folded into "Ran N tools · 9s" rows, by
-    /// the chat's own rule. Starts as the chat shows them (Settings →
-    /// Appearance → Fold Consecutive Tool Calls); the toggle only affects this
-    /// share. It replaces the old hide-tools toggle, which dropped every tool row.
+    /// Starts from each turn's captured task disclosure. Global and per-turn
+    /// controls only affect this share; the live transcript stays independent.
     @State private var foldTools = false
+    @State private var usesInitialDisclosure = true
+    @State private var disclosureCells: [ChatShareCell]?
+    @State private var didInitialize = false
     /// Thinking rows left out: neither shown nor selected (so not shared).
     @AppStorage("chatShare.hideThinking") private var hideThinking = false
     /// [T-share-hide-title] The export starts at the first message, with no title
@@ -81,7 +86,9 @@ struct ChatShareSelectionView: View {
 
     /// Every row of the current fold state, hidden thinking included.
     private var allCells: [ChatShareCell] {
-        foldTools ? (request.foldedCells ?? request.cells) : request.cells
+        if let disclosureCells { return disclosureCells }
+        if usesInitialDisclosure, let initial = request.initialCells { return initial }
+        return foldTools ? (request.foldedCells ?? request.cells) : request.cells
     }
 
     /// The rows on show — everything but hidden thinking.
@@ -102,9 +109,32 @@ struct ChatShareSelectionView: View {
     /// selected folded row selects its tools, a selected tool selects its row.
     private func toggleFold() {
         let before = allCells
+        usesInitialDisclosure = false
+        disclosureCells = nil
         foldTools.toggle()
         selection = ChatShareCells.remapSelection(selection, from: before, to: allCells)
         deselectHidden()
+        onDisclosureChanged?(allCells)
+    }
+
+    private func toggleDisclosure(_ messageId: UUID) {
+        let before = allCells
+        guard let header = before.first(where: { $0.messageId == messageId && $0.kind == .taskHeader && $0.canToggleSteps }),
+              let folded = request.foldedCells else { return }
+        let source = header.stepsCollapsed ? request.cells : folded
+        let replacement = source.filter { $0.messageId == messageId }
+        var next: [ChatShareCell] = []
+        var inserted = false
+        for cell in before {
+            if cell.messageId == messageId {
+                if !inserted { next.append(contentsOf: replacement); inserted = true }
+            } else { next.append(cell) }
+        }
+        disclosureCells = next
+        foldTools = next.contains { $0.kind == .taskHeader && $0.stepsCollapsed }
+        selection = ChatShareCells.remapSelection(selection, from: before, to: next)
+        deselectHidden()
+        onDisclosureChanged?(next)
     }
 
     private var byId: [UUID: ChatMessage] {
@@ -135,10 +165,12 @@ struct ChatShareSelectionView: View {
                 .overlay(alignment: .leading) { dragStrip(proxy) }
                 .overlay(alignment: .top) { floatingActions }
                 .onAppear {
+                    guard !didInitialize else { return }
+                    didInitialize = true
                     foldTools = request.startsFolded && request.foldedCells != nil
                     selection = request.initialSelection
                     deselectHidden()
-                    if let first = request.cells.first(where: { request.initialSelection.contains($0.id) })?.id {
+                    if let first = cells.first(where: { request.initialSelection.contains($0.id) })?.id {
                         DispatchQueue.main.async { proxy.scrollTo(first, anchor: .center) }
                     }
                 }
@@ -186,8 +218,9 @@ struct ChatShareSelectionView: View {
 
     private func row(_ cell: ChatShareCell, index: Int, message: ChatMessage) -> some View {
         let isOn = selection.contains(cell.id)
-        return ChatShareCellContent(cell: cell, message: message)
-            .allowsHitTesting(false)
+        return ChatShareCellContent(cell: cell, message: message,
+                                    onToggleSteps: { toggleDisclosure(cell.messageId) })
+            .allowsHitTesting(cell.kind == .taskHeader)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Selected: a tint plus a check badge floating at the leading edge

@@ -28,13 +28,14 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
     static func request(messages: [ChatMessage], title: String, vm: AIChatViewModel,
                         messageId: UUID? = nil) -> ChatShareRequest {
         let frozen = messages.map(copy)
+        let enabled = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool)
+            ?? ConsecutiveToolCallsPolicy.defaultEnabled
         let cells = ChatExportContent.cells(for: frozen)
         let folded = ChatExportContent.cells(for: frozen, foldTools: true)
-        let startsFolded = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool)
-            ?? ConsecutiveToolCallsPolicy.defaultEnabled
-        let visible = startsFolded ? folded : cells
+        let visible = ChatExportContent.cells(for: frozen, foldTools: enabled, preserveDisclosure: true, disclosureEnabled: enabled)
+        let startsFolded = visible.contains { $0.kind == .taskHeader && $0.stepsCollapsed }
         let unit = visible.first(where: { $0.messageId == messageId })?.unitId
-        return ChatShareRequest(cells: cells, foldedCells: folded, startsFolded: startsFolded,
+        return ChatShareRequest(cells: cells, foldedCells: folded, initialCells: visible, startsFolded: startsFolded,
                                 messages: frozen, initialSelection: ChatShareCells.roundSelection(unit: unit, in: visible),
                                 title: title, vm: vm)
     }
@@ -55,7 +56,7 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
             block.isThinkingExpanded = source.isThinkingExpanded
             block.thinkingDuration = source.thinkingDuration
             block.thinkingStartTime = nil
-            block.isToolGroupExpanded = false
+            block.isToolGroupExpanded = source.isToolGroupExpanded
             return block
         }
         let result = ChatMessage(role: source.role, content: source.content, blocks: blocks,
@@ -68,8 +69,9 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
         result.taskDuration = source.taskDuration
         result.streamInterruptCount = source.streamInterruptCount
         result.isCompactedHistory = source.isCompactedHistory
+        result.isAwaitingModelResponse = source.isAwaitingModelResponse
         result.isUserTextExpanded = true
-        result.isStepsCollapsed = false
+        result.isStepsCollapsed = source.isStepsCollapsed
         return result
     }
 }
@@ -192,7 +194,7 @@ enum ChatExportContent {
                 text = m.blocks.first(where: { $0.id == cell.blockId })?.content ?? ""
             case .callback: text = m.content
             case .note: text = m.error ?? ""
-            case .toolGroup: text = ""
+            case .toolGroup, .taskHeader: text = ""
             }
             return ChatShareEstimateInput(kind: cell.kind, text: text)
         }
@@ -205,12 +207,13 @@ enum ChatExportContent {
 
     /// The picker's cells for a chat, from its messages as they are now.
     ///
-    /// [T-share-fold-tools] `foldTools`: runs of tool calls become one "Ran N
-    /// tools · 9s" row, by the chat's own rule (ToolFoldPlanner.foldedRuns),
-    /// and a reply still being written folds only as far as the chat does
-    /// (its fold horizon, from `runningMessageId` / `separators`).
+    /// Completed-turn folding matches the live list: one task-duration
+    /// disclosure followed by the final text block. Active turns retain every
+    /// step; preserving disclosure captures individually opened history turns.
     @MainActor
     static func cells(for messages: [ChatMessage], foldTools: Bool = false,
+                      preserveDisclosure: Bool = false,
+                      disclosureEnabled: Bool = true,
                       runningMessageId: UUID? = nil,
                       separators: [UUID: Set<UUID>] = [:]) -> [ChatShareCell] {
         let units = ChatShareUnits.group(messages.map(ChatShareUnitSource.init(message:)))
@@ -232,19 +235,15 @@ enum ChatExportContent {
             }
             if m.error?.isEmpty == false { errors.insert(m.id) }
         }
-        var folds: [UUID: [ChatShareFold]] = [:]
-        if foldTools {
-            for m in messages where m.role == .assistant {
-                let runs = AssistantBlockPresentationSegment.make(m.blocks, enabled: true).filter(\.isToolGroup)
-                folds[m.id] = runs.map { run in
-                    ChatShareFold(memberIds: run.blocks.map(\.id), toolCount: run.blocks.count,
-                                  failedCount: run.blocks.filter { if case .failed? = $0.toolStatus { return true }; return false }.count,
-                                  cancelledCount: run.blocks.filter { $0.toolStatus == .cancelled }.count,
-                                  duration: run.blocks.compactMap(\.toolDuration).reduce(0, +))
-                }
-            }
-        }
-        return ChatShareCells.cells(units: units, blocks: blocks, errors: errors, folds: folds)
+        let taskHeaders = Set(messages.filter { $0.role == .assistant }.map(\.id))
+        let collapsed = Set(messages.filter { message in
+            message.role == .assistant && foldTools && message.taskDuration != nil
+                && (!preserveDisclosure || message.isStepsCollapsed)
+        }.map(\.id))
+        let collapsible = Set(messages.filter { disclosureEnabled && $0.role == .assistant && $0.taskDuration != nil && $0.error == nil }.map(\.id))
+        return ChatShareCells.cells(units: units, blocks: blocks, errors: errors,
+                                    taskHeaders: taskHeaders, collapsedMessages: collapsed,
+                                    collapsibleMessages: collapsible)
     }
 
 }
@@ -266,6 +265,7 @@ struct ChatShareCellContent: View {
     let cell: ChatShareCell
     @ObservedObject var message: ChatMessage
     var tableChunks: [ChatShareTableChunk]? = nil
+    var onToggleSteps: (() -> Void)? = nil
 
     private var block: AssistantBlock? {
         cell.blockId.flatMap { id in message.blocks.first { $0.id == id } }
@@ -298,6 +298,29 @@ struct ChatShareCellContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
             }
+        case .taskHeader:
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    SoulAvatarView(size: 22)
+                    Text(SoulStore.cachedMetadata.name.isEmpty ? "Ze" : SoulStore.cachedMetadata.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(ChatColors.primaryText)
+                    if let latency = message.firstTokenLatency {
+                        FirstTokenLatencyPill(seconds: latency)
+                    }
+                }
+                if !message.isAwaitingModelResponse, message.error == nil, let duration = message.taskDuration {
+                    AssistantTaskDurationView(duration: duration,
+                        onToggle: cell.canToggleSteps ? (onToggleSteps ?? {}) : nil,
+                        isCollapsed: cell.stepsCollapsed,
+                        accessibilityIdentifier: "chatShare.taskToggle.\(message.id.uuidString)")
+                }
+            }
+            .padding(.top, 4)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(message.isCompactedHistory ? 0.5 : 1)
+            .accessibilityIdentifier("chatShare.taskHeader")
         case .toolGroup:
             // [T-share-fold-tools] The chat's own folded row, closed.
             if let fold = cell.fold {

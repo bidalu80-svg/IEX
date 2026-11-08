@@ -2,8 +2,19 @@
 set -euo pipefail
 APP="$RUNNER_TEMP/ZeFavoritesHarness.app"
 mkdir -p "$APP"
+cat > "$RUNNER_TEMP/FavoritesFeedbackBoundary.swift" <<'SWIFT'
+import Foundation
+@MainActor final class AudioSessionCoordinator {
+    static let shared = AudioSessionCoordinator()
+    enum Intent { case interfaceFeedback }
+    var canPlayInterfaceFeedback = true
+    func begin(_ intent: Intent) {}
+    func end(_ intent: Intent) {}
+}
+SWIFT
 xcrun swiftc -target "$(uname -m)-apple-ios16.0-simulator" \
   -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+  Shared/AppFeedbackPreferences.swift Shared/AppFeedback.swift "$RUNNER_TEMP/FavoritesFeedbackBoundary.swift" \
   Views/Chat/Media/MediaFavoriteControls.swift scripts/FavoritesUIHarness.swift \
   -o "$APP/ZeFavoritesHarness"
 cat > "$APP/Info.plist" <<'PLIST'

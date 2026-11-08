@@ -58,3 +58,10 @@ else:
             print(label + ": " + str(result.stdout.count("RESULT pass")) + " upstream behavioral cases")
             result.check_returncode()
     print("PASS: original sharing behavior cases on reference and production")
+    # Ze's live transcript now folds an entire completed task, independently
+    # of the historical upstream consecutive-tool grouping contract above.
+    with tempfile.TemporaryDirectory(prefix="ze-share-task-disclosure-") as tmp:
+        binary = pathlib.Path(tmp) / "disclosure-checks"
+        subprocess.run([compiler, "-parse-as-library", str(ROOT / "Views/Chat/SessionExport/ChatShareModel.swift"),
+                        str(ROOT / "scripts/ChatShareDisclosureChecks.swift"), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)

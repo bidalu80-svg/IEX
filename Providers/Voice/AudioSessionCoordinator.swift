@@ -16,7 +16,8 @@ import UIKit
 //   .capture            — mic recording (.record/.measurement)            [highest]
 //   .mediaAttachment    — Markdown audio attachment / auto_play playback
 //   .replyTTS           — read-replies (cloud VoiceOutputPlayer OR System AVSpeech)
-//   .backgroundKeepAlive— silent keep-alive track (background only)        [lowest]
+//   .backgroundKeepAlive— silent keep-alive track (background only)
+//   .interfaceFeedback  — short, optional completion/preview chime         [lowest]
 //
 // `.mediaAttachment` and `.replyTTS` are mutually exclusive at the source level
 // (the media player preempts TTS — see AIChatViewModel.stopSpeech on play), so in
@@ -28,7 +29,9 @@ final class AudioSessionCoordinator {
     private init() { registerInterruptionObserver() }
 
     enum Intent: Int {
-        // Higher rawValue = higher priority.
+        // Higher rawValue = higher priority. Short interface sounds never
+        // preempt recording, spoken replies, media or background keep-alive.
+        case interfaceFeedback = -1
         case backgroundKeepAlive = 0
         case replyTTS = 1
         case mediaAttachment = 2
@@ -40,6 +43,8 @@ final class AudioSessionCoordinator {
 
     /// True while the mic is capturing — reply TTS is suppressed in this state.
     var isCapturing: Bool { active.contains(.capture) }
+    var canPlayInterfaceFeedback: Bool { !isCapturing && !interrupted && !AVAudioSession.sharedInstance().secondaryAudioShouldBeSilencedHint }
+    private var interrupted = false
 
     // MARK: - Public API
 
@@ -49,6 +54,7 @@ final class AudioSessionCoordinator {
 
     /// Declare that `intent` now needs the audio session. Idempotent.
     func begin(_ intent: Intent) {
+        if intent == .capture { AppFeedback.stopSound() }
         // Media attachment preempts reply TTS (mutually exclusive voice content):
         // stop the cloud queue directly and notify the chat VM to stop System TTS,
         // BEFORE media takes the session. (TTS is not auto-resumed afterwards.)
@@ -85,6 +91,8 @@ final class AudioSessionCoordinator {
 
     private func profile(for intent: Intent) -> (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) {
         switch intent {
+        case .interfaceFeedback:
+            return (.ambient, .default, [.mixWithOthers])
         case .capture:
             return (.record, .measurement, [])
         case .mediaAttachment:
@@ -210,6 +218,7 @@ final class AudioSessionCoordinator {
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
+            interrupted = true
             logger.info("[AudioSession] interruption began")
             sessionActive = false   // system deactivated us
             // Previously we only flagged the session inactive; the TTS queue
@@ -217,6 +226,7 @@ final class AudioSessionCoordinator {
             // survives and can resume when the interruption ends.
             pauseTTSForExternalAudio(reason: "interruption-began")
         case .ended:
+            interrupted = false
             logger.info("[AudioSession] interruption ended → re-asserting")
             apply(reason: "interruption-ended")
             resumeTTSAfterExternalAudio(reason: "interruption-ended")

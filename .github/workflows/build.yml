@@ -68,6 +68,25 @@ jobs:
           set -euo pipefail
           python3 scripts/test-visualization.py | tee visualization-tests.log
 
+      - name: Test sound and vibration preferences and iOS 16 feedback
+        run: |
+          set -euo pipefail
+          python3 scripts/test-feedback.py | tee feedback-tests.log
+
+      - name: Verify sound and vibration settings and actual tone playback
+        timeout-minutes: 4
+        run: bash scripts/test-feedback-ui.sh
+
+      - name: Upload sound and vibration review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedback-settings-review
+          path: |
+            feedback-ui-evidence/
+            feedback-tests.log
+          retention-days: 7
+
       - name: Test question card state and answer validation
         run: |
           set -euo pipefail

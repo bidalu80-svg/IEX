@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FEE0A0010000000000000003 /* SoundHapticsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */; };
+		FEE0A0010000000000000002 /* AppFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000012 /* AppFeedback.swift */; };
+		FEE0A0010000000000000001 /* AppFeedbackPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */; };
 		CBA240139CE7A850A5FEAFBB /* VisualizationVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */; };
 		C9ED889B1715F4ADFDCF21AE /* VisualizationAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */; };
 		FCAC1E1A020E77B758DD8F32 /* VisualizationDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C4F64FA50D69B103B87366 /* VisualizationDocument.swift */; };
@@ -618,6 +621,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundHapticsSettingsView.swift; sourceTree = "<group>"; };
+		FEE0A0010000000000000012 /* AppFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeedback.swift; sourceTree = "<group>"; };
+		FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeedbackPreferences.swift; sourceTree = "<group>"; };
 		524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Visualization/VisualizationVerification.swift"; sourceTree = SOURCE_ROOT; };
 		CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Visualization/VisualizationAttachment.swift"; sourceTree = SOURCE_ROOT; };
 		E8C4F64FA50D69B103B87366 /* VisualizationDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Visualization/VisualizationDocument.swift"; sourceTree = SOURCE_ROOT; };
@@ -1794,6 +1800,8 @@
 				E5PRIV11 /* EnvVarPrivacyStore.swift */,
 				E5PRIV12 /* EnvVarRedactor.swift */,
 				E5Q000014 /* FontSettings.swift */,
+				FEE0A0010000000000000012 /* AppFeedback.swift */,
+				FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */,
 				E5J000022 /* FileHandleSafeWrite.h */,
 				E5J000021 /* FileHandleSafeWrite.m */,
 				E5J000052 /* ObjCExceptionCatcher.h */,
@@ -2274,6 +2282,7 @@
 			children = (
 				E5S000014 /* CloudSyncSettingsView.swift */,
 				E5G000013 /* EnhancedBackgroundSettingsView.swift */,
+				FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */,
 				E5P000012 /* EnvironmentVariablesView.swift */,
 				E5J000012 /* LogManagementView.swift */,
 				E5J000013 /* ConfigAuditView.swift */,
@@ -3121,6 +3130,9 @@
 				E5Q000003 /* AppLogger.swift in Sources */,
 				F1S00012 /* ChatSessionIdEnvironment.swift in Sources */,
 				E5Q000004 /* FontSettings.swift in Sources */,
+				FEE0A0010000000000000003 /* SoundHapticsSettingsView.swift in Sources */,
+				FEE0A0010000000000000002 /* AppFeedback.swift in Sources */,
+				FEE0A0010000000000000001 /* AppFeedbackPreferences.swift in Sources */,
 				E5R000001 /* ICloudBackupManager.swift in Sources */,
 				E5R000002 /* ICloudBackupView.swift in Sources */,
 				E5S000001 /* DeviceIdentity.swift in Sources */,

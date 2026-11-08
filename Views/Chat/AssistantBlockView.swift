@@ -1056,7 +1056,7 @@ private struct QuestionCardView: View {
     }
     private func setExpanded(_ expanded: Bool, haptic: Bool) {
         guard block.isQuestionCardExpanded != expanded else { return }
-        if haptic { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        if haptic { AppFeedback.haptic() }
         block.isQuestionCardExpanded = expanded
         if let card = block.questionCard {
             QuestionCardExpansionStore.setExpanded(expanded, for: card.requestId, status: card.status)
@@ -1086,12 +1086,12 @@ private struct QuestionCardView: View {
         saveDraft()
         let accepted = coordinator.submitAnswer(requestId: card.requestId, answer: answer, questionIndex: card.currentIndex)
         if accepted {
-            UISelectionFeedbackGenerator().selectionChanged()
+            AppFeedback.haptic()
             synchronizeState(requestId: card.requestId)
         } else {
             requestIsLive = coordinator.isPending(requestId: card.requestId)
             synchronizeState(requestId: card.requestId)
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            AppFeedback.haptic()
         }
         isSubmitting = false
     }
@@ -1602,15 +1602,15 @@ private struct QuestionPendingCard: View {
         // "always" rule ([T-user-ask-no-policy]), so there is nothing to contrast with.
         Button(QuestionAskLocalized("Allow")) {
             onConfirm(1)
-            haptic(heavy: q.risk == .high)
+            haptic()
         }
         .buttonStyle(QuestionAskButtonStyle(kind: .secondary, tint: tint, fontSize: t.button))
     }
 
     // MARK: Helpers
 
-    private func haptic(heavy: Bool = false) {
-        UIImpactFeedbackGenerator(style: heavy ? .medium : .light).impactOccurred()
+    private func haptic() {
+        AppFeedback.haptic()
     }
 }
 

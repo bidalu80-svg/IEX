@@ -28,7 +28,7 @@ struct MediaFavoriteActionButton<Label: View>: View {
         Button {
             state.perform(action)
             showError = state.errorMessage != nil
-            UINotificationFeedbackGenerator().notificationOccurred(state.succeeded ? .success : .error)
+            AppFeedback.haptic()
         } label: {
             label(state.succeeded)
         }

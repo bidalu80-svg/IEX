@@ -2494,8 +2494,7 @@ struct AIChatView: View {
         .contentShape(Rectangle())
         .onLongPressGesture {
             UIPasteboard.general.string = error
-            let generator = UINotificationFeedbackGenerator()
-            generator.notificationOccurred(.success)
+            AppFeedback.haptic()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -3720,7 +3719,7 @@ struct AIChatView: View {
                         // point so the cue and the release zone agree.
                         let arm = Self.kSendSwipeArmFraction
                         if newProgress >= arm && sendSwipeProgress < arm {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            AppFeedback.haptic()
                         }
                         sendSwipeProgress = newProgress
                         sendSwipeLocation = value.location

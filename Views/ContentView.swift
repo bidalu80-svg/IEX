@@ -3861,7 +3861,7 @@ private struct DraggableFAB<Label: View>: View {
                                 dragOffset = 0
                             }
                             if changed {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                AppFeedback.haptic()
                             }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                                 didDrag = false
@@ -5472,6 +5472,19 @@ private struct SettingsSheet: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 21, height: 21)
                                 .background(.indigo, in: Circle())
+                        }
+                    }
+                    NavigationLink {
+                        SoundHapticsSettingsView()
+                    } label: {
+                        Label {
+                            Text("声音与震动")
+                        } icon: {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.pink, in: Circle())
                         }
                     }
                 }

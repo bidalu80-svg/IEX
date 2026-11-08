@@ -42,6 +42,8 @@ import PDFKit
             let vm = AIChatViewModel()
             checkpoint("Verifying native visualizations")
             try await ZeVisualizationVerification.run(window: window, directory: directory)
+            checkpoint("Verifying frozen task disclosure parity")
+            try await verifyTaskDisclosure(window: window, vm: vm)
             checkpoint("Creating production fixture")
             let messages = try fixture()
             let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)
@@ -266,7 +268,7 @@ import PDFKit
     /// An acknowledgement only means the real tap/gesture was sent; controller
     /// visibility above remains the success oracle. Stale acknowledgements cannot
     /// complete a different action.
-    private static func requestUIAction(_ action: String, details: [String: Any]) async throws {
+    static func requestUIAction(_ action: String, details: [String: Any]) async throws {
         let sequence = UUID().uuidString
         var request = details
         request["sequence"] = sequence
@@ -316,6 +318,104 @@ import PDFKit
     private static func verificationError(_ label: String) -> NSError {
         NSError(domain: "ConversationShareVerification", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: label])
+    }
+
+    private static func verifyTaskDisclosure(window: UIWindow, vm: AIChatViewModel) async throws {
+        let key = ConsecutiveToolCallsPolicy.preferenceKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let original { UserDefaults.standard.set(original, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        UserDefaults.standard.set(true, forKey: key)
+        func reply(_ final: String, duration: TimeInterval?, collapsed: Bool) -> ChatMessage {
+            let thought = AssistantBlock(kind: .thinking, content: "检查来源和正文。")
+            thought.thinkingDuration = 9
+            let first = AssistantBlock(kind: .fileReadTool(path: "/tmp/source.json"), content: "来源数据", toolStatus: .success)
+            first.toolSummary = "读取来源"; first.toolDuration = 0.8
+            let second = AssistantBlock(kind: .shellTool(command: "validate"), content: "验证通过", toolStatus: .success)
+            second.toolSummary = "核对数据"; second.toolDuration = 1.3
+            let message = ChatMessage(role: .assistant, content: "", blocks: [
+                AssistantBlock(kind: .text, content: "先查询并核对来源。"), first, thought, second,
+                AssistantBlock(kind: .text, content: final)])
+            message.taskDuration = duration; message.firstTokenLatency = 14.8
+            message.isStepsCollapsed = collapsed
+            return message
+        }
+        let closed = reply("CLOSED_FINAL 这是已收起过程后的完整正文。", duration: 74, collapsed: true)
+        let opened = reply("OPEN_FINAL 这是手动展开过程的正文。", duration: 20, collapsed: false)
+        let running = reply("RUNNING_FINAL 正在回复的正文。", duration: nil, collapsed: true)
+        let prompt = ChatMessage(role: .user, content: "请核对工具折叠。")
+        let request = ChatShareSnapshot.request(messages: [prompt, closed, opened, running],
+                                                title: "任务折叠验证", vm: vm, messageId: closed.id)
+        guard let initial = request.initialCells, let folded = request.foldedCells else { throw ChatExportError.nothingToExport }
+        let closedCells = initial.filter { $0.messageId == closed.id }
+        let openedCells = initial.filter { $0.messageId == opened.id }
+        let runningCells = initial.filter { $0.messageId == running.id }
+        try require(closedCells.map(\.kind) == [.taskHeader, .text], "Share opens a collapsed finished turn as task header and final text only")
+        try require(closedCells.last?.blockId == closed.blocks.last?.id, "Share preserves the exact visible final block identity")
+        try require(!initial.contains { $0.kind == .toolGroup }, "Share contains no obsolete tool-count disclosure cards")
+        try require(openedCells.contains { $0.kind == .tool } && openedCells.contains { $0.kind == .thinking },
+                    "Share preserves an individually expanded history turn")
+        try require(runningCells.contains { $0.kind == .tool } && !runningCells.contains { $0.stepsCollapsed },
+                    "An active turn stays expanded even when its stored flag is collapsed")
+        let liveVM = AIChatViewModel()
+        liveVM.messages = [prompt, closed]
+        window.overrideUserInterfaceStyle = .light
+        let liveHost = UIHostingController(rootView: CollectionViewMessageListV3(vm: liveVM, inputFocused: false,
+            maxContentWidth: 0, floatingBarHeight: 0, inputBarHeight: 0).environmentObject(liveVM))
+        window.rootViewController = liveHost
+        try await Task.sleep(nanoseconds: 650_000_000)
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let liveText = descendants(liveHost.view).compactMap { ($0 as? SelectableMarkdownTextView)?.attributedText?.string }.joined(separator: "\n")
+        try require(liveText.contains("CLOSED_FINAL") && !liveText.contains("先查询"),
+                    "Actual collection transcript displays the same final-only collapsed turn")
+        try capture(window, name: "live-task-disclosure-light.png")
+        let snapshot = request.messages.first { $0.id == closed.id }!
+        closed.isStepsCollapsed = false
+        try require(snapshot.isStepsCollapsed, "Live disclosure changes do not mutate the share snapshot")
+        let selected = request.initialSelection
+        let unfoldedSelection = ChatShareCells.remapSelection(selected, from: initial, to: request.cells)
+        let closedExpanded = request.cells.filter { $0.messageId == closed.id }
+        try require(closedExpanded.allSatisfy { unfoldedSelection.contains($0.id) },
+                    "Expanding a selected task restores all underlying tool and thinking selections")
+        let roundTrip = ChatShareCells.remapSelection(unfoldedSelection, from: request.cells, to: initial)
+        try require(roundTrip == selected, "Mixed per-turn disclosure preserves selection through an expand round trip")
+        window.overrideUserInterfaceStyle = .light
+        var disclosed: [ChatShareCell]?
+        window.rootViewController = UIHostingController(rootView: ChatShareSelectionView(request: request,
+            onDisclosureChanged: { disclosed = $0 }).environment(\.colorScheme, .light))
+        try await Task.sleep(nanoseconds: 350_000_000)
+        try capture(window, name: "picker-task-disclosure-light.png")
+        try await requestUIAction("open", details: ["identifier": "chatShare.taskToggle.\(closed.id.uuidString)"])
+        try await waitUntil("Task-duration tap expands the selected task's real share rows") {
+            disclosed?.contains { $0.messageId == closed.id && $0.kind == .tool } == true
+        }
+        try require(snapshot.isStepsCollapsed, "Share disclosure tap leaves the frozen source model unchanged")
+        try capture(window, name: "picker-task-expanded-light.png")
+        try await requestUIAction("open", details: ["identifier": "chatShare.taskToggle.\(closed.id.uuidString)"])
+        try await waitUntil("Task-duration tap collapses the same share task again") {
+            let rows = disclosed?.filter { $0.messageId == closed.id } ?? []
+            return rows.map(\.kind) == [.taskHeader, .text]
+        }
+        var pdfOptions = ChatExportOptions(); pdfOptions.format = .pdf; pdfOptions.hideHeader = true
+        let selectedGroups = ChatShareCells.renderGroups(initial, selected: Set(closedCells.map(\.id)))
+        let artifact = try await ChatExportRenderer(vm: vm).render(groups: selectedGroups, messages: request.messages,
+            title: request.title, options: pdfOptions, progress: { _, _ in })
+        let pdf = try save(artifact.url, name: "task-disclosure.pdf")
+        let document = PDFDocument(url: pdf)
+        try require(document?.findString("CLOSED_FINAL", withOptions: []).isEmpty == false,
+                    "Collapsed export contains the visible final reply")
+        try require(document?.findString("先查询", withOptions: []).isEmpty == true,
+                    "Collapsed export omits preliminary hidden text and tool trail")
+        try require(document?.findString("任务耗时", withOptions: []).isEmpty == false,
+                    "Collapsed export renders the same task-duration disclosure label")
+        let completelyFolded = folded.filter { $0.messageId == opened.id }
+        try require(completelyFolded.map(\.kind) == [.taskHeader, .text], "Share can explicitly fold a previously expanded task")
+        UserDefaults.standard.set(false, forKey: key)
+        let disabled = ChatShareSnapshot.request(messages: [closed], title: "", vm: vm)
+        try require(disabled.initialCells?.contains { $0.kind == .tool } == true && !disabled.startsFolded,
+                    "Appearance folding disabled keeps the share tool trail visible")
     }
 
     private static func fixture() throws -> [ChatMessage] {

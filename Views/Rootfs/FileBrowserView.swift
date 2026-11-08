@@ -907,7 +907,7 @@ private struct FileBrowserRow: View {
                     // host-URL → guest-path mapping the breadcrumb uses, so we
                     // reuse it instead of reconstructing the path by hand.
                     UIPasteboard.general.string = viewModel.displayPath(for: item.url)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AppFeedback.haptic()
                     onCopiedPath()
                 } label: {
                     Label(String(localized: "Copy Absolute Path"), systemImage: "document.on.clipboard")

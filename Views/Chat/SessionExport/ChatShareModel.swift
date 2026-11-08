@@ -68,7 +68,7 @@ enum ChatShareUnits {
 /// piece of a reply (a text block, a tool call, a thinking block, the error line), so
 /// a long tool log can be left out while the answer around it is kept.
 struct ChatShareCell: Identifiable, Equatable {
-    enum Kind: Equatable { case user, callback, text, tool, thinking, note, toolGroup }
+    enum Kind: Equatable { case user, callback, text, tool, thinking, note, toolGroup, taskHeader }
     let kind: Kind
     let messageId: UUID
     /// The block for text / tool / thinking cells, the first folded block for a
@@ -78,8 +78,11 @@ struct ChatShareCell: Identifiable, Equatable {
     let unitId: UUID
     /// [T-share-fold-tools] For a `.toolGroup`: the folded run it stands for.
     var fold: ChatShareFold? = nil
+    var stepsCollapsed = false
+    var canToggleSteps = false
 
     var id: String {
+        if kind == .taskHeader { return "\(messageId.uuidString)/task-header" }
         if kind == .toolGroup, let blockId { return "\(messageId.uuidString)/fold/\(blockId.uuidString)" }
         if let blockId { return "\(messageId.uuidString)/\(blockId.uuidString)" }
         return kind == .note ? "\(messageId.uuidString)/error" : messageId.uuidString
@@ -90,7 +93,8 @@ struct ChatShareCell: Identifiable, Equatable {
     /// when the picker folds or unfolds.
     var coveredIds: [String] {
         guard let fold else { return [id] }
-        return fold.memberIds.map { "\(messageId.uuidString)/\($0.uuidString)" }
+        let members = fold.memberIds.map { "\(messageId.uuidString)/\($0.uuidString)" }
+        return kind == .taskHeader ? [id] + members : members
     }
 }
 
@@ -122,7 +126,9 @@ enum ChatShareCells {
     /// `.toolGroup` cell in place of the blocks they cover, exactly where the
     /// chat shows its folded row (at the run's first block).
     static func cells(units: [ChatShareUnit], blocks: [UUID: [ChatShareBlockSource]],
-                      errors: Set<UUID>, folds: [UUID: [ChatShareFold]] = [:]) -> [ChatShareCell] {
+                      errors: Set<UUID>, folds: [UUID: [ChatShareFold]] = [:],
+                      taskHeaders: Set<UUID> = [], collapsedMessages: Set<UUID> = [],
+                      collapsibleMessages: Set<UUID> = []) -> [ChatShareCell] {
         var out: [ChatShareCell] = []
         for unit in units {
             switch unit.kind {
@@ -132,11 +138,25 @@ enum ChatShareCells {
                 out.append(ChatShareCell(kind: .callback, messageId: unit.id, blockId: nil, unitId: unit.id))
             case .reply:
                 for mid in unit.messageIds {
+                    let sources = blocks[mid] ?? []
+                    let collapsed = collapsedMessages.contains(mid)
+                    let finalText = sources.last(where: { $0.kind == .text })?.id
+                    if taskHeaders.contains(mid) {
+                        // The completed-turn disclosure owns exactly the steps hidden
+                        // by the live list: everything except its last text block.
+                        let hidden = sources.filter { !$0.isEmpty && $0.kind != .hidden && $0.id != finalText }.map(\.id)
+                        let fold = collapsed ? ChatShareFold(memberIds: hidden, toolCount: 0, failedCount: 0,
+                                                             cancelledCount: 0, duration: nil) : nil
+                        out.append(ChatShareCell(kind: .taskHeader, messageId: mid, blockId: nil,
+                                                 unitId: unit.id, fold: fold, stepsCollapsed: collapsed,
+                                                 canToggleSteps: collapsibleMessages.contains(mid)))
+                    }
                     let messageFolds = folds[mid] ?? []
                     let foldAt = Dictionary(messageFolds.compactMap { f in f.memberIds.first.map { ($0, f) } },
                                             uniquingKeysWith: { a, _ in a })
                     let folded = Set(messageFolds.flatMap(\.memberIds))
-                    for b in blocks[mid] ?? [] {
+                    for b in sources {
+                        if collapsed && b.id != finalText { continue }
                         if let f = foldAt[b.id] {
                             out.append(ChatShareCell(kind: .toolGroup, messageId: mid, blockId: b.id,
                                                      unitId: unit.id, fold: f))
@@ -413,6 +433,7 @@ enum ChatShareHeightEstimate {
         case .callback: return 72
         case .tool: return 36
         case .toolGroup: return 30
+        case .taskHeader: return 62
         case .thinking: return 40
         case .note: return 30
         case .text:

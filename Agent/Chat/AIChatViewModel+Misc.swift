@@ -62,7 +62,7 @@ extension AIChatViewModel {
     func enqueuePrompt() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, isProcessing else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppFeedback.haptic()
         let pendingAttachments = attachments
         let prompt = QueuedPrompt(text: text, attachments: pendingAttachments)
         promptQueue.append(prompt)

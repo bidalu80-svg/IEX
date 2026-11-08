@@ -118,6 +118,23 @@ import WebKit
                 let rect = label.convert(label.bounds, to: cards[0])
                 try check(cards[0].bounds.contains(rect), "Metric label lies inside card")
             }
+            if !dark, let metric = metricLabels.first as? ZeVisualizationSelectableLabel {
+                try await ConversationShareVerification.requestUIAction("selectVisualization", details: [
+                    "identifier": metric.accessibilityIdentifier ?? "ze.visualization.value.92",
+                    "startX": 16, "startY": metric.bounds.midY, "endX": 2])
+                try check(metric.activeSelectionView?.isFirstResponder == true,
+                          "Actual double tap starts native metric text selection")
+                if let selected = metric.activeSelectionView, let text = selected.text, (text as NSString).length >= 2 {
+                    selected.selectedRange = NSRange(location: 0, length: 2); selected.copy(nil)
+                    try check(UIPasteboard.general.string == (text as NSString).substring(with: selected.selectedRange),
+                              "Native chart text copies only the selected substring")
+                }
+                let selectedImage = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                try selectedImage.pngData()?.write(to: directory.appendingPathComponent("visualization-native-selection.png"))
+                metric.endTextSelection()
+                try check(metric.activeSelectionView == nil, "Native text selection releases its temporary text view")
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
             // Capture the body before opening any detail sheet.
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             try image.pngData()?.write(to: directory.appendingPathComponent("visualization-\(dark ? "dark" : "light").png"))
@@ -277,6 +294,41 @@ import WebKit
         let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
         try check(!previewImages.isEmpty, "Custom HTML/SVG renders a real inline image")
         try check(!descendants(host.view).contains { $0 is WKWebView }, "Inline chat does not retain a web view per card")
+        if let preview = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
+           let glyph = preview.textLayout.glyphs.first {
+            let scale = preview.bounds.width / 360
+            try check(preview.textLayout.text.contains("SOURCE_END") && preview.textLayout.text.contains("2026-11-07"),
+                      "Custom snapshot contains exact selectable HTML and SVG text")
+            try await ConversationShareVerification.requestUIAction("selectVisualization", details: [
+                "identifier": "ze.visualization.custom.preview", "startX": glyph.rect.midX * scale,
+                "startY": glyph.rect.midY * scale])
+            try check(preview.activeSelectionView?.isFirstResponder == true,
+                      "Actual long press starts native text selection over custom pixels")
+            if let selected = preview.activeSelectionView {
+                let full = (selected.text ?? "") as NSString
+                let source = full.range(of: "SOURCE_END")
+                try check(source.location != NSNotFound, "Custom source text is selectable beyond the original viewport")
+                selected.selectedRange = source
+                selected.copy(nil)
+                try check(UIPasteboard.general.string == "SOURCE_END", "Custom copy uses the selected exact text, not a summary")
+                if let range = selected.selectedTextRange {
+                    let regions = selected.selectionRects(for: range)
+                    try check(!regions.isEmpty && regions.allSatisfy { $0.rect.maxY <= preview.bounds.height + 2 },
+                              "Custom selection handles and highlight use captured footer geometry")
+                }
+                let first = full.range(of: "自由布局"), last = full.range(of: "非固定图表组件")
+                if first.location != NSNotFound, last.location != NSNotFound {
+                    selected.selectedRange = NSRange(location: first.location, length: NSMaxRange(last) - first.location)
+                    selected.copy(nil)
+                    try check(UIPasteboard.general.string?.contains("非固定图表组件") == true,
+                              "One native custom selection spans multiple HTML and SVG text nodes")
+                }
+            }
+            let selectedImage = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            try selectedImage.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-selection.png"))
+            preview.endTextSelection()
+            try check(preview.activeSelectionView == nil, "Custom selection releases its temporary native text view")
+        } else { try check(false, "Custom snapshot is missing text geometry") }
         card?.subviews.compactMap { $0 as? UIButton }.first?.sendActions(for: .touchUpInside)
         try await Task.sleep(nanoseconds: 500_000_000)
         let detail = (host.presentedViewController as? UINavigationController)?.topViewController as? ZeCustomVisualizationController
@@ -358,6 +410,9 @@ import WebKit
         let sharedImage = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage?.pngData() }.first
         try sharedImage?.write(to: directory.appendingPathComponent("visualization-custom-share.png"))
         try check(liveImage != nil && sharedImage == liveImage, "Custom live/share previews use identical captured pixels")
+        let sharedLayout = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.textLayout }.first
+        try check(sharedLayout?.text.contains("75") == true && sharedLayout?.text.contains("SOURCE_END") == true,
+                  "Shared custom image retains exact current selectable text with frozen state")
         let compactData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "compact", "title": "Compact",
             "components": [["id": "small", "type": "custom", "height": 600, "fallbackText": "Short content",
                             "html": "<p style='margin:0;line-height:24px'>Short content with a 600px hint</p>"]]])
@@ -368,6 +423,26 @@ import WebKit
         try check(compactImage.map { $0.size.height / $0.size.width * 360 < 100 } == true,
                   "Overestimated height hint does not create an empty 600px viewport")
         try compactImage?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-compact.png"))
+        let canvasHTML = """
+        <canvas id="labels" width="340" height="100" style="width:100%;height:100px"></canvas>
+        <script>const c=document.getElementById('labels');let ctx=c.getContext('2d');ctx.font='18px sans-serif';ctx.fillText('STALE_OLD',10,24);c.width=340;ctx=c.getContext('2d');ctx.font='18px sans-serif';ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);ctx.fillText('Clear-old',10,65);ctx.clearRect(0,0,340,100);ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);</script>
+        """
+        let canvasData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "canvas", "title": "Canvas labels",
+            "components": [["id": "drawn", "type": "custom", "height": 180, "fallbackText": "Canvas III WWW 中文", "html": canvasHTML]]])
+        let canvas = try ZeVisualizationParser.parse(String(decoding: canvasData, as: UTF8.self)).get().components[0]
+        let canvasSnapshot: ZeCustomVisualizationSnapshot? = await withCheckedContinuation { continuation in
+            ZeCustomVisualizationRenderer.shared.renderSnapshot(component: canvas, state: nil, dark: true) { continuation.resume(returning: $0) }
+        }
+        let canvasText = canvasSnapshot?.textLayout.text ?? ""
+        try check(canvasText.contains("Canvas III WWW 中文") && !canvasText.contains("STALE_OLD") && !canvasText.contains("Clear-old"),
+                  "Canvas text remains selectable and drops labels erased or reset before capture")
+        if let layout = canvasSnapshot?.textLayout {
+            let text = layout.text as NSString
+            let narrow = text.range(of: "III"), wide = text.range(of: "WWW")
+            let narrowWidth = layout.glyphs.filter { NSIntersectionRange($0.range, narrow).length > 0 }.reduce(CGFloat(0)) { $0 + $1.rect.width }
+            let wideWidth = layout.glyphs.filter { NSIntersectionRange($0.range, wide).length > 0 }.reduce(CGFloat(0)) { $0 + $1.rect.width }
+            try check(wideWidth > narrowWidth * 1.5, "Canvas selection geometry measures proportional glyph widths")
+        }
         ZeCustomVisualizationRenderer.shared.clear()
         try check(ZeCustomVisualizationRenderer.shared.cacheCount == 0, "Custom preview cache releases all derived images")
         return checks

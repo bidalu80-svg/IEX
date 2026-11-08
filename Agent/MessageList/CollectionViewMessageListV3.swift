@@ -224,7 +224,7 @@ fileprivate struct BridgedAssistantHeaderV3: View {
     }
 }
 
-private struct FirstTokenLatencyPill: View {
+struct FirstTokenLatencyPill: View {
     let seconds: TimeInterval
 
     private var durationText: String {
@@ -581,7 +581,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
                 ) {
                     UIPasteboard.general.string = ZeVisualizationStreaming.prepare(replyText, readable: true)
                     flashCompletionAction(.copy)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    AppFeedback.haptic()
                 }
             }
 

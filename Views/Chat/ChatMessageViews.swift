@@ -861,15 +861,18 @@ struct AssistantTaskDurationView: View {
     /// demanded pixel-accurate taps.
     private let onToggle: (() -> Void)?
     private let isCollapsed: Bool
+    private let controlIdentifier: String?
     @Environment(\.colorScheme) private var colorScheme
 
     init(duration: TimeInterval,
          onToggle: (() -> Void)? = nil,
-         isCollapsed: Bool = false) {
+         isCollapsed: Bool = false,
+         accessibilityIdentifier: String? = nil) {
         self.frozenDuration = duration
         self.liveStartTime = nil
         self.onToggle = onToggle
         self.isCollapsed = isCollapsed
+        self.controlIdentifier = accessibilityIdentifier
     }
 
     init(liveStartTime: TimeInterval) {
@@ -877,6 +880,7 @@ struct AssistantTaskDurationView: View {
         self.liveStartTime = liveStartTime
         self.onToggle = nil
         self.isCollapsed = false
+        self.controlIdentifier = nil
     }
 
     /// Blue on dark, neutral on light: the duration doubles as the fold
@@ -938,6 +942,7 @@ struct AssistantTaskDurationView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("任务耗时 \(durationText)")
                 .accessibilityValue(isCollapsed ? "已收起" : "已展开")
+                .accessibilityIdentifier(controlIdentifier ?? "assistant.taskDuration")
         } else {
             content
         }

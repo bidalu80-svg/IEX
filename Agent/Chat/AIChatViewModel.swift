@@ -2231,7 +2231,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
         }
 
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppFeedback.haptic()
         autoRetryAttempt = 0
         autoRetryCountdown = 0
         canResume = false
@@ -2617,7 +2617,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
 
             logger.info("🔄SESSION [vm=\(self.vmInstanceId)] send DONE session=\(self.sessionId ?? "nil")")
-            self.playCompletionHaptic()
             self.isProcessing = false
             self.endBackgroundProcessing()
         }
@@ -2774,7 +2773,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             await self.drainQueuedPrompts()
             logger.info("🔄SESSION [vm=\(self.vmInstanceId)] retry DONE session=\(self.sessionId ?? "nil")")
-            self.playCompletionHaptic()
             self.isProcessing = false
             self.endBackgroundProcessing()
         }
@@ -2906,7 +2904,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             await self.drainQueuedPrompts()
             logger.info("🔄SESSION [vm=\(self.vmInstanceId)] resume DONE session=\(self.sessionId ?? "nil")")
-            self.playCompletionHaptic()
             self.isProcessing = false
             self.endBackgroundProcessing()
         }
@@ -3221,7 +3218,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             await self.drainQueuedPrompts()
             logger.info("🔄SESSION [vm=\(self.vmInstanceId)] \(label) DONE session=\(self.sessionId ?? "nil")")
-            self.playCompletionHaptic()
             self.isProcessing = false
             self.endBackgroundProcessing()
         }
@@ -4077,10 +4073,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             let preview = b.content.replacingOccurrences(of: "\n", with: "⏎").prefix(40)
             logger.info("⏹️[StopDiag]   [\(committedMark)] block[\(i)] kind=\(kindStr) status=\(statusStr) len=\(b.content.count) tuId=\(b.toolUseId?.prefix(8) ?? "-") \"\(preview)\"")
         }
-    }
-
-    private func playCompletionHaptic() {
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
     }
 
     private func handleUserCancelledCleanup() {
@@ -5690,6 +5682,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 break
             }
         }
+
+        // One terminal reply notification per agent-loop invocation, before
+        // queued replies are drained. Cancellation, resumable/truncated output
+        // and errors never masquerade as a completed task.
+        AppFeedback.completedReply(
+            hasError: messages[msgIdx].error != nil,
+            isCancelled: Task.isCancelled || userDidCancel,
+            canResume: canResume,
+            hasReply: messages[msgIdx].blocks.contains { $0.kind == .text && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        )
 
         // Cache parsed MarkdownContent and NSAttributedString on completed text blocks
         // to avoid re-parsing and re-rendering on cell recycling / SwiftUI refreshes.

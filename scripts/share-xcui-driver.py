@@ -168,6 +168,14 @@ final class ShareDriver: XCTestCase {
             var strategy = request.action
             do {
                 switch request.action {
+                case "selectVisualization":
+                    let target = app.descendants(matching: .any)[request.identifier ?? "ze.visualization.custom.preview"].firstMatch
+                    guard target.waitForExistence(timeout: 10) else {
+                        throw NSError(domain: "ShareDriver", code: 9, userInfo: [NSLocalizedDescriptionKey: "Visualization selection target is missing"])
+                    }
+                    let point = target.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: request.startX ?? 20, dy: request.startY ?? 20))
+                    if request.endX == 2 { point.doubleTap(); strategy = "xcui-visualization-double-tap" }
+                    else { point.press(forDuration: 0.65); strategy = "xcui-visualization-long-press" }
                 case "open":
                     let button = app.buttons[request.identifier ?? "chatShare.export"].firstMatch
                     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true AND enabled == true"), object: button)
