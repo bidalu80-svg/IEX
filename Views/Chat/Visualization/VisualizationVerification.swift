@@ -301,8 +301,8 @@ import WebKit
             var scale = imageRect.width / 360
             let initialImageHeight = imageRect.height
             let originalIdentity = String(describing: ObjectIdentifier(preview))
-            let preselection: [String: Any] = ["preview": NSStringFromCGRect(preview.frame), "image": NSStringFromCGRect(imageRect),
-                "card": card.map { NSStringFromCGRect($0.frame) } ?? "missing", "glyphs": preview.textLayout.glyphs.count,
+            let preselection: [String: Any] = ["preview": NSCoder.string(for: preview.frame), "image": NSCoder.string(for: imageRect),
+                "card": card.map { NSCoder.string(for: $0.frame) } ?? "missing", "glyphs": preview.textLayout.glyphs.count,
                 "naturalHeight": block.visualizationSelections.values.first?.customContentHeight ?? 0]
             try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted])
                 .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
