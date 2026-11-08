@@ -41,11 +41,22 @@ import Foundation
             let file = soundDirectory.appendingPathComponent(name)
             let stored = try Data(contentsOf: file)
             precondition(stored == ReplyToneAudio.wav(tone))
-            let old = Date(timeIntervalSince1970: 1_000)
-            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: file.path)
+            // URL resource values may retain previously fetched metadata. Read
+            // actual file attributes before/after; inode also detects an atomic
+            // rewrite even if a filesystem rounds the modification timestamp.
+            let before = try FileManager.default.attributesOfItem(atPath: file.path)
             precondition(ReplyToneAudio.notificationFile(tone, directory: soundDirectory) == name)
-            let modification = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            precondition(modification == old, "Valid file reuses bytes without rewriting on every notification")
+            let after = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard let beforeDate = before[.modificationDate] as? Date,
+                  let afterDate = after[.modificationDate] as? Date,
+                  let beforeInode = before[.systemFileNumber] as? NSNumber,
+                  let afterInode = after[.systemFileNumber] as? NSNumber else { preconditionFailure("Filesystem attributes must exist") }
+            if beforeDate != afterDate || beforeInode != afterInode {
+                FileHandle.standardError.write(Data("Unexpected notification rewrite \(tone.rawValue): before=\(before), after=\(after)\n".utf8))
+            }
+            precondition(beforeDate == afterDate && beforeInode == afterInode,
+                         "Valid file reuses bytes without rewriting on every notification")
             try Data("damaged".utf8).write(to: file)
             precondition(ReplyToneAudio.notificationFile(tone, directory: soundDirectory) == name)
             let repaired = try Data(contentsOf: file)
