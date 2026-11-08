@@ -10,6 +10,25 @@ import UIKit
         if !condition { throw NSError(domain: "ConversationSearchVerification", code: checks, userInfo: [NSLocalizedDescriptionKey: message]) }
     }
     private static func settle(_ seconds: Double = 0.6) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+    private static func awaitSearch(_ vm: AIChatViewModel, count: Int, stage: String,
+                                    directory: URL) async throws {
+        let start = ProcessInfo.processInfo.systemUptime
+        // Debounce, detached Markdown projection and main-actor publication must
+        // finish before asserting. A fixed delay races cold simulator startup.
+        while vm.chatSearch.isSearching || vm.chatSearch.hits.count != count {
+            if ProcessInfo.processInfo.systemUptime - start >= 8 { break }
+            await settle(0.05)
+        }
+        let state: [String: Any] = ["stage": stage, "query": vm.chatSearch.query,
+            "isActive": vm.chatSearch.isActive, "isSearching": vm.chatSearch.isSearching,
+            "actualCount": vm.chatSearch.hits.count, "expectedCount": count,
+            "messageCount": vm.messages.count,
+            "elapsed": ProcessInfo.processInfo.systemUptime - start]
+        try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("search-state-\(stage).json"))
+        try require(!vm.chatSearch.isSearching && vm.chatSearch.hits.count == count,
+                    "Search \(stage) did not finish with \(count) hits: \(state)")
+    }
     private static func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     static func run() async {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("search-verification")
@@ -34,7 +53,7 @@ import UIKit
             vm.chatSearch.bind(viewModel: vm)
             vm.chatSearch.activate()
             vm.chatSearch.query = "needle"
-            await settle()
+            try await awaitSearch(vm, count: 6, stage: "initial", directory: directory)
             try require(vm.chatSearch.hits.count == 6, "Visible prose/code/table/tool occurrences counted exactly; hidden link URL omitted")
             try require(vm.chatSearch.currentIndex == 5, "New query selects newest occurrence")
             try require(!vm.chatSearch.hits.contains(where: { $0.text.contains("hidden-output") }), "Hidden tool output excluded")
@@ -44,12 +63,12 @@ import UIKit
             let selected = vm.chatSearch.current?.match
             block.content += "\n\nnew streamed needle"
             block.cachedMarkdown = MarkdownContent(prepareMarkdownForRender(block.content))
-            await settle()
+            try await awaitSearch(vm, count: 7, stage: "streamed", directory: directory)
             try require(vm.chatSearch.hits.count == 7, "Streaming recomputes result count")
             try require(vm.chatSearch.current?.match == selected, "Streaming preserves current occurrence")
             vm.chatSearch.query = "stale query"
             vm.chatSearch.query = "Café"
-            await settle()
+            try await awaitSearch(vm, count: 1, stage: "replaced-query", directory: directory)
             try require(vm.chatSearch.hits.count == 1 && vm.chatSearch.current?.keyword == "Café", "Cancelled query never overwrites new result")
             vm.chatSearch.query = "needle"
             vm.chatSearch.deactivate()
@@ -59,7 +78,7 @@ import UIKit
             let key = ChatSearchUnitKey(messageId: assistant.id, blockId: block.id, field: .body)
             let independent = other.token(for: key)
             vm.chatSearch.activate(prefill: "needle")
-            await settle()
+            try await awaitSearch(vm, count: 7, stage: "reactivated", directory: directory)
             try require(independent.state == nil, "Other conversation center stays clear")
 
             // Real collection view and real Markdown rendering, no replacement views.

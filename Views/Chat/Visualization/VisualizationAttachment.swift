@@ -162,7 +162,11 @@ final class ZeVisualizationAttachment: NSTextAttachment {
         self.fontSize = fontSize
         self.interaction = ZeVisualizationInteractionState(value: selection, onChange: onChange)
         super.init(data: nil, ofType: nil)
-        image = Self.blank
+        // Custom cards render through makeView, with explicit TextKit bounds.
+        // A placeholder image makes UIKit attach an image-preview context menu
+        // whose failure dependencies swallow the preview's text-selection hold.
+        // Keep native chart attachments unchanged; custom cards need no bitmap.
+        image = component.type == .custom ? nil : Self.blank
         _ = ZeVisualizationLifecycle.shared
     }
     required init?(coder: NSCoder) { return nil }
