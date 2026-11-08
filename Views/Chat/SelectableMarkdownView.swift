@@ -5231,6 +5231,18 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     // even when isScrollEnabled=false; reject horizontal pans that
     // originate inside a scrollable code block subview.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Custom previews select their captured HTML/SVG text in their own
+        // native overlay. The parent must not select the attachment glyph or
+        // form failure-dependency relationships with the child's recognizers.
+        // Keep normal scrolling and the passive selection-drag observer intact.
+        if gestureRecognizer !== panGestureRecognizer && gestureRecognizer !== selectionDragTracker {
+            let point = gestureRecognizer.location(in: self)
+            var touched = hitTest(point, with: nil)
+            while let view = touched, view !== self {
+                if view is ZeCustomVisualizationPreview { return false }
+                touched = view.superview
+            }
+        }
         if gestureRecognizer == self.panGestureRecognizer {
             let location = gestureRecognizer.location(in: self)
             // Check if touch is inside any code block UITextView subview

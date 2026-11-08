@@ -1264,25 +1264,7 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
     }
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { prioritizeSelectionGestures(); prepare() } else { endTextSelection() }
-    }
-    private func prioritizeSelectionGestures() {
-        // The enclosing Markdown UITextView must not also select its one-character
-        // image attachment during the custom card's long press. Leave its zero-
-        // duration drag observer and every scroll pan unchanged.
-        var ancestor = superview
-        while let view = ancestor {
-            if view is UITextView {
-                for candidate in view.gestureRecognizers ?? [] {
-                    if let hold = candidate as? UILongPressGestureRecognizer, hold.minimumPressDuration > 0.05,
-                       let own = selectionGestures.first as? UILongPressGestureRecognizer { candidate.require(toFail: own) }
-                    else if let tap = candidate as? UITapGestureRecognizer, tap.numberOfTapsRequired == 2,
-                            let own = selectionGestures.last { candidate.require(toFail: own) }
-                }
-                break
-            }
-            ancestor = view.superview
-        }
+        if window != nil { prepare() } else { endTextSelection() }
     }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) { super.traitCollectionDidChange(previousTraitCollection); if window != nil { prepare() } }
     func prepare() {
