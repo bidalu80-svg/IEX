@@ -5,9 +5,9 @@ import UIKit
 /// The screenshots are deterministic timeline samples plus one live 12pt glyph.
 private struct ThinkingGlyphSamples: View {
     let dark: Bool
-    private let times: [TimeInterval] = [0, 0.08, 0.10, 0.20, 0.36, 0.50, 0.625, 0.65,
-                                         0.75, 0.85, 0.98, 1.15, 1.25, 1.40, 1.60, 1.80,
-                                         2.0, 2.20, 2.32, 2.40]
+    private let times: [TimeInterval] = [0, 0.08, 0.25, 0.325, 0.45, 0.5875, 0.75, 0.85,
+                                         0.925, 1.10, 1.175, 1.20, 1.25, 1.40, 1.5125, 1.65,
+                                         1.775, 1.85, 2.0, 2.40]
     var body: some View {
         VStack(spacing: 18) {
             HStack(spacing: 5) {
@@ -76,10 +76,32 @@ private struct ThinkingGlyphSamples: View {
             let after = JellyThinkingGlyphAnimation.state(elapsed: boundary + 0.00001)
             let toRadians = Double.pi / 180
             try check(abs(before.morph - after.morph) < 0.0001 &&
-                      abs(sin(before.rotationDegrees * toRadians) - sin(after.rotationDegrees * toRadians)) < 0.0001,
+                      abs(sin(before.rotationDegrees * toRadians) - sin(after.rotationDegrees * toRadians)) < 0.0001 &&
+                      abs(cos(before.rotationDegrees * toRadians) - cos(after.rotationDegrees * toRadians)) < 0.0001,
                       "The shape and orientation join continuously across the loop")
-            try check(abs(JellyThinkingGlyphAnimation.colorCycleDuration - boundary) > 0.1,
-                      "Color timing runs independently of the shape loop")
+            try check(abs(JellyThinkingGlyphAnimation.colorCycleDuration - 1.2) < 0.000001 &&
+                      abs(JellyThinkingGlyphAnimation.colorCycleDuration - boundary) > 0.1,
+                      "Color sweeps twice as fast as before and independently of the shape loop")
+            let hold = JellyThinkingGlyphAnimation.holdDuration
+            let turn = JellyThinkingGlyphAnimation.rotationDuration
+            let firstEnd = hold + turn
+            let secondStart = firstEnd + hold
+            let forward = (0...120).map { JellyThinkingGlyphAnimation.state(elapsed: hold + turn * Double($0) / 120).rotationDegrees }
+            let backward = (0...120).map { JellyThinkingGlyphAnimation.state(elapsed: secondStart + turn * Double($0) / 120 - 0.00000001).rotationDegrees }
+            let monotonic = zip(forward, forward.dropFirst()).allSatisfy { $0 <= $1 } &&
+                            zip(backward, backward.dropFirst()).allSatisfy { $0 <= $1 }
+            try check(abs(turn - 0.675) < 0.000001 && abs(hold - 0.25) < 0.000001 &&
+                      abs(forward.first! - 0) < 0.0001 && abs(forward.last! - 360) < 0.0001 &&
+                      abs(backward.first! - 360) < 0.0001 && abs(backward.last! - 720) < 0.0001 && monotonic,
+                      "Each shape change makes exactly one full turn at the original rotation duration and pause")
+            let midpoint = hold + turn / 2
+            let delta = 0.00001
+            let velocity = (JellyThinkingGlyphAnimation.state(elapsed: midpoint + delta).rotationDegrees -
+                            JellyThinkingGlyphAnimation.state(elapsed: midpoint - delta).rotationDegrees) / (2 * delta)
+            let settled = JellyThinkingGlyphAnimation.state(elapsed: firstEnd - 0.05)
+            try check(velocity > 835 && velocity < 840 && abs(settled.morph - 1) < 0.000001 &&
+                      settled.rotationDegrees < 360 && settled.rotationDegrees > 350,
+                      "Rotation restores the original cosine peak speed and continues outside the faster morph")
             guard let window else { throw NSError(domain: "ThinkingGlyph", code: -1) }
             for dark in [false, true] {
                 window.overrideUserInterfaceStyle = dark ? .dark : .light

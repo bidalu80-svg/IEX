@@ -25,7 +25,7 @@ check('Settings > Scheduled Tasks' in tool and '当前没有定时任务' in too
 check(project.count('/* AIChatViewModel+ScheduledTaskTools.swift in Sources */')==2 and 'path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"' in project,'new tool file is in app source membership')
 glyph=anim[anim.index('// MARK: - Typing Indicator'):anim.index('struct TypingIndicator:')]
 check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in glyph and 'paused: reduceMotion || scenePhase != .active' in glyph,'glyph requests a 60Hz animation schedule and pauses for reduced motion or an inactive scene')
-check('transitionDuration: TimeInterval = 0.525' in glyph and 'holdDuration: TimeInterval = 0.10' in glyph and 'easedProgress' in glyph,'faster morphs share eased motion and shorter endpoint settling')
+check('transitionDuration: TimeInterval = 0.525' in glyph and 'rotationDuration: TimeInterval = 0.675' in glyph and 'holdDuration: TimeInterval = 0.25' in glyph and 'morphProgress' in glyph and 'rotationProgress' in glyph,'faster morphs retain the original independent one-turn rotation timing')
 check('colorCycleDuration' in glyph and 'sweepOffset' in glyph and 'Canvas {' in glyph and 'private static let spectrum' in glyph and 'purpleGradient' not in glyph,'independent rainbow sweep is drawn in a bounded vector canvas')
 check('private struct JellyThinkingGlyph' in anim and 'HStack(spacing: 4)' in anim,'glyph is placed before Chinese thinking label')
 check('scripts/verify-agent-scheduled-tools.py' in source('.github/workflows/build.yml'),'CI runs integration gate')

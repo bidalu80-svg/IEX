@@ -285,7 +285,7 @@ import WebKit
             try check(pdf?.string?.contains(marker) == true, "PDF includes searchable \(marker)")
         }
         let firstPage = pdf?.page(at: 0)
-        try check(pdf?.string?.contains("VISUAL_LAST") == false && pdf?.string?.contains("VISUAL_DETAIL") == false, "PDF matches visible preview without duplicate data appendix")
+        try check(pdf?.string?.contains("VISUAL_LAST") == false && pdf?.string?.contains("VISUAL_DETAIL") == true, "PDF preserves the visible info detail without appending hidden table rows")
         try check(document.components.first { $0.type == .table }?.csv.contains("VISUAL_LAST") == true, "Complete table remains available through CSV")
         let mixed = markdown + "\n\n| Key | Value |\n| --- | --- |\n| Test | 1 |\n"
         try check(ChatExportContent.tableChunks(mixed, contentWidth: 360, base: 390) == nil, "Mixed table and chart preserve original block selection identity")

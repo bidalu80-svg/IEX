@@ -147,14 +147,22 @@ final class ZeVisualizationAttachment: NSTextAttachment {
     let component: ZeVisualizationComponent
     let fontSize: CGFloat
     private let interaction: ZeVisualizationInteractionState
+    // One transient measurement per attachment, discarded with its rendered text.
+    // TextKit probes the same width repeatedly while the conversation scrolls.
+    private var measuredWidth: CGFloat?
+    private var measuredCustomHeight: Double?
+    private var measuredHeight: CGFloat = 0
     static let verticalInset: CGFloat = 8
     var onLayoutChange: (() -> Void)? {
         get { interaction.onLayoutChange }
         set { interaction.onLayoutChange = newValue }
     }
     func cardHeight(width: CGFloat) -> CGFloat {
-        ZeVisualizationCardView.height(component, width: width, font: fontSize,
-                                       customHeight: interaction.value.customContentHeight)
+        let customHeight = interaction.value.customContentHeight
+        if measuredWidth == width, measuredCustomHeight == customHeight { return measuredHeight }
+        let height = ZeVisualizationCardView.height(component, width: width, font: fontSize, customHeight: customHeight)
+        measuredWidth = width; measuredCustomHeight = customHeight; measuredHeight = height
+        return height
     }
     var plainText: String { component.plainText }
     init(component: ZeVisualizationComponent, fontSize: CGFloat, selection: ZeVisualizationSelection = ZeVisualizationSelection(), onChange: ((ZeVisualizationSelection) -> Void)? = nil) {
@@ -237,27 +245,108 @@ final class ZeVisualizationCardView: UIView {
     private var metricLabels: [UILabel] = []
     private var custom: ZeCustomVisualizationPreview?
     private let interaction: ZeVisualizationInteractionState
+    private var fittedWidth: CGFloat?
+    private var fittedCustomHeight: Double?
+    private var fittedHeight: CGFloat = 0
     func fittingHeight(width: CGFloat) -> CGFloat {
-        Self.height(component, width: width, font: fontSize, customHeight: interaction.value.customContentHeight)
+        let customHeight = interaction.value.customContentHeight
+        if fittedWidth == width, fittedCustomHeight == customHeight { return fittedHeight }
+        let height = Self.height(component, width: width, font: fontSize, customHeight: customHeight)
+        fittedWidth = width; fittedCustomHeight = customHeight; fittedHeight = height
+        return height
     }
-    static func customHeaderHeight(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> CGFloat {
-        let title = [c.title, c.unit].compactMap { $0 }.joined(separator: " · ")
+    private static func textHeight(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
+        let constrainedWidth = max(1, width)
+        guard !text.isEmpty else { return ceil(font.lineHeight) }
+        let rect = (text as NSString).boundingRect(
+            with: CGSize(width: constrainedWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font], context: nil)
+        return max(ceil(font.lineHeight), ceil(rect.height))
+    }
+
+    private static func titleText(_ c: ZeVisualizationComponent) -> String {
+        [c.title, c.unit].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private static func bodyText(_ item: ZeVisualizationItem) -> String {
+        [item.displayValue, item.detail ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    private static func headingHeight(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> CGFloat {
+        let scale = max(1, font / 16.5)
         let face = UIFont.systemFont(ofSize: font, weight: .semibold)
-        let rect = (title as NSString).boundingRect(with: CGSize(width: max(1, width - 76), height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: face], context: nil)
-        return max(52, ceil(min(rect.height, face.lineHeight * 2)) + 24)
+        return max(46 * scale, textHeight(titleText(c), font: face, width: width - 76) + 4)
     }
+
+    static func customHeaderHeight(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> CGFloat {
+        let face = UIFont.systemFont(ofSize: font, weight: .semibold)
+        return max(52, textHeight(titleText(c), font: face, width: width - 76) + 24)
+    }
+
+    private static func valueFont(_ item: ZeVisualizationItem, type: ZeVisualizationKind, font: CGFloat) -> UIFont {
+        // Large figures keep their hierarchy; prose and missing-data explanations
+        // use body size so a two-column grid does not become oversized paragraphs.
+        let size = type == .info || item.value == nil ? font : font * 1.65
+        return .systemFont(ofSize: size, weight: .semibold)
+    }
+
+    private static func itemCellHeight(_ item: ZeVisualizationItem, width: CGFloat, font: CGFloat,
+                                      type: ZeVisualizationKind) -> CGFloat {
+        let labelFont = UIFont.systemFont(ofSize: font * 0.85)
+        let valueFont = valueFont(item, type: type, font: font)
+        let labelHeight = textHeight(item.label, font: labelFont, width: width)
+        let valueHeight = textHeight(item.displayValue, font: valueFont, width: width)
+        let detailHeight = (item.detail?.isEmpty == false)
+            ? 6 + textHeight(item.detail ?? "", font: labelFont, width: width) : 0
+        let minimum = (type == .info ? 64 : 92) * max(1, font / 16.5)
+        return max(minimum, labelHeight + 6 + valueHeight + detailHeight + 8)
+    }
+
+    private static func itemColumns(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> Int {
+        width < 260 || font > 25 || c.type == .info ? 1 : 2
+    }
+
+    private static func itemRowHeights(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> [CGFloat] {
+        let items = Array((c.items ?? []).prefix(6))
+        guard !items.isEmpty else { return [] }
+        let columns = itemColumns(c, width: width, font: font)
+        let gap: CGFloat = 16
+        let bodyWidth = max(1, width - 32)
+        let columnWidth = max(1, (bodyWidth - CGFloat(columns - 1) * gap) / CGFloat(columns))
+        var heights = Array(repeating: CGFloat(0), count: (items.count + columns - 1) / columns)
+        for (index, item) in items.enumerated() {
+            let row = index / columns
+            heights[row] = max(heights[row], itemCellHeight(item, width: columnWidth, font: font, type: c.type))
+        }
+        return heights
+    }
+
+    private static func tableRowHeights(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> [CGFloat] {
+        let rows = [c.headers ?? []] + (c.rows ?? []).prefix(5).map { $0.map(\.text) }
+        return rows.enumerated().map { rowIndex, cells in
+            let columns = max(1, min(3, cells.count))
+            let columnWidth = max(1, (width - CGFloat(columns - 1) * 8) / CGFloat(columns))
+            let face = UIFont.systemFont(ofSize: font * 0.8, weight: rowIndex == 0 ? .semibold : .regular)
+            let height = cells.prefix(3).map { textHeight($0, font: face, width: columnWidth) }.max() ?? 0
+            return max(36 * max(1, font / 16.5), height + 8)
+        }
+    }
+
     static func height(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat, customHeight: Double? = nil) -> CGFloat {
         let scale = max(1, font / 16.5)
         if c.type == .custom {
             let content = CGFloat(customHeight ?? Double(c.height ?? 360))
             return customHeaderHeight(c, width: width, font: font) + max(1, width - 24) / 360 * content + 12
         }
-        if c.type.isChart { return 350 * scale }
-        if c.type == .table { return (106 + CGFloat(min(5, c.rows?.count ?? 0)) * 36) * scale }
-        let columns = width < 260 || font > 25 || c.type == .info ? 1 : 2
-        let rows = (min(6, c.items?.count ?? 0) + columns - 1) / columns
-        return (74 + CGFloat(rows) * (c.type == .info ? 64 : 92)) * scale
+        let header = headingHeight(c, width: width, font: font)
+        if c.type.isChart { return max(350 * scale, header + 34 + 240 * scale) }
+        if c.type == .table {
+            return 12 + header + 8 + tableRowHeights(c, width: max(1, width - 32), font: font).reduce(0, +) + 14
+        }
+        let rowHeights = itemRowHeights(c, width: width, font: font)
+        let body = rowHeights.reduce(0, +) + CGFloat(max(0, rowHeights.count - 1)) * 10
+        return 12 + header + 8 + body + 14
     }
     init(component: ZeVisualizationComponent, fontSize: CGFloat, interaction: ZeVisualizationInteractionState = ZeVisualizationInteractionState()) {
         self.component = component
@@ -270,8 +359,9 @@ final class ZeVisualizationCardView: UIView {
         clipsToBounds = true
         accessibilityIdentifier = "ze.visualization.\(component.id)"
         heading.font = .systemFont(ofSize: fontSize, weight: .semibold)
-        heading.text = [component.title, component.unit].compactMap { $0 }.joined(separator: " · ")
-        heading.numberOfLines = 2
+        heading.text = Self.titleText(component)
+        heading.numberOfLines = 0
+        heading.lineBreakMode = .byWordWrapping
         addSubview(heading)
         action.setImage(UIImage(systemName: "arrow.up.left.and.arrow.down.right"), for: .normal)
         action.tintColor = .systemBlue
@@ -297,7 +387,8 @@ final class ZeVisualizationCardView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
-        heading.frame = CGRect(x: 16, y: 12, width: max(1, bounds.width - 76), height: 46 * max(1, fontSize / 16.5))
+        let headerHeight = Self.headingHeight(component, width: bounds.width, font: fontSize)
+        heading.frame = CGRect(x: 16, y: 12, width: max(1, bounds.width - 76), height: headerHeight)
         action.frame = CGRect(x: bounds.width - 52, y: 10, width: 44, height: 44)
         let top = heading.frame.maxY + 8
         chart?.frame = CGRect(x: 12, y: top, width: bounds.width - 24, height: bounds.height - top - 12)
@@ -316,7 +407,8 @@ final class ZeVisualizationCardView: UIView {
 #endif
     }
     private func label(_ text: String, size: CGFloat, weight: UIFont.Weight = .regular, secondary: Bool = false) -> UILabel {
-        let l = ZeVisualizationSelectableLabel(); l.text = text; l.numberOfLines = 2
+        let l = ZeVisualizationSelectableLabel(); l.text = text; l.numberOfLines = 0
+        l.lineBreakMode = .byWordWrapping
         l.font = .systemFont(ofSize: size, weight: weight)
         l.textColor = secondary ? .secondaryLabel : .label
         l.adjustsFontSizeToFitWidth = false
@@ -331,40 +423,58 @@ final class ZeVisualizationCardView: UIView {
         guard width > 0, height > 0 else { return }
         if component.type == .table {
             let rows = [component.headers ?? []] + (component.rows ?? []).prefix(5).map { $0.map(\.text) }
-            let rowHeight = height / CGFloat(max(1, rows.count))
+            let rowHeights = Self.tableRowHeights(component, width: width, font: fontSize)
+            var rowY: CGFloat = 0
             for (rowIndex, cells) in rows.enumerated() {
                 let columns = min(3, cells.count)
-                let columnWidth = (width - CGFloat(max(0, columns - 1)) * 8) / CGFloat(max(1, columns))
+                let columnWidth = max(1, (width - CGFloat(max(0, columns - 1)) * 8) / CGFloat(max(1, columns)))
+                let rowHeight = rowHeights[rowIndex]
                 for (column, text) in cells.prefix(3).enumerated() {
                     let value = label(text, size: fontSize * 0.8, weight: rowIndex == 0 ? .semibold : .regular)
-                    value.frame = CGRect(x: CGFloat(column) * (columnWidth + 8), y: CGFloat(rowIndex) * rowHeight,
-                                         width: columnWidth, height: rowHeight - 4)
+                    value.frame = CGRect(x: CGFloat(column) * (columnWidth + 8), y: rowY,
+                                         width: columnWidth, height: rowHeight - 8)
                     bodyContainer.addSubview(value)
                 }
+                rowY += rowHeight
             }
             return
         }
         let items = Array((component.items ?? []).prefix(6))
-        let columns = bounds.width < 260 || fontSize > 25 || component.type == .info ? 1 : 2
-        let rows = (items.count + columns - 1) / columns
-        let rowHeight = height / CGFloat(max(1, rows))
-        let columnWidth = (width - CGFloat(columns - 1) * 16) / CGFloat(columns)
-        for (index, item) in items.enumerated() {
-            let cell = UIView(frame: CGRect(x: CGFloat(index % columns) * (columnWidth + 16), y: CGFloat(index / columns) * rowHeight,
-                                            width: columnWidth, height: rowHeight - 6))
-            let name = label(item.label, size: fontSize * 0.85, secondary: true)
-            let value = label(item.displayValue, size: component.type == .info ? fontSize : fontSize * 1.65, weight: .semibold)
-            let nameHeight = min(cell.bounds.height * 0.4, fontSize * 1.8)
-            name.frame = CGRect(x: 0, y: 0, width: columnWidth, height: nameHeight)
-            value.frame = CGRect(x: 0, y: nameHeight + 2, width: columnWidth, height: max(1, cell.bounds.height - nameHeight - 2))
-            value.accessibilityIdentifier = "ze.visualization.value.\(item.id)"
-            cell.addSubview(name); cell.addSubview(value)
-            cell.isAccessibilityElement = false
-            cell.shouldGroupAccessibilityChildren = true
-            cell.accessibilityLabel = "\(item.label), \(item.displayValue), \(component.unit ?? "")"
-            cell.accessibilityTraits = .staticText
-            bodyContainer.addSubview(cell)
-            metricLabels += [name, value]
+        let columns = Self.itemColumns(component, width: bounds.width, font: fontSize)
+        let columnWidth = max(1, (width - CGFloat(columns - 1) * 16) / CGFloat(columns))
+        let rowHeights = Self.itemRowHeights(component, width: bounds.width, font: fontSize)
+        var rowY: CGFloat = 0
+        for row in 0..<rowHeights.count {
+            let rowHeight = rowHeights[row]
+            for column in 0..<columns {
+                let index = row * columns + column
+                guard index < items.count else { continue }
+                let item = items[index]
+                let cell = UIView(frame: CGRect(x: CGFloat(column) * (columnWidth + 16), y: rowY,
+                                                width: columnWidth, height: rowHeight))
+                let name = label(item.label, size: fontSize * 0.85, secondary: true)
+                let value = label(item.displayValue, size: Self.valueFont(item, type: component.type, font: fontSize).pointSize, weight: .semibold)
+                let nameHeight = Self.textHeight(item.label, font: name.font, width: columnWidth)
+                let valueHeight = Self.textHeight(item.displayValue, font: value.font, width: columnWidth)
+                name.frame = CGRect(x: 0, y: 0, width: columnWidth, height: nameHeight)
+                value.frame = CGRect(x: 0, y: nameHeight + 6, width: columnWidth, height: valueHeight)
+                value.accessibilityIdentifier = "ze.visualization.value.\(item.id)"
+                cell.addSubview(name); cell.addSubview(value)
+                if let text = item.detail, !text.isEmpty {
+                    let detail = label(text, size: fontSize * 0.85, secondary: true)
+                    detail.frame = CGRect(x: 0, y: value.frame.maxY + 6, width: columnWidth,
+                                          height: Self.textHeight(text, font: detail.font, width: columnWidth))
+                    cell.addSubview(detail)
+                    metricLabels.append(detail)
+                }
+                cell.isAccessibilityElement = false
+                cell.shouldGroupAccessibilityChildren = true
+                cell.accessibilityLabel = "\(item.label), \(Self.bodyText(item)), \(component.unit ?? "")"
+                cell.accessibilityTraits = .staticText
+                bodyContainer.addSubview(cell)
+                metricLabels += [name, value]
+            }
+            rowY += rowHeight + 10
         }
     }
     private func openDetails() {

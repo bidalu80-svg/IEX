@@ -2697,12 +2697,13 @@ private struct ThinkingDurationLabel: View {
 // MARK: - Typing Indicator
 
 /// Pure time sampling keeps shape easing independent from the moving spectrum.
-/// Each morph is 0.15 s shorter than before, with a brief 0.10 s settling pause.
+/// The faster shape morph keeps the original one-turn rotation and pause timing.
 private enum JellyThinkingGlyphAnimation {
     static let transitionDuration: TimeInterval = 0.525
-    static let holdDuration: TimeInterval = 0.10
-    static let colorCycleDuration: TimeInterval = 2.4
-    static var cycleDuration: TimeInterval { 2 * (transitionDuration + holdDuration) }
+    static let rotationDuration: TimeInterval = 0.675
+    static let holdDuration: TimeInterval = 0.25
+    static let colorCycleDuration: TimeInterval = 1.2
+    static var cycleDuration: TimeInterval { 2 * (rotationDuration + holdDuration) }
 
     struct State {
         let morph: Double
@@ -2714,24 +2715,38 @@ private enum JellyThinkingGlyphAnimation {
         let time = max(0, elapsed)
         let local = time.truncatingRemainder(dividingBy: cycleDuration)
         let sweep = (time / colorCycleDuration).truncatingRemainder(dividingBy: 1)
-        let forwardEnd = holdDuration + transitionDuration
+        let forwardEnd = holdDuration + rotationDuration
         let returnStart = forwardEnd + holdDuration
         if local < holdDuration {
             return State(morph: 0, rotationDegrees: 0, sweepOffset: sweep)
         }
         if local < forwardEnd {
-            let eased = easedProgress((local - holdDuration) / transitionDuration)
-            return State(morph: eased, rotationDegrees: eased * 360, sweepOffset: sweep)
+            let progress = (local - holdDuration) / rotationDuration
+            return State(morph: morphProgress(progress),
+                         rotationDegrees: rotationProgress(progress) * 360, sweepOffset: sweep)
         }
         if local < returnStart {
             return State(morph: 1, rotationDegrees: 360, sweepOffset: sweep)
         }
-        let eased = easedProgress((local - returnStart) / transitionDuration)
-        return State(morph: 1 - eased, rotationDegrees: 360 + eased * 360, sweepOffset: sweep)
+        let progress = (local - returnStart) / rotationDuration
+        return State(morph: 1 - morphProgress(progress),
+                     rotationDegrees: 360 + rotationProgress(progress) * 360, sweepOffset: sweep)
     }
 
-    /// Zero velocity and acceleration at both ends joins each settling pause
-    /// without a sudden start or stop. Shape, scale and rotation use one curve.
+    /// Keep the faster morph centered inside the original, gentler full turn.
+    private static func morphProgress(_ rotationPhase: Double) -> Double {
+        let delay = (rotationDuration - transitionDuration) / 2
+        return easedProgress((rotationPhase * rotationDuration - delay) / transitionDuration)
+    }
+
+    /// Restore the original cosine timing: exactly one turn per shape change,
+    /// with zero angular velocity at each end instead of a concentrated spin.
+    private static func rotationProgress(_ progress: Double) -> Double {
+        let t = min(1, max(0, progress))
+        return 0.5 - 0.5 * cos(t * .pi)
+    }
+
+    /// Shape and scale settle with zero velocity and acceleration at both ends.
     static func easedProgress(_ progress: Double) -> Double {
         let t = min(1, max(0, progress))
         return t * t * t * (t * (t * 6 - 15) + 10)

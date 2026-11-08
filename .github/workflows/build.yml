@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
       animation_only:
-        description: 'Verify thinking animation and package iOS app without unrelated UI regression'
+        description: 'Verify thinking animation and native card layout, then package iOS app'
         type: boolean
         default: false
 
@@ -162,6 +162,10 @@ jobs:
         # Cold simulator startup took over two minutes on the previous runner.
         timeout-minutes: 5
         run: bash scripts/test-thinking-glyph-ui.sh
+
+      - name: Verify native visualization text wrapping and layout
+        timeout-minutes: 4
+        run: bash scripts/test-native-visualization-layout.sh
 
       - name: Test GitHub connector structure and Swift syntax
         run: |
@@ -335,6 +339,7 @@ jobs:
             subagent-comparison-evidence/
             subagent-full-detail-evidence/
             thinking-glyph-evidence/
+            native-layout-evidence/
           if-no-files-found: warn
           retention-days: 7
 
@@ -990,16 +995,19 @@ jobs:
           python3 - <<'PYFOCUS'
           import json, os, pathlib
           report = json.loads(pathlib.Path('thinking-glyph-evidence/thinking-glyph-result.json').read_text())
-          assert report['success'] and len(report['checks']) == 7, report
+          assert report['success'] and len(report['checks']) == 9, report
+          native = json.loads(pathlib.Path('native-layout-evidence/native-layout-result.json').read_text())
+          assert native['success'], native
           evidence = {
               'head_sha': os.environ['GITHUB_SHA'],
-              'scope': 'Thinking animation render and easing, iOS 16 target, complete application build and IPA audit',
+              'scope': 'Thinking animation, native visualization text layout, iOS 16 target, complete application build and IPA audit',
               'animation_checks': report['checks'],
+              'native_layout_checks': native['checks'],
               'full_application_runtime_regression': 'not run in explicitly selected animation-only mode'
           }
           pathlib.Path('ipa-runtime-gate.json').write_text(json.dumps(evidence, indent=2))
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('### Animation-only verification\n\nThinking glyph render/easing and complete iOS app build/package were checked. Full conversation, sharing, search and unrelated UI regression were not run in this explicitly selected mode.\n')
+              summary.write('### Animation-only verification\n\nThinking glyph render/easing, native visualization text layout and complete iOS app build/package were checked. Full conversation, sharing, search and unrelated UI regression were not run in this explicitly selected mode.\n')
           PYFOCUS
 
       - name: Upload unsigned IPA
