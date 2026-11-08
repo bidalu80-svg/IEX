@@ -2696,124 +2696,108 @@ private struct ThinkingDurationLabel: View {
 
 // MARK: - Typing Indicator
 
-/// Pure time sampling keeps shape easing independent from the moving spectrum.
-/// The faster shape morph keeps the original one-turn rotation and pause timing.
-private enum JellyThinkingGlyphAnimation {
-    static let transitionDuration: TimeInterval = 0.525
-    static let rotationDuration: TimeInterval = 0.675
-    static let holdDuration: TimeInterval = 0.25
-    static let colorCycleDuration: TimeInterval = 1.2
-    static var cycleDuration: TimeInterval { 2 * (rotationDuration + holdDuration) }
+/// The reference supplies a short entrance followed by three grouped dot turns.
+/// Intermediate motion is authored offline; runtime only samples a bounded atlas.
+private enum CubeThinkingGlyphAnimation {
+    static let framesPerSecond: Double = 60
+    static let introFrameCount = 12
+    static let loopFrameCount = 62
+    static let frameCount = 74
+    static let tileSide = 56
+    static let atlasColumns = 8
+    static var introDuration: TimeInterval { Double(introFrameCount) / framesPerSecond }
+    static var loopDuration: TimeInterval { Double(loopFrameCount) / framesPerSecond }
 
-    struct State {
-        let morph: Double
-        let rotationDegrees: Double
-        let sweepOffset: Double
-    }
-
-    static func state(elapsed: TimeInterval) -> State {
-        let time = max(0, elapsed)
-        let local = time.truncatingRemainder(dividingBy: cycleDuration)
-        let sweep = (time / colorCycleDuration).truncatingRemainder(dividingBy: 1)
-        let forwardEnd = holdDuration + rotationDuration
-        let returnStart = forwardEnd + holdDuration
-        if local < holdDuration {
-            return State(morph: 0, rotationDegrees: 0, sweepOffset: sweep)
+    static func frameIndex(elapsed: TimeInterval, reducedMotion: Bool = false) -> Int {
+        // Reduced motion uses the fully formed cube, rather than its entrance dot.
+        if reducedMotion { return introFrameCount }
+        guard elapsed.isFinite, elapsed > 0 else { return 0 }
+        if elapsed < introDuration {
+            return min(introFrameCount - 1, Int((elapsed * framesPerSecond).rounded(.down)))
         }
-        if local < forwardEnd {
-            let progress = (local - holdDuration) / rotationDuration
-            return State(morph: morphProgress(progress),
-                         rotationDegrees: rotationProgress(progress) * 360, sweepOffset: sweep)
-        }
-        if local < returnStart {
-            return State(morph: 1, rotationDegrees: 360, sweepOffset: sweep)
-        }
-        let progress = (local - returnStart) / rotationDuration
-        return State(morph: 1 - morphProgress(progress),
-                     rotationDegrees: 360 + rotationProgress(progress) * 360, sweepOffset: sweep)
-    }
-
-    /// Keep the faster morph centered inside the original, gentler full turn.
-    private static func morphProgress(_ rotationPhase: Double) -> Double {
-        let delay = (rotationDuration - transitionDuration) / 2
-        return easedProgress((rotationPhase * rotationDuration - delay) / transitionDuration)
-    }
-
-    /// Restore the original cosine timing: exactly one turn per shape change,
-    /// with zero angular velocity at each end instead of a concentrated spin.
-    private static func rotationProgress(_ progress: Double) -> Double {
-        let t = min(1, max(0, progress))
-        return 0.5 - 0.5 * cos(t * .pi)
-    }
-
-    /// Shape and scale settle with zero velocity and acceleration at both ends.
-    static func easedProgress(_ progress: Double) -> Double {
-        let t = min(1, max(0, progress))
-        return t * t * t * (t * (t * 6 - 15) + 10)
+        let phase = (elapsed - introDuration).truncatingRemainder(dividingBy: loopDuration)
+        let offset = min(loopFrameCount - 1, Int((phase * framesPerSecond + 0.00000001).rounded(.down)))
+        return introFrameCount + offset
     }
 }
 
-/// A tiny vector canvas isolates refreshes to the glyph. The path rotates in
-/// screen space while its spectrum always sweeps left to right, even at rest.
-private struct JellyThinkingGlyphFrame: View {
+/// One shared, bounded decoded set. NSCache can discard it under memory pressure;
+/// the explicit warning hook also removes it. No frame decoding happens per tick.
+private final class CubeThinkingGlyphFrames: NSObject {
+    let frames: [CGImage]
+    let decodedByteCount: Int
+    private static let key: NSString = "thinking-cube"
+    private static let cache: NSCache<NSString, CubeThinkingGlyphFrames> = {
+        let value = NSCache<NSString, CubeThinkingGlyphFrames>()
+        value.countLimit = 1
+        value.totalCostLimit = 2 * 1024 * 1024
+        return value
+    }()
+    private static let warningObserver = NotificationCenter.default.addObserver(
+        forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+    ) { _ in purgeCache() }
+
+    private init(frames: [CGImage], decodedByteCount: Int) {
+        self.frames = frames
+        self.decodedByteCount = decodedByteCount
+    }
+
+    static func purgeCache() { cache.removeAllObjects() }
+
+    static func load() -> CubeThinkingGlyphFrames? {
+        _ = warningObserver
+        if let existing = cache.object(forKey: key) { return existing }
+        guard let atlas = UIImage(named: "ThinkingCubeAtlas")?.cgImage else { return nil }
+        let side = CubeThinkingGlyphAnimation.tileSide
+        let columns = CubeThinkingGlyphAnimation.atlasColumns
+        let count = CubeThinkingGlyphAnimation.frameCount
+        let rows = (count + columns - 1) / columns
+        guard atlas.width == side * columns, atlas.height == side * rows else { return nil }
+        var decoded: [CGImage] = []
+        decoded.reserveCapacity(count)
+        let space = CGColorSpaceCreateDeviceRGB()
+        for index in 0..<count {
+            let rect = CGRect(x: (index % columns) * side, y: (index / columns) * side,
+                              width: side, height: side)
+            guard let cropped = atlas.cropping(to: rect),
+                  let bitmap = CGContext(data: nil, width: side, height: side,
+                                         bitsPerComponent: 8, bytesPerRow: side * 4,
+                                         space: space,
+                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            bitmap.draw(cropped, in: CGRect(x: 0, y: 0, width: side, height: side))
+            guard let frame = bitmap.makeImage() else { return nil }
+            decoded.append(frame)
+        }
+        // Include the source atlas as well as the tightly decoded frame buffers.
+        let bytes = atlas.width * atlas.height * 4 + decoded.reduce(0) { $0 + $1.bytesPerRow * $1.height }
+        let result = CubeThinkingGlyphFrames(frames: decoded, decodedByteCount: bytes)
+        cache.setObject(result, forKey: key, cost: bytes)
+        return result
+    }
+}
+
+/// Only the small icon redraws. Its alpha preserves the reference dot depth and
+/// motion, while a template tint makes the same frames readable in both themes.
+private struct CubeThinkingGlyphFrame: View {
     @Environment(\.colorScheme) private var colorScheme
     let elapsed: TimeInterval
-    private let size: CGFloat = 12
-    private static let spectrum = Gradient(colors: [
-        Color(red: 1.00, green: 0.29, blue: 0.42),
-        Color(red: 1.00, green: 0.57, blue: 0.23),
-        Color(red: 1.00, green: 0.85, blue: 0.29),
-        Color(red: 0.27, green: 0.86, blue: 0.48),
-        Color(red: 0.17, green: 0.82, blue: 0.91),
-        Color(red: 0.34, green: 0.48, blue: 1.00),
-        Color(red: 0.76, green: 0.37, blue: 0.98),
-        Color(red: 1.00, green: 0.29, blue: 0.42),
-        Color(red: 1.00, green: 0.57, blue: 0.23),
-        Color(red: 1.00, green: 0.85, blue: 0.29),
-        Color(red: 0.27, green: 0.86, blue: 0.48),
-        Color(red: 0.17, green: 0.82, blue: 0.91),
-        Color(red: 0.34, green: 0.48, blue: 1.00),
-        Color(red: 0.76, green: 0.37, blue: 0.98),
-        Color(red: 1.00, green: 0.29, blue: 0.42)
-    ])
+    var reducedMotion: Bool = false
 
     var body: some View {
-        let state = JellyThinkingGlyphAnimation.state(elapsed: elapsed)
-        Canvas { context, canvas in
-            let side = size * (1 + 0.08 * CGFloat(state.morph))
-            let center = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
-            let rect = CGRect(x: -side / 2, y: -side / 2, width: side, height: side)
-            let corner = side * (0.5 - 0.25 * CGFloat(state.morph))
-            let transform = CGAffineTransform(rotationAngle: CGFloat(state.rotationDegrees * .pi / 180))
-                .concatenating(CGAffineTransform(translationX: center.x, y: center.y))
-            let path = Path(roundedRect: rect, cornerRadius: corner, style: .continuous)
-                .applying(transform)
-            let wavelength = size * 2.8
-            let shift = CGFloat(state.sweepOffset) * wavelength
-            var fillContext = context
-            fillContext.addFilter(.shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.12),
-                                          radius: 1.3, x: 0, y: 0.8))
-            fillContext.fill(path, with: .linearGradient(Self.spectrum,
-                startPoint: CGPoint(x: center.x - wavelength * 1.5 + shift, y: center.y),
-                endPoint: CGPoint(x: center.x + wavelength * 0.5 + shift, y: center.y)))
-            context.fill(path, with: .linearGradient(Gradient(colors: [
-                .white.opacity(colorScheme == .dark ? 0.35 : 0.48), .clear, .black.opacity(0.10)
-            ]), startPoint: CGPoint(x: center.x - size / 2, y: center.y - size / 2),
-                endPoint: CGPoint(x: center.x + size / 2, y: center.y + size / 2)))
-            context.stroke(path, with: .linearGradient(Gradient(colors: [
-                .white.opacity(0.85), .white.opacity(0.18)
-            ]), startPoint: CGPoint(x: center.x - size / 2, y: center.y - size / 2),
-                endPoint: CGPoint(x: center.x + size / 2, y: center.y + size / 2)), lineWidth: 0.65)
+        let index = CubeThinkingGlyphAnimation.frameIndex(elapsed: elapsed, reducedMotion: reducedMotion)
+        Canvas { context, size in
+            guard let resources = CubeThinkingGlyphFrames.load() else { return }
+            var image = context.resolve(Image(decorative: resources.frames[index], scale: 1, orientation: .up))
+            image.shading = .color(colorScheme == .dark ? .white : .black)
+            context.draw(image, in: CGRect(origin: .zero, size: size))
         }
-        // Leave drawing space for the rotated square and its soft rim shadow.
-        .frame(width: 18, height: 18)
-        .frame(width: size, height: size)
+        .frame(width: 24, height: 24)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 }
 
-private struct JellyThinkingGlyph: View {
+private struct CubeThinkingGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var startedAt = Date()
@@ -2821,7 +2805,8 @@ private struct JellyThinkingGlyph: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0,
                                 paused: reduceMotion || scenePhase != .active)) { timeline in
-            JellyThinkingGlyphFrame(elapsed: reduceMotion ? 0 : timeline.date.timeIntervalSince(startedAt))
+            CubeThinkingGlyphFrame(elapsed: timeline.date.timeIntervalSince(startedAt),
+                                   reducedMotion: reduceMotion)
         }
         .onAppear { startedAt = Date() }
     }
@@ -2847,7 +2832,7 @@ struct TypingIndicator: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            JellyThinkingGlyph()
+            CubeThinkingGlyph()
             ZStack(alignment: .leading) {
                 labelText
                     .foregroundStyle(ChatColors.secondaryText)

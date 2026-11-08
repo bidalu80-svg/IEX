@@ -158,10 +158,12 @@ jobs:
           python3 scripts/verify-agent-scheduled-tools.py | tee agent-scheduled-tools-structure.log
           xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift
 
-      - name: Verify thinking glyph easing and rendered rainbow frames
+      - name: Verify reference dot-cube motion and rendered frames
         # Cold simulator startup took over two minutes on the previous runner.
         timeout-minutes: 5
-        run: bash scripts/test-thinking-glyph-ui.sh
+        run: |
+          python3 scripts/verify-thinking-cube-atlas.py
+          bash scripts/test-thinking-glyph-ui.sh
 
       - name: Verify native visualization text wrapping and layout
         timeout-minutes: 4
@@ -995,7 +997,7 @@ jobs:
           python3 - <<'PYFOCUS'
           import json, os, pathlib
           report = json.loads(pathlib.Path('thinking-glyph-evidence/thinking-glyph-result.json').read_text())
-          assert report['success'] and len(report['checks']) == 9, report
+          assert report['success'] and len(report['checks']) == 12, report
           native = json.loads(pathlib.Path('native-layout-evidence/native-layout-result.json').read_text())
           assert native['success'], native
           evidence = {

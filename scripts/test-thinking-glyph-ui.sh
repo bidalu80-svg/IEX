@@ -5,6 +5,21 @@ thinking_source="$RUNNER_TEMP/ThinkingGlyphProduction.swift"
 mkdir -p "$thinking_app" thinking-glyph-evidence
 python3 scripts/extract-thinking-glyph.py "$thinking_source"
 cp "${thinking_source%.swift}.sources.json" thinking-glyph-evidence/
+thinking_atlas="Assets.xcassets/ThinkingCubeAtlas.imageset/thinking-cube-atlas.png"
+cp "$thinking_atlas" "$thinking_app/ThinkingCubeAtlas.png"
+cp "$thinking_atlas" "$thinking_app/thinking-cube-atlas.png"
+python3 - "$thinking_atlas" "${thinking_source%.swift}.sources.json" <<'PYATLAS'
+import hashlib, json, pathlib, sys
+atlas = pathlib.Path(sys.argv[1])
+manifest = pathlib.Path(sys.argv[2])
+sources = json.loads(manifest.read_text())
+sources['atlas'] = str(atlas)
+sources['atlasSHA256'] = hashlib.sha256(atlas.read_bytes()).hexdigest()
+sources['harnessSHA256'] = hashlib.sha256(pathlib.Path('scripts/ThinkingGlyphUIHarness.swift').read_bytes()).hexdigest()
+sources['resourceLoading'] = 'Real production PNG copied to the standalone app bundle under the asset name'
+manifest.write_text(json.dumps(sources, indent=2))
+pathlib.Path('thinking-glyph-evidence/ThinkingGlyphProduction.sources.json').write_text(json.dumps(sources, indent=2))
+PYATLAS
 xcrun --sdk iphonesimulator swiftc -parse-as-library \
   -target "$(uname -m)-apple-ios16.0-simulator" \
   -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
@@ -31,7 +46,7 @@ xcrun simctl bootstatus "$thinking_device" -b
 xcrun simctl install "$thinking_device" "$thinking_app"
 thinking_container=$(xcrun simctl get_app_container "$thinking_device" com.ze.thinking-glyph-harness data)
 collect_thinking() {
-  cp "$thinking_container/Documents/"thinking-glyph-* thinking-glyph-evidence/ 2>/dev/null || true
+  cp -R "$thinking_container/Documents/"thinking-glyph-* thinking-glyph-evidence/ 2>/dev/null || true
   xcrun simctl terminate "$thinking_device" com.ze.thinking-glyph-harness >/dev/null 2>&1 || true
 }
 trap collect_thinking EXIT
@@ -48,7 +63,9 @@ root=pathlib.Path('thinking-glyph-evidence')
 result=json.loads((root/'thinking-glyph-result.json').read_text())
 print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['success'],result
+assert len(result['checks'])==12,result
 assert len(result['screenshots'])==2,result
-for name in result['screenshots']:
+assert len(result['frameFiles'])==74,result
+for name in result['screenshots'] + result['frameFiles']:
     assert (root/name).read_bytes().startswith(b'\x89PNG\r\n\x1a\n'),name
 PY

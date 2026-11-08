@@ -19,7 +19,7 @@ output.write_text('import SwiftUI\nimport UIKit\n\n' + glyph + '\n' +
 output.with_suffix('.sources.json').write_text(json.dumps({
     'source': str(source.relative_to(root)),
     'sourceSHA256': hashlib.sha256(source.read_bytes()).hexdigest(),
-    'extraction': 'Unmodified production animation engine, deterministic frame and TimelineView glyph',
+    'extraction': 'Unmodified production frame sampler, decoded atlas cache, Canvas and TimelineView glyph',
     'scope': 'iOS16 compilation and deterministic rendered frames; no physical-device FPS assertion',
 }, indent=2), encoding='utf-8')
 print(output)
