@@ -63,21 +63,21 @@ import AVFoundation
             let queuedReply = FeedbackProbeMessage()
             completionProbe.messages = [firstReply, queuedReply]
             var notifiedIDs = Set<UUID>()
-            completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &notifiedIDs)
-            completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
-            completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
             try check(events.count == 2 && notifiedIDs == Set([firstReply.id, queuedReply.id]),
                       "Each completed queued reply notifies once; loop-exit fallback does not replay the last message")
             events.removeAll()
             let removedReply = FeedbackProbeMessage()
             completionProbe.messages = [removedReply]
             completionProbe.messages.removeAll()
-            completionProbe.notifyCompletionFeedback(for: removedReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: removedReply.id, notifiedMessageIDs: &notifiedIDs)
             try check(events.isEmpty && !notifiedIDs.contains(removedReply.id),
                       "A message deleted during persistence does not notify or index a stale array slot")
             completionProbe.messages = [queuedReply, firstReply]
             var reorderedIDs = Set<UUID>()
-            completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &reorderedIDs)
+            await completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &reorderedIDs)
             try check(events.count == 1 && reorderedIDs == Set([firstReply.id]),
                       "Completion resolves stable message identity after array reorder")
             events.removeAll()
@@ -88,15 +88,95 @@ import AVFoundation
             let emptyReply = FeedbackProbeMessage()
             emptyReply.blocks = [FeedbackProbeBlock(kind: .tool, content: "Tool output")]
             completionProbe.messages = [failedReply, pausedReply, cancelledReply, emptyReply]
-            completionProbe.notifyCompletionFeedback(for: failedReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: failedReply.id, notifiedMessageIDs: &notifiedIDs)
             completionProbe.canResume = true
-            completionProbe.notifyCompletionFeedback(for: pausedReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: pausedReply.id, notifiedMessageIDs: &notifiedIDs)
             completionProbe.canResume = false
             completionProbe.userDidCancel = true
-            completionProbe.notifyCompletionFeedback(for: cancelledReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: cancelledReply.id, notifiedMessageIDs: &notifiedIDs)
             completionProbe.userDidCancel = false
-            completionProbe.notifyCompletionFeedback(for: emptyReply.id, notifiedMessageIDs: &notifiedIDs)
+            await completionProbe.notifyCompletionFeedback(for: emptyReply.id, notifiedMessageIDs: &notifiedIDs)
             try check(events.isEmpty, "Production finalization suppresses failed, resumable, stopped and tool-only replies")
+            // Exercise real per-reply scheduling and the real cleanup adapter;
+            // the notification-center boundary controls acknowledgement only.
+            let backgroundProbe = FeedbackCompletionProbe()
+            backgroundProbe.probeApplicationState = .background
+            let backgroundA = FeedbackProbeMessage(), backgroundB = FeedbackProbeMessage()
+            backgroundA.blocks = [FeedbackProbeBlock(kind: .text, content: "Completed A")]
+            backgroundB.blocks = [FeedbackProbeBlock(kind: .text, content: "Completed B")]
+            backgroundProbe.messages = [backgroundA, backgroundB]
+            let scheduler = BackgroundKeepAliveManager.shared
+            scheduler.calls.removeAll()
+            var backgroundIDs = Set<UUID>()
+            await backgroundProbe.notifyCompletionFeedback(for: backgroundA.id, notifiedMessageIDs: &backgroundIDs)
+            await backgroundProbe.notifyCompletionFeedback(for: backgroundB.id, notifiedMessageIDs: &backgroundIDs)
+            await backgroundProbe.notifyCompletionFeedback(for: backgroundB.id, notifiedMessageIDs: &backgroundIDs)
+            try check(scheduler.calls.map(\.replyID) == [backgroundA.id, backgroundB.id] &&
+                      scheduler.calls.map(\.body) == ["Completed A", "Completed B"] &&
+                      backgroundProbe.feedbackBackgroundScheduledReplyID == backgroundB.id,
+                      "Background A and queued B each schedule their own frozen reply once")
+            await backgroundProbe.postBackgroundSummaryIfNeeded(sessionTitle: "Session", responseSummary: "Completed B",
+                sessionID: "feedback-session", replyID: backgroundB.id, isError: false, wasBackground: true,
+                completionSoundEligible: true, completionSoundAlreadyPlayed: false,
+                attempt: backgroundProbe.feedbackBackgroundNotificationAttempt)
+            try check(scheduler.calls.count == 2, "Final background cleanup does not repeat B after per-reply scheduling")
+            backgroundProbe.messages = [failedReply, pausedReply, cancelledReply, emptyReply]
+            await backgroundProbe.notifyCompletionFeedback(for: failedReply.id, notifiedMessageIDs: &backgroundIDs)
+            backgroundProbe.canResume = true
+            await backgroundProbe.notifyCompletionFeedback(for: pausedReply.id, notifiedMessageIDs: &backgroundIDs)
+            backgroundProbe.canResume = false; backgroundProbe.userDidCancel = true
+            await backgroundProbe.notifyCompletionFeedback(for: cancelledReply.id, notifiedMessageIDs: &backgroundIDs)
+            backgroundProbe.userDidCancel = false
+            await backgroundProbe.notifyCompletionFeedback(for: emptyReply.id, notifiedMessageIDs: &backgroundIDs)
+            try check(scheduler.calls.count == 2, "Background failure, Stop, Resume and tool-only results do not schedule completion sounds")
+            let declined = FeedbackProbeMessage()
+            backgroundProbe.messages = [declined]
+            backgroundProbe.feedbackBackgroundScheduledReplyID = nil
+            scheduler.accepts = false
+            await backgroundProbe.notifyCompletionFeedback(for: declined.id, notifiedMessageIDs: &backgroundIDs)
+            try check(backgroundProbe.feedbackBackgroundScheduledReplyID == nil,
+                      "Rejected notification submission never records an accepted reply ID")
+            scheduler.accepts = true; scheduler.calls.removeAll(); scheduler.delay = 150_000_000
+            let pending = FeedbackProbeMessage()
+            backgroundProbe.messages = [pending]
+            let pendingTask = Task { @MainActor in
+                await backgroundProbe.notifyCompletionFeedback(for: pending.id, notifiedMessageIDs: &backgroundIDs)
+            }
+            for _ in 0..<20 {
+                if backgroundProbe.feedbackBackgroundNotificationAttempt?.replyID == pending.id { break }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            await backgroundProbe.postBackgroundSummaryIfNeeded(sessionTitle: "Session", responseSummary: "Pending",
+                sessionID: "feedback-session", replyID: pending.id, isError: false, wasBackground: true,
+                completionSoundEligible: true, completionSoundAlreadyPlayed: false,
+                attempt: backgroundProbe.feedbackBackgroundNotificationAttempt)
+            await pendingTask.value
+            try check(scheduler.calls.count == 1 && backgroundProbe.feedbackBackgroundScheduledReplyID == pending.id,
+                      "Background expiration shares an in-flight acknowledgement instead of adding a duplicate")
+            scheduler.delay = 0; scheduler.calls.removeAll(); scheduler.backgroundNotificationsEnabled = false
+            let disabled = FeedbackProbeMessage()
+            backgroundProbe.messages = [disabled]; backgroundProbe.feedbackBackgroundScheduledReplyID = nil
+            await backgroundProbe.notifyCompletionFeedback(for: disabled.id, notifiedMessageIDs: &backgroundIDs)
+            try check(scheduler.calls.isEmpty && backgroundProbe.feedbackBackgroundScheduledReplyID == nil,
+                      "The global background notification switch suppresses per-reply submission")
+            scheduler.backgroundNotificationsEnabled = true
+            await backgroundProbe.postBackgroundSummaryIfNeeded(sessionTitle: "Failed", responseSummary: "Error",
+                sessionID: "feedback-session", replyID: disabled.id, isError: true, wasBackground: true,
+                completionSoundEligible: false, completionSoundAlreadyPlayed: false,
+                attempt: backgroundProbe.feedbackBackgroundNotificationAttempt)
+            try check(scheduler.calls.count == 1 && scheduler.calls[0].isError && !scheduler.calls[0].soundEligible,
+                      "Error cleanup keeps its existing silent summary path")
+            scheduler.calls.removeAll()
+            let otherSession = FeedbackCompletionProbe()
+            otherSession.probeApplicationState = .background; otherSession.sessionId = "second-session"
+            let otherReply = FeedbackProbeMessage()
+            otherSession.messages = [otherReply]
+            var otherIDs = Set<UUID>()
+            await otherSession.notifyCompletionFeedback(for: otherReply.id, notifiedMessageIDs: &otherIDs)
+            try check(scheduler.calls.count == 1 && scheduler.calls[0].sessionID == "second-session" &&
+                      otherSession.feedbackBackgroundScheduledReplyID == otherReply.id,
+                      "A second concurrent session owns its separate accepted completion notification")
+            scheduler.calls.removeAll()
             try check(AppFeedback.notificationSound(eligible: true, alreadyPlayed: false) == nil,
                       "Automatic sound OFF also silences background completion notifications")
             settings.preferences.completionSoundEnabled = true

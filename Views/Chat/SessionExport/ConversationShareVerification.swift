@@ -479,7 +479,10 @@ import PDFKit
         window.rootViewController = UIHostingController(rootView: ChatShareSelectionView(request: request,
             onDisclosureChanged: { disclosed = $0 }, onSelectionChanged: { actualSelection = $0 })
             .environment(\.colorScheme, .light))
-        try await Task.sleep(nanoseconds: 350_000_000)
+        try await waitUntil("Share picker initializes the frozen round selection") {
+            actualSelection == selected
+        }
+        try await Task.sleep(nanoseconds: 250_000_000)
         try capture(window, name: "picker-task-disclosure-light.png")
         try await requestUIAction("open", details: ["identifier": "chatShare.taskToggle.\(closed.id.uuidString)"])
         try await waitUntil("Task-duration tap expands the selected task's real share rows") {

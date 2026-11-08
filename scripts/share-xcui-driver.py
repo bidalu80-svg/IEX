@@ -26,6 +26,7 @@ import urllib.parse
 DRIVER = r'''
 import XCTest
 import Foundation
+import UIKit
 
 final class ShareDriver: XCTestCase {
     private struct Request: Decodable {
@@ -154,10 +155,12 @@ final class ShareDriver: XCTestCase {
         let deadline = Date().addingTimeInterval(600)
         var handled = Set<String>()
         var actions = 0
+        var actionFailures: [String] = []
         while Date() < deadline {
             let request = try JSONDecoder().decode(Request.self, from: exchange("/request"))
             if request.action == "finish" {
                 XCTAssertEqual(request.success, true, request.error ?? "Production share verification failed")
+                XCTAssertTrue(actionFailures.isEmpty, actionFailures.joined(separator: "\n"))
                 XCTAssertGreaterThanOrEqual(actions, 16, "Expected eight real share-button taps and eight interactive dismissals")
                 return
             }
@@ -167,6 +170,7 @@ final class ShareDriver: XCTestCase {
             }
             var beforePNG: String?
             var hierarchy: String?
+            var targetGeometry: [String: String]?
             var strategy = request.action
             do {
                 switch request.action {
@@ -186,6 +190,8 @@ final class ShareDriver: XCTestCase {
                         throw NSError(domain: "ShareDriver", code: 9, userInfo: [NSLocalizedDescriptionKey: "Visualization selection target is missing"])
                     }
                     let point = target.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: request.startX ?? 20, dy: request.startY ?? 20))
+                    targetGeometry = ["frame": NSCoder.string(for: target.frame),
+                                      "point": NSCoder.string(for: point.screenPoint)]
                     if request.endX == 2 { point.doubleTap(); strategy = "xcui-visualization-double-tap" }
                     else { point.press(forDuration: 0.65); strategy = "xcui-visualization-long-press" }
                 case "open":
@@ -211,6 +217,7 @@ final class ShareDriver: XCTestCase {
                     "strategy": strategy, "screenPNG": screen.pngRepresentation.base64EncodedString()]
                 acknowledgment["beforeScreenPNG"] = beforePNG
                 acknowledgment["hierarchy"] = hierarchy
+                acknowledgment["targetGeometry"] = targetGeometry
                 _ = try exchange("/ack", body: acknowledgment)
                 handled.insert(sequence)
                 actions += 1
@@ -220,7 +227,11 @@ final class ShareDriver: XCTestCase {
                     "hierarchy": hierarchy ?? app.debugDescription]
                 failure["beforeScreenPNG"] = beforePNG
                 _ = try? exchange("/ack", body: failure)
-                throw error
+                // The app records this failed action in its current suite.
+                // Keep driving later independent suites; the final verdict
+                // still fails even if an app-side report lost this error.
+                handled.insert(sequence)
+                actionFailures.append("\(request.action) \(request.identifier ?? ""): \(error.localizedDescription)")
             }
         }
         XCTFail("Production share verification did not complete within 600 seconds")

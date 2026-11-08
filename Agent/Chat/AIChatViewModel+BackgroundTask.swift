@@ -82,6 +82,46 @@ extension AIChatViewModel {
         startBackgroundStatusTimer()
     }
 
+    /// Freeze this reply before any await so a queued turn cannot replace its
+    /// text or session identity while notification submission is in flight.
+    func notifyBackgroundReplyCompletion(for message: ChatMessage) async {
+        guard UIApplication.shared.applicationState != .active,
+              let sid = sessionId, !sid.isEmpty else { return }
+        let replyID = message.id
+        let fallbackTitle = messages.first(where: { $0.role == .user })?.content.prefix(60).description ?? "Agent task"
+        let text = message.blocks.filter { $0.kind == .text }.map(\.content).joined(separator: "\n")
+        let responseSummary = String(MarkdownStripper.plainText(text).prefix(200))
+        let attempt = Task { @MainActor in
+            // The fallback is frozen too; title lookup never reads a later turn.
+            let storedTitle = await ChatStore.shared.getSession(sid)?.title
+            let title = storedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackTitle
+            return await BackgroundKeepAliveManager.shared.postBackgroundTaskNotification(
+                sessionTitle: title, responseSummary: responseSummary, sessionId: sid,
+                wasBackground: true, completionSoundEligible: true, replyID: replyID)
+        }
+        feedbackBackgroundNotificationAttempt = (replyID, attempt)
+        let accepted = await attempt.value
+        if accepted { feedbackBackgroundScheduledReplyID = replyID }
+    }
+
+    /// The same bounded attempt is shared with expiration/normal cleanup. An
+    /// attempted success is never submitted again merely because its callback
+    /// arrived late; error/incomplete summaries keep their existing path.
+    func postBackgroundSummaryIfNeeded(sessionTitle: String, responseSummary: String, sessionID: String,
+                                      replyID: UUID?, isError: Bool, wasBackground: Bool,
+                                      completionSoundEligible: Bool, completionSoundAlreadyPlayed: Bool,
+                                      attempt: (replyID: UUID, task: Task<Bool, Never>)?) async {
+        if completionSoundEligible, let replyID, let attempt, attempt.replyID == replyID {
+            _ = await attempt.task.value
+            return
+        }
+        await BackgroundKeepAliveManager.shared.postBackgroundTaskNotification(
+            sessionTitle: sessionTitle, responseSummary: responseSummary, sessionId: sessionID,
+            isError: isError, wasBackground: wasBackground,
+            completionSoundEligible: completionSoundEligible, completionSoundAlreadyPlayed: completionSoundAlreadyPlayed,
+            replyID: replyID)
+    }
+
     func endBackgroundProcessing() {
         // [T-ios-session-unread-badge / T-ios-unread-dot-reappears] Mark unread
         // when this session finished off-screen and produced NEW content. The
@@ -128,6 +168,8 @@ extension AIChatViewModel {
                 feedbackCompletedReplyID == reply.id && !hasError && !canResume && !userDidCancel && !Task.isCancelled
             } ?? false
             let completionSoundAlreadyPlayed = lastReply.map { feedbackAudibleReplyID == $0.id } ?? false
+            let completedReplyID = lastReply?.id
+            let completionNotificationAttempt = feedbackBackgroundNotificationAttempt
             let responseSummary: String = {
                 let assistantTurns = agentHistory.filter { $0.role == .assistant }
                 logger.info("[BackgroundNotification] building responseSummary from agentHistory: totalMsgs=\(agentHistory.count) assistantTurns=\(assistantTurns.count) wasBackground=\(wasBackground) hasError=\(hasError)")
@@ -191,10 +233,11 @@ extension AIChatViewModel {
                 } else {
                     sessionTitle = fallbackTitle
                 }
-                BackgroundKeepAliveManager.shared.postBackgroundTaskNotification(
-                    sessionTitle: sessionTitle, responseSummary: responseSummary, sessionId: sid, isError: hasError, wasBackground: wasBackground,
-                    completionSoundEligible: completionSoundEligible, completionSoundAlreadyPlayed: completionSoundAlreadyPlayed
-                )
+                await self.postBackgroundSummaryIfNeeded(
+                    sessionTitle: sessionTitle, responseSummary: responseSummary, sessionID: sid,
+                    replyID: completedReplyID, isError: hasError, wasBackground: wasBackground,
+                    completionSoundEligible: completionSoundEligible, completionSoundAlreadyPlayed: completionSoundAlreadyPlayed,
+                    attempt: completionNotificationAttempt)
                 await MainActor.run {
                     UIApplication.shared.endBackgroundTask(bgTaskID)
                 }

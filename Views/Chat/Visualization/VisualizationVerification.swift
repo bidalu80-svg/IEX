@@ -301,6 +301,13 @@ import WebKit
 
     private static func runCustom(window: UIWindow, directory: URL) async throws -> [String] {
         var checks: [String] = []
+        var captureGeometry: [[String: Any]] = []
+        ZeCustomVisualizationRuntime.verificationOnCapture = { geometry in
+            captureGeometry.append(geometry)
+            try? JSONSerialization.data(withJSONObject: captureGeometry, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("visualization-custom-capture-layout.json"))
+        }
+        defer { ZeCustomVisualizationRuntime.verificationOnCapture = nil }
         func check(_ ok: Bool, _ text: String) throws {
             guard ok else {
                 let shot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
@@ -355,9 +362,14 @@ import WebKit
             var scale = imageRect.width / 360
             let initialImageHeight = imageRect.height
             let originalIdentity = String(describing: ObjectIdentifier(preview))
-            let preselection: [String: Any] = ["preview": NSCoder.string(for: preview.frame), "image": NSCoder.string(for: imageRect),
+            let selectedPoint = CGPoint(x: imageRect.minX + glyph.rect.midX * scale, y: imageRect.minY + glyph.rect.midY * scale)
+            let windowPoint = preview.convert(selectedPoint, to: window)
+            var preselection: [String: Any] = ["preview": NSCoder.string(for: preview.frame), "image": NSCoder.string(for: imageRect),
                 "card": card.map { NSCoder.string(for: $0.frame) } ?? "missing", "glyphs": preview.textLayout.glyphs.count,
-                "naturalHeight": block.visualizationSelections.values.first?.customContentHeight ?? 0]
+                "naturalHeight": block.visualizationSelections.values.first?.customContentHeight ?? 0,
+                "windowPoint": [windowPoint.x, windowPoint.y],
+                "hitViewBefore": String(describing: window.hitTest(windowPoint, with: nil)),
+                "pictureFrames": preview.subviews.compactMap { ($0 as? UIImageView).map { NSCoder.string(for: $0.frame) } }]
             try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted])
                 .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
             try check(abs(imageRect.minY) < 1 && abs(imageRect.height - preview.bounds.height) < 2,
@@ -378,6 +390,11 @@ import WebKit
             }
             imageRect = preview.imageDisplayRect; scale = imageRect.width / 360
             card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
+            preselection["gestureEvents"] = preview.verificationGestureEvents
+            preselection["hitViewAfter"] = String(describing: window.hitTest(windowPoint, with: nil))
+            preselection["previewInWindowAfter"] = NSCoder.string(for: preview.convert(preview.bounds, to: window))
+            try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
             try check(preview.window === window && preview.activeSelectionView?.isFirstResponder == true,
                       "Actual long press starts native text selection over custom pixels (active=\(preview.activeSelectionView != nil), mounted=\(preview.window === window), original=\(originalIdentity), current=\(ObjectIdentifier(preview)), bounds=\(preview.bounds), image=\(imageRect))")
             try check(abs(imageRect.minY) < 1 && abs(imageRect.height - initialImageHeight) < 2 && abs(preview.bounds.height - imageRect.height) < 2,

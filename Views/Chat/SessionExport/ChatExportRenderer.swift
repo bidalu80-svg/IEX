@@ -320,7 +320,8 @@ struct ChatShareCellContent: View {
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(message.isCompactedHistory ? 0.5 : 1)
-            .accessibilityIdentifier("chatShare.taskHeader")
+            // Keep the identifier on the duration Button. A container identifier
+            // propagates to descendants and replaces the Button's ID.
         case .toolGroup:
             // [T-share-fold-tools] The chat's own folded row, closed.
             if let fold = cell.fold {

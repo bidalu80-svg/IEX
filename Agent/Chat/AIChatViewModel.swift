@@ -2046,6 +2046,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// the existing background notification, keyed to the completed reply.
     var feedbackCompletedReplyID: UUID?
     var feedbackAudibleReplyID: UUID?
+    /// Only an error-free notification-center callback counts as accepted.
+    var feedbackBackgroundScheduledReplyID: UUID?
+    /// One current attempt also prevents a late callback after the bounded
+    /// timeout from racing a second success notification at background cleanup.
+    var feedbackBackgroundNotificationAttempt: (replyID: UUID, task: Task<Bool, Never>)?
     /// Budget expiry requests one final answer at the next completed-tool boundary.
     var zeSubAgentWrapUpRequested = false
     var zeSubAgentResultPromptIds: Set<UUID> = []
@@ -4342,7 +4347,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// A loop can finish several queued user turns before it returns. Keep
     /// notification ownership with the completed message, so advancing to the
     /// next turn does not drop a chime or replay the final turn at loop exit.
-    private func notifyCompletionFeedback(for messageID: UUID, notifiedMessageIDs: inout Set<UUID>) {
+    private func notifyCompletionFeedback(for messageID: UUID, notifiedMessageIDs: inout Set<UUID>) async {
         guard let message = messages.first(where: { $0.id == messageID }),
               notifiedMessageIDs.insert(message.id).inserted else { return }
         let hasReply = message.blocks.contains { $0.kind == .text && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -4353,11 +4358,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         if AppFeedback.completedReply(hasError: false, isCancelled: false, canResume: false, hasReply: true) {
             feedbackAudibleReplyID = message.id
         }
+        await notifyBackgroundReplyCompletion(for: message)
     }
 
     private func runAgentLoop(resumingAt existingMsgIdx: Int? = nil, committedBlocks: Int? = nil) async throws {
         feedbackCompletedReplyID = nil
         feedbackAudibleReplyID = nil
+        feedbackBackgroundScheduledReplyID = nil
+        feedbackBackgroundNotificationAttempt = nil
         // REPRO-DIAG(2026-05-16): bump global round counter and emit a clear
         // BEGIN/END marker so the user can grep `ROUND \d+` to slice the log
         // by attempt. A "round" = one runAgentLoop invocation, which is
@@ -5349,7 +5357,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
                 hitTurnLimit = false
                 if let completingReplyID {
-                    notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
+                    await notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
+                    // Notification acknowledgement can yield; re-find the turn
+                    // before the queue adapter reads or advances its index.
+                    guard let currentIndex = messages.firstIndex(where: { $0.id == completingReplyID }) else { return }
+                    msgIdx = currentIndex
                 }
 
                 // [T-ios-queued-message-continues-prev-turn] The current turn's
@@ -5715,14 +5727,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
         // Fallback for terminal paths outside the no-tool finish branch.
         // Already finalized messages are deduplicated by their stable id.
-        notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
+        await notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
+        guard let completedMessage = messages.first(where: { $0.id == completingReplyID }) else { return }
 
         // Cache parsed MarkdownContent and NSAttributedString on completed text blocks
         // to avoid re-parsing and re-rendering on cell recycling / SwiftUI refreshes.
-        for i in messages[msgIdx].blocks.indices {
-            if case .text = messages[msgIdx].blocks[i].kind, !messages[msgIdx].blocks[i].content.isEmpty {
-                messages[msgIdx].blocks[i].cachedMarkdown = MarkdownContent(prepareMarkdownForRender(messages[msgIdx].blocks[i].content))
-                cacheAttributedString(for: messages[msgIdx].blocks[i])
+        for i in completedMessage.blocks.indices {
+            if case .text = completedMessage.blocks[i].kind, !completedMessage.blocks[i].content.isEmpty {
+                completedMessage.blocks[i].cachedMarkdown = MarkdownContent(prepareMarkdownForRender(completedMessage.blocks[i].content))
+                cacheAttributedString(for: completedMessage.blocks[i])
             }
         }
 

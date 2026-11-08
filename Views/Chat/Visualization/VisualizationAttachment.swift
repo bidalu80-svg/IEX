@@ -185,7 +185,10 @@ final class ZeVisualizationAttachment: NSTextAttachment {
 /// TextKit can briefly resize an attachment to its provisional glyph bounds.
 /// Always lay out the child from the measured content, rather than stretching
 /// its previous height with autoresizing (which centers/crops custom previews).
-private final class ZeVisualizationAttachmentContainer: UIView {
+// Keep a regular Objective-C runtime name: the PDF exporter hides TextKit's
+// underscore-prefixed private drawing views, and Swift private classes mangle
+// to an underscore-prefixed name as well.
+final class ZeVisualizationAttachmentContainer: UIView {
     private let card: ZeVisualizationCardView
     init(card: ZeVisualizationCardView) {
         self.card = card; super.init(frame: .zero); addSubview(card)
@@ -780,6 +783,16 @@ struct ZeCustomVisualizationSnapshot {
 /// tool bridge. The CSP is installed before model markup and cannot be relaxed by it.
 @MainActor enum ZeCustomVisualizationRuntime {
     static let width: CGFloat = 360
+#if DEBUG
+    static var verificationOnCapture: (([String: Any]) -> Void)?
+    private static func recordCapture(_ web: WKWebView, phase: String) {
+        let inset = web.scrollView.contentInset, adjusted = web.scrollView.adjustedContentInset
+        verificationOnCapture?(["phase": phase, "frame": NSCoder.string(for: web.frame),
+            "contentInset": [inset.top, inset.left, inset.bottom, inset.right],
+            "adjustedContentInset": [adjusted.top, adjusted.left, adjusted.bottom, adjusted.right],
+            "contentOffset": [web.scrollView.contentOffset.x, web.scrollView.contentOffset.y]])
+    }
+#endif
     static func webView(component: ZeVisualizationComponent, state: String?, dark: Bool) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -944,12 +957,24 @@ struct ZeCustomVisualizationSnapshot {
             let height = CGFloat(number.doubleValue)
             // Oversized documents remain scrollable in details; avoid huge bitmaps.
             guard height.isFinite, height > 0, height <= 1600 else { completion(nil); return }
+#if DEBUG
+            recordCapture(web, phase: "beforeNormalization")
+#endif
             web.transform = .identity
+            // DOM geometry starts at document zero. Window safe-area insets
+            // must not shift snapshot pixels away from those captured glyphs.
+            web.scrollView.contentInsetAdjustmentBehavior = .never
+            web.scrollView.contentInset = .zero
+            web.scrollView.scrollIndicatorInsets = .zero
             web.scrollView.setContentOffset(.zero, animated: false)
             web.frame.size = CGSize(width: width, height: height)
             web.setNeedsLayout(); web.layoutIfNeeded()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak web] in
                 guard let web, web.superview != nil else { completion(nil); return }
+                web.scrollView.setContentOffset(.zero, animated: false)
+#if DEBUG
+                recordCapture(web, phase: "snapshot")
+#endif
                 let config = WKSnapshotConfiguration()
                 config.rect = CGRect(x: 0, y: 0, width: width, height: height)
                 config.snapshotWidth = NSNumber(value: Double(540 / web.traitCollection.displayScale))
@@ -1180,6 +1205,13 @@ final class ZeCustomVisualizationSelectionTextView: UITextView {
 }
 
 final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
+#if DEBUG
+    private(set) var verificationGestureEvents: [String] = []
+    private func recordGesture(_ event: String) {
+        verificationGestureEvents.append(event)
+        if verificationGestureEvents.count > 32 { verificationGestureEvents.removeFirst() }
+    }
+#endif
     let component: ZeVisualizationComponent
     private let interaction: ZeVisualizationInteractionState
     private let picture = UIImageView()
@@ -1272,12 +1304,18 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
                                                        dark: traitCollection.userInterfaceStyle == .dark)
     }
     @objc private func selectByPress(_ sender: UILongPressGestureRecognizer) {
+#if DEBUG
+        recordGesture("press state=\(sender.state.rawValue) point=\(sender.location(in: self))")
+#endif
         if sender.state == .began { beginTextSelection(at: sender.location(in: self)) }
     }
     @objc private func selectByTap(_ sender: UITapGestureRecognizer) {
         if sender.state == .ended { beginTextSelection(at: sender.location(in: self)) }
     }
     func beginTextSelection(at point: CGPoint) {
+#if DEBUG
+        recordGesture("begin point=\(point) active=\(activeSelectionView != nil) glyphs=\(textLayout.glyphs.count)")
+#endif
         guard activeSelectionView == nil, !textLayout.glyphs.isEmpty else { return }
         let imageRect = imageDisplayRect
         guard imageRect.contains(point) else { return }
@@ -1299,6 +1337,9 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
                 ancestor = view.superview
             }
             text.becomeFirstResponder(); text.selectWord(at: selectedPoint)
+#if DEBUG
+            self.recordGesture("focused=\(text.isFirstResponder) range=\(text.selectedRange)")
+#endif
             // Focusing a nested read-only text view may try to scroll its parent
             // to its synthetic text layout; the captured card stays at its pixels.
             for (scroll, offset) in offsets where scroll.contentOffset != offset { scroll.setContentOffset(offset, animated: false) }
@@ -1311,6 +1352,9 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         }
     }
     func endTextSelection() {
+#if DEBUG
+        if activeSelectionView != nil { recordGesture("end active selection mounted=\(window != nil)") }
+#endif
         let active = activeSelectionView; activeSelectionView = nil
         active?.onDismiss = nil; active?.resignFirstResponder(); active?.removeFromSuperview()
         isAccessibilityElement = true
@@ -1318,6 +1362,11 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
     }
     @objc private func dismissSelection(_ gesture: UITapGestureRecognizer) { activeSelectionView?.resignFirstResponder() }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+#if DEBUG
+        if selectionGestures.contains(where: { $0 === gestureRecognizer }) {
+            recordGesture("receive \(type(of: gestureRecognizer)) touch=\(touch.location(in: self)) view=\(String(describing: touch.view))")
+        }
+#endif
         guard gestureRecognizer === dismissTap, let activeSelectionView, let touched = touch.view else { return true }
         if touched === activeSelectionView || touched.isDescendant(of: activeSelectionView) { return false }
         var ancestor: UIView? = touched
@@ -1329,7 +1378,11 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         return true
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        !selectionGestures.contains(where: { $0 === gestureRecognizer }) || activeSelectionView == nil
+        let allowed = !selectionGestures.contains(where: { $0 === gestureRecognizer }) || activeSelectionView == nil
+#if DEBUG
+        recordGesture("shouldBegin \(type(of: gestureRecognizer)) allowed=\(allowed)")
+#endif
+        return allowed
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         gestureRecognizer === dismissTap || otherGestureRecognizer === dismissTap

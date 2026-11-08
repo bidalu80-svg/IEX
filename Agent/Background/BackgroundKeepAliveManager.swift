@@ -944,13 +944,15 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         return "\(base) · \(formatted)"
     }
 
-    func postBackgroundTaskNotification(sessionTitle: String, responseSummary: String, sessionId: String, isError: Bool = false, wasBackground: Bool? = nil, completionSoundEligible: Bool = false, completionSoundAlreadyPlayed: Bool = false) {
-        guard backgroundNotificationsEnabled else { return }
+    /// True means the notification center acknowledged scheduling, not that
+    /// iOS displayed it or played a sound. Callback waiting is bounded to 3s.
+    @discardableResult func postBackgroundTaskNotification(sessionTitle: String, responseSummary: String, sessionId: String, isError: Bool = false, wasBackground: Bool? = nil, completionSoundEligible: Bool = false, completionSoundAlreadyPlayed: Bool = false, replyID: UUID? = nil) async -> Bool {
+        guard backgroundNotificationsEnabled else { return false }
         // Use the caller-captured snapshot when available (the async Task in
         // endBackgroundProcessing may not run until the app is already active).
         // Fall back to the live check for other call sites.
         let isBackground = wasBackground ?? (UIApplication.shared.applicationState != .active)
-        guard isBackground else { return }
+        guard isBackground else { return false }
 
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -989,14 +991,33 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         UIApplication.shared.applicationIconBadgeNumber = current + 1
 
         let request = UNNotificationRequest(
-            identifier: "bg-task-\(sessionId)-\(Date().timeIntervalSince1970)",
+            identifier: replyID.map { "bg-reply-\(sessionId)-\($0.uuidString)" } ?? "bg-task-\(sessionId)-\(Date().timeIntervalSince1970)",
             content: content,
             trigger: nil // deliver immediately
         )
-        center.add(request) { error in
-            if let error {
-                logger.error("[BackgroundNotification] Failed to post: \(error.localizedDescription)")
+        return await withCheckedContinuation { continuation in
+            let receipt = BackgroundNotificationReceipt(continuation)
+            center.add(request) { error in
+                let accepted = error == nil
+                if let error { logger.error("[BackgroundNotification] Failed to post: \(error.localizedDescription)") }
+                Task { @MainActor in receipt.resolve(accepted) }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                if receipt.resolve(false) {
+                    logger.warning("[BackgroundNotification] Scheduling acknowledgement exceeded 3s; delivery state is unknown")
+                }
+            }
+        }
+    }
+
+    @MainActor private final class BackgroundNotificationReceipt {
+        private var continuation: CheckedContinuation<Bool, Never>?
+        init(_ continuation: CheckedContinuation<Bool, Never>) { self.continuation = continuation }
+        @discardableResult func resolve(_ accepted: Bool) -> Bool {
+            guard let continuation else { return false }
+            self.continuation = nil
+            continuation.resume(returning: accepted)
+            return true
         }
     }
 
