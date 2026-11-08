@@ -40,6 +40,10 @@ import AVFoundation
             checks.append(text)
         }
         do {
+            for _ in 0..<40 where UIApplication.shared.applicationState != .active {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            try check(UIApplication.shared.applicationState == .active, "Foreground tone tests run in an active application")
             settings.preferences.hapticsEnabled = false
             settings.preferences.completionSoundEnabled = false
             AppFeedback.haptic()
@@ -50,6 +54,64 @@ import AVFoundation
                 settings.preferences.hapticStrength = strength
                 AppFeedback.haptic()
                 try check(events.last == .haptic(strength), "Selected haptic style reaches real generator: \(strength.rawValue)")
+            }
+            // Execute the production view-model finalization method against
+            // queue/message boundaries, with real app feedback behind it.
+            events.removeAll()
+            let completionProbe = FeedbackCompletionProbe()
+            let firstReply = FeedbackProbeMessage()
+            let queuedReply = FeedbackProbeMessage()
+            completionProbe.messages = [firstReply, queuedReply]
+            var notifiedIDs = Set<UUID>()
+            completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &notifiedIDs)
+            completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
+            completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
+            try check(events.count == 2 && notifiedIDs == Set([firstReply.id, queuedReply.id]),
+                      "Each completed queued reply notifies once; loop-exit fallback does not replay the last message")
+            events.removeAll()
+            let removedReply = FeedbackProbeMessage()
+            completionProbe.messages = [removedReply]
+            completionProbe.messages.removeAll()
+            completionProbe.notifyCompletionFeedback(for: removedReply.id, notifiedMessageIDs: &notifiedIDs)
+            try check(events.isEmpty && !notifiedIDs.contains(removedReply.id),
+                      "A message deleted during persistence does not notify or index a stale array slot")
+            completionProbe.messages = [queuedReply, firstReply]
+            var reorderedIDs = Set<UUID>()
+            completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &reorderedIDs)
+            try check(events.count == 1 && reorderedIDs == Set([firstReply.id]),
+                      "Completion resolves stable message identity after array reorder")
+            events.removeAll()
+            let failedReply = FeedbackProbeMessage()
+            failedReply.error = "Network error"
+            let pausedReply = FeedbackProbeMessage()
+            let cancelledReply = FeedbackProbeMessage()
+            let emptyReply = FeedbackProbeMessage()
+            emptyReply.blocks = [FeedbackProbeBlock(kind: .tool, content: "Tool output")]
+            completionProbe.messages = [failedReply, pausedReply, cancelledReply, emptyReply]
+            completionProbe.notifyCompletionFeedback(for: failedReply.id, notifiedMessageIDs: &notifiedIDs)
+            completionProbe.canResume = true
+            completionProbe.notifyCompletionFeedback(for: pausedReply.id, notifiedMessageIDs: &notifiedIDs)
+            completionProbe.canResume = false
+            completionProbe.userDidCancel = true
+            completionProbe.notifyCompletionFeedback(for: cancelledReply.id, notifiedMessageIDs: &notifiedIDs)
+            completionProbe.userDidCancel = false
+            completionProbe.notifyCompletionFeedback(for: emptyReply.id, notifiedMessageIDs: &notifiedIDs)
+            try check(events.isEmpty, "Production finalization suppresses failed, resumable, stopped and tool-only replies")
+            try check(AppFeedback.notificationSound(eligible: true, alreadyPlayed: false) == nil,
+                      "Automatic sound OFF also silences background completion notifications")
+            settings.preferences.completionSoundEnabled = true
+            try check(AppFeedback.notificationSound(eligible: false, alreadyPlayed: false) == nil,
+                      "Background notification stays silent for incomplete or failed work")
+            try check(AppFeedback.notificationSound(eligible: true, alreadyPlayed: true) == nil,
+                      "Notification does not replay a chime already played in the foreground")
+            AudioSessionCoordinator.shared.canPlayInterfaceFeedback = false
+            try check(AppFeedback.notificationSound(eligible: true, alreadyPlayed: false) == nil,
+                      "Background notification sound respects microphone/interruption suppression")
+            AudioSessionCoordinator.shared.canPlayInterfaceFeedback = true
+            for tone in ReplyCompletionTone.allCases {
+                settings.preferences.completionTone = tone
+                try check(AppFeedback.notificationSound(eligible: true, alreadyPlayed: false) != nil,
+                          "Background completion uses a valid selected notification sound: \(tone.rawValue)")
             }
             events.removeAll()
             settings.preferences.completionSoundEnabled = true

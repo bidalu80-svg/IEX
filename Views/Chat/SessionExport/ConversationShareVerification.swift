@@ -323,11 +323,16 @@ import PDFKit
     private static func verifyTaskDisclosure(window: UIWindow, vm: AIChatViewModel) async throws {
         let key = ConsecutiveToolCallsPolicy.preferenceKey
         let original = UserDefaults.standard.object(forKey: key)
+        let thinkingKey = "chatShare.hideThinking"
+        let originalThinking = UserDefaults.standard.object(forKey: thinkingKey)
         defer {
             if let original { UserDefaults.standard.set(original, forKey: key) }
             else { UserDefaults.standard.removeObject(forKey: key) }
+            if let originalThinking { UserDefaults.standard.set(originalThinking, forKey: thinkingKey) }
+            else { UserDefaults.standard.removeObject(forKey: thinkingKey) }
         }
         UserDefaults.standard.set(true, forKey: key)
+        UserDefaults.standard.set(false, forKey: thinkingKey)
         func reply(_ final: String, duration: TimeInterval?, collapsed: Bool) -> ChatMessage {
             let thought = AssistantBlock(kind: .thinking, content: "检查来源和正文。")
             thought.thinkingDuration = 9
@@ -383,13 +388,18 @@ import PDFKit
         try require(roundTrip == selected, "Mixed per-turn disclosure preserves selection through an expand round trip")
         window.overrideUserInterfaceStyle = .light
         var disclosed: [ChatShareCell]?
+        var actualSelection: Set<String>?
         window.rootViewController = UIHostingController(rootView: ChatShareSelectionView(request: request,
-            onDisclosureChanged: { disclosed = $0 }).environment(\.colorScheme, .light))
+            onDisclosureChanged: { disclosed = $0 }, onSelectionChanged: { actualSelection = $0 })
+            .environment(\.colorScheme, .light))
         try await Task.sleep(nanoseconds: 350_000_000)
         try capture(window, name: "picker-task-disclosure-light.png")
         try await requestUIAction("open", details: ["identifier": "chatShare.taskToggle.\(closed.id.uuidString)"])
         try await waitUntil("Task-duration tap expands the selected task's real share rows") {
             disclosed?.contains { $0.messageId == closed.id && $0.kind == .tool } == true
+        }
+        try await waitUntil("Task disclosure expands without toggling row selection") {
+            actualSelection == unfoldedSelection
         }
         try require(snapshot.isStepsCollapsed, "Share disclosure tap leaves the frozen source model unchanged")
         try capture(window, name: "picker-task-expanded-light.png")
@@ -398,8 +408,32 @@ import PDFKit
             let rows = disclosed?.filter { $0.messageId == closed.id } ?? []
             return rows.map(\.kind) == [.taskHeader, .text]
         }
-        var pdfOptions = ChatExportOptions(); pdfOptions.format = .pdf; pdfOptions.hideHeader = true
+        try await waitUntil("Task disclosure round trip preserves the original selected rows") {
+            actualSelection == selected
+        }
+        try await requestUIAction("open", details: ["identifier": "chatShare.foldTools"])
+        try await waitUntil("Global expansion opens every completed task while preserving the active trail") {
+            guard let disclosed else { return false }
+            return !disclosed.contains { $0.stepsCollapsed } && actualSelection == unfoldedSelection
+        }
+        try await requestUIAction("open", details: ["identifier": "chatShare.foldTools"])
+        try await waitUntil("Global folding closes completed tasks and leaves the active turn expanded") {
+            guard let disclosed else { return false }
+            return disclosed.filter { $0.kind == .taskHeader && $0.stepsCollapsed }.count == 2
+                && disclosed.contains { $0.messageId == running.id && $0.kind == .tool }
+                && actualSelection == ChatShareCells.remapSelection(unfoldedSelection, from: request.cells, to: folded)
+        }
         let selectedGroups = ChatShareCells.renderGroups(initial, selected: Set(closedCells.map(\.id)))
+        var imageOptions = ChatExportOptions(); imageOptions.hideHeader = true
+        let imageArtifact = try await ChatExportRenderer(vm: vm).render(groups: selectedGroups, messages: request.messages,
+            title: request.title, options: imageOptions, progress: { _, _ in })
+        let imageURL = try save(imageArtifact.url, name: "task-disclosure.png")
+        let collapsedImage = UIImage(contentsOfFile: imageURL.path)
+        try require(collapsedImage != nil && imageArtifact.size.height > 40 && imageArtifact.size.height < imageArtifact.size.width,
+                    "Collapsed long-image export has compact task header and final text geometry")
+        try require(!selectedGroups.joined().contains { $0.kind == .tool || $0.kind == .thinking || $0.blockId == closed.blocks.first?.id },
+                    "Long image and PDF use the same frozen visible cells without hidden steps")
+        var pdfOptions = imageOptions; pdfOptions.format = .pdf
         let artifact = try await ChatExportRenderer(vm: vm).render(groups: selectedGroups, messages: request.messages,
             title: request.title, options: pdfOptions, progress: { _, _ in })
         let pdf = try save(artifact.url, name: "task-disclosure.pdf")

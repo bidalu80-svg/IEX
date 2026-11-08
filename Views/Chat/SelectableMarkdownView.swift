@@ -5969,8 +5969,9 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 return
             }
 
-            if attachment is ZeVisualizationAttachment {
-                view.frame = boundingRect
+            if let visualization = attachment as? ZeVisualizationAttachment {
+                view.frame = CGRect(origin: boundingRect.origin, size: CGSize(width: boundingRect.width,
+                    height: visualization.cardHeight(width: boundingRect.width) + ZeVisualizationAttachment.verticalInset * 2))
                 view.setNeedsLayout()
             }
 

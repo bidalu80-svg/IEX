@@ -34,6 +34,31 @@ import Foundation
                 }
             }
         }
+        let soundDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("ze-notification-sounds-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: soundDirectory) }
+        for tone in ReplyCompletionTone.allCases {
+            guard let name = ReplyToneAudio.notificationFile(tone, directory: soundDirectory) else { preconditionFailure("Notification sound must materialize") }
+            let file = soundDirectory.appendingPathComponent(name)
+            let stored = try Data(contentsOf: file)
+            precondition(stored == ReplyToneAudio.wav(tone))
+            let old = Date(timeIntervalSince1970: 1_000)
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+            precondition(ReplyToneAudio.notificationFile(tone, directory: soundDirectory) == name)
+            let modification = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            precondition(modification == old, "Valid file reuses bytes without rewriting on every notification")
+            try Data("damaged".utf8).write(to: file)
+            precondition(ReplyToneAudio.notificationFile(tone, directory: soundDirectory) == name)
+            let repaired = try Data(contentsOf: file)
+            precondition(repaired == ReplyToneAudio.wav(tone), "Damaged audio is replaced with the selected waveform")
+        }
+        let soundFiles = try FileManager.default.contentsOfDirectory(at: soundDirectory, includingPropertiesForKeys: [.fileSizeKey])
+        precondition(soundFiles.count == 5, "Notification audio storage is bounded to five fixed filenames")
+        let diskBytes = try soundFiles.reduce(0) { $0 + (try $1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+        precondition(diskBytes < 150 * 1024)
+        let blockedDirectory = soundDirectory.appendingPathComponent("blocked")
+        try Data("a file, not a directory".utf8).write(to: blockedDirectory)
+        precondition(ReplyToneAudio.notificationFile(.glass, directory: blockedDirectory) == nil, "Write failure stays silent rather than choosing an unexpected default sound")
+        print("PASS notification audio: fixed filenames, exact-byte reuse, corruption repair, bounded disk storage and silent write failure")
         var previous: [Data] = []
         var bytes = 0
         for tone in ReplyCompletionTone.allCases {

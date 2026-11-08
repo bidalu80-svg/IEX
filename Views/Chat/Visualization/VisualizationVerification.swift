@@ -261,6 +261,7 @@ import WebKit
         let html = ##"""
         <style>body{background:#13243d;color:#fff}h2{margin:8px 0}label{display:block}svg{width:100%;height:170px}button{border:0;border-radius:10px;padding:8px}</style>
         <h2>自由布局 · 交互几何</h2><label>角度 <input id="angle" type="range" min="10" max="90" value="30"></label><output id="value">30</output>
+        <p style="margin:4px 0">Inline <strong>75</strong> pts</p>
         <svg viewBox="0 0 340 170"><path id="shape" fill="#2bc9ac" stroke="#ffbd55" stroke-width="4" d="M20 145 L170 30 L320 145 Z"/><text x="20" y="165" fill="white">非固定图表组件</text></svg>
         <section style="line-height:1.6;padding:8px 0"><p>这是用于检查正文高度的多行中文说明。完整来源应当出现在图形下方，不能因为模型低估高度而被裁切。</p><p>数据来自验收样例，数值仅用于交互测试，并非实时价格。展开页可以滚动查看所有说明。</p><p>图形、刻度、日期和来源都属于同一个内容区域。分享时应保留全部末行文字。</p></section>
         <svg id="edge-chart" viewBox="0 0 340 40" style="height:48px"><text x="320" y="30" fill="white">2026-11-07</text></svg>
@@ -289,23 +290,62 @@ import WebKit
         }
         try await Task.sleep(nanoseconds: 200_000_000)
         host.view.layoutIfNeeded()
-        let card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
+        var card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
         try check(card != nil, "Custom design is integrated in real chat Markdown")
         let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
         try check(!previewImages.isEmpty, "Custom HTML/SVG renders a real inline image")
         try check(!descendants(host.view).contains { $0 is WKWebView }, "Inline chat does not retain a web view per card")
-        if let preview = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
+        if var preview = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
            let glyph = preview.textLayout.glyphs.first {
-            let scale = preview.bounds.width / 360
+            var imageRect = preview.imageDisplayRect
+            var scale = imageRect.width / 360
+            let initialImageHeight = imageRect.height
+            let originalIdentity = String(describing: ObjectIdentifier(preview))
+            let preselection: [String: Any] = ["preview": NSStringFromCGRect(preview.frame), "image": NSStringFromCGRect(imageRect),
+                "card": card.map { NSStringFromCGRect($0.frame) } ?? "missing", "glyphs": preview.textLayout.glyphs.count,
+                "naturalHeight": block.visualizationSelections.values.first?.customContentHeight ?? 0]
+            try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted])
+                .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
+            try check(abs(imageRect.minY) < 1 && abs(imageRect.height - preview.bounds.height) < 2,
+                      "New custom preview uses its natural height without centered blank margins")
             try check(preview.textLayout.text.contains("SOURCE_END") && preview.textLayout.text.contains("2026-11-07"),
                       "Custom snapshot contains exact selectable HTML and SVG text")
+            try check(preview.textLayout.text.contains("Inline 75 pts"),
+                      "Inline HTML emphasis does not insert artificial copied line breaks")
             try await ConversationShareVerification.requestUIAction("selectVisualization", details: [
-                "identifier": "ze.visualization.custom.preview", "startX": glyph.rect.midX * scale,
-                "startY": glyph.rect.midY * scale])
-            try check(preview.activeSelectionView?.isFirstResponder == true,
-                      "Actual long press starts native text selection over custom pixels")
+                "identifier": "ze.visualization.custom.preview", "startX": imageRect.minX + glyph.rect.midX * scale,
+                "startY": imageRect.minY + glyph.rect.midY * scale])
+            for _ in 0..<20 {
+                if let current = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first(where: { $0.window === window }) {
+                    preview = current
+                }
+                if preview.window === window && preview.activeSelectionView?.isFirstResponder == true { break }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            imageRect = preview.imageDisplayRect; scale = imageRect.width / 360
+            card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
+            try check(preview.window === window && preview.activeSelectionView?.isFirstResponder == true,
+                      "Actual long press starts native text selection over custom pixels (active=\(preview.activeSelectionView != nil), mounted=\(preview.window === window), original=\(originalIdentity), current=\(ObjectIdentifier(preview)), bounds=\(preview.bounds), image=\(imageRect))")
+            try check(abs(imageRect.minY) < 1 && abs(imageRect.height - initialImageHeight) < 2 && abs(preview.bounds.height - imageRect.height) < 2,
+                      "Focusing custom selection preserves its natural preview geometry")
             if let selected = preview.activeSelectionView {
                 let full = (selected.text ?? "") as NSString
+                if let initialRange = selected.selectedTextRange {
+                    let before = selected.selectedRange
+                    let targetText = full.range(of: "非固定图表组件")
+                    if let targetGlyph = preview.textLayout.glyphs.last(where: { NSIntersectionRange($0.range, targetText).length > 0 }) {
+                        let endCaret = selected.caretRect(for: initialRange.end)
+                        try await ConversationShareVerification.requestUIAction("dragVisualizationSelection", details: [
+                            "identifier": "ze.visualization.custom.selection", "startX": endCaret.midX,
+                            "startY": endCaret.maxY + 5, "endX": targetGlyph.rect.maxX * scale - 1,
+                            "endY": targetGlyph.rect.midY * scale])
+                        try check(selected.selectedRange.length > before.length,
+                                  "Real native selection-handle drag extends across custom text nodes")
+                        selected.copy(nil)
+                        try check(UIPasteboard.general.string?.contains("角度") == true,
+                                  "Dragged custom selection copies the intervening visible text")
+                    }
+                }
                 let source = full.range(of: "SOURCE_END")
                 try check(source.location != NSNotFound, "Custom source text is selectable beyond the original viewport")
                 selected.selectedRange = source
@@ -328,6 +368,21 @@ import WebKit
             try selectedImage.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-selection.png"))
             preview.endTextSelection()
             try check(preview.activeSelectionView == nil, "Custom selection releases its temporary native text view")
+            if let current = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first(where: { $0.window === window }) { preview = current }
+            imageRect = preview.imageDisplayRect; scale = imageRect.width / 360
+            let doubleGlyph = preview.textLayout.glyphs.first ?? glyph
+            try await ConversationShareVerification.requestUIAction("selectVisualization", details: [
+                "identifier": "ze.visualization.custom.preview", "startX": imageRect.minX + doubleGlyph.rect.midX * scale,
+                "startY": imageRect.minY + doubleGlyph.rect.midY * scale, "endX": 2])
+            for _ in 0..<20 {
+                if let current = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first(where: { $0.window === window }) { preview = current }
+                if preview.window === window && preview.activeSelectionView?.isFirstResponder == true { break }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            try check(preview.window === window && preview.activeSelectionView?.isFirstResponder == true &&
+                      (preview.activeSelectionView?.selectedRange.length ?? 0) > 0,
+                      "Actual double tap also selects custom text after a prior selection closes (current=\(ObjectIdentifier(preview)), mounted=\(preview.window === window))")
+            preview.endTextSelection()
         } else { try check(false, "Custom snapshot is missing text geometry") }
         card?.subviews.compactMap { $0 as? UIButton }.first?.sendActions(for: .touchUpInside)
         try await Task.sleep(nanoseconds: 500_000_000)
@@ -413,6 +468,23 @@ import WebKit
         let sharedLayout = descendants(share.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.textLayout }.first
         try check(sharedLayout?.text.contains("75") == true && sharedLayout?.text.contains("SOURCE_END") == true,
                   "Shared custom image retains exact current selectable text with frozen state")
+        if var preview = descendants(share.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
+           let glyph = preview.textLayout.glyphs.first {
+            let rect = preview.imageDisplayRect, scale = rect.width / 360
+            try check(abs(rect.minY) < 1 && abs(rect.height - preview.bounds.height) < 2,
+                      "Remounted shared custom preview keeps the same complete natural height")
+            try await ConversationShareVerification.requestUIAction("selectVisualization", details: [
+                "identifier": "ze.visualization.custom.preview", "startX": rect.minX + glyph.rect.midX * scale,
+                "startY": rect.minY + glyph.rect.midY * scale])
+            for _ in 0..<20 {
+                if let current = descendants(share.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first(where: { $0.window === window }) { preview = current }
+                if preview.window === window && preview.activeSelectionView?.isFirstResponder == true { break }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            try check(preview.window === window && preview.activeSelectionView?.isFirstResponder == true,
+                      "Long press also selects exact custom text after share remount (current=\(ObjectIdentifier(preview)), mounted=\(preview.window === window))")
+            preview.endTextSelection()
+        }
         let compactData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "compact", "title": "Compact",
             "components": [["id": "small", "type": "custom", "height": 600, "fallbackText": "Short content",
                             "html": "<p style='margin:0;line-height:24px'>Short content with a 600px hint</p>"]]])
@@ -425,7 +497,7 @@ import WebKit
         try compactImage?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-compact.png"))
         let canvasHTML = """
         <canvas id="labels" width="340" height="100" style="width:100%;height:100px"></canvas>
-        <script>const c=document.getElementById('labels');let ctx=c.getContext('2d');ctx.font='18px sans-serif';ctx.fillText('STALE_OLD',10,24);c.width=340;ctx=c.getContext('2d');ctx.font='18px sans-serif';ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);ctx.fillText('Clear-old',10,65);ctx.clearRect(0,0,340,100);ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);</script>
+        <script>const c=document.getElementById('labels');let ctx=c.getContext('2d');ctx.font='18px sans-serif';ctx.fillText('STALE_OLD',10,24);c.width=680;c.height=200;ctx=c.getContext('2d');ctx.scale(2,2);ctx.font='18px sans-serif';ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);ctx.fillText('Clear-old',10,65);ctx.clearRect(0,0,340,100);ctx.fillStyle='#1668ca';ctx.fillText('Canvas III WWW 中文',10,30);</script>
         """
         let canvasData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "id": "canvas", "title": "Canvas labels",
             "components": [["id": "drawn", "type": "custom", "height": 180, "fallbackText": "Canvas III WWW 中文", "html": canvasHTML]]])

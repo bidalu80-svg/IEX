@@ -123,6 +123,11 @@ extension AIChatViewModel {
             let sid = sessionId ?? ""
             let wasBackground = UIApplication.shared.applicationState != .active
             let hasError = messages.last?.error != nil || errorMessage != nil
+            let lastReply = messages.last(where: { $0.role == .assistant })
+            let completionSoundEligible = lastReply.map { reply in
+                feedbackCompletedReplyID == reply.id && !hasError && !canResume && !userDidCancel && !Task.isCancelled
+            } ?? false
+            let completionSoundAlreadyPlayed = lastReply.map { feedbackAudibleReplyID == $0.id } ?? false
             let responseSummary: String = {
                 let assistantTurns = agentHistory.filter { $0.role == .assistant }
                 logger.info("[BackgroundNotification] building responseSummary from agentHistory: totalMsgs=\(agentHistory.count) assistantTurns=\(assistantTurns.count) wasBackground=\(wasBackground) hasError=\(hasError)")
@@ -187,7 +192,8 @@ extension AIChatViewModel {
                     sessionTitle = fallbackTitle
                 }
                 BackgroundKeepAliveManager.shared.postBackgroundTaskNotification(
-                    sessionTitle: sessionTitle, responseSummary: responseSummary, sessionId: sid, isError: hasError, wasBackground: wasBackground
+                    sessionTitle: sessionTitle, responseSummary: responseSummary, sessionId: sid, isError: hasError, wasBackground: wasBackground,
+                    completionSoundEligible: completionSoundEligible, completionSoundAlreadyPlayed: completionSoundAlreadyPlayed
                 )
                 await MainActor.run {
                     UIApplication.shared.endBackgroundTask(bgTaskID)

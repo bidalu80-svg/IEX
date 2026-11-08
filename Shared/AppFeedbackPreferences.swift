@@ -72,9 +72,26 @@ struct AppFeedbackPreferences: Equatable {
 }
 
 /// Short, original synthesized chimes. Five mono WAVs together cost less than
-/// 150 KiB; they are generated lazily in memory and never create cache files.
+/// 150 KiB. Direct playback is memory-only; background notifications reuse at
+/// most five derived audio files in the system-required Library/Sounds folder.
 enum ReplyToneAudio {
     static let sampleRate = 44_100
+    /// iOS local notifications load custom audio from Library/Sounds. Only the
+    /// five fixed names are used; identical contents are reused and damaged or
+    /// outdated contents are replaced atomically. Failure stays silent.
+    static func notificationFile(_ tone: ReplyCompletionTone, directory: URL? = nil) -> String? {
+        guard let directory = directory ?? FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?.appendingPathComponent("Sounds", isDirectory: true) else { return nil }
+        let name = "ze-reply-\(tone.rawValue)-v1.wav"
+        let file = directory.appendingPathComponent(name)
+        let data = wav(tone)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            if size == data.count, (try? Data(contentsOf: file)) == data { return name }
+            try data.write(to: file, options: .atomic)
+            return name
+        } catch { return nil }
+    }
     static func wav(_ tone: ReplyCompletionTone) -> Data {
         let notes = tone.notes
         let duration = (notes.map { $0.start + $0.duration }.max() ?? 0.2) + 0.015

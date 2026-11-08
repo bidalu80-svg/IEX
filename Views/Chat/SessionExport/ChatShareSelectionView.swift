@@ -61,7 +61,9 @@ struct ChatShareSelectionView: View {
     let request: ChatShareRequest
     /// Allows the full-app runtime verifier to observe the resulting projection.
     var onDisclosureChanged: (([ChatShareCell]) -> Void)? = nil
+    var onSelectionChanged: ((Set<String>) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: Set<String> = []
     @State private var showOptions = false
     @State private var frames = ChatShareRowFrames()
@@ -176,6 +178,7 @@ struct ChatShareSelectionView: View {
                 }
             }
             .environmentObject(request.vm)
+            .onChange(of: selection) { onSelectionChanged?($0) }
             .navigationTitle(selection.isEmpty
                              ? ShareLocalized("Select Messages")
                              : String(format: ShareLocalized("%lld Selected"), selection.count))
@@ -239,8 +242,13 @@ struct ChatShareSelectionView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .contentShape(Rectangle())
-            .onTapGesture { toggle(cell.id) }
+            // Keep selection's hit surface behind row content. An ancestor
+            // tap recognizer can also fire for the task-disclosure Button,
+            // unintentionally deselecting the header during expansion.
+            .background {
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { toggle(cell.id) }
+            }
             .contextMenu {
                 Button {
                     selection = ChatShareCells.setBelow(cell.id, in: cells, selected: selection, on: true)
@@ -325,6 +333,7 @@ struct ChatShareSelectionView: View {
                         }
                         .modifier(ChatShareFloatingButtonSurface())
                         .accessibilityValue(foldTools ? ShareLocalized("Folded") : ShareLocalized("Expanded"))
+                        .accessibilityIdentifier("chatShare.foldTools")
                     }
                     Button {
                         hideThinking.toggle()
@@ -349,7 +358,7 @@ struct ChatShareSelectionView: View {
                 // At least as wide as the screen, contents centred: fits → centred on
                 // the row's own width; wider → scrolls from the leading edge.
                 .frame(minWidth: geo.size.width)
-                .animation(.easeInOut(duration: 0.2), value: selection.isEmpty)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: selection.isEmpty)
             }
         }
         .frame(height: 46)

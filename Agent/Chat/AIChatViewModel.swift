@@ -2042,6 +2042,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Set by cancel() so the task's error handler knows this was a user stop.
     /// Internal-access so concurrent tool extensions can read it. [T-concurrent-tools]
     var userDidCancel = false
+    /// Share one audible completion between direct foreground playback and
+    /// the existing background notification, keyed to the completed reply.
+    var feedbackCompletedReplyID: UUID?
+    var feedbackAudibleReplyID: UUID?
     /// Budget expiry requests one final answer at the next completed-tool boundary.
     var zeSubAgentWrapUpRequested = false
     var zeSubAgentResultPromptIds: Set<UUID> = []
@@ -4335,7 +4339,25 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         message.blocks = kept
     }
 
+    /// A loop can finish several queued user turns before it returns. Keep
+    /// notification ownership with the completed message, so advancing to the
+    /// next turn does not drop a chime or replay the final turn at loop exit.
+    private func notifyCompletionFeedback(for messageID: UUID, notifiedMessageIDs: inout Set<UUID>) {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              notifiedMessageIDs.insert(message.id).inserted else { return }
+        let hasReply = message.blocks.contains { $0.kind == .text && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let cancelled = Task.isCancelled || userDidCancel
+        guard AppFeedbackPreferences.shouldComplete(hasError: message.error != nil, isCancelled: cancelled,
+                                                    canResume: canResume, hasReply: hasReply) else { return }
+        feedbackCompletedReplyID = message.id
+        if AppFeedback.completedReply(hasError: false, isCancelled: false, canResume: false, hasReply: true) {
+            feedbackAudibleReplyID = message.id
+        }
+    }
+
     private func runAgentLoop(resumingAt existingMsgIdx: Int? = nil, committedBlocks: Int? = nil) async throws {
+        feedbackCompletedReplyID = nil
+        feedbackAudibleReplyID = nil
         // REPRO-DIAG(2026-05-16): bump global round counter and emit a clear
         // BEGIN/END marker so the user can grep `ROUND \d+` to slice the log
         // by attempt. A "round" = one runAgentLoop invocation, which is
@@ -4470,6 +4492,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         var committedBlockCount = committedBlocks ?? 0
         self.committedBlockCount = committedBlockCount
         var turnUsage = TokenUsage()
+        var notifiedReplyMessageIDs = Set<UUID>()
 
         // Log context baseline for offload diagnostics
         let estimatedTokens = estimateContextTokens()
@@ -5215,6 +5238,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
             // If no tool uses, this turn is done — persist and break.
             guard !toolEntries.isEmpty else {
+                // Capture before persistence awaits; queue continuation may use a
+                // different assistant message on its next iteration.
+                let completingReplyID = messages.indices.contains(msgIdx) ? messages[msgIdx].id : nil
                 logger.info("Agent loop ending — no tool calls. stopReason=\(String(describing: stopReason))")
 
                 // [T-ios-stale-resume-banner] This turn produced a complete
@@ -5322,6 +5348,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     }
                 }
                 hitTurnLimit = false
+                if let completingReplyID {
+                    notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
+                }
 
                 // [T-ios-queued-message-continues-prev-turn] The current turn's
                 // tool loop has fully converged (no tool calls this iteration) and
@@ -5647,6 +5676,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
         // Store accumulated usage on the assistant message
         guard msgIdx < messages.count else { return }
+        let completingReplyID = messages[msgIdx].id
         messages[msgIdx].isAwaitingModelResponse = false
         messages[msgIdx].usage = turnUsage
         if messages[msgIdx].error == nil,
@@ -5683,15 +5713,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
         }
 
-        // One terminal reply notification per agent-loop invocation, before
-        // queued replies are drained. Cancellation, resumable/truncated output
-        // and errors never masquerade as a completed task.
-        AppFeedback.completedReply(
-            hasError: messages[msgIdx].error != nil,
-            isCancelled: Task.isCancelled || userDidCancel,
-            canResume: canResume,
-            hasReply: messages[msgIdx].blocks.contains { $0.kind == .text && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        )
+        // Fallback for terminal paths outside the no-tool finish branch.
+        // Already finalized messages are deduplicated by their stable id.
+        notifyCompletionFeedback(for: completingReplyID, notifiedMessageIDs: &notifiedReplyMessageIDs)
 
         // Cache parsed MarkdownContent and NSAttributedString on completed text blocks
         // to avoid re-parsing and re-rendering on cell recycling / SwiftUI refreshes.

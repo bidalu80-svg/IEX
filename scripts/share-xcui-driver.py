@@ -168,6 +168,16 @@ final class ShareDriver: XCTestCase {
             var strategy = request.action
             do {
                 switch request.action {
+                case "dragVisualizationSelection":
+                    let target = app.textViews[request.identifier ?? "ze.visualization.custom.selection"].firstMatch
+                    guard target.waitForExistence(timeout: 10), let endX = request.endX, let endY = request.endY else {
+                        throw NSError(domain: "ShareDriver", code: 10, userInfo: [NSLocalizedDescriptionKey: "Visualization selection handles are missing"])
+                    }
+                    let origin = target.coordinate(withNormalizedOffset: .zero)
+                    let start = origin.withOffset(CGVector(dx: request.startX ?? 20, dy: request.startY ?? 20))
+                    let end = origin.withOffset(CGVector(dx: endX, dy: endY))
+                    start.press(forDuration: 0.15, thenDragTo: end)
+                    strategy = "xcui-visualization-selection-handle-drag"
                 case "selectVisualization":
                     let target = app.descendants(matching: .any)[request.identifier ?? "ze.visualization.custom.preview"].firstMatch
                     guard target.waitForExistence(timeout: 10) else {

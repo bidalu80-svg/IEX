@@ -1,6 +1,7 @@
 import UIKit
 import AVFoundation
 import Combine
+import UserNotifications
 
 @MainActor final class AppFeedbackSettings: ObservableObject {
     static let shared = AppFeedbackSettings()
@@ -44,12 +45,22 @@ import Combine
         #endif
     }
 
-    static func completedReply(hasError: Bool, isCancelled: Bool, canResume: Bool, hasReply: Bool) {
+    @discardableResult static func completedReply(hasError: Bool, isCancelled: Bool, canResume: Bool, hasReply: Bool) -> Bool {
         guard AppFeedbackPreferences.shouldComplete(hasError: hasError, isCancelled: isCancelled,
-                                                    canResume: canResume, hasReply: hasReply) else { return }
+                                                    canResume: canResume, hasReply: hasReply) else { return false }
         haptic()
         let preferences = AppFeedbackSettings.shared.preferences
-        if preferences.completionSoundEnabled { sound.play(preferences.completionTone) }
+        // Background completion is announced by its existing local notification.
+        // Playing directly here as well would produce two different chimes.
+        guard preferences.completionSoundEnabled, UIApplication.shared.applicationState == .active else { return false }
+        return sound.play(preferences.completionTone)
+    }
+    static func notificationSound(eligible: Bool, alreadyPlayed: Bool) -> UNNotificationSound? {
+        let preferences = AppFeedbackSettings.shared.preferences
+        guard eligible, !alreadyPlayed, preferences.completionSoundEnabled,
+              AudioSessionCoordinator.shared.canPlayInterfaceFeedback,
+              let name = ReplyToneAudio.notificationFile(preferences.completionTone) else { return nil }
+        return UNNotificationSound(named: UNNotificationSoundName(rawValue: name))
     }
     /// An explicit preview works while the automatic completion switch is off.
     static func preview(_ tone: ReplyCompletionTone) { sound.play(tone) }
@@ -69,13 +80,13 @@ import Combine
             })
         }
     }
-    func play(_ tone: ReplyCompletionTone) {
+    @discardableResult func play(_ tone: ReplyCompletionTone) -> Bool {
         // A completion chime must never leak into the microphone or fight a call.
-        guard AudioSessionCoordinator.shared.canPlayInterfaceFeedback else { return }
+        guard AudioSessionCoordinator.shared.canPlayInterfaceFeedback else { return false }
         stop()
         let data = waveforms[tone] ?? ReplyToneAudio.wav(tone)
         waveforms[tone] = data
-        guard let next = try? AVAudioPlayer(data: data) else { return }
+        guard let next = try? AVAudioPlayer(data: data) else { return false }
         AudioSessionCoordinator.shared.begin(.interfaceFeedback)
         holdingIntent = true
         next.delegate = self
@@ -85,7 +96,10 @@ import Combine
             #if DEBUG
             AppFeedback.eventObserver?(.sound(tone))
             #endif
-        } else { stop() }
+            return true
+        }
+        stop()
+        return false
     }
     func stop() {
         player?.stop(); player?.delegate = nil; player = nil

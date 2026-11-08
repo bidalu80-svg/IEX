@@ -2,11 +2,42 @@
 set -euo pipefail
 APP="$RUNNER_TEMP/ZeFeedbackHarness.app"
 mkdir -p "$APP" feedback-ui-evidence
+PROBE="$RUNNER_TEMP/ZeFeedbackCompletionProbe.swift"
+python3 - "$PROBE" <<'PY'
+import pathlib,sys
+source=pathlib.Path('Agent/Chat/AIChatViewModel.swift').read_text(encoding='utf-8')
+start=source.index('    private func notifyCompletionFeedback(')
+opening=source.index('{', start)
+depth=1
+end=opening+1
+while depth:
+    depth += (source[end] == '{') - (source[end] == '}')
+    end += 1
+method=source[start:end].replace('private func notifyCompletionFeedback', 'func notifyCompletionFeedback', 1)
+pathlib.Path(sys.argv[1]).write_text("""import Foundation
+struct FeedbackProbeBlock {
+    enum Kind { case text, tool }
+    var kind: Kind
+    var content: String
+}
+final class FeedbackProbeMessage {
+    let id = UUID()
+    var error: String?
+    var blocks = [FeedbackProbeBlock(kind: .text, content: "Finished reply")]
+}
+@MainActor final class FeedbackCompletionProbe {
+    var messages: [FeedbackProbeMessage] = []
+    var userDidCancel = false
+    var canResume = false
+    var feedbackCompletedReplyID: UUID?
+    var feedbackAudibleReplyID: UUID?
+"""+method+"\n}\n", encoding="utf-8")
+PY
 xcrun swiftc -parse-as-library -D DEBUG \
   -target "$(uname -m)-apple-ios16.0-simulator" \
   -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
   Shared/AppFeedbackPreferences.swift Shared/AppFeedback.swift \
-  Views/Settings/SoundHapticsSettingsView.swift scripts/FeedbackUIHarness.swift \
+  Views/Settings/SoundHapticsSettingsView.swift scripts/FeedbackUIHarness.swift "$PROBE" \
   -o "$APP/ZeFeedbackHarness"
 cat > "$APP/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

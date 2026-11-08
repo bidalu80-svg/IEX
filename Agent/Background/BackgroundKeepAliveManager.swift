@@ -944,7 +944,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
         return "\(base) · \(formatted)"
     }
 
-    func postBackgroundTaskNotification(sessionTitle: String, responseSummary: String, sessionId: String, isError: Bool = false, wasBackground: Bool? = nil) {
+    func postBackgroundTaskNotification(sessionTitle: String, responseSummary: String, sessionId: String, isError: Bool = false, wasBackground: Bool? = nil, completionSoundEligible: Bool = false, completionSoundAlreadyPlayed: Bool = false) {
         guard backgroundNotificationsEnabled else { return }
         // Use the caller-captured snapshot when available (the async Task in
         // endBackgroundProcessing may not run until the app is already active).
@@ -978,7 +978,7 @@ final class BackgroundKeepAliveManager: NSObject, ObservableObject, CLLocationMa
             content.title = "\(isError ? "❌" : "✅") \(sessionTitle)"
             content.body = responseSummary
         }
-        content.sound = .default
+        content.sound = AppFeedback.notificationSound(eligible: completionSoundEligible && !isError, alreadyPlayed: completionSoundAlreadyPlayed)
         content.categoryIdentifier = Self.bgTaskCategoryId
         content.userInfo = ["sessionId": sessionId]
         logger.info("[BackgroundNotification] posting notification title=\(content.title.debugDescription) bodyLength=\(content.body.count) sessionId=\(sessionId)")

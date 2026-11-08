@@ -67,7 +67,9 @@ final class ZeVisualizationSelectableLabel: UILabel, UIGestureRecognizerDelegate
                 selection.selectedTextRange = word
             } else { selection.selectedRange = NSRange(location: 0, length: content.length) }
             UIMenuController.shared.showMenu(from: selection, rect: selection.bounds)
-            self.installDismissTap()
+            // A hold still has its finger down when it begins. Install only
+            // after that initiating gesture has ended so it cannot dismiss itself.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.installDismissTap() }
         }
     }
     func endTextSelection() {
@@ -81,7 +83,7 @@ final class ZeVisualizationSelectableLabel: UILabel, UIGestureRecognizerDelegate
         onSelectionEnded?()
     }
     private func installDismissTap() {
-        guard let window, dismissTap == nil else { return }
+        guard let window = activeSelectionView?.window, dismissTap == nil else { return }
         let tap = UITapGestureRecognizer(target: self, action: #selector(tappedOutside(_:)))
         tap.cancelsTouchesInView = false; tap.delegate = self
         window.addGestureRecognizer(tap); dismissTap = tap
@@ -90,9 +92,14 @@ final class ZeVisualizationSelectableLabel: UILabel, UIGestureRecognizerDelegate
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard gestureRecognizer === dismissTap else { return true }
         // Keep selection-handle drags and menu actions in their original chain.
-        if UIMenuController.shared.isMenuVisible { return false }
         if let selection = activeSelectionView, let touched = touch.view,
            touched === selection || touched.isDescendant(of: selection) { return false }
+        var ancestor = touch.view
+        while let view = ancestor {
+            let name = String(describing: type(of: view))
+            if name.contains("Menu") || name.contains("Callout") { return false }
+            ancestor = view.superview
+        }
         return true
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -167,12 +174,27 @@ final class ZeVisualizationAttachment: NSTextAttachment {
     }
     func makeView(width: CGFloat) -> UIView {
         let height = cardHeight(width: width)
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: height + Self.verticalInset * 2))
         let view = ZeVisualizationCardView(component: component, fontSize: fontSize, interaction: interaction)
+        let container = ZeVisualizationAttachmentContainer(card: view)
+        container.frame = CGRect(x: 0, y: 0, width: width, height: height + Self.verticalInset * 2)
         view.frame = CGRect(x: 0, y: Self.verticalInset, width: width, height: height)
-        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        container.addSubview(view)
         return container
+    }
+}
+
+/// TextKit can briefly resize an attachment to its provisional glyph bounds.
+/// Always lay out the child from the measured content, rather than stretching
+/// its previous height with autoresizing (which centers/crops custom previews).
+private final class ZeVisualizationAttachmentContainer: UIView {
+    private let card: ZeVisualizationCardView
+    init(card: ZeVisualizationCardView) {
+        self.card = card; super.init(frame: .zero); addSubview(card)
+    }
+    required init?(coder: NSCoder) { return nil }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        card.frame = CGRect(x: 0, y: ZeVisualizationAttachment.verticalInset, width: bounds.width,
+                            height: card.fittingHeight(width: bounds.width))
     }
 }
 
@@ -207,6 +229,9 @@ final class ZeVisualizationCardView: UIView {
     private var metricLabels: [UILabel] = []
     private var custom: ZeCustomVisualizationPreview?
     private let interaction: ZeVisualizationInteractionState
+    func fittingHeight(width: CGFloat) -> CGFloat {
+        Self.height(component, width: width, font: fontSize, customHeight: interaction.value.customContentHeight)
+    }
     static func customHeaderHeight(_ c: ZeVisualizationComponent, width: CGFloat, font: CGFloat) -> CGFloat {
         let title = [c.title, c.unit].compactMap { $0 }.joined(separator: " · ")
         let face = UIFont.systemFont(ofSize: font, weight: .semibold)
@@ -780,11 +805,12 @@ struct ZeCustomVisualizationSnapshot {
               const result=original.apply(this,args);
               if(name==='clearRect'||name==='fillRect') {
                 const m=this.getTransform();
-                if(m.a===1&&m.b===0&&m.c===0&&m.d===1&&m.e===0&&m.f===0&&args[0]<=0&&args[1]<=0&&args[2]>=this.canvas.width&&args[3]>=this.canvas.height&&
+                const a=m.transformPoint(new DOMPoint(args[0],args[1])),b=m.transformPoint(new DOMPoint(args[0]+args[2],args[1]+args[3]));
+                if(m.b===0&&m.c===0&&Math.min(a.x,b.x)<=0&&Math.min(a.y,b.y)<=0&&Math.max(a.x,b.x)>=this.canvas.width&&Math.max(a.y,b.y)>=this.canvas.height&&
                     (name==='clearRect'||(this.globalAlpha===1&&typeof this.fillStyle==='string'&&!this.fillStyle.includes('rgba')))) canvasText.delete(this.canvas);
               } else {
                 let list=canvasText.get(this.canvas)||[];
-                if(list.length<256 && String(args[0]).length<=1024) {
+                if(list.length<256 && String(args[0]).length<=1024 && list.reduce((n,r)=>n+r.text.length,0)+String(args[0]).length<=8192) {
                   const text=String(args[0]), metrics=this.measureText(text), m=this.getTransform();
                   const width=Math.min(metrics.width,Number(args[3])||metrics.width);
                   const rtl=this.direction==='rtl'; let x=Number(args[1]),y=Number(args[2]);
@@ -867,11 +893,14 @@ struct ZeCustomVisualizationSnapshot {
     """
     static let textLayoutScript = """
     (() => {
-      let text='',glyphs=[],visited=0;
+      let text='',glyphs=[],visited=0,lastRect=null;
       const add=(value,rects)=>{
         if(!value || text.length+value.length+1>8192 || glyphs.length+rects.length>8192) return;
-        const start=text.length;text+=value+'\\n';
+        const first=rects[0],last=rects[rects.length-1];
+        if(lastRect&&first&&Math.abs(lastRect.y+lastRect.h/2-first.y-first.h/2)>Math.min(lastRect.h,first.h)*0.65) text+='\\n';
+        const start=text.length;text+=value;
         for(const r of rects) if(r.w>0 && r.h>0) glyphs.push([start+r.i,r.n,r.x,r.y,r.w,r.h]);
+        if(last) lastRect=last;
       };
       const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
       while(walker.nextNode() && ++visited<=6000 && glyphs.length<8192) {
@@ -892,6 +921,8 @@ struct ZeCustomVisualizationSnapshot {
       }
       for(const canvas of Array.from(document.querySelectorAll('canvas')).slice(0,16)) {
         const box=canvas.getBoundingClientRect(),sx=box.width/canvas.width,sy=box.height/canvas.height;
+        const css=getComputedStyle(canvas);
+        if(!box.width||!box.height||css.display==='none'||css.visibility==='hidden'||Number(css.opacity)===0||canvas.closest('[aria-hidden="true"]')) continue;
         for(const run of (window.__zeCanvasText?.get(canvas)||[])) {
           if(!run.text.trim()) continue;
           const rects=run.glyphs.map(r=>({...r,x:box.x+window.scrollX+r.x*sx,y:box.y+window.scrollY+r.y*sy,w:r.w*sx,h:r.h*sy}));
@@ -1151,6 +1182,7 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
     private(set) var textLayout = ZeCustomVisualizationTextLayout.empty
     private(set) var activeSelectionView: ZeCustomVisualizationSelectionTextView?
     private var dismissTap: UITapGestureRecognizer?
+    private var selectionGestures: [UIGestureRecognizer] = []
     private var requestedKey: String?
     private(set) var isPending = false
     init(component: ZeVisualizationComponent, interaction: ZeVisualizationInteractionState) {
@@ -1164,13 +1196,44 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
         addSubview(picture); addSubview(summary)
         accessibilityLabel = component.fallbackText
         let press = UILongPressGestureRecognizer(target: self, action: #selector(selectByPress(_:)))
-        press.minimumPressDuration = 0.4; addGestureRecognizer(press)
+        press.minimumPressDuration = 0.4; press.delegate = self; addGestureRecognizer(press)
         let double = UITapGestureRecognizer(target: self, action: #selector(selectByTap(_:)))
-        double.numberOfTapsRequired = 2; addGestureRecognizer(double)
+        double.numberOfTapsRequired = 2; double.delegate = self; addGestureRecognizer(double)
+        selectionGestures = [press, double]
     }
     required init?(coder: NSCoder) { return nil }
-    override func layoutSubviews() { super.layoutSubviews(); picture.frame = bounds; summary.frame = bounds.insetBy(dx: 12, dy: 12); activeSelectionView?.frame = bounds }
-    override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { prepare() } else { endTextSelection() } }
+    var imageDisplayRect: CGRect {
+        guard let image = picture.image, image.size.width > 0, image.size.height > 0 else { return bounds }
+        let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews(); picture.frame = bounds; summary.frame = bounds.insetBy(dx: 12, dy: 12)
+        activeSelectionView?.frame = imageDisplayRect
+    }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { prioritizeSelectionGestures(); prepare() } else { endTextSelection() }
+    }
+    private func prioritizeSelectionGestures() {
+        // The enclosing Markdown UITextView must not also select its one-character
+        // image attachment during the custom card's long press. Leave its zero-
+        // duration drag observer and every scroll pan unchanged.
+        var ancestor = superview
+        while let view = ancestor {
+            if view is UITextView {
+                for candidate in view.gestureRecognizers ?? [] {
+                    if let hold = candidate as? UILongPressGestureRecognizer, hold.minimumPressDuration > 0.05,
+                       let own = selectionGestures.first as? UILongPressGestureRecognizer { candidate.require(toFail: own) }
+                    else if let tap = candidate as? UITapGestureRecognizer, tap.numberOfTapsRequired == 2,
+                            let own = selectionGestures.last { candidate.require(toFail: own) }
+                }
+                break
+            }
+            ancestor = view.superview
+        }
+    }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) { super.traitCollectionDidChange(previousTraitCollection); if window != nil { prepare() } }
     func prepare() {
         let dark = traitCollection.userInterfaceStyle == .dark
@@ -1210,15 +1273,36 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
     }
     func beginTextSelection(at point: CGPoint) {
         guard activeSelectionView == nil, !textLayout.glyphs.isEmpty else { return }
+        let imageRect = imageDisplayRect
+        guard imageRect.contains(point) else { return }
         let text = ZeCustomVisualizationSelectionTextView(layout: textLayout)
-        text.frame = bounds; text.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        text.frame = imageRect
         text.onDismiss = { [weak self] in self?.endTextSelection() }
         isAccessibilityElement = false
         activeSelectionView = text; addSubview(text)
-        text.becomeFirstResponder(); text.selectWord(at: point)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(dismissSelection(_:)))
-        tap.cancelsTouchesInView = false; tap.delegate = self
-        window?.addGestureRecognizer(tap); dismissTap = tap
+        text.layoutIfNeeded()
+        let selectedPoint = CGPoint(x: point.x - imageRect.minX, y: point.y - imageRect.minY)
+        // Match native label selection: let the long-press touch and TextKit
+        // layout settle before transferring the responder to the new text view.
+        DispatchQueue.main.async { [weak self, weak text] in
+            guard let self, let text, self.activeSelectionView === text, text.window != nil else { return }
+            var offsets: [(UIScrollView, CGPoint)] = []
+            var ancestor = self.superview
+            while let view = ancestor {
+                if let scroll = view as? UIScrollView { offsets.append((scroll, scroll.contentOffset)) }
+                ancestor = view.superview
+            }
+            text.becomeFirstResponder(); text.selectWord(at: selectedPoint)
+            // Focusing a nested read-only text view may try to scroll its parent
+            // to its synthetic text layout; the captured card stays at its pixels.
+            for (scroll, offset) in offsets where scroll.contentOffset != offset { scroll.setContentOffset(offset, animated: false) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak text] in
+                guard let self, let text, self.activeSelectionView === text, let window = text.window else { return }
+                let tap = UITapGestureRecognizer(target: self, action: #selector(self.dismissSelection(_:)))
+                tap.cancelsTouchesInView = false; tap.delegate = self
+                window.addGestureRecognizer(tap); self.dismissTap = tap
+            }
+        }
     }
     func endTextSelection() {
         let active = activeSelectionView; activeSelectionView = nil
@@ -1229,8 +1313,20 @@ final class ZeCustomVisualizationPreview: UIView, UIGestureRecognizerDelegate {
     @objc private func dismissSelection(_ gesture: UITapGestureRecognizer) { activeSelectionView?.resignFirstResponder() }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard gestureRecognizer === dismissTap, let activeSelectionView, let touched = touch.view else { return true }
-        if UIMenuController.shared.isMenuVisible { return false }
-        return !touched.isDescendant(of: activeSelectionView) && !String(describing: type(of: touched)).contains("Menu")
+        if touched === activeSelectionView || touched.isDescendant(of: activeSelectionView) { return false }
+        var ancestor: UIView? = touched
+        while let view = ancestor {
+            let name = String(describing: type(of: view))
+            if name.contains("Menu") || name.contains("Callout") { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        !selectionGestures.contains(where: { $0 === gestureRecognizer }) || activeSelectionView == nil
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === dismissTap || otherGestureRecognizer === dismissTap
     }
     private func updateHeight(_ image: UIImage) {
         guard image.size.width > 0 else { return }
