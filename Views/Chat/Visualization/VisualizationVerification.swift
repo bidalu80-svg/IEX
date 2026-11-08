@@ -345,7 +345,8 @@ import WebKit
         window.rootViewController = host
         try await Task.sleep(nanoseconds: 200_000_000)
         host.view.layoutIfNeeded()
-        for _ in 0..<50 {
+        let renderWaits = Int((ZeCustomVisualizationRenderer.maximumRenderSeconds + 1) / 0.1)
+        for _ in 0..<renderWaits {
             if descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first?.isPending == false { break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
@@ -355,6 +356,11 @@ import WebKit
         try check(card != nil, "Custom design is integrated in real chat Markdown")
         let previewImages = descendants(host.view).compactMap { ($0 as? ZeCustomVisualizationPreview)?.renderedImage }
         try check(!previewImages.isEmpty, "Custom HTML/SVG renders a real inline image")
+        try previewImages.first?.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-initial.png"))
+        let initialLayoutImage = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try initialLayoutImage.pngData()?.write(to: directory.appendingPathComponent("visualization-custom-initial-layout.png"))
         try check(!descendants(host.view).contains { $0 is WKWebView }, "Inline chat does not retain a web view per card")
         if var preview = descendants(host.view).compactMap({ $0 as? ZeCustomVisualizationPreview }).first,
            let glyph = preview.textLayout.glyphs.first {

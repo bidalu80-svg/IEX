@@ -1013,6 +1013,9 @@ struct ZeCustomVisualizationSnapshot {
 /// images / 8 MiB decoded cost. Cells retain UIImage previews, never web views.
 @MainActor final class ZeCustomVisualizationRenderer: NSObject, WKNavigationDelegate {
     static let shared = ZeCustomVisualizationRenderer()
+    static let loadingTimeoutNanoseconds: UInt64 = 20_000_000_000
+    static let captureTimeoutNanoseconds: UInt64 = 4_000_000_000
+    static let maximumRenderSeconds: Double = 24
     private struct Job {
         let component: ZeVisualizationComponent
         let state: String?
@@ -1064,13 +1067,17 @@ struct ZeCustomVisualizationSnapshot {
         web = view; view.navigationDelegate = self
         view.frame.origin = CGPoint(x: -20000, y: 0)
         window.addSubview(view)
+        armTimeout(Self.loadingTimeoutNanoseconds)
+        view.loadHTMLString(ZeCustomVisualizationRuntime.html(job.component), baseURL: nil)
+    }
+    private func armTimeout(_ nanoseconds: UInt64) {
+        timeout?.cancel()
         let token = generation
         timeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
             guard !Task.isCancelled, let self, token == self.generation else { return }
             self.finish(nil)
         }
-        view.loadHTMLString(ZeCustomVisualizationRuntime.html(job.component), baseURL: nil)
     }
     private func finish(_ snapshot: ZeCustomVisualizationSnapshot?) {
         guard let job = current else { return }
@@ -1083,6 +1090,11 @@ struct ZeCustomVisualizationSnapshot {
         startNext()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard web === webView else { return }
+        // Cold WebKit process launch can exceed the capture budget. Once the
+        // document loads, bound measurement/snapshot separately so an actual
+        // script or snapshot stall still releases the queue promptly.
+        armTimeout(Self.captureTimeoutNanoseconds)
         let token = generation
         Task { [weak self, weak webView] in
             try? await Task.sleep(nanoseconds: 100_000_000)

@@ -863,6 +863,7 @@ struct AssistantTaskDurationView: View {
     private let isCollapsed: Bool
     private let controlIdentifier: String?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.chatSnapshotRendering) private var snapshotRendering
 
     init(duration: TimeInterval,
          onToggle: (() -> Void)? = nil,
@@ -925,10 +926,19 @@ struct AssistantTaskDurationView: View {
     @ViewBuilder
     private func label(_ durationText: String) -> some View {
         let content = HStack(spacing: 5) {
-            Text("任务耗时 \(durationText)")
-                .font(.system(size: 12, weight: .medium))
-                .monospacedDigit()
-                .fixedSize(horizontal: true, vertical: false)
+            if snapshotRendering {
+                // UIKit labels share the exporter's existing vector-text pass.
+                // SwiftUI Text stays rasterized when its layer is drawn to PDF.
+                ExportLabel(text: "任务耗时 \(durationText)",
+                            font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                            color: UIColor(tint), lines: 1)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                Text("任务耗时 \(durationText)")
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .fixedSize(horizontal: true, vertical: false)
+            }
             if onToggle != nil {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 10, weight: .semibold))

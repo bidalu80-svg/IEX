@@ -476,7 +476,7 @@ private struct ChatExportHeaderView: View {
 }
 
 /// A wrapping UILabel sized by SwiftUI: header text drawable as vector glyphs.
-private struct ExportLabel: UIViewRepresentable {
+struct ExportLabel: UIViewRepresentable {
     let text: String
     let font: UIFont
     var color: UIColor = .label
@@ -586,12 +586,13 @@ final class ChatExportRenderer {
         // Wait for actual asynchronous attachments and two stable layout passes.
         // Missing images produce an explicit retryable error rather than a blank export.
         var stable = 0
-        // Custom previews use one bounded serial renderer. Give each queued
-        // component its own four-second deadline before declaring export ready.
+        // Custom previews use one bounded serial renderer. Include cold WebKit
+        // launch and the separate capture budget for every queued component.
         func customCount(_ view: UIView) -> Int {
             (view is ZeCustomVisualizationPreview ? 1 : 0) + view.subviews.reduce(0) { $0 + customCount($1) }
         }
-        let attachmentPasses = 100 + min(8, customCount(host.view)) * 80
+        let renderPasses = Int(ceil(ZeCustomVisualizationRenderer.maximumRenderSeconds / 0.05))
+        let attachmentPasses = 100 + min(8, customCount(host.view)) * renderPasses
         do {
             for pass in 0..<attachmentPasses {
                 try Task.checkCancellation()

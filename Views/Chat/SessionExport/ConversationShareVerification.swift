@@ -528,6 +528,7 @@ import PDFKit
             title: request.title, options: pdfOptions, progress: { _, _ in })
         let pdf = try save(artifact.url, name: "task-disclosure.pdf")
         let document = PDFDocument(url: pdf)
+        try saveText(document?.string ?? "", name: "task-disclosure-pdf-text.txt")
         try require(document?.findString("CLOSED_FINAL", withOptions: []).isEmpty == false,
                     "Collapsed export contains the visible final reply")
         try require(document?.findString("先查询", withOptions: []).isEmpty == true,
