@@ -79,7 +79,9 @@ def main():
         raise RuntimeError(f'Expected one UI test target, found {len(targets)}')
     targets[0]['UITargetAppPath'] = str(args.app.resolve())
     targets[0]['UITargetAppBundleIdentifier'] = 'com.ze.selection-diagnostic'
-    configured = args.work / 'SelectionDiagnostic.xctestrun'
+    # Xcode resolves __TESTROOT__ relative to this file. Keep the configured
+    # descriptor beside the original products, as the full-app driver does.
+    configured = descriptors[0].with_name('SelectionDiagnostic-Configured.xctestrun')
     with configured.open('wb') as stream:
         plistlib.dump(descriptor, stream)
     return shared.logged([
