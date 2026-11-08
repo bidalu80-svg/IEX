@@ -219,6 +219,9 @@ final class ZeVisualizationLifecycle {
 /// UIKit labels deliberately remain real subviews for the existing PDF exporter.
 /// No per-frame work: paths draw only when data, selection, traits or size change.
 final class ZeVisualizationCardView: UIView {
+#if DEBUG
+    static var verificationOnLayout: ((ZeVisualizationCardView) -> Void)?
+#endif
     let component: ZeVisualizationComponent
     private let fontSize: CGFloat
     private let heading = ZeVisualizationSelectableLabel()
@@ -303,6 +306,9 @@ final class ZeVisualizationCardView: UIView {
             lastWidth = bounds.width
             rebuildBody()
         }
+#if DEBUG
+        Self.verificationOnLayout?(self)
+#endif
     }
     private func label(_ text: String, size: CGFloat, weight: UIFont.Weight = .regular, secondary: Bool = false) -> UILabel {
         let l = ZeVisualizationSelectableLabel(); l.text = text; l.numberOfLines = 2

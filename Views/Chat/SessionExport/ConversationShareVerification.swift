@@ -8,6 +8,8 @@ import PDFKit
 @MainActor enum ConversationShareVerification {
     private static var checks: [String] = []
     private static var files: [String] = []
+    private static var suites: [[String: Any]] = []
+    private static var started = Date()
     private static let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("share-verification", isDirectory: true)
 
@@ -24,6 +26,7 @@ import PDFKit
     }
 
     static func run() async {
+        checks = []; files = []; suites = []; started = Date()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             checkpoint("Waiting for application window")
@@ -40,184 +43,268 @@ import PDFKit
             defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = oldStyle }
             window.overrideUserInterfaceStyle = .light
             let vm = AIChatViewModel()
-            checkpoint("Verifying native visualizations")
-            try await ZeVisualizationVerification.run(window: window, directory: directory)
-            checkpoint("Verifying frozen task disclosure parity")
-            try await verifyTaskDisclosure(window: window, vm: vm)
-            checkpoint("Creating production fixture")
-            let messages = try fixture()
-            let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)
-            try require(request.initialSelection.isEmpty, "Conversation menu starts with no selection")
-            let first = messages[1].blocks[0]
-            let frozen = request.messages[1].blocks[0]
-            first.content = "MUTATED LIVE CONTENT"
-            try require(frozen.content.contains("SHARE_BEGIN"), "Streaming snapshot freezes text and preserves block identity")
-            try require(first.id == frozen.id && first !== frozen, "Snapshot models retain identities without sharing references")
-            let all = Set(request.cells.map(\.id))
-            let groups = ChatShareCells.renderGroups(request.cells, selected: all)
-            try require(groups.count >= 3, "Selected block groups preserve user and reply ordering")
-            let tool = request.cells.first { $0.kind == .tool }!
-            let selected = all.subtracting([tool.id])
-            try require(!ChatShareCells.renderGroups(request.cells, selected: selected).joined().contains(tool),
-                        "Individual tool can be excluded while surrounding text remains selected")
-            if let folded = request.foldedCells {
-                let mapped = ChatShareCells.remapSelection(all, from: request.cells, to: folded)
-                try require(ChatShareCells.remapSelection(mapped, from: folded, to: request.cells) == all,
-                            "Production fold adapter preserves full selection through round trip")
+            await runSuite("visualizations", window: window) {
+                checkpoint("Verifying native and custom visualizations")
+                try await ZeVisualizationVerification.run(window: window, directory: directory)
             }
-
-            for dark in [false, true] {
-                let scheme: ColorScheme = dark ? .dark : .light
-                let name = dark ? "dark" : "light"
-                window.overrideUserInterfaceStyle = dark ? .dark : .light
-                let picker = UIHostingController(rootView: ChatShareSelectionView(request: request)
-                    .environment(\.colorScheme, scheme))
-                window.rootViewController = picker
-                try await Task.sleep(nanoseconds: 500_000_000)
-                try capture(window, name: "picker-\(name).png")
-                let selectedRequest = ChatShareRequest(cells: request.cells, foldedCells: request.foldedCells,
-                    startsFolded: false, messages: request.messages, initialSelection: all,
-                    title: request.title, vm: vm)
-                window.rootViewController = UIHostingController(rootView: ChatShareSelectionView(request: selectedRequest)
-                    .environment(\.colorScheme, scheme))
-                try await Task.sleep(nanoseconds: 500_000_000)
-                try capture(window, name: "picker-selected-\(name).png")
-
-                var imageOptions = ChatExportOptions()
-                imageOptions.dark = dark
-                imageOptions.adaptiveTables = true
-                checkpoint("Rendering \(name) PNG")
-                let image = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
-                    title: "分享验证 Share Verification", options: imageOptions, progress: { _, _ in })
-                let imageURL = try save(image.url, name: "export-\(name).png")
-                guard let decoded = UIImage(contentsOfFile: imageURL.path) else { throw ChatExportError.writeFailed }
-                try require(decoded.size.width > 1000 && decoded.size.height > 1000, "\(name) PNG has complete measured dimensions")
-                try require(hasFixtureImage(decoded), "\(name) PNG contains the asynchronously loaded red image")
-
-                var pdfOptions = imageOptions
-                pdfOptions.format = .pdf
-                checkpoint("Rendering \(name) PDF")
-                let pdf = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
-                    title: "分享验证 Share Verification", options: pdfOptions, progress: { _, _ in })
-                let pdfURL = try save(pdf.url, name: "export-\(name).pdf")
-                guard let document = PDFDocument(url: pdfURL) else { throw ChatExportError.writeFailed }
-                let text = document.string ?? ""
-                let markers = ["SHARE_BEGIN", "SHARE_END", "CODE_MARKER", "TABLE_LAST"]
-                let matches = Dictionary(uniqueKeysWithValues: markers.map {
-                    ($0, document.findString($0, withOptions: []))
-                })
-                // Persist extraction and actual PDFKit search separately: PDFKit may
-                // insert layout whitespace in `string` that differs from findString.
-                try saveText(text, name: "pdf-document-text-\(name).txt")
-                let pageText = (0..<document.pageCount).map { index in
-                    "--- Page \(index + 1) ---\n" + (document.page(at: index)?.string ?? "<nil>")
-                }.joined(separator: "\n\n")
-                try saveText(pageText, name: "pdf-page-text-\(name).txt")
-                let searchReport: [String: Any] = Dictionary(uniqueKeysWithValues: markers.map { marker in
-                    (marker, ["count": matches[marker]!.count,
-                              "documentStringContains": text.contains(marker),
-                              "selections": matches[marker]!.map { $0.string ?? "<nil>" }] as [String: Any])
-                })
-                let searchName = "pdf-search-\(name).json"
-                try JSONSerialization.data(withJSONObject: searchReport, options: [.prettyPrinted, .sortedKeys])
-                    .write(to: directory.appendingPathComponent(searchName), options: .atomic)
-                files.append(searchName)
-                try require(document.pageCount > 1, "\(name) PDF paginates the complete long reply")
-                for marker in markers {
-                    try require(!matches[marker]!.isEmpty, "\(name) PDF has searchable \(marker) without truncation")
-                }
-                try require(!text.contains("MUTATED LIVE CONTENT"), "\(name) export never reads later streaming changes")
-                try capturePDF(document, name: "pdf-first-\(name).png", page: 0)
-                try capturePDF(document, name: "pdf-last-\(name).png", page: document.pageCount - 1)
-
-                UserDefaults.standard.set("image", forKey: "chatShare.format")
-                var finished: URL?
-                let preview = UIHostingController(rootView: ChatSharePreviewSheet(groups: groups,
-                    count: all.count, messages: request.messages, title: "分享验证 Share Verification", vm: vm,
-                    initialOptions: imageOptions, onRendered: { finished = $0 })
-                    .environment(\.colorScheme, scheme))
-                // Reproduce the modal ownership of the real flow: an application
-                // root presents the selection sheet, which presents the preview.
-                // The preview must present its activity controller from this nested
-                // context, not from a convenient replacement root controller.
-                let shareRoot = UIHostingController(rootView: Text("Share presentation verification"))
-                let modalPicker = UIHostingController(rootView: ChatShareSelectionView(request: selectedRequest)
-                    .environment(\.colorScheme, scheme))
-                modalPicker.modalPresentationStyle = .pageSheet
-                preview.modalPresentationStyle = .pageSheet
-                window.rootViewController = shareRoot
-                window.layoutIfNeeded()
-                try await waitUntil("\(name) application root is visible") { shareRoot.viewIfLoaded?.window === window }
-                shareRoot.present(modalPicker, animated: false)
-                try await waitUntil("\(name) selection sheet is visible") {
-                    modalPicker.presentingViewController != nil && modalPicker.viewIfLoaded?.window === window
-                        && !modalPicker.isBeingPresented
-                }
-                modalPicker.present(preview, animated: false)
-                try await waitUntil("\(name) preview is presented above the selection sheet") {
-                    preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
-                        && !preview.isBeingPresented
-                }
-                try require(shareRoot.presentedViewController != nil && modalPicker.presentedViewController != nil,
-                            "\(name) production preview has two real modal presentation levels")
-                for _ in 0..<400 {
-                    if finished != nil { break }
-                    try await Task.sleep(nanoseconds: 100_000_000)
-                }
-                try require(finished != nil, "\(name) complete preview renders without a manual export action")
-                let cachedImageURL = finished
-                try await Task.sleep(nanoseconds: 250_000_000)
-                try capture(window, name: "preview-\(name).png")
-                guard let renderedImage = finished else { throw ChatExportError.writeFailed }
-                try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
-                    url: renderedImage, format: "png", name: "\(name)-png")
-                finished = nil
-                UserDefaults.standard.set("pdf", forKey: "chatShare.format")
-                for _ in 0..<400 {
-                    if finished?.pathExtension == "pdf" { break }
-                    try await Task.sleep(nanoseconds: 100_000_000)
-                }
-                try require(finished?.pathExtension == "pdf", "\(name) format change produces current PDF preview")
-                try await Task.sleep(nanoseconds: 250_000_000)
-                try capture(window, name: "preview-pdf-\(name).png")
-                guard let renderedPDF = finished else { throw ChatExportError.writeFailed }
-                try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
-                    url: renderedPDF, format: "pdf", name: "\(name)-pdf")
-                finished = nil
-                UserDefaults.standard.set("image", forKey: "chatShare.format")
-                for _ in 0..<30 {
-                    if finished != nil { break }
-                    try await Task.sleep(nanoseconds: 100_000_000)
-                }
-                try require(finished == cachedImageURL, "\(name) switching back reuses the exact finished render")
-                shareRoot.dismiss(animated: false)
-                try await waitUntil("\(name) nested share flow closes cleanly") { shareRoot.presentedViewController == nil }
+            await runSuite("task-disclosure", window: window) {
+                checkpoint("Verifying frozen task disclosure parity")
+                try await verifyTaskDisclosure(window: window, vm: vm)
             }
-
-            let cancelled = Task { @MainActor in
-                try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
-                    title: "Cancelled", options: ChatExportOptions(), progress: { _, _ in })
+            await runSuite("base-exports", window: window) {
+                try await verifyBasicExports(window: window, vm: vm)
             }
-            cancelled.cancel()
-            do {
-                _ = try await cancelled.value
-                throw NSError(domain: "ConversationShareVerification", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey: "Cancelled export produced a success result"])
-            } catch is CancellationError { checks.append("Cancellation stops production export") }
-
-            var hiddenOptions = ChatExportOptions()
-            hiddenOptions.format = .pdf
-            hiddenOptions.hideHeader = true
-            let hidden = try await ChatExportRenderer(vm: vm).render(groups: Array(groups.prefix(1)),
-                messages: request.messages, title: "PRIVATE_TITLE_SENTINEL", options: hiddenOptions, progress: { _, _ in })
-            let hiddenURL = try save(hidden.url, name: "hidden-title.pdf")
-            let hiddenDocument = PDFDocument(url: hiddenURL)
-            try require(!(hiddenDocument?.string ?? "").contains("PRIVATE_TITLE_SENTINEL")
-                && !hidden.url.lastPathComponent.contains("PRIVATE_TITLE_SENTINEL"), "Hidden title is absent from PDF and filename")
-            try result(success: true)
+            let failures = suites.compactMap { suite -> String? in
+                guard suite["success"] as? Bool == false else { return nil }
+                return "\(suite["name"] as? String ?? "unknown suite"): \(suite["error"] as? String ?? "unknown failure")"
+            }
+            try result(success: failures.isEmpty, error: failures.isEmpty ? nil : failures.joined(separator: "\n"))
         } catch {
             try? result(success: false, error: error.localizedDescription)
         }
+    }
+
+    /// Each suite owns its temporary UI and records its failure without hiding
+    /// later independent evidence. The aggregate result still fails if any suite
+    /// or its bounded presentation cleanup fails.
+    private static func runSuite(_ name: String, window: UIWindow,
+                                 operation: @MainActor () async throws -> Void) async {
+        let suiteStarted = Date()
+        let previous = window.rootViewController
+        let oldStyle = window.overrideUserInterfaceStyle
+        let defaults = UserDefaults.standard
+        let savedDefaults = defaults.dictionaryRepresentation().filter {
+            $0.key.hasPrefix("chatShare.") || $0.key == ConsecutiveToolCallsPolicy.preferenceKey
+        }
+        let checkStart = checks.count
+        let fileStart = files.count
+        var errors: [String] = []
+        do { try await operation() }
+        catch {
+            errors.append(error.localizedDescription)
+            do { try capture(window, name: "suite-\(name)-failure.png") }
+            catch { errors.append("Suite failure screenshot write failed: \(error.localizedDescription)") }
+        }
+
+        window.endEditing(true)
+        UIMenuController.shared.setMenuVisible(false, animated: false)
+        let temporaryRoot = window.rootViewController
+        if let temporaryRoot, temporaryRoot !== previous {
+            temporaryRoot.viewIfLoaded?.endEditing(true)
+            if temporaryRoot.presentedViewController != nil {
+                temporaryRoot.dismiss(animated: false)
+                for _ in 0..<50 {
+                    if temporaryRoot.presentedViewController == nil { break }
+                    do { try await Task.sleep(nanoseconds: 100_000_000) }
+                    catch { errors.append("Suite presentation cleanup interrupted: \(error.localizedDescription)"); break }
+                }
+                if temporaryRoot.presentedViewController != nil {
+                    errors.append("Suite presentation cleanup exceeded 5 seconds")
+                }
+            }
+        }
+        window.rootViewController = previous
+        window.overrideUserInterfaceStyle = oldStyle
+        window.layoutIfNeeded()
+        let currentKeys = defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("chatShare.") || $0 == ConsecutiveToolCallsPolicy.preferenceKey
+        }
+        for key in Set(currentKeys).union(savedDefaults.keys) {
+            if let value = savedDefaults[key] { defaults.set(value, forKey: key) }
+            else { defaults.removeObject(forKey: key) }
+        }
+        let restored = window.rootViewController === previous && window.overrideUserInterfaceStyle == oldStyle
+        if !restored { errors.append("Suite did not restore the original application window state") }
+
+        let reportName = "suite-\(name).json"
+        var report: [String: Any] = ["name": name, "success": errors.isEmpty,
+            "error": errors.joined(separator: "\n"), "elapsedSeconds": Date().timeIntervalSince(suiteStarted),
+            "checks": Array(checks.dropFirst(checkStart)), "files": Array(files.dropFirst(fileStart)),
+            "windowStateRestored": restored]
+        do {
+            try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent(reportName), options: .atomic)
+            files.append(reportName)
+        } catch {
+            errors.append("Suite report write failed: \(error.localizedDescription)")
+            report["success"] = false
+            report["error"] = errors.joined(separator: "\n")
+        }
+        suites.append(report)
+        checkpoint("Suite \(name): \(errors.isEmpty ? "passed" : "failed; continuing independent verification")")
+    }
+
+    private static func verifyBasicExports(window: UIWindow, vm: AIChatViewModel) async throws {
+        checkpoint("Creating production fixture")
+        let messages = try fixture()
+        let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)
+        try require(request.initialSelection.isEmpty, "Conversation menu starts with no selection")
+        let first = messages[1].blocks[0]
+        let frozen = request.messages[1].blocks[0]
+        first.content = "MUTATED LIVE CONTENT"
+        try require(frozen.content.contains("SHARE_BEGIN"), "Streaming snapshot freezes text and preserves block identity")
+        try require(first.id == frozen.id && first !== frozen, "Snapshot models retain identities without sharing references")
+        let all = Set(request.cells.map(\.id))
+        let groups = ChatShareCells.renderGroups(request.cells, selected: all)
+        try require(groups.count >= 3, "Selected block groups preserve user and reply ordering")
+        let tool = request.cells.first { $0.kind == .tool }!
+        let selected = all.subtracting([tool.id])
+        try require(!ChatShareCells.renderGroups(request.cells, selected: selected).joined().contains(tool),
+                    "Individual tool can be excluded while surrounding text remains selected")
+        if let folded = request.foldedCells {
+            let mapped = ChatShareCells.remapSelection(all, from: request.cells, to: folded)
+            try require(ChatShareCells.remapSelection(mapped, from: folded, to: request.cells) == all,
+                        "Production fold adapter preserves full selection through round trip")
+        }
+
+        for dark in [false, true] {
+            let scheme: ColorScheme = dark ? .dark : .light
+            let name = dark ? "dark" : "light"
+            window.overrideUserInterfaceStyle = dark ? .dark : .light
+            let picker = UIHostingController(rootView: ChatShareSelectionView(request: request)
+                .environment(\.colorScheme, scheme))
+            window.rootViewController = picker
+            try await Task.sleep(nanoseconds: 500_000_000)
+            try capture(window, name: "picker-\(name).png")
+            let selectedRequest = ChatShareRequest(cells: request.cells, foldedCells: request.foldedCells,
+                startsFolded: false, messages: request.messages, initialSelection: all,
+                title: request.title, vm: vm)
+            window.rootViewController = UIHostingController(rootView: ChatShareSelectionView(request: selectedRequest)
+                .environment(\.colorScheme, scheme))
+            try await Task.sleep(nanoseconds: 500_000_000)
+            try capture(window, name: "picker-selected-\(name).png")
+
+            var imageOptions = ChatExportOptions()
+            imageOptions.dark = dark
+            imageOptions.adaptiveTables = true
+            checkpoint("Rendering \(name) PNG")
+            let image = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
+                title: "分享验证 Share Verification", options: imageOptions, progress: { _, _ in })
+            let imageURL = try save(image.url, name: "export-\(name).png")
+            guard let decoded = UIImage(contentsOfFile: imageURL.path) else { throw ChatExportError.writeFailed }
+            try require(decoded.size.width > 1000 && decoded.size.height > 1000, "\(name) PNG has complete measured dimensions")
+            try require(hasFixtureImage(decoded), "\(name) PNG contains the asynchronously loaded red image")
+
+            var pdfOptions = imageOptions
+            pdfOptions.format = .pdf
+            checkpoint("Rendering \(name) PDF")
+            let pdf = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
+                title: "分享验证 Share Verification", options: pdfOptions, progress: { _, _ in })
+            let pdfURL = try save(pdf.url, name: "export-\(name).pdf")
+            guard let document = PDFDocument(url: pdfURL) else { throw ChatExportError.writeFailed }
+            let text = document.string ?? ""
+            let markers = ["SHARE_BEGIN", "SHARE_END", "CODE_MARKER", "TABLE_LAST"]
+            let matches = Dictionary(uniqueKeysWithValues: markers.map {
+                ($0, document.findString($0, withOptions: []))
+            })
+            // Persist extraction and actual PDFKit search separately: PDFKit may
+            // insert layout whitespace in `string` that differs from findString.
+            try saveText(text, name: "pdf-document-text-\(name).txt")
+            let pageText = (0..<document.pageCount).map { index in
+                "--- Page \(index + 1) ---\n" + (document.page(at: index)?.string ?? "<nil>")
+            }.joined(separator: "\n\n")
+            try saveText(pageText, name: "pdf-page-text-\(name).txt")
+            let searchReport: [String: Any] = Dictionary(uniqueKeysWithValues: markers.map { marker in
+                (marker, ["count": matches[marker]!.count,
+                          "documentStringContains": text.contains(marker),
+                          "selections": matches[marker]!.map { $0.string ?? "<nil>" }] as [String: Any])
+            })
+            let searchName = "pdf-search-\(name).json"
+            try JSONSerialization.data(withJSONObject: searchReport, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent(searchName), options: .atomic)
+            files.append(searchName)
+            try require(document.pageCount > 1, "\(name) PDF paginates the complete long reply")
+            for marker in markers {
+                try require(!matches[marker]!.isEmpty, "\(name) PDF has searchable \(marker) without truncation")
+            }
+            try require(!text.contains("MUTATED LIVE CONTENT"), "\(name) export never reads later streaming changes")
+            try capturePDF(document, name: "pdf-first-\(name).png", page: 0)
+            try capturePDF(document, name: "pdf-last-\(name).png", page: document.pageCount - 1)
+
+            UserDefaults.standard.set("image", forKey: "chatShare.format")
+            var finished: URL?
+            let preview = UIHostingController(rootView: ChatSharePreviewSheet(groups: groups,
+                count: all.count, messages: request.messages, title: "分享验证 Share Verification", vm: vm,
+                initialOptions: imageOptions, onRendered: { finished = $0 })
+                .environment(\.colorScheme, scheme))
+            // Reproduce the modal ownership of the real flow: an application
+            // root presents the selection sheet, which presents the preview.
+            // The preview must present its activity controller from this nested
+            // context, not from a convenient replacement root controller.
+            let shareRoot = UIHostingController(rootView: Text("Share presentation verification"))
+            let modalPicker = UIHostingController(rootView: ChatShareSelectionView(request: selectedRequest)
+                .environment(\.colorScheme, scheme))
+            modalPicker.modalPresentationStyle = .pageSheet
+            preview.modalPresentationStyle = .pageSheet
+            window.rootViewController = shareRoot
+            window.layoutIfNeeded()
+            try await waitUntil("\(name) application root is visible") { shareRoot.viewIfLoaded?.window === window }
+            shareRoot.present(modalPicker, animated: false)
+            try await waitUntil("\(name) selection sheet is visible") {
+                modalPicker.presentingViewController != nil && modalPicker.viewIfLoaded?.window === window
+                    && !modalPicker.isBeingPresented
+            }
+            modalPicker.present(preview, animated: false)
+            try await waitUntil("\(name) preview is presented above the selection sheet") {
+                preview.presentingViewController != nil && preview.viewIfLoaded?.window === window
+                    && !preview.isBeingPresented
+            }
+            try require(shareRoot.presentedViewController != nil && modalPicker.presentedViewController != nil,
+                        "\(name) production preview has two real modal presentation levels")
+            for _ in 0..<400 {
+                if finished != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try require(finished != nil, "\(name) complete preview renders without a manual export action")
+            let cachedImageURL = finished
+            try await Task.sleep(nanoseconds: 250_000_000)
+            try capture(window, name: "preview-\(name).png")
+            guard let renderedImage = finished else { throw ChatExportError.writeFailed }
+            try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
+                url: renderedImage, format: "png", name: "\(name)-png")
+            finished = nil
+            UserDefaults.standard.set("pdf", forKey: "chatShare.format")
+            for _ in 0..<400 {
+                if finished?.pathExtension == "pdf" { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try require(finished?.pathExtension == "pdf", "\(name) format change produces current PDF preview")
+            try await Task.sleep(nanoseconds: 250_000_000)
+            try capture(window, name: "preview-pdf-\(name).png")
+            guard let renderedPDF = finished else { throw ChatExportError.writeFailed }
+            try await verifyActivityPresentation(window: window, root: shareRoot, preview: preview,
+                url: renderedPDF, format: "pdf", name: "\(name)-pdf")
+            finished = nil
+            UserDefaults.standard.set("image", forKey: "chatShare.format")
+            for _ in 0..<30 {
+                if finished != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try require(finished == cachedImageURL, "\(name) switching back reuses the exact finished render")
+            shareRoot.dismiss(animated: false)
+            try await waitUntil("\(name) nested share flow closes cleanly") { shareRoot.presentedViewController == nil }
+        }
+
+        let cancelled = Task { @MainActor in
+            try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
+                title: "Cancelled", options: ChatExportOptions(), progress: { _, _ in })
+        }
+        cancelled.cancel()
+        do {
+            _ = try await cancelled.value
+            throw NSError(domain: "ConversationShareVerification", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Cancelled export produced a success result"])
+        } catch is CancellationError { checks.append("Cancellation stops production export") }
+
+        var hiddenOptions = ChatExportOptions()
+        hiddenOptions.format = .pdf
+        hiddenOptions.hideHeader = true
+        let hidden = try await ChatExportRenderer(vm: vm).render(groups: Array(groups.prefix(1)),
+            messages: request.messages, title: "PRIVATE_TITLE_SENTINEL", options: hiddenOptions, progress: { _, _ in })
+        let hiddenURL = try save(hidden.url, name: "hidden-title.pdf")
+        let hiddenDocument = PDFDocument(url: hiddenURL)
+        try require(!(hiddenDocument?.string ?? "").contains("PRIVATE_TITLE_SENTINEL")
+            && !hidden.url.lastPathComponent.contains("PRIVATE_TITLE_SENTINEL"), "Hidden title is absent from PDF and filename")
     }
 
     /// The host-side XCTest runner drives real taps and interactive dismissals.
@@ -533,6 +620,7 @@ import PDFKit
 
     private static func result(success: Bool, error: String? = nil) throws {
         let output: [String: Any] = ["success": success, "error": error ?? "", "checks": checks, "files": files,
+            "suites": suites, "elapsedSeconds": Date().timeIntervalSince(started),
             "scope": "Full production simulator app: native Markdown/table/code/image/tools, actual PNG/PDF files, extraction, snapshot isolation, cancellation and cache reuse. Real nested modal picker/preview; production share button tapped through external XCTest UI automation; visible UIActivityViewController, real system close action and repeat presentation for current PNG/PDF in light/dark appearance. Screenshots recorded. No physical-device touch, third-party recipient delivery, credentialed tool actions or device FPS assertion."]
         try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("result.json"), options: .atomic)

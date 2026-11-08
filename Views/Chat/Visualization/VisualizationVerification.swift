@@ -21,13 +21,39 @@ import WebKit
     """#
 
     static func run(window: UIWindow, directory: URL) async throws {
+        let previous = window.rootViewController
+        let previousStyle = window.overrideUserInterfaceStyle
+        defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = previousStyle }
+        var nativeError: Error?
+        var customError: Error?
+        do { try await runNative(window: window, directory: directory) }
+        catch { nativeError = error }
+        window.rootViewController = previous
+        window.overrideUserInterfaceStyle = previousStyle
+        var customChecks: [String] = []
+        do { customChecks = try await runCustom(window: window, directory: directory) }
+        catch { customError = error }
+        if customError == nil {
+            try JSONSerialization.data(withJSONObject: ["success": true, "checks": customChecks], options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("visualization-custom-result.json"))
+        }
+        let report: [String: Any] = ["success": nativeError == nil && customError == nil,
+            "nativeSuccess": nativeError == nil, "customSuccess": customError == nil,
+            "nativeError": nativeError?.localizedDescription ?? "", "customError": customError?.localizedDescription ?? "",
+            "systemVersion": UIDevice.current.systemVersion]
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("visualization-result.json"))
+        if let error = nativeError ?? customError { throw error }
+    }
+
+    private static func runNative(window: UIWindow, directory: URL) async throws {
         var checks: [String] = []
         func check(_ condition: Bool, _ message: String) throws {
             guard condition else {
                 let shot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
                 try? shot.pngData()?.write(to: directory.appendingPathComponent("visualization-failure.png"))
                 let report: [String: Any] = ["success": false, "checks": checks, "error": message]
-                try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted]).write(to: directory.appendingPathComponent("visualization-result.json"))
+                try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted]).write(to: directory.appendingPathComponent("visualization-native-result.json"))
                 throw NSError(domain: "VisualizationVerification", code: checks.count, userInfo: [NSLocalizedDescriptionKey: message])
             }
             checks.append(message)
@@ -222,8 +248,39 @@ import WebKit
         let request = ChatShareSnapshot.request(messages: [message], title: document.title, vm: model)
         let groups = ChatShareCells.renderGroups(request.cells, selected: Set(request.cells.map(\.id)))
         var options = ChatExportOptions(); options.format = .pdf
+        var exportCardGeometry: [String: [String: Any]] = [:]
+        ZeVisualizationCardView.verificationOnLayout = { card in
+            var root: UIView = card
+            while let parent = root.superview { root = parent }
+            let values: [[String: Any]] = descendants(card).compactMap { view in
+                guard let label = view as? UILabel,
+                      label.accessibilityIdentifier?.hasPrefix("ze.visualization.value.") == true else { return nil }
+                return ["text": label.text ?? "", "hidden": label.isHidden,
+                    "bounds": NSCoder.string(for: label.bounds),
+                    "frameInCard": NSCoder.string(for: label.convert(label.bounds, to: card)),
+                    "textRect": NSCoder.string(for: label.textRect(forBounds: label.bounds, limitedToNumberOfLines: label.numberOfLines))]
+            }
+            exportCardGeometry[card.component.id] = ["cardBounds": NSCoder.string(for: card.bounds),
+                "cardInRoot": NSCoder.string(for: card.convert(card.bounds, to: root)),
+                "rootBounds": NSCoder.string(for: root.bounds), "metrics": values]
+        }
+        defer { ZeVisualizationCardView.verificationOnLayout = nil }
         let result = try await ChatExportRenderer(vm: model).render(groups: groups, messages: request.messages, title: document.title, options: options, progress: { _, _ in })
+        ZeVisualizationCardView.verificationOnLayout = nil
+        try Data(contentsOf: result.url).write(to: directory.appendingPathComponent("visualization.pdf"))
         let pdf = PDFDocument(url: result.url)
+        let numericSelections = pdf?.findString("8.91", withOptions: []) ?? []
+        let pages: [[String: Any]] = (0..<(pdf?.pageCount ?? 0)).compactMap { index in
+            guard let page = pdf?.page(at: index) else { return nil }
+            let selections = numericSelections.filter { $0.pages.contains(page) }.map { selection in
+                ["text": selection.string ?? "", "bounds": NSCoder.string(for: selection.bounds(for: page))]
+            }
+            return ["index": index, "bounds": NSCoder.string(for: page.bounds(for: .mediaBox)),
+                "text": page.string ?? "", "metricSelections": selections]
+        }
+        try JSONSerialization.data(withJSONObject: ["pages": pages, "cards": exportCardGeometry,
+            "metricSelectionCount": numericSelections.count], options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("visualization-pdf-layout.json"))
         for marker in ["VISUAL_BEGIN", "VISUAL_SOURCE"] {
             try check(pdf?.string?.contains(marker) == true, "PDF includes searchable \(marker)")
         }
@@ -232,17 +289,14 @@ import WebKit
         try check(document.components.first { $0.type == .table }?.csv.contains("VISUAL_LAST") == true, "Complete table remains available through CSV")
         let mixed = markdown + "\n\n| Key | Value |\n| --- | --- |\n| Test | 1 |\n"
         try check(ChatExportContent.tableChunks(mixed, contentWidth: 360, base: 390) == nil, "Mixed table and chart preserve original block selection identity")
-        let numericSelections = pdf?.findString("8.91", withOptions: []) ?? []
         try check(numericSelections.contains { selection in
             guard let firstPage, selection.pages.contains(firstPage) else { return false }
             // The metric must appear inside the visible card on the first page.
             return selection.bounds(for: firstPage).midY > firstPage.bounds(for: .mediaBox).height * 0.42
         }, "PDF contains the metric inside the visible card")
-        try Data(contentsOf: result.url).write(to: directory.appendingPathComponent("visualization.pdf"))
-        checks += try await runCustom(window: window, directory: directory)
         let report: [String: Any] = ["success": true, "checks": checks, "elapsedSeconds": CFAbsoluteTimeGetCurrent() - started,
                                     "systemVersion": UIDevice.current.systemVersion, "cacheCount": ZeVisualizationCache.shared.statistics.count]
-        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: directory.appendingPathComponent("visualization-result.json"))
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: directory.appendingPathComponent("visualization-native-result.json"))
     }
 
     private static func runCustom(window: UIWindow, directory: URL) async throws -> [String] {

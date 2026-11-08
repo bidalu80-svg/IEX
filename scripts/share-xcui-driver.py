@@ -149,7 +149,9 @@ final class ShareDriver: XCTestCase {
             app.launchEnvironment["DYLD_FALLBACK_LIBRARY_PATH"] = fallback
         }
         app.launch()
-        let deadline = Date().addingTimeInterval(300)
+        // Independent visualization, disclosure and export suites retain their
+        // own action bounds and must all be allowed to publish a result.
+        let deadline = Date().addingTimeInterval(600)
         var handled = Set<String>()
         var actions = 0
         while Date() < deadline {
@@ -221,7 +223,7 @@ final class ShareDriver: XCTestCase {
                 throw error
             }
         }
-        XCTFail("Production share verification did not complete within 300 seconds")
+        XCTFail("Production share verification did not complete within 600 seconds")
     }
 }
 '''
@@ -447,8 +449,8 @@ def run_driver(args: argparse.Namespace) -> int:
             "-destination", f"platform=iOS Simulator,id={args.device}",
             "-parallel-testing-enabled", "NO", "-maximum-concurrent-test-simulator-destinations", "1",
             "-disable-concurrent-destination-testing", "-resultBundlePath", str(args.evidence / "ShareDriver.xcresult"),
-            "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "330",
-        ], args.evidence / "test.log", 360)
+            "-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", "630",
+        ], args.evidence / "test.log", 660)
         return result
     finally:
         server.shutdown()
