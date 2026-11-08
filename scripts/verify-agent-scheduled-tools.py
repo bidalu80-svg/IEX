@@ -23,9 +23,10 @@ check('parseDate(arguments["scheduled_at"] as? String)' in tool and 'ScheduledTa
 check('try store.setEnabled' in tool and 'try store.delete(id: id)' in tool,'model can disable or delete its own task by returned UUID')
 check('Settings > Scheduled Tasks' in tool and '当前没有定时任务' in tool,'tool responses guide Chinese UI')
 check(project.count('/* AIChatViewModel+ScheduledTaskTools.swift in Sources */')==2 and 'path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"' in project,'new tool file is in app source membership')
-check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in anim,'glyph uses a 60fps timeline')
-check('private let size: CGFloat = 12' in anim and 'private let holdDuration: TimeInterval = 0.25' in anim and 'easedRotationProgress' in anim and '0.08 * morph' in anim and 'rotationDegrees' in anim,'glyph stays small, pauses 0.25s, scales at the square, and eases rotation')
-check('Color.cyan' in anim and 'purpleGradient' in anim and 'corner = size * (0.5 - 0.25 * morph)' in anim and 'if elapsed < holdDuration' in anim and '.strokeBorder' in anim,'pale-blue circle and paused light-purple rounded-square jelly transition')
+glyph=anim[anim.index('// MARK: - Typing Indicator'):anim.index('struct TypingIndicator:')]
+check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in glyph and 'paused: reduceMotion || scenePhase != .active' in glyph,'glyph requests a 60Hz animation schedule and pauses for reduced motion or an inactive scene')
+check('transitionDuration: TimeInterval = 0.525' in glyph and 'holdDuration: TimeInterval = 0.10' in glyph and 'easedProgress' in glyph,'faster morphs share eased motion and shorter endpoint settling')
+check('colorCycleDuration' in glyph and 'sweepOffset' in glyph and 'Canvas {' in glyph and 'private static let spectrum' in glyph and 'purpleGradient' not in glyph,'independent rainbow sweep is drawn in a bounded vector canvas')
 check('private struct JellyThinkingGlyph' in anim and 'HStack(spacing: 4)' in anim,'glyph is placed before Chinese thinking label')
 check('scripts/verify-agent-scheduled-tools.py' in source('.github/workflows/build.yml'),'CI runs integration gate')
 print(f'Structural checks passed: {checks}')

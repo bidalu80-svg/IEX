@@ -2696,153 +2696,119 @@ private struct ThinkingDurationLabel: View {
 
 // MARK: - Typing Indicator
 
-/// A compact 60 FPS jelly glyph. The footprint stays square so the shape
-/// morphs from a circle into a rounded square instead of stretching into a
-/// pill. Each morph transition makes one complete turn, keeping both directions of
-/// the morph visually connected while invalidating only this tiny view.
-private struct JellyThinkingGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var startedAt = Date()
+/// Pure time sampling keeps shape easing independent from the moving spectrum.
+/// Each morph is 0.15 s shorter than before, with a brief 0.10 s settling pause.
+private enum JellyThinkingGlyphAnimation {
+    static let transitionDuration: TimeInterval = 0.525
+    static let holdDuration: TimeInterval = 0.10
+    static let colorCycleDuration: TimeInterval = 2.4
+    static var cycleDuration: TimeInterval { 2 * (transitionDuration + holdDuration) }
 
-    private let size: CGFloat = 12
-    private let transitionDuration: TimeInterval = 0.675
-    private let holdDuration: TimeInterval = 0.25
-
-    private var cycleDuration: TimeInterval {
-        transitionDuration * 2 + holdDuration * 2
+    struct State {
+        let morph: Double
+        let rotationDegrees: Double
+        let sweepOffset: Double
     }
+
+    static func state(elapsed: TimeInterval) -> State {
+        let time = max(0, elapsed)
+        let local = time.truncatingRemainder(dividingBy: cycleDuration)
+        let sweep = (time / colorCycleDuration).truncatingRemainder(dividingBy: 1)
+        let forwardEnd = holdDuration + transitionDuration
+        let returnStart = forwardEnd + holdDuration
+        if local < holdDuration {
+            return State(morph: 0, rotationDegrees: 0, sweepOffset: sweep)
+        }
+        if local < forwardEnd {
+            let eased = easedProgress((local - holdDuration) / transitionDuration)
+            return State(morph: eased, rotationDegrees: eased * 360, sweepOffset: sweep)
+        }
+        if local < returnStart {
+            return State(morph: 1, rotationDegrees: 360, sweepOffset: sweep)
+        }
+        let eased = easedProgress((local - returnStart) / transitionDuration)
+        return State(morph: 1 - eased, rotationDegrees: 360 + eased * 360, sweepOffset: sweep)
+    }
+
+    /// Zero velocity and acceleration at both ends joins each settling pause
+    /// without a sudden start or stop. Shape, scale and rotation use one curve.
+    static func easedProgress(_ progress: Double) -> Double {
+        let t = min(1, max(0, progress))
+        return t * t * t * (t * (t * 6 - 15) + 10)
+    }
+}
+
+/// A tiny vector canvas isolates refreshes to the glyph. The path rotates in
+/// screen space while its spectrum always sweeps left to right, even at rest.
+private struct JellyThinkingGlyphFrame: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let elapsed: TimeInterval
+    private let size: CGFloat = 12
+    private static let spectrum = Gradient(colors: [
+        Color(red: 1.00, green: 0.29, blue: 0.42),
+        Color(red: 1.00, green: 0.57, blue: 0.23),
+        Color(red: 1.00, green: 0.85, blue: 0.29),
+        Color(red: 0.27, green: 0.86, blue: 0.48),
+        Color(red: 0.17, green: 0.82, blue: 0.91),
+        Color(red: 0.34, green: 0.48, blue: 1.00),
+        Color(red: 0.76, green: 0.37, blue: 0.98),
+        Color(red: 1.00, green: 0.29, blue: 0.42),
+        Color(red: 1.00, green: 0.57, blue: 0.23),
+        Color(red: 1.00, green: 0.85, blue: 0.29),
+        Color(red: 0.27, green: 0.86, blue: 0.48),
+        Color(red: 0.17, green: 0.82, blue: 0.91),
+        Color(red: 0.34, green: 0.48, blue: 1.00),
+        Color(red: 0.76, green: 0.37, blue: 0.98),
+        Color(red: 1.00, green: 0.29, blue: 0.42)
+    ])
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
-            let state = reduceMotion
-                ? (morphPhase: CGFloat(0), rotationDegrees: 0.0)
-                : animationState(at: timeline.date)
-            let phase = state.morphPhase
-            // 0 and 1 are circles; 0.5 is a rounded square. The icon holds
-            // each endpoint for 0.25s, so rotation only happens during a morph.
-            let morph = 0.5 - 0.5 * cos(phase * 2 * .pi)
-            let corner = size * (0.5 - 0.25 * morph)
-            let rotation = Angle(degrees: state.rotationDegrees)
-            // The rounded square gently grows by 8% through the morph, then
-            // settles back to the circle's original footprint on the return.
-            let lift = 1.0 + 0.08 * morph
-
-            ZStack {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(currentGradient)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: corner, style: .continuous)
-                            .fill(purpleGradient)
-                            .opacity(morph)
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: corner, style: .continuous)
-                            .strokeBorder(currentRimGradient, lineWidth: 0.9)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                                    .strokeBorder(purpleRimGradient, lineWidth: 0.9)
-                                    .opacity(morph)
-                            }
-                    }
-                    .frame(width: size, height: size)
-                    .shadow(color: shadowColor.opacity(0.22), radius: 3, y: 1)
-                    .scaleEffect(lift)
-                    .rotationEffect(rotation)
-            }
-            .frame(width: size, height: size)
-            .compositingGroup()
+        let state = JellyThinkingGlyphAnimation.state(elapsed: elapsed)
+        Canvas { context, canvas in
+            let side = size * (1 + 0.08 * CGFloat(state.morph))
+            let center = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
+            let rect = CGRect(x: -side / 2, y: -side / 2, width: side, height: side)
+            let corner = side * (0.5 - 0.25 * CGFloat(state.morph))
+            let transform = CGAffineTransform(rotationAngle: CGFloat(state.rotationDegrees * .pi / 180))
+                .concatenating(CGAffineTransform(translationX: center.x, y: center.y))
+            let path = Path(roundedRect: rect, cornerRadius: corner, style: .continuous)
+                .applying(transform)
+            let wavelength = size * 2.8
+            let shift = CGFloat(state.sweepOffset) * wavelength
+            var fillContext = context
+            fillContext.addFilter(.shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.12),
+                                          radius: 1.3, x: 0, y: 0.8))
+            fillContext.fill(path, with: .linearGradient(Self.spectrum,
+                startPoint: CGPoint(x: center.x - wavelength * 1.5 + shift, y: center.y),
+                endPoint: CGPoint(x: center.x + wavelength * 0.5 + shift, y: center.y)))
+            context.fill(path, with: .linearGradient(Gradient(colors: [
+                .white.opacity(colorScheme == .dark ? 0.35 : 0.48), .clear, .black.opacity(0.10)
+            ]), startPoint: CGPoint(x: center.x - size / 2, y: center.y - size / 2),
+                endPoint: CGPoint(x: center.x + size / 2, y: center.y + size / 2)))
+            context.stroke(path, with: .linearGradient(Gradient(colors: [
+                .white.opacity(0.85), .white.opacity(0.18)
+            ]), startPoint: CGPoint(x: center.x - size / 2, y: center.y - size / 2),
+                endPoint: CGPoint(x: center.x + size / 2, y: center.y + size / 2)), lineWidth: 0.65)
         }
+        // Leave drawing space for the rotated square and its soft rim shadow.
+        .frame(width: 18, height: 18)
         .frame(width: size, height: size)
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+private struct JellyThinkingGlyph: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var startedAt = Date()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0,
+                                paused: reduceMotion || scenePhase != .active)) { timeline in
+            JellyThinkingGlyphFrame(elapsed: reduceMotion ? 0 : timeline.date.timeIntervalSince(startedAt))
+        }
         .onAppear { startedAt = Date() }
-    }
-
-    private var currentGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(colorScheme == .dark ? 0.34 : 0.74),
-                Color.cyan.opacity(colorScheme == .dark ? 0.30 : 0.43),
-                Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.26)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var purpleGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(colorScheme == .dark ? 0.36 : 0.68),
-                Color(red: 0.78, green: 0.70, blue: 1.0).opacity(colorScheme == .dark ? 0.34 : 0.68),
-                Color(red: 0.62, green: 0.48, blue: 0.94).opacity(colorScheme == .dark ? 0.22 : 0.50)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var currentRimGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                .white.opacity(colorScheme == .dark ? 0.84 : 0.92),
-                .cyan.opacity(colorScheme == .dark ? 0.48 : 0.66),
-                Color(red: 0.42, green: 0.67, blue: 0.93).opacity(colorScheme == .dark ? 0.34 : 0.54)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var purpleRimGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                .white.opacity(colorScheme == .dark ? 0.88 : 0.94),
-                Color(red: 0.68, green: 0.56, blue: 0.98).opacity(colorScheme == .dark ? 0.62 : 0.88),
-                Color(red: 0.46, green: 0.34, blue: 0.82).opacity(colorScheme == .dark ? 0.40 : 0.72)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var shadowColor: Color {
-        let purple = Color(red: 0.62, green: 0.48, blue: 0.94)
-        return purple
-    }
-
-    private func animationState(at date: Date) -> (morphPhase: CGFloat, rotationDegrees: Double) {
-        let elapsed = date.timeIntervalSince(startedAt)
-            .truncatingRemainder(dividingBy: cycleDuration)
-        let forwardEnd = holdDuration + transitionDuration
-        let squareHoldEnd = forwardEnd + holdDuration
-
-        // Hold the blue circle before the forward morph.
-        if elapsed < holdDuration {
-            return (0, 0)
-        }
-        // Circle → rounded square: exactly one full turn.
-        if elapsed < forwardEnd {
-            let progress = (elapsed - holdDuration) / transitionDuration
-            let eased = easedRotationProgress(progress)
-            return (CGFloat(progress * 0.5), eased * 360.0)
-        }
-        // Hold the light-purple rounded square before returning.
-        if elapsed < squareHoldEnd {
-            return (0.5, 360.0)
-        }
-        // Rounded square → circle: another full turn.
-        let progress = (elapsed - squareHoldEnd) / transitionDuration
-        let eased = easedRotationProgress(progress)
-        return (CGFloat(0.5 + progress * 0.5), 360.0 + eased * 360.0)
-    }
-
-    /// Cosine easing gives the rotation zero velocity at both ends of each
-    /// morph, so it settles into the 0.25s hold instead of snapping or turning
-    /// at a constant, mechanical speed.
-    private func easedRotationProgress(_ progress: TimeInterval) -> Double {
-        let clamped = min(1.0, max(0.0, progress))
-        return 0.5 - 0.5 * cos(clamped * .pi)
     }
 }
 
