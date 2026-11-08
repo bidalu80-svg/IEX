@@ -10,6 +10,7 @@ python3 - "$diagnostic_evidence/source-manifest.json" <<'PY'
 import hashlib, json, pathlib, subprocess, sys
 paths = ['Agent/Visualization/VisualizationDocument.swift',
          'Views/Chat/Visualization/VisualizationAttachment.swift',
+         'Views/Chat/SelectableMarkdownView.swift',
          'scripts/SelectionDiagnosticHarness.swift', 'scripts/selection-diagnostic-driver.py']
 result = {'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
           'purpose': 'Diagnosis only; feature acceptance requires actual selection in the complete application',
@@ -58,10 +59,13 @@ collect_diagnostics
 python3 - "$diagnostic_evidence" <<'PY'
 import json, pathlib, sys
 folder = pathlib.Path(sys.argv[1])
-names = ['plain-long', 'plain-double', 'textview-long', 'textview-double',
-         'guarded-long', 'guarded-double', 'native-long', 'native-double']
+names = ['textview-long', 'textview-double', 'native-long', 'native-double',
+         'tracked-long', 'tracked-double', 'nodrag-long', 'nodrag-double',
+         'swiftui-long', 'swiftui-double', 'combined-long', 'combined-double']
 results = {name: json.loads((folder / f'selection-diagnostic-{name}.json').read_text()) for name in names}
 (folder / 'comparison.json').write_text(json.dumps(results, ensure_ascii=False, indent=2))
-print(json.dumps(results, ensure_ascii=False, indent=2))
+print(json.dumps({name: {key: result.get(key) for key in
+      ['success', 'firstResponder', 'selectedText', 'selectedRange']} for name, result in results.items()},
+      ensure_ascii=False, indent=2))
 print('Diagnostic collection complete. Each recorded native selection must be evaluated before making a production fix.')
 PY

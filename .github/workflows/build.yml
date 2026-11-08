@@ -11,16 +11,20 @@ on:
         description: 'Run isolated text-selection diagnostics without building an IPA'
         type: boolean
         default: false
+      application_only:
+        description: 'Run complete application verification with diagnostic simulator artifacts'
+        type: boolean
+        default: false
 
 concurrency:
   # Keep only the newest build for a branch. Rapid feature pushes should not
   # consume three macOS runners for superseded commits.
-  group: ze-build-${{ github.workflow }}-${{ github.ref }}
+  group: ze-build-${{ github.workflow }}-${{ github.ref }}-${{ inputs.selection_only && 'selection' || 'application' }}
   cancel-in-progress: true
 
 jobs:
   build:
-    if: ${{ inputs.selection_only != true }}
+    if: ${{ inputs.selection_only != true && inputs.application_only != true }}
     name: Build Ze.app
     runs-on: macos-15
 
@@ -1033,6 +1037,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build complete application for simulator
         run: bash scripts/build-share-search-simulator.sh
+      - name: Retain simulator application for focused diagnosis
+        if: ${{ inputs.application_only == true }}
+        run: ditto -c -k --keepParent "$ZE_SHARE_SEARCH_SIM_APP" "$RUNNER_TEMP/ZeSelectionRuntime.zip"
+      - name: Upload diagnostic simulator application
+        if: ${{ inputs.application_only == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selection-runtime-application
+          path: ${{ runner.temp }}/ZeSelectionRuntime.zip
+          retention-days: 2
       - name: Verify full chat lifecycle, exports and search navigation
         timeout-minutes: 16
         run: bash scripts/test-share-search-application.sh

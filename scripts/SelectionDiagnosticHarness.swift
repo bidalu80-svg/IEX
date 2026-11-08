@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 
 // Only the application's cache-clear boundary is stubbed. The component model,
 // custom preview, geometry-backed selection view and gestures are production.
@@ -49,6 +50,74 @@ import UIKit
     }
 }
 
+/// Copies only the production tracker/inline-code recognizer construction and
+/// delegate decisions relevant to an embedded custom attachment. The real
+/// Markdown parser, collection auto-scroll and attachment layout are outside
+/// this focused policy fixture and are not simulated here.
+@MainActor final class SelectionDiagnosticTrackedTextView: UITextView, UIGestureRecognizerDelegate {
+    private weak var selectionDragTracker: UILongPressGestureRecognizer?
+    private weak var inlineCodeTapGesture: UITapGestureRecognizer?
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        let codeTap = UITapGestureRecognizer(target: self, action: #selector(observedAction(_:)))
+        codeTap.delegate = self
+        addGestureRecognizer(codeTap)
+        inlineCodeTapGesture = codeTap
+        let tracker = UILongPressGestureRecognizer(target: self, action: #selector(observedAction(_:)))
+        tracker.minimumPressDuration = 0
+        tracker.cancelsTouchesInView = false
+        tracker.delaysTouchesBegan = false
+        tracker.delaysTouchesEnded = false
+        tracker.delegate = self
+        addGestureRecognizer(tracker)
+        selectionDragTracker = tracker
+    }
+    required init?(coder: NSCoder) { return nil }
+    @objc private func observedAction(_ gesture: UIGestureRecognizer) {}
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer !== panGestureRecognizer && gestureRecognizer !== selectionDragTracker {
+            let point = gestureRecognizer.location(in: self)
+            var touched = hitTest(point, with: nil)
+            while let view = touched, view !== self {
+                if view is ZeCustomVisualizationPreview { return false }
+                touched = view.superview
+            }
+        }
+        if gestureRecognizer === inlineCodeTapGesture {
+            if let selection = selectedTextRange, !selection.isEmpty { return false }
+            let point = gestureRecognizer.location(in: self)
+            // The only attachment in this fixture is the custom preview.
+            if subviews.contains(where: { $0 is ZeCustomVisualizationPreview && $0.frame.contains(point) }) { return false }
+            return false // no inline-code or blank-area handler in this fixture
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === selectionDragTracker || otherGestureRecognizer === selectionDragTracker { return true }
+        if gestureRecognizer === inlineCodeTapGesture { return otherGestureRecognizer is UITapGestureRecognizer }
+        return false
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === inlineCodeTapGesture, otherGestureRecognizer is UILongPressGestureRecognizer {
+            if otherGestureRecognizer === selectionDragTracker { return false }
+            return true
+        }
+        return false
+    }
+}
+
+@MainActor private struct SelectionDiagnosticContainer: UIViewRepresentable {
+    let content: UIView
+    func makeUIView(context: Context) -> UIView { content }
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
 @MainActor final class SelectionDiagnosticController: UIViewController {
     private let caseName: String
     private var preview: ZeCustomVisualizationPreview?
@@ -87,16 +156,21 @@ import UIKit
         }
 
         let parent: UIView
-        if caseName.hasPrefix("textview-") || caseName.hasPrefix("guarded-") {
-            let text: UITextView = caseName.hasPrefix("guarded-")
-                ? SelectionDiagnosticGuardedTextView(usingTextLayoutManager: false)
-                : UITextView(usingTextLayoutManager: false)
+        let tracked = caseName.hasPrefix("tracked-") || caseName.hasPrefix("combined-")
+        let swiftUIScroll = caseName.hasPrefix("swiftui-") || caseName.hasPrefix("combined-")
+        let dragDisabled = caseName.hasPrefix("nodrag-") || caseName.hasPrefix("combined-")
+        if caseName.hasPrefix("textview-") || caseName.hasPrefix("guarded-") || tracked || swiftUIScroll || dragDisabled {
+            let text: UITextView
+            if tracked { text = SelectionDiagnosticTrackedTextView(usingTextLayoutManager: false) }
+            else if caseName.hasPrefix("guarded-") { text = SelectionDiagnosticGuardedTextView(usingTextLayoutManager: false) }
+            else { text = UITextView(usingTextLayoutManager: false) }
             text.isEditable = false
             text.isSelectable = true
             text.isScrollEnabled = false
             text.contentInsetAdjustmentBehavior = .never
             text.textContainerInset = .zero
             text.textContainer.lineFragmentPadding = 0
+            if dragDisabled { text.textDragInteraction?.isEnabled = false }
             let attachment = NSTextAttachment()
             attachment.bounds = CGRect(x: 0, y: 0, width: 360, height: 180)
             text.attributedText = NSAttributedString(attachment: attachment)
@@ -108,7 +182,7 @@ import UIKit
         } else { parent = UIView() }
         parent.frame = region
         parent.accessibilityIdentifier = "ze.selection.container"
-        view.addSubview(parent)
+        if !swiftUIScroll { view.addSubview(parent) }
 
         do {
             let raw = #"{"schemaVersion":1,"id":"selection-probe","title":"Selection probe","components":[{"id":"custom","type":"custom","height":180,"html":"<p>Selection probe</p>","fallbackText":"Selection probe"}]}"#
@@ -122,6 +196,16 @@ import UIKit
             preview.apply(snapshot)
             parent.addSubview(preview)
             self.preview = preview
+            if swiftUIScroll {
+                let host = UIHostingController(rootView: ScrollView {
+                    SelectionDiagnosticContainer(content: parent).frame(width: 360, height: 220)
+                    Color.clear.frame(height: 700)
+                })
+                addChild(host)
+                host.view.frame = CGRect(x: 20, y: 140, width: 360, height: 500)
+                view.addSubview(host.view)
+                host.didMove(toParent: self)
+            }
         } catch {
             events.append(["event": "setupError", "error": error.localizedDescription])
         }

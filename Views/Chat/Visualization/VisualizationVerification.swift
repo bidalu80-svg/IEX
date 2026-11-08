@@ -376,6 +376,20 @@ import WebKit
                 "windowPoint": [windowPoint.x, windowPoint.y],
                 "hitViewBefore": String(describing: window.hitTest(windowPoint, with: nil)),
                 "pictureFrames": preview.subviews.compactMap { ($0 as? UIImageView).map { NSCoder.string(for: $0.frame) } }]
+            func gestureChain(_ target: UIView) -> [[String: Any]] {
+                var result: [[String: Any]] = []
+                var ancestor: UIView? = target
+                while let view = ancestor {
+                    result.append(["view": String(describing: view), "gestures": (view.gestureRecognizers ?? []).map {
+                        ["type": String(describing: type(of: $0)), "state": $0.state.rawValue,
+                         "name": $0.name ?? "", "enabled": $0.isEnabled,
+                         "delegate": String(describing: $0.delegate)] as [String: Any]
+                    }])
+                    ancestor = view.superview
+                }
+                return result
+            }
+            preselection["gestureChainBefore"] = gestureChain(preview)
             try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted])
                 .write(to: directory.appendingPathComponent("visualization-custom-selection-layout.json"))
             try check(abs(imageRect.minY) < 1 && abs(imageRect.height - preview.bounds.height) < 2,
@@ -397,6 +411,7 @@ import WebKit
             imageRect = preview.imageDisplayRect; scale = imageRect.width / 360
             card = descendants(host.view).compactMap { $0 as? ZeVisualizationCardView }.first
             preselection["gestureEvents"] = preview.verificationGestureEvents
+            preselection["gestureChainAfter"] = gestureChain(preview)
             preselection["hitViewAfter"] = String(describing: window.hitTest(windowPoint, with: nil))
             preselection["previewInWindowAfter"] = NSCoder.string(for: preview.convert(preview.bounds, to: window))
             try JSONSerialization.data(withJSONObject: preselection, options: [.prettyPrinted, .sortedKeys])

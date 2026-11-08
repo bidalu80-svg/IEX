@@ -18,8 +18,9 @@ final class SelectionDiagnosticDriver: XCTestCase {
     @MainActor
     func testRealGesturesInEachContainer() throws {
         continueAfterFailure = false
-        let cases = ["plain-long", "plain-double", "textview-long", "textview-double",
-                     "guarded-long", "guarded-double", "native-long", "native-double"]
+        let cases = ["textview-long", "textview-double", "native-long", "native-double",
+                     "tracked-long", "tracked-double", "nodrag-long", "nodrag-double",
+                     "swiftui-long", "swiftui-double", "combined-long", "combined-double"]
         let app = XCUIApplication(bundleIdentifier: "com.ze.selection-diagnostic")
         for name in cases {
             app.launchArguments = ["--case", name]
