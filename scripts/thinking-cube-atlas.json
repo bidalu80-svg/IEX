@@ -59,8 +59,8 @@
     "2b1db06b9e950c7b5e82132e2a46c167d14115b2d8f7fc91d89affe4eb398536",
     "ffc1003990cbd710845a8cc6f1a684406da642addfed1acb58e5091d722f77b6"
   ],
-  "interpolation": "Offline bidirectional DIS optical flow; smoothstep loop join",
-  "atlasSHA256": "4365b0c70cf4422f44299968803a96b0face3b161fb3bb3c64cd1c59562039e4",
+  "interpolation": "Offline bidirectional local polynomial optical flow; smoothstep loop join",
+  "atlasSHA256": "b782d1903d72038ad8552c12434e1d029cfd73c25d3b2361f8f866c1a4ba09c8",
   "decodedAtlasBytes": 1003520,
   "scope": "Reference-derived raster motion at the supplied resolution. Loop closure and intermediate frames are reconstructed."
 }

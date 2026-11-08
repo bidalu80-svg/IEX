@@ -72,8 +72,14 @@ private struct ThinkingGlyphSamples: View {
 
     private func difference(_ first: [UInt8], _ second: [UInt8]) -> Double {
         guard first.count == second.count, !first.isEmpty else { return .infinity }
-        return zip(first, second).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) } /
-            Double(first.count) / 255
+        var total: Double = 0
+        for index in first.indices {
+            let firstValue: Double = Double(first[index])
+            let secondValue: Double = Double(second[index])
+            total += abs(firstValue - secondValue)
+        }
+        let mean: Double = total / Double(first.count)
+        return mean / 255.0
     }
 
     private func renderedFrame(at elapsed: TimeInterval, dark: Bool = false) throws -> UIImage {
@@ -148,8 +154,10 @@ private struct ThinkingGlyphSamples: View {
                 animation.frameIndex(elapsed: $0, reducedMotion: true) == still
             }, "Reduced Motion always selects the same valid static reference frame")
 
-            let masks = try frames.frames.map { try alpha($0) }
-            let neutralPaddedMasks = try frames.frames.allSatisfy { image in
+            let masks: [[UInt8]] = try frames.frames.map { (image: CGImage) throws -> [UInt8] in
+                try alpha(image)
+            }
+            let neutralPaddedMasks: Bool = try frames.frames.allSatisfy { (image: CGImage) throws -> Bool in
                 let bytes = try rgba(image)
                 var visible = 0
                 for y in 0..<tile {
@@ -169,7 +177,7 @@ private struct ThinkingGlyphSamples: View {
             try check(neutralPaddedMasks,
                       "Every frame contains a small neutral dot mask with transparent padding and no opaque background")
 
-            let atlasFramesMatch = try (0..<count).allSatisfy { index in
+            let atlasFramesMatch: Bool = try (0..<count).allSatisfy { (index: Int) throws -> Bool in
                 let rect = CGRect(x: (index % columns) * tile, y: (index / columns) * tile, width: tile, height: tile)
                 guard let crop = atlas.cropping(to: rect) else { return false }
                 return try alpha(crop) == masks[index]
@@ -223,9 +231,15 @@ private struct ThinkingGlyphSamples: View {
             }
             let lightPixels = try rgba(lightFrame)
             let darkPixels = try rgba(darkFrame)
-            let inverseError = stride(from: 0, to: lightPixels.count, by: 4).reduce(0.0) {
-                $0 + abs(Double(lightPixels[$1]) + Double(darkPixels[$1]) - 255)
-            } / Double(lightFrame.width * lightFrame.height) / 255
+            var inverseDifference: Double = 0
+            for offset in stride(from: 0, to: lightPixels.count, by: 4) {
+                let lightValue: Double = Double(lightPixels[offset])
+                let darkValue: Double = Double(darkPixels[offset])
+                let inverseSum: Double = lightValue + darkValue - 255.0
+                inverseDifference += abs(inverseSum)
+            }
+            let tintPixelCount: Double = Double(lightFrame.width * lightFrame.height)
+            let inverseError: Double = inverseDifference / tintPixelCount / 255.0
             let lightInk = stride(from: 0, to: lightPixels.count, by: 4).filter { lightPixels[$0] < 220 }.count
             let darkInk = stride(from: 0, to: darkPixels.count, by: 4).filter { darkPixels[$0] > 35 }.count
             metrics["lightDarkInverseError"] = inverseError

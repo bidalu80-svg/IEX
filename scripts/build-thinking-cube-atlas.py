@@ -24,9 +24,10 @@ def interpolate(left, right, fraction):
     size = left.shape[0]
     a = cv2.resize(left, (size * 4, size * 4), interpolation=cv2.INTER_CUBIC)
     b = cv2.resize(right, (size * 4, size * 4), interpolation=cv2.INTER_CUBIC)
-    flow = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
-    ab = flow.calc(a, b, None)
-    ba = flow.calc(b, a, None)
+    # A local polynomial flow keeps each tiny circular particle coherent.
+    # Patch-based flow can stretch a fast foreground dot into a short streak.
+    ab = cv2.calcOpticalFlowFarneback(a, b, None, 0.5, 4, 25, 5, 7, 1.5, 0)
+    ba = cv2.calcOpticalFlowFarneback(b, a, None, 0.5, 4, 25, 5, 7, 1.5, 0)
     y, x = np.mgrid[:a.shape[0], :a.shape[1]].astype(np.float32)
     first = cv2.remap(a, x - ab[:, :, 0] * fraction, y - ab[:, :, 1] * fraction,
                       cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
@@ -98,7 +99,7 @@ def main():
         'introFrameCount': 12, 'loopFrameCount': 62,
         'sourceLoopFramesInclusive': [6, 34], 'joinDuration': 0.1,
         'sourceFrameAlphaSHA256': [hashlib.sha256(mask.tobytes()).hexdigest() for mask in masks],
-        'interpolation': 'Offline bidirectional DIS optical flow; smoothstep loop join',
+        'interpolation': 'Offline bidirectional local polynomial optical flow; smoothstep loop join',
         'atlasSHA256': hashlib.sha256(path.read_bytes()).hexdigest(),
         'decodedAtlasBytes': 448 * 560 * 4,
         'scope': 'Reference-derived raster motion at the supplied resolution. Loop closure and intermediate frames are reconstructed.',
