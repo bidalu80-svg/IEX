@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+thinking_phase="${1:-all}"
+case "$thinking_phase" in
+  all|prepare|verify) ;;
+  *) echo "Expected all, prepare or verify" >&2; exit 2 ;;
+esac
 thinking_app="$RUNNER_TEMP/ZeThinkingGlyphHarness.app"
 thinking_source="$RUNNER_TEMP/ThinkingGlyphProduction.swift"
+if [ "$thinking_phase" != verify ]; then
 mkdir -p "$thinking_app" thinking-glyph-evidence
 python3 scripts/extract-thinking-glyph.py "$thinking_source"
 cp "${thinking_source%.swift}.sources.json" thinking-glyph-evidence/
@@ -41,22 +47,34 @@ cat > "$thinking_app/Info.plist" <<'PLIST'
 PLIST
 codesign --force --sign - "$thinking_app"
 thinking_device=$(xcrun simctl list devices available --json | python3 -c 'import sys,json; d=json.load(sys.stdin); xs=[x for runtime,devices in d["devices"].items() if "iOS" in runtime for x in devices if x["name"].startswith("iPhone")]; print(next((x["udid"] for x in xs if x["state"]=="Booted"),xs[0]["udid"]))')
+echo "Preparing simulator: $(date -u +%FT%TZ)"
 xcrun simctl boot "$thinking_device" || true
 xcrun simctl bootstatus "$thinking_device" -b
+echo "Installing animation harness: $(date -u +%FT%TZ)"
 xcrun simctl install "$thinking_device" "$thinking_app"
+echo "Installed animation harness: $(date -u +%FT%TZ)"
 thinking_container=$(xcrun simctl get_app_container "$thinking_device" com.ze.thinking-glyph-harness data)
+printf '%s\n' "$thinking_device" > "$RUNNER_TEMP/thinking-glyph-device.txt"
+printf '%s\n' "$thinking_container" > "$RUNNER_TEMP/thinking-glyph-container.txt"
+rm -f "$thinking_container/Documents/thinking-glyph-result.json"
+echo "Launching animation harness: $(date -u +%FT%TZ)"
+xcrun simctl launch "$thinking_device" com.ze.thinking-glyph-harness
+echo "Animation harness launched: $(date -u +%FT%TZ)"
+fi
+if [ "$thinking_phase" = prepare ]; then exit 0; fi
+thinking_device=$(cat "$RUNNER_TEMP/thinking-glyph-device.txt")
+thinking_container=$(cat "$RUNNER_TEMP/thinking-glyph-container.txt")
 collect_thinking() {
   cp -R "$thinking_container/Documents/"thinking-glyph-* thinking-glyph-evidence/ 2>/dev/null || true
   xcrun simctl terminate "$thinking_device" com.ze.thinking-glyph-harness >/dev/null 2>&1 || true
 }
 trap collect_thinking EXIT
-rm -f "$thinking_container/Documents/thinking-glyph-result.json"
-xcrun simctl launch "$thinking_device" com.ze.thinking-glyph-harness
 for thinking_attempt in $(seq 1 90); do
   if [ -f "$thinking_container/Documents/thinking-glyph-result.json" ]; then break; fi
   sleep 1
 done
 collect_thinking
+trap - EXIT
 python3 - <<'PY'
 import json,pathlib
 root=pathlib.Path('thinking-glyph-evidence')
