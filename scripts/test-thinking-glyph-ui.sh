@@ -52,7 +52,7 @@ collect_thinking() {
 trap collect_thinking EXIT
 rm -f "$thinking_container/Documents/thinking-glyph-result.json"
 xcrun simctl launch "$thinking_device" com.ze.thinking-glyph-harness
-for thinking_attempt in $(seq 1 30); do
+for thinking_attempt in $(seq 1 90); do
   if [ -f "$thinking_container/Documents/thinking-glyph-result.json" ]; then break; fi
   sleep 1
 done
@@ -63,9 +63,13 @@ root=pathlib.Path('thinking-glyph-evidence')
 result=json.loads((root/'thinking-glyph-result.json').read_text())
 print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['success'],result
-assert len(result['checks'])==12,result
+assert len(result['checks'])>=18,result
 assert len(result['screenshots'])==2,result
-assert len(result['frameFiles'])==74,result
-for name in result['screenshots'] + result['frameFiles']:
+assert len(result['frameFiles'])==result['frameCount'],result
+assert len(result['rowFrameFiles'])==113,result
+assert len(result['rowSamples'])==110,result
+assert result['motionFPS']==60,result
+assert len(result['motionFrameFiles'])==900,result
+for name in result['screenshots'] + result['frameFiles'] + result['rowFrameFiles'] + result['motionFrameFiles']:
     assert (root/name).read_bytes().startswith(b'\x89PNG\r\n\x1a\n'),name
 PY

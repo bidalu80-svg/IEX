@@ -23,9 +23,9 @@ check('parseDate(arguments["scheduled_at"] as? String)' in tool and 'ScheduledTa
 check('try store.setEnabled' in tool and 'try store.delete(id: id)' in tool,'model can disable or delete its own task by returned UUID')
 check('Settings > Scheduled Tasks' in tool and '当前没有定时任务' in tool,'tool responses guide Chinese UI')
 check(project.count('/* AIChatViewModel+ScheduledTaskTools.swift in Sources */')==2 and 'path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"' in project,'new tool file is in app source membership')
-glyph=anim[anim.index('// MARK: - Typing Indicator'):anim.index('struct TypingIndicator:')]
+glyph=anim[anim.index('// MARK: - Typing Indicator'):anim.index('// MARK: - Thinking Level Sheet')]
 check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in glyph and 'paused: reduceMotion || scenePhase != .active' in glyph,'glyph requests a 60Hz animation schedule and pauses for reduced motion or an inactive scene')
-check('introFrameCount = 12' in glyph and 'loopFrameCount = 62' in glyph and 'frameIndex(elapsed:' in glyph,'reference entrance and grouped dot turns use deterministic frame sampling')
+check('globalRotationDegrees(elapsed:' in glyph and 'loopStartFrameIndex' in glyph and 'frameIndex(elapsed:' in glyph,'local dot turns and continuous global rotation use independent time sampling')
 check('Canvas {' in glyph and 'ThinkingCubeAtlas' in glyph and 'NSCache<NSString, CubeThinkingGlyphFrames>' in glyph and 'didReceiveMemoryWarningNotification' in glyph and 'spectrum' not in glyph,'bounded transparent dot atlas is drawn natively with a purgeable shared cache')
 check('private struct CubeThinkingGlyph' in anim and 'HStack(spacing: 4)' in anim,'glyph is placed before Chinese thinking label')
 check('scripts/verify-agent-scheduled-tools.py' in source('.github/workflows/build.yml'),'CI runs integration gate')

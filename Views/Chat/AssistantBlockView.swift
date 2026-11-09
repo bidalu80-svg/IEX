@@ -2696,28 +2696,90 @@ private struct ThinkingDurationLabel: View {
 
 // MARK: - Typing Indicator
 
-/// The reference supplies a short entrance followed by three grouped dot turns.
-/// Intermediate motion is authored offline; runtime only samples a bounded atlas.
+/// The complete recorded entrance and six observed layer turns, in cube-local
+/// coordinates. Global rotation keeps advancing when the local layer cycle wraps.
+/// The recording ends mid-turn; only its completion is reconstructed offline.
 private enum CubeThinkingGlyphAnimation {
     static let framesPerSecond: Double = 60
-    static let introFrameCount = 12
-    static let loopFrameCount = 62
-    static let frameCount = 74
+    static let introFrameCount = 16
+    static let loopFrameCount = 108
+    static let frameCount = 124
     static let tileSide = 56
     static let atlasColumns = 8
+    static let decodedMemoryBudget = 4 * 1024 * 1024
+    static let loopStartFrameIndex = introFrameCount
+    static let globalDegreesPerSourceFrame = 0.919341504573822
+    static let pivotX: CGFloat = 28.5 / 56.0
+    static let pivotY: CGFloat = 27.5 / 56.0
     static var introDuration: TimeInterval { Double(introFrameCount) / framesPerSecond }
     static var loopDuration: TimeInterval { Double(loopFrameCount) / framesPerSecond }
+    static var initialPlaybackDuration: TimeInterval { Double(frameCount) / framesPerSecond }
+
+    private static let scaleKeyframes: [(frame: Double, scale: Double)] = [
+        (8, 1), (17, 1.0036402940750122), (26, 0.9911999388661918),
+        (35, 0.9646904525861668), (43, 0.9361779693449992),
+        (52, 0.9070229325033577), (61, 0.9)
+    ]
 
     static func frameIndex(elapsed: TimeInterval, reducedMotion: Bool = false) -> Int {
-        // Reduced motion uses the fully formed cube, rather than its entrance dot.
-        if reducedMotion { return introFrameCount }
+        if reducedMotion { return loopStartFrameIndex }
         guard elapsed.isFinite, elapsed > 0 else { return 0 }
         if elapsed < introDuration {
             return min(introFrameCount - 1, Int((elapsed * framesPerSecond).rounded(.down)))
         }
         let phase = (elapsed - introDuration).truncatingRemainder(dividingBy: loopDuration)
         let offset = min(loopFrameCount - 1, Int((phase * framesPerSecond + 0.00000001).rounded(.down)))
-        return introFrameCount + offset
+        return loopStartFrameIndex + offset
+    }
+
+    static func globalRotationDegrees(elapsed: TimeInterval, reducedMotion: Bool = false) -> Double {
+        let sourceFrame = sampledSourceFrame(elapsed: elapsed, reducedMotion: reducedMotion)
+        // Canvas uses a downward y axis, opposite the offline OpenCV rotation.
+        return -globalDegreesPerSourceFrame * (sourceFrame - 8)
+    }
+
+    static func globalScale(elapsed: TimeInterval, reducedMotion: Bool = false) -> CGFloat {
+        let sourceFrame = sampledSourceFrame(elapsed: elapsed, reducedMotion: reducedMotion)
+        guard sourceFrame > 8 else { return 1 }
+        for index in 1..<scaleKeyframes.count {
+            let left = scaleKeyframes[index - 1]
+            let right = scaleKeyframes[index]
+            if sourceFrame <= right.frame {
+                let fraction = (sourceFrame - left.frame) / (right.frame - left.frame)
+                // The clip stops before the scale settles. Finish that small
+                // change once, then retain the settled scale for further turns.
+                let progress = index == scaleKeyframes.count - 1
+                    ? fraction * fraction * (3 - 2 * fraction) : fraction
+                return CGFloat(left.scale + (right.scale - left.scale) * progress)
+            }
+        }
+        return CGFloat(scaleKeyframes[scaleKeyframes.count - 1].scale)
+    }
+
+    private static func sampledSourceFrame(elapsed: TimeInterval, reducedMotion: Bool) -> Double {
+        if reducedMotion { return 8 }
+        guard elapsed.isFinite, elapsed > 0 else { return 0 }
+        return elapsed * 30
+    }
+}
+
+private enum TypingIndicatorAnimation {
+    static let labelDelay: TimeInterval = 14.0 / 30.0
+    static let labelDuration: TimeInterval = 0.2
+    static let labelInitialOffsetY: CGFloat = 9.0 * 24.0 / 56.0
+
+    struct LabelState {
+        let opacity: Double
+        let offsetY: CGFloat
+    }
+
+    static func labelState(elapsed: TimeInterval, reducedMotion: Bool = false) -> LabelState {
+        if reducedMotion { return LabelState(opacity: 1, offsetY: 0) }
+        let time = elapsed.isFinite ? elapsed : 0
+        let fraction = min(1, max(0, (time - labelDelay) / labelDuration))
+        let remaining = (1 - fraction) * (1 - fraction)
+        return LabelState(opacity: 1 - remaining,
+                          offsetY: labelInitialOffsetY * CGFloat(remaining))
     }
 }
 
@@ -2730,7 +2792,7 @@ private final class CubeThinkingGlyphFrames: NSObject {
     private static let cache: NSCache<NSString, CubeThinkingGlyphFrames> = {
         let value = NSCache<NSString, CubeThinkingGlyphFrames>()
         value.countLimit = 1
-        value.totalCostLimit = 2 * 1024 * 1024
+        value.totalCostLimit = CubeThinkingGlyphAnimation.decodedMemoryBudget
         return value
     }()
     private static let warningObserver = NotificationCenter.default.addObserver(
@@ -2776,20 +2838,26 @@ private final class CubeThinkingGlyphFrames: NSObject {
     }
 }
 
-/// Only the small icon redraws. Its alpha preserves the reference dot depth and
-/// motion, while a template tint makes the same frames readable in both themes.
+/// The small Canvas restores the recorded camera pose from local dot frames.
+/// Its global angle is sampled from elapsed time, never from the local loop phase.
 private struct CubeThinkingGlyphFrame: View {
     @Environment(\.colorScheme) private var colorScheme
     let elapsed: TimeInterval
     var reducedMotion: Bool = false
 
     var body: some View {
-        let index = CubeThinkingGlyphAnimation.frameIndex(elapsed: elapsed, reducedMotion: reducedMotion)
+        let animation = CubeThinkingGlyphAnimation.self
+        let index = animation.frameIndex(elapsed: elapsed, reducedMotion: reducedMotion)
         Canvas { context, size in
             guard let resources = CubeThinkingGlyphFrames.load() else { return }
             var image = context.resolve(Image(decorative: resources.frames[index], scale: 1, orientation: .up))
             image.shading = .color(colorScheme == .dark ? .white : .black)
-            context.draw(image, in: CGRect(origin: .zero, size: size))
+            let pivot = CGPoint(x: size.width * animation.pivotX, y: size.height * animation.pivotY)
+            context.translateBy(x: pivot.x, y: pivot.y)
+            context.rotate(by: .degrees(animation.globalRotationDegrees(elapsed: elapsed, reducedMotion: reducedMotion)))
+            let scale = animation.globalScale(elapsed: elapsed, reducedMotion: reducedMotion)
+            context.scaleBy(x: scale, y: scale)
+            context.draw(image, in: CGRect(x: -pivot.x, y: -pivot.y, width: size.width, height: size.height))
         }
         .frame(width: 24, height: 24)
         .allowsHitTesting(false)
@@ -2797,66 +2865,35 @@ private struct CubeThinkingGlyphFrame: View {
     }
 }
 
-private struct CubeThinkingGlyph: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var startedAt = Date()
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0,
-                                paused: reduceMotion || scenePhase != .active)) { timeline in
-            CubeThinkingGlyphFrame(elapsed: timeline.date.timeIntervalSince(startedAt),
-                                   reducedMotion: reduceMotion)
-        }
-        .onAppear { startedAt = Date() }
-    }
-}
-
-struct TypingIndicator: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var startedAt = Date()
+/// Deterministic production row: the icon and label share one elapsed time.
+private struct TypingIndicatorFrame: View {
+    let elapsed: TimeInterval
+    var reducedMotion: Bool = false
 
     private static let label = "Ze正在思考中"
-    // Keep the thinking-label sweep in lockstep with the tool-step shimmer.
-    // Both use a time-driven 1.65 s pass with a narrow 42%-of-width
-    // highlight (minimum 52 pt); using the same values makes the two effects
-    // read as one shared UI treatment.
-    private var peakOpacity: CGFloat {
-        // The capsule shines over a dark gray surface, so 0.25 is enough
-        // there. This label uses `secondaryLabel`, which is already bright
-        // in dark mode, so its sweep needs a stronger white band to remain
-        // visibly distinct.
-        colorScheme == .light ? 0.75 : 0.75
-    }
 
     var body: some View {
+        let entry = TypingIndicatorAnimation.labelState(elapsed: elapsed, reducedMotion: reducedMotion)
         HStack(spacing: 4) {
-            CubeThinkingGlyph()
+            CubeThinkingGlyphFrame(elapsed: elapsed, reducedMotion: reducedMotion)
             ZStack(alignment: .leading) {
-                labelText
-                    .foregroundStyle(ChatColors.secondaryText)
-
-                if !reduceMotion {
-                TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
-                    let elapsed = timeline.date.timeIntervalSince(startedAt)
-                    let phase = CGFloat((elapsed / ChatShimmerStyle.sweepDuration).truncatingRemainder(dividingBy: 1.0))
-
+                labelText.foregroundStyle(ChatColors.secondaryText)
+                if !reducedMotion {
+                    let phase = CGFloat((max(0, elapsed) / ChatShimmerStyle.sweepDuration)
+                        .truncatingRemainder(dividingBy: 1.0))
                     labelText
-                        // Match ShimmerOverlay: a white highlight whose alpha
-                        // is supplied by the moving gradient mask.
                         .foregroundStyle(Color.white)
                         .mask(sweepMask(phase: phase))
                         .accessibilityHidden(true)
                 }
             }
-            }
+            .opacity(entry.opacity)
+            .offset(y: entry.offsetY)
         }
         .fixedSize(horizontal: true, vertical: false)
         .frame(minHeight: 24, alignment: .leading)
         .accessibilityElement(children: .ignore)
-            .accessibilityLabel(String(localized: "Ze正在思考中"))
-        .onAppear { startedAt = Date() }
+        .accessibilityLabel(String(localized: "Ze正在思考中"))
     }
 
     private var labelText: some View {
@@ -2865,22 +2902,33 @@ struct TypingIndicator: View {
             .lineLimit(1)
     }
 
-    /// The same narrow, time-driven band used by ShimmerOverlay. The gradient
-    /// is used as a mask so the highlight exists only inside the glyphs.
     private func sweepMask(phase: CGFloat) -> some View {
         GeometryReader { proxy in
             let bandWidth = max(52, proxy.size.width * 0.42)
             LinearGradient(
-                colors: [
-                    .white.opacity(0),
-                    .white.opacity(peakOpacity),
-                    .white.opacity(0)
-                ],
+                colors: [.white.opacity(0), .white.opacity(0.75), .white.opacity(0)],
                 startPoint: .leading,
                 endPoint: .trailing
             )
             .frame(width: bandWidth, height: proxy.size.height)
             .offset(x: -bandWidth + phase * (proxy.size.width + bandWidth))
+        }
+    }
+}
+
+struct TypingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var startedAt: Date?
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0,
+                                paused: reduceMotion || scenePhase != .active)) { timeline in
+            let elapsed = startedAt.map { max(0, timeline.date.timeIntervalSince($0)) } ?? 0
+            TypingIndicatorFrame(elapsed: elapsed, reducedMotion: reduceMotion)
+        }
+        .onAppear {
+            if startedAt == nil { startedAt = Date() }
         }
     }
 }

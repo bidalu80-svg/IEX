@@ -997,7 +997,7 @@ jobs:
           python3 - <<'PYFOCUS'
           import json, os, pathlib
           report = json.loads(pathlib.Path('thinking-glyph-evidence/thinking-glyph-result.json').read_text())
-          assert report['success'] and len(report['checks']) == 12, report
+          assert report['success'] and len(report['checks']) >= 18 and len(report['rowFrameFiles']) >= 110, report
           native = json.loads(pathlib.Path('native-layout-evidence/native-layout-result.json').read_text())
           assert native['success'], native
           evidence = {
