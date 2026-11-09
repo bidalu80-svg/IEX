@@ -2709,8 +2709,10 @@ private enum CubeThinkingGlyphAnimation {
     static let decodedMemoryBudget = 4 * 1024 * 1024
     static let loopStartFrameIndex = introFrameCount
     static let globalDegreesPerSourceFrame = 0.919341504573822
-    static let pivotX: CGFloat = 28.5 / 56.0
-    static let pivotY: CGFloat = 27.5 / 56.0
+    // OpenCV indexes pixel centers at integers. Canvas measures from the image
+    // edge, so add half a source pixel before restoring the recorded pose.
+    static let pivotX: CGFloat = 29.0 / 56.0
+    static let pivotY: CGFloat = 28.0 / 56.0
     static var introDuration: TimeInterval { Double(introFrameCount) / framesPerSecond }
     static var loopDuration: TimeInterval { Double(loopFrameCount) / framesPerSecond }
     static var initialPlaybackDuration: TimeInterval { Double(frameCount) / framesPerSecond }
