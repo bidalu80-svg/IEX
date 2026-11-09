@@ -845,9 +845,26 @@ jobs:
 
       - name: Resolve SPM dependencies
         run: |
+          set -euo pipefail
+          # Xcode 16.4's SwiftPM downloads binary artifacts directly into its
+          # shared cache. A failed HTTP retry can collide with that same path.
+          # Seed the affected archive in a private cache after checking the
+          # checksum published by RealTimeCutVADLibrary 1.0.14's Package.swift.
+          ZE_SPM_CACHE_ROOT="$RUNNER_TEMP/ze-spm-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$ZE_SPM_CACHE_ROOT/artifacts"
+          VAD_ARCHIVE_URL="https://github.com/helloooideeeeea/RealTimeCutVADLibraryForXCFramework/releases/download/v1.0.3/RealTimeCutVADCXXLibrary.xcframework.zip"
+          VAD_CACHE_KEY="https___github_com_helloooideeeeea_RealTimeCutVADLibraryForXCFramework_releases_download_v1_0_3_RealTimeCutVADCXXLibrary_xcframework_zip"
+          VAD_DOWNLOAD="$ZE_SPM_CACHE_ROOT/vad-download.zip"
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 20 \
+            --max-time 300 "$VAD_ARCHIVE_URL" -o "$VAD_DOWNLOAD"
+          echo "00c4a8cd5a22e634f34d744eb06aa88a4494e12a5f9d4573989129a1f4c7e76d  $VAD_DOWNLOAD" | shasum -a 256 -c -
+          unzip -tq "$VAD_DOWNLOAD"
+          mv "$VAD_DOWNLOAD" "$ZE_SPM_CACHE_ROOT/artifacts/$VAD_CACHE_KEY"
+          echo "ZE_SPM_CACHE_ROOT=$ZE_SPM_CACHE_ROOT" >> "$GITHUB_ENV"
           xcodebuild -resolvePackageDependencies \
             -project Ze.xcodeproj \
             -scheme Ze \
+            -packageCachePath "$ZE_SPM_CACHE_ROOT" \
             -clonedSourcePackagesDirPath .spm
 
       - name: Build (Debug, no signing)
@@ -870,6 +887,7 @@ jobs:
             -scheme Ze \
             -configuration Debug \
             -destination generic/platform=iOS \
+            -packageCachePath "$ZE_SPM_CACHE_ROOT" \
             -clonedSourcePackagesDirPath .spm \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
