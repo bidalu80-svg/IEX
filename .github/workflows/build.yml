@@ -159,8 +159,9 @@ jobs:
           xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift
 
       - name: Verify reference dot-cube motion and rendered frames
-        # Cold simulator startup took over two minutes on the previous runner.
-        timeout-minutes: 5
+        # Cold simulator boot, installation and launch exceeded four minutes
+        # even though the rendering checks themselves finished successfully.
+        timeout-minutes: 8
         run: |
           python3 scripts/verify-thinking-cube-atlas.py
           bash scripts/test-thinking-glyph-ui.sh

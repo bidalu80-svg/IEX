@@ -61,7 +61,11 @@ python3 - <<'PY'
 import json,pathlib
 root=pathlib.Path('thinking-glyph-evidence')
 result=json.loads((root/'thinking-glyph-result.json').read_text())
-print(json.dumps(result,ensure_ascii=False,indent=2))
+summary={key:value for key,value in result.items()
+         if key not in ('frameFiles','rowFrameFiles','rowSamples','motionFrameFiles')}
+summary['exportCounts']={key:len(result.get(key,[]))
+                         for key in ('frameFiles','rowFrameFiles','rowSamples','motionFrameFiles')}
+print(json.dumps(summary,ensure_ascii=False,indent=2))
 assert result['success'],result
 assert len(result['checks'])>=18,result
 assert len(result['screenshots'])==2,result
