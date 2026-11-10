@@ -7,6 +7,10 @@ on:
     branches: [ "**" ]
   workflow_dispatch:
     inputs:
+      provider_review_only:
+        description: 'Run provider branding, WorkBuddy credits and chat chrome review only'
+        type: boolean
+        default: false
       application_only:
         description: 'Run complete application verification with diagnostic simulator artifacts'
         type: boolean
@@ -24,7 +28,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.application_only != true || inputs.animation_only == true }}
+    if: ${{ inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
     name: Build Ze.app
     runs-on: macos-15
 
@@ -1166,3 +1170,7 @@ jobs:
             share-search-simulator-app-path.txt
             bundled-rootfs-evidence/
           retention-days: 7
+
+  provider-review:
+    if: ${{ inputs.provider_review_only == true }}
+    uses: ./.github/workflows/provider-interface.yml
