@@ -15,8 +15,7 @@ struct ProviderBrandIcon: View {
             } else if type == .githubCopilot {
                 GitHubCopilotIcon()
             } else if let asset = Self.assetName(type: type, baseURL: baseURL) {
-                Image(asset).resizable().scaledToFit()
-                    .foregroundStyle(Color.primary)
+                Image(asset).renderingMode(.original).resizable().scaledToFit()
             } else {
                 Image(systemName: "questionmark.square")
                     .resizable().scaledToFit().foregroundStyle(.secondary)
@@ -81,7 +80,7 @@ struct VoiceProviderBrandIcon: View {
     var body: some View {
         Group {
             if let asset = Self.assetName(templateID: templateID) {
-                Image(asset).resizable().scaledToFit().foregroundStyle(Color.primary)
+                Image(asset).renderingMode(.original).resizable().scaledToFit()
             } else {
                 Image(systemName: "questionmark.square").resizable().scaledToFit()
             }

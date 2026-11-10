@@ -4982,15 +4982,13 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 previousCompact = target.compactAppearance
                 previousCompactScroll = target.compactScrollEdgeAppearance
             }
-            guard let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance)
-                .copy() as? UINavigationBarAppearance else { return }
-            // Set color last: UIKit's shadowImage setter resets shadowColor.
-            appearance.shadowImage = nil
-            appearance.shadowColor = .clear
+            let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance).copy()
             appearance.backgroundEffect = UIAccessibility.isReduceTransparencyEnabled
                 ? nil : UIBlurEffect(style: .systemUltraThinMaterial)
             appearance.backgroundColor = UIColor(ChatColors.background)
                 .withAlphaComponent(UIAccessibility.isReduceTransparencyEnabled ? 1 : 0.25)
+            appearance.shadowImage = nil
+            appearance.shadowColor = UIColor.clear
             target.standardAppearance = appearance
             target.scrollEdgeAppearance = appearance
             target.compactAppearance = appearance

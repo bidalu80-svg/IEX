@@ -235,6 +235,35 @@ private struct ChromeFixture: View {
                       height: CGFloat(max(0, maxY - minY + 1)) / image.scale)
     }
 
+    private func hasNoShadow(_ appearance: UINavigationBarAppearance?) -> Bool {
+        // Apple's UIBarAppearance.shadowColor contract: nil and clear BOTH
+        // mean no shadow. UIKit may normalize a clear assignment to nil.
+        // Require an actual appearance and no opaque custom shadow image.
+        guard let appearance else { return false }
+        let imageIsEmpty = appearance.shadowImage == nil || appearance.shadowImage?.size == .zero
+        return imageIsEmpty && (appearance.shadowColor == nil || appearance.shadowColor?.cgColor.alpha == 0)
+    }
+
+    private func chromaticCoverage(_ image: UIImage) -> Double {
+        guard let source = image.cgImage else { return 0 }
+        var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: 64, height: 64,
+                                          bitsPerComponent: 8, bytesPerRow: 256,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return false }
+            context.draw(source, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+            return true
+        }
+        guard rendered else { return 0 }
+        var colored = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) where pixels[index + 3] > 200 {
+            let values = [Int(pixels[index]), Int(pixels[index + 1]), Int(pixels[index + 2])]
+            if (values.max() ?? 0) - (values.min() ?? 0) > 40 { colored += 1 }
+        }
+        return Double(colored) / 4096
+    }
+
     private func run() async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         var checks: [String] = []
@@ -255,6 +284,18 @@ private struct ChromeFixture: View {
             }
         }
         do {
+            let probe = UINavigationBarAppearance()
+            probe.configureWithDefaultBackground()
+            diagnostics.append(["fixture": "shadow-setter-default", "shadow": probe.shadowColor?.description ?? "nil"])
+            probe.shadowColor = UIColor.clear
+            diagnostics.append(["fixture": "shadow-setter-clear", "shadow": probe.shadowColor?.description ?? "nil"])
+            probe.shadowImage = nil
+            probe.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+            probe.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+            let probeItem = UINavigationItem()
+            probeItem.standardAppearance = probe
+            diagnostics.append(["fixture": "shadow-setter-copied-to-item", "shadow": probeItem.standardAppearance?.shadowColor?.description ?? "nil"])
+            try check(hasNoShadow(probeItem.standardAppearance), "UIKit nil/clear shadow follows Apple's documented no-shadow contract")
             let store = ProviderConfigStore()
             let open = ProviderInstance(id: "open", label: "自定义 OpenAI", providerType: .openAI)
             let buddy = ProviderInstance(id: "buddy", label: "Wbnew", providerType: .workBuddy)
@@ -292,6 +333,7 @@ private struct ChromeFixture: View {
             for type in ProviderType.allCases {
                 if let asset = ProviderBrandIcon.assetName(type: type) {
                     try check(UIImage(named: asset) != nil, "Bundled vendor asset loads: \(type.rawValue)")
+                    try check(UIImage(named: asset)?.renderingMode != .alwaysTemplate, "Vendor asset preserves original artwork colors: \(type.rawValue)")
                 }
             }
             try check(UIImage(named: "WorkBuddy") != nil, "Existing WorkBuddy asset loads")
@@ -318,6 +360,15 @@ private struct ChromeFixture: View {
             }
             try check(Set(badgeImages).count == badgeImages.count, "Different selected providers render distinct badge artwork")
             for scheme: ColorScheme in [.light, .dark] {
+                let openAIRenderer = ImageRenderer(content: ProviderBrandIcon(type: .openAI, size: 32).environment(\.colorScheme, scheme))
+                openAIRenderer.scale = 3
+                if let image = openAIRenderer.uiImage {
+                    let coverage = chromaticCoverage(image)
+                    diagnostics.append(["fixture": "openai-original-color-\(scheme)", "chromaticCoverage": coverage])
+                    try check(coverage > 0.25, "OpenAI retains its published green avatar instead of template tint: \(scheme)")
+                } else {
+                    try check(false, "OpenAI avatar produces an image: \(scheme)")
+                }
                 let renderer = ImageRenderer(content: ProviderBrandIcon(type: .gemini, size: 32).environment(\.colorScheme, scheme))
                 renderer.scale = 3
                 if let image = renderer.uiImage {
@@ -359,7 +410,7 @@ private struct ChromeFixture: View {
                 "standardShadow": owner.navigationItem.standardAppearance?.shadowColor?.description ?? "nil",
                 "scrollShadow": owner.navigationItem.scrollEdgeAppearance?.shadowColor?.description ?? "nil"
             ])
-            try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.clear, "Chat item removes separator")
+            try check(hasNoShadow(owner.navigationItem.standardAppearance), "Chat item removes separator")
             try check(owner.navigationItem.standardAppearance?.backgroundEffect != nil || UIAccessibility.isReduceTransparencyEnabled, "Chat item has translucent material")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
             controller.restore()
@@ -402,7 +453,7 @@ private struct ChromeFixture: View {
                             "standardShadow": navigation?.topViewController?.navigationItem.standardAppearance?.shadowColor?.description ?? "nil",
                             "scrollShadow": navigation?.topViewController?.navigationItem.scrollEdgeAppearance?.shadowColor?.description ?? "nil"
                         ])
-                        try check(navigation?.topViewController?.navigationItem.standardAppearance?.shadowColor == UIColor.clear,
+                        try check(hasNoShadow(navigation?.topViewController?.navigationItem.standardAppearance),
                                   "Actual NavigationStack has no hard separator: \(theme), \(Int(width)), large \(large)")
                         let format = UIGraphicsImageRendererFormat()
                         format.scale = 3

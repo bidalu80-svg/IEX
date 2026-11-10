@@ -4,22 +4,36 @@
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/openai.svg",
     "license": "MIT",
     "sourceSHA256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186",
-    "assetSHA256": "d95a83615596521a120b7ce4cd67f8b96314488a0c939b72713ad9205d903d8c",
+    "assetSHA256": "b6138f2fe2b18e3d280865b027f352bc113eb8a87d906f5ffca701087a2cf6a1",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandOpenAI.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/OpenAI/style.ts",
+    "avatarStyle": [
+      "#19C37D",
+      "#FFFFFF",
+      0.75,
+      "OpenAI"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandAnthropic.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/anthropic.svg",
     "license": "MIT",
     "sourceSHA256": "e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3",
-    "assetSHA256": "a15b09cb3435a15899e7b66749927620e45f3f3b8b8948c74b7a19c5b5732e03",
+    "assetSHA256": "12f6ec92acfa74e3ec5bceca51e25e35fa1133969acd88b95aff0511f91ed491",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandAnthropic.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/Anthropic/style.ts",
+    "avatarStyle": [
+      "#F1F0E8",
+      "#141413",
+      0.75,
+      "Anthropic"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandGemini.imageset",
@@ -34,7 +48,9 @@
       "logo@2x.png": "e90a7fdb34b0f315cbb963a545b40dae854841751d6ed4ff2493ffbef9c06cf9",
       "logo@3x.png": "5407115eecd74a6baf32331bcbcdecc5a648986ba202657b0d7cfdac3743943c"
     },
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandAntigravity.imageset",
@@ -49,29 +65,45 @@
       "logo@2x.png": "cc8e03cc5de11680499bdab21eae980965e0ef88b39c34028cb7bf664514df8a",
       "logo@3x.png": "471bfe715ea20437b291e01b492b86dbf02a0c56db63f0f5bf636b8518abe8e7"
     },
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandOpenRouter.imageset",
-    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/openrouter.svg",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/openrouter-color.svg",
     "license": "MIT",
-    "sourceSHA256": "ae671cc83de9bd45db97a47ed5e38a4e1bd9f93a12be495ba4b4f8b284026bca",
-    "assetSHA256": "a5144ce58b45fafc804e1d30dd21052588c4d92b08e48d1ca119faddbc0094f6",
+    "sourceSHA256": "17bede1b89166f824ee06753dc526a3f5e18b769706deaab09d04a3a98de1a78",
+    "assetSHA256": "cb5b2ed16ea2432fbe5b6eba5a525ebcb547623559d5e1c73a2f8ab296ff8b39",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandOpenRouter.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/OpenRouter/style.ts",
+    "avatarStyle": [
+      "#000000",
+      "#C8FF00",
+      0.75,
+      "OpenRouter"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandXAI.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/xai.svg",
     "license": "MIT",
     "sourceSHA256": "89eb7de9f0d02a41cfecd9109e253d7fd3529e27467dee4254faa67f3ac21451",
-    "assetSHA256": "bf63266cae37a9714627205ba06061a35ff1a1b85f61ceb0f2f43d7a48de35ce",
+    "assetSHA256": "2335a415041a393ca997055569b14b2aa6905e1275262649815f6907fc19de28",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandXAI.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/XAI/style.ts",
+    "avatarStyle": [
+      "#FFFFFF",
+      "#000000",
+      0.65,
+      "XAI"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandKimi.imageset",
@@ -82,18 +114,27 @@
     "darkAssetSHA256": "bce9c96d5693ce2d52600c960bc7d7148f82d9a1ae683be351d0ab08ae8c9f59",
     "normalizedSVG": "Assets.xcassets/ProviderBrandKimi.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandElevenLabs.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/elevenlabs.svg",
     "license": "MIT",
     "sourceSHA256": "152a4a89fd5228924b6ccc91a72675966df35e3b69d1cf93a67b6866cf846584",
-    "assetSHA256": "1bb6e634e7243d9130645053a1c2e0835c2a860098eba2d35ba8f0bf2389fb06",
+    "assetSHA256": "daaf9c0210a841f682c87b3b491782e771bc5bb7f7543d46635662b0d854a08a",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandElevenLabs.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/ElevenLabs/style.ts",
+    "avatarStyle": [
+      "#FFFFFF",
+      "#000000",
+      0.5,
+      "ElevenLabs"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandAzure.imageset",
@@ -104,7 +145,9 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandAzure.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandMiniMax.imageset",
@@ -115,7 +158,9 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandMiniMax.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandBailian.imageset",
@@ -126,7 +171,9 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandBailian.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandVolcengine.imageset",
@@ -137,7 +184,9 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandVolcengine.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandIFlytek.imageset",
@@ -148,18 +197,27 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandIFlytek.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandMiMo.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/xiaomimimo.svg",
     "license": "MIT",
     "sourceSHA256": "b04ad7dad52af2212c4567daf0ee6856f2c4625c92c680a27f9880295d558b71",
-    "assetSHA256": "99defcca38ec28c6edc0e6abc3cc43daceeeb836e51163a9135d2a51c7df3df1",
+    "assetSHA256": "5cc24ef0f5eda4dda8de3f761ce637cf06267df0aaaac0e1cd5548dabe627588",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandMiMo.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/XiaomiMiMo/style.ts",
+    "avatarStyle": [
+      "#000000",
+      "#FFFFFF",
+      0.7,
+      "XiaomiMiMo"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandDeepSeek.imageset",
@@ -170,39 +228,62 @@
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandDeepSeek.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": null,
+    "avatarStyle": null,
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandMoonshot.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/moonshot.svg",
     "license": "MIT",
     "sourceSHA256": "435f41b74e6a87639b6bf860e9628f20cbe7d6229bece412d548f4cea3081852",
-    "assetSHA256": "1047c98136f5d29cafded944a31cf0f057f8b52832cb1ccd0bf1a82e8fa3f543",
+    "assetSHA256": "297ef97c2814b04afbed3085c2f3cb2d4c38ce9b5c9d6e2826cdf9e1301185ac",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandMoonshot.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/Moonshot/style.ts",
+    "avatarStyle": [
+      "#16191E",
+      "#FFFFFF",
+      0.75,
+      "Moonshot"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandGroq.imageset",
     "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/groq.svg",
     "license": "MIT",
     "sourceSHA256": "078d5cf6e7a54905040c15ddacf5ea33c13042fe7739e820cedc2096e4406651",
-    "assetSHA256": "f10c0964f7200f53c7d26c6a9832502ebf90b905249c96bc1717f823c9b5a73f",
+    "assetSHA256": "2ac409b2d9d983bdb4eeb1085c43812d10e4f6e89890e57afebf3e41a9807eea",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandGroq.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/src/Groq/style.ts",
+    "avatarStyle": [
+      "#F55036",
+      "#FFFFFF",
+      0.75,
+      "Groq"
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   },
   {
     "asset": "ProviderBrandDeepgram.imageset",
     "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/1bb2f6e6ea50f920de8d2f3d273ae48564a5eaee/icons/deepgram.svg",
     "license": "CC0-1.0",
     "sourceSHA256": "e6904363c90592bbb689e47aae10dc6ca5ae2f32ed9e1573a87c973be04bafb9",
-    "assetSHA256": "9a732035a07b537abf28141e199715cb77d08a66417bbca58d179b9823f814cf",
+    "assetSHA256": "0c9f0c74ea5108e9afb0a6b312e76d17cb975a4fdff8c73fd1b51c58db5a5422",
     "darkAssetSHA256": null,
     "normalizedSVG": "Assets.xcassets/ProviderBrandDeepgram.imageset/logo.svg",
     "rasterSHA256": {},
-    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+    "avatarStyleSource": "https://raw.githubusercontent.com/simple-icons/simple-icons/1bb2f6e6ea50f920de8d2f3d273ae48564a5eaee/data/simple-icons.json",
+    "avatarStyle": [
+      "#13EF93",
+      "#000000",
+      0.75,
+      null
+    ],
+    "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"
   }
 ]

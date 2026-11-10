@@ -16,12 +16,26 @@ LOBE = "ea434b96e75813517b377825e01c0df61dee8836"
 SIMPLE = "1bb2f6e6ea50f920de8d2f3d273ae48564a5eaee"
 ICONS = {
     "OpenAI": "openai", "Anthropic": "anthropic", "Gemini": "gemini-color",
-    "Antigravity": "antigravity-color", "OpenRouter": "openrouter",
+    "Antigravity": "antigravity-color", "OpenRouter": "openrouter-color",
     "XAI": "xai", "Kimi": "kimi-color", "ElevenLabs": "elevenlabs",
     "Azure": "azure-color", "MiniMax": "minimax-color", "Bailian": "bailian-color",
     "Volcengine": "volcengine-color", "IFlytek": "iflytekcloud-color",
     "MiMo": "xiaomimimo", "DeepSeek": "deepseek-color", "Moonshot": "moonshot",
     "Groq": "groq", "Deepgram": "deepgram",
+}
+
+# Published avatar colors, not app tint. OpenAI explicitly uses the published
+# green GPT avatar variant; Anthropic retains its own AI mark, not Claude's star.
+AVATARS = {
+    "OpenAI": ("#19C37D", "#FFFFFF", .75, "OpenAI"),
+    "Anthropic": ("#F1F0E8", "#141413", .75, "Anthropic"),
+    "OpenRouter": ("#000000", "#C8FF00", .75, "OpenRouter"),
+    "XAI": ("#FFFFFF", "#000000", .65, "XAI"),
+    "ElevenLabs": ("#FFFFFF", "#000000", .5, "ElevenLabs"),
+    "MiMo": ("#000000", "#FFFFFF", .7, "XiaomiMiMo"),
+    "Moonshot": ("#16191E", "#FFFFFF", .75, "Moonshot"),
+    "Groq": ("#F55036", "#FFFFFF", .75, "Groq"),
+    "Deepgram": ("#13EF93", "#000000", .75, None),
 }
 
 
@@ -48,6 +62,23 @@ def download(item):
         normalized = normalized.replace(b"<svg ", b"<svg " + dimensions, 1)
     normalized = re.sub(rb'\sstyle="flex:none;line-height:1"', b'', normalized)
     output = normalized.replace(b"currentColor", b"#000000")
+    color_source = None
+    if name in AVATARS:
+        background, foreground, scale, component = AVATARS[name]
+        if component:
+            color_source = f"https://raw.githubusercontent.com/lobehub/lobe-icons/{LOBE}/src/{component}/style.ts"
+        else:
+            color_source = f"https://raw.githubusercontent.com/simple-icons/simple-icons/{SIMPLE}/data/simple-icons.json"
+        tinted = normalized.replace(b"currentColor", foreground.encode())
+        root = ET.fromstring(tinted)
+        # Keep the published path markup byte-for-byte; no generated XML prefixes.
+        body = re.sub(rb"^<svg\b[^>]*>", b"", tinted).rsplit(b"</svg>", 1)[0]
+        fill_rule = root.attrib.get("fill-rule", "nonzero")
+        width, height = float(view_box[2]), float(view_box[3])
+        margin_x, margin_y = width * (1 - scale) / 2, height * (1 - scale) / 2
+        output = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:g}" height="{height:g}" viewBox="0 0 {width:g} {height:g}">'
+                  f'<rect width="{width:g}" height="{height:g}" rx="5" fill="{background}"/>'
+                  f'<g fill="{foreground}" fill-rule="{fill_rule}" transform="translate({margin_x:g} {margin_y:g}) scale({scale})">').encode() + body + b'</g></svg>'
     directory = ROOT / "Assets.xcassets" / f"ProviderBrand{name}.imageset"
     directory.mkdir(exist_ok=True)
     source_path = directory / "logo.svg"
@@ -55,12 +86,11 @@ def download(item):
         source_path = ROOT / f"docs/provider-brand-source/{name.lower()}.svg"
         source_path.parent.mkdir(exist_ok=True)
     source_path.write_bytes(output)
-    color = icon.endswith("-color")
     manifest = {
         "images": [{"filename": "logo.svg", "idiom": "universal"}],
         "info": {"author": "xcode", "version": 1},
         "properties": {"preserves-vector-representation": True,
-                       "template-rendering-intent": "original" if color else "template"},
+                       "template-rendering-intent": "original"},
     }
     dark_hash = None
     raster_hashes = {}
@@ -92,7 +122,9 @@ def download(item):
             "assetSHA256": hashlib.sha256(output).hexdigest(), "darkAssetSHA256": dark_hash,
             "normalizedSVG": str(source_path.relative_to(ROOT)).replace("\\", "/"),
             "rasterSHA256": raster_hashes,
-            "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"}
+            "avatarStyleSource": color_source,
+            "avatarStyle": AVATARS.get(name),
+            "modification": "Original rendering; explicit SVG dimensions; published avatar colors where available; Kimi monochrome ink adapts to theme while blue dot remains; Gemini/Antigravity exact SVG flattened offline"}
 
 
 if __name__ == "__main__":
