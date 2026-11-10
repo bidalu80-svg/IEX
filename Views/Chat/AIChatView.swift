@@ -4970,7 +4970,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 reportedTopInset = barBottom
                 DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
             }
-            let height = max(1, barBottom + 48)
+            let height = max(1, barBottom + 24)
             let nextFrame = CGRect(x: 0, y: 0, width: host.bounds.width, height: height)
             if lastFrostFrame != nextFrame {
                 lastFrostFrame = nextFrame
@@ -4981,7 +4981,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 fadeMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
                                    UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
                 fadeMask.locations = [0, NSNumber(value: Double(max(0, barBottom - 8) / height)),
-                                      NSNumber(value: Double((barBottom + 18) / height)), 1]
+                                      NSNumber(value: Double((barBottom + 9) / height)), 1]
                 fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
                 fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
                 frostedOverlay.layer.mask = fadeMask
