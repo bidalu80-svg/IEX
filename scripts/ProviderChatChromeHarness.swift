@@ -467,7 +467,7 @@ private struct ChromeFixture: View {
                             let mask = frost?.layer.mask as? CAGradientLayer
                             diagnostics.append([
                                 "fixture": "frost-\(theme)-\(Int(width))-\(large)",
-                                "frostFrame": frost.map { NSStringFromCGRect($0.frame) } ?? "nil",
+                                "frostFrame": frost.map { NSCoder.string(for: $0.frame) } ?? "nil",
                                 "barBottom": barBottom, "maskLocations": mask?.locations ?? [],
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
