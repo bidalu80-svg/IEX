@@ -298,7 +298,7 @@ jobs:
         run: bash scripts/test-model-picker-header.sh prepare
 
       - name: Verify model picker and WorkBuddy balance interfaces
-        if: ${{ !cancelled() && inputs.animation_only != true }}
+        if: ${{ success() && inputs.animation_only != true }}
         timeout-minutes: 3
         run: bash scripts/test-model-picker-header.sh verify
 

@@ -207,8 +207,8 @@ func modelDisplayName(from id: String) -> String { id }
             do { _ = try await flight.value; preconditionFailure("late balance must not publish after logout") } catch is CancellationError {}
             do { _ = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession); preconditionFailure("signed-out balance must fail") } catch {}
         }
-        let empty = try WorkBuddyBalanceAPI.parse(payload: Data(#"{"Response":{"Data":{"Accounts":[]}}}"#.utf8), sourcePath: "/fixture")
-        check(empty.quota.remaining == 0, "explicit empty account collection is real zero")
+        let emptyBalance = try WorkBuddyBalanceAPI.parse(payload: Data(#"{"Response":{"Data":{"Accounts":[]}}}"#.utf8), sourcePath: "/fixture")
+        check(emptyBalance.quota.remaining == 0, "explicit empty account collection is real zero")
         for json in ["{}", #"{"Response":{"Data":{}}}"#, #"{"Response":{"Error":{"Code":"Unauthorized"},"Data":{"Accounts":[]}}}"#,
             #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10}]}}}"#,
             #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10,"CapacityRemain":true}]}}}"#,
