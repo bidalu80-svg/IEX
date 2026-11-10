@@ -83,6 +83,35 @@ jobs:
           set -euo pipefail
           python3 scripts/test-feedback.py 2>&1 | tee feedback-tests.log
 
+      - name: Prepare model picker and WorkBuddy balance simulator
+        if: ${{ inputs.animation_only != true }}
+        timeout-minutes: 12
+        run: bash scripts/test-model-picker-header.sh prepare
+
+      - name: Verify model picker and WorkBuddy balance interfaces
+        if: ${{ success() && inputs.animation_only != true }}
+        timeout-minutes: 3
+        run: bash scripts/test-model-picker-header.sh verify
+
+      - name: Prepare provider icons and chat chrome simulator
+        timeout-minutes: 12
+        run: bash scripts/test-provider-chat-chrome.sh prepare
+
+      - name: Verify provider icons, selection and translucent chat chrome
+        timeout-minutes: 3
+        run: bash scripts/test-provider-chat-chrome.sh verify
+
+      - name: Upload provider interface review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-interface-review
+          path: |
+            provider-chrome-evidence/
+            model-picker-evidence/
+            workbuddy-tests.log
+          retention-days: 7
+
       - name: Verify sound and vibration settings and actual tone playback
         if: ${{ inputs.animation_only != true }}
         timeout-minutes: 4
@@ -291,35 +320,6 @@ jobs:
         continue-on-error: true
         timeout-minutes: 8
         run: bash scripts/test-favorites-ui.sh
-
-      - name: Prepare model picker and WorkBuddy balance simulator
-        if: ${{ inputs.animation_only != true }}
-        timeout-minutes: 12
-        run: bash scripts/test-model-picker-header.sh prepare
-
-      - name: Verify model picker and WorkBuddy balance interfaces
-        if: ${{ success() && inputs.animation_only != true }}
-        timeout-minutes: 3
-        run: bash scripts/test-model-picker-header.sh verify
-
-      - name: Prepare provider icons and chat chrome simulator
-        timeout-minutes: 12
-        run: bash scripts/test-provider-chat-chrome.sh prepare
-
-      - name: Verify provider icons, selection and translucent chat chrome
-        timeout-minutes: 3
-        run: bash scripts/test-provider-chat-chrome.sh verify
-
-      - name: Upload provider interface review evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: provider-interface-review
-          path: |
-            provider-chrome-evidence/
-            model-picker-evidence/
-            workbuddy-tests.log
-          retention-days: 7
 
       - name: Test rendered question cards and answer sheets
         if: ${{ inputs.animation_only != true }}
