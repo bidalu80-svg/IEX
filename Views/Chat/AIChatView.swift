@@ -4892,7 +4892,7 @@ private struct NavBarStyleModifier: ViewModifier {
                     .toolbarBackgroundVisibility(.visible, for: .navigationBar)
             } else {
                 content
-                    .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+                    .toolbarBackground(.regularMaterial, for: .navigationBar)
                     .toolbarBackground(.visible, for: .navigationBar)
                     .overlay(alignment: .top) {
                         Color.clear
@@ -4918,13 +4918,14 @@ private struct ChatNavigationEdgeFade: View {
             if reduceTransparency {
                 Rectangle().fill(ChatColors.background)
             } else {
-                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(.regularMaterial)
             }
         }
-        .frame(height: 22)
+        .frame(height: 44)
         .mask(LinearGradient(stops: [
             .init(color: .black, location: 0),
-            .init(color: .black.opacity(0.6), location: 0.35),
+            .init(color: .black, location: 0.2),
+            .init(color: .black.opacity(0.65), location: 0.6),
             .init(color: .clear, location: 1)
         ], startPoint: .top, endPoint: .bottom))
     }
@@ -4984,9 +4985,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             }
             let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance).copy()
             appearance.backgroundEffect = UIAccessibility.isReduceTransparencyEnabled
-                ? nil : UIBlurEffect(style: .systemUltraThinMaterial)
+                ? nil : UIBlurEffect(style: .systemMaterial)
             appearance.backgroundColor = UIColor(ChatColors.background)
-                .withAlphaComponent(UIAccessibility.isReduceTransparencyEnabled ? 1 : 0.25)
+                .withAlphaComponent(UIAccessibility.isReduceTransparencyEnabled ? 1 : 0.35)
             appearance.shadowImage = nil
             appearance.shadowColor = UIColor.clear
             target.standardAppearance = appearance
