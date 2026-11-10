@@ -4910,6 +4910,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var badgeHost: UIHostingController<AnyView>?
         var onTopInset: ((CGFloat) -> Void)?
         private var reportedTopInset: CGFloat = 0
+        private var lastFrostFrame = CGRect.null
+        private var lastReduceTransparency: Bool?
 
         func updateBadge(_ badge: AnyView?) {
             guard let badge else {
@@ -4924,8 +4926,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             } else {
                 let hosting = UIHostingController(rootView: badge)
                 hosting.view.backgroundColor = .clear
-                addChild(hosting)
-                hosting.didMove(toParent: self)
+                if #available(iOS 16.4, *) { hosting.safeAreaRegions = [] }
                 badgeHost = hosting
             }
         }
@@ -4945,7 +4946,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         }
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
-            applyIfNeeded()
+            guard let navigation = navigationController, item != nil else { return }
+            layoutFrostedOverlay(in: navigation)
         }
         override func viewWillDisappear(_ animated: Bool) {
             super.viewWillDisappear(animated)
@@ -4967,26 +4969,42 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
             }
             let height = max(1, barBottom + 48)
-            frostedOverlay.frame = CGRect(x: 0, y: 0, width: host.bounds.width, height: height)
-            fadeMask.frame = frostedOverlay.bounds
-            fadeMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
-                               UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
-            fadeMask.locations = [0, NSNumber(value: Double(max(0, barBottom - 8) / height)),
-                                  NSNumber(value: Double((barBottom + 18) / height)), 1]
-            fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
-            fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
-            frostedOverlay.layer.mask = fadeMask
-            frostedOverlay.effect = UIAccessibility.isReduceTransparencyEnabled
-                ? nil : UIBlurEffect(style: .systemMaterial)
-            frostedOverlay.backgroundColor = UIAccessibility.isReduceTransparencyEnabled
-                ? UIColor(ChatColors.background) : .clear
+            let nextFrame = CGRect(x: 0, y: 0, width: host.bounds.width, height: height)
+            if lastFrostFrame != nextFrame {
+                lastFrostFrame = nextFrame
+                frostedOverlay.frame = nextFrame
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                fadeMask.frame = frostedOverlay.bounds
+                fadeMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
+                                   UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
+                fadeMask.locations = [0, NSNumber(value: Double(max(0, barBottom - 8) / height)),
+                                      NSNumber(value: Double((barBottom + 18) / height)), 1]
+                fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
+                fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
+                frostedOverlay.layer.mask = fadeMask
+                CATransaction.commit()
+            }
+            let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
+            if lastReduceTransparency != reduceTransparency {
+                lastReduceTransparency = reduceTransparency
+                frostedOverlay.effect = reduceTransparency ? nil : UIBlurEffect(style: .systemMaterial)
+                frostedOverlay.backgroundColor = reduceTransparency ? UIColor(ChatColors.background) : .clear
+            }
             if let badgeHost {
+                if let owner = navigation.topViewController, badgeHost.parent !== owner {
+                    badgeHost.willMove(toParent: nil)
+                    badgeHost.removeFromParent()
+                    owner.addChild(badgeHost)
+                    badgeHost.didMove(toParent: owner)
+                }
                 if badgeHost.view.superview !== host {
                     badgeHost.view.removeFromSuperview()
                     host.insertSubview(badgeHost.view, aboveSubview: frostedOverlay)
                 }
-                badgeHost.view.frame = CGRect(x: (host.bounds.width - 24) / 2,
-                                              y: barBottom + 2, width: 24, height: 24)
+                let badgeFrame = CGRect(x: (host.bounds.width - 24) / 2,
+                                        y: barBottom + 2, width: 24, height: 24)
+                if badgeHost.view.frame != badgeFrame { badgeHost.view.frame = badgeFrame }
             }
         }
         func applyIfNeeded() {
@@ -5028,7 +5046,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             layoutFrostedOverlay(in: navigation)
         }
         func restore() {
+            badgeHost?.willMove(toParent: nil)
             badgeHost?.view.removeFromSuperview()
+            badgeHost?.removeFromParent()
             frostedOverlay.removeFromSuperview()
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }

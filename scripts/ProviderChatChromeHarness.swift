@@ -302,9 +302,17 @@ private struct ChromeFixture: View {
         var failures: [String] = []
         var diagnostics: [[String: Any]] = []
         var screenshots: [String] = []
+        func progress(_ stage: String) {
+            let record: [String: Any] = ["stage": stage, "checks": checks.count, "failures": failures,
+                                       "screenshots": screenshots, "time": Date().timeIntervalSince1970]
+            if let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: docs.appendingPathComponent("provider-chrome-progress.json"), options: .atomic)
+            }
+        }
         func check(_ pass: Bool, _ name: String) throws {
-            guard pass else { failures.append(name); return }
+            guard pass else { failures.append(name); progress("FAILED: " + name); return }
             checks.append(name)
+            progress(name)
         }
         func write(_ success: Bool, _ error: String? = nil) {
             var result: [String: Any] = ["success": success && failures.isEmpty, "checks": checks, "failures": failures,
@@ -316,6 +324,7 @@ private struct ChromeFixture: View {
             }
         }
         do {
+            progress("begin production tests")
             let probe = UINavigationBarAppearance()
             probe.configureWithDefaultBackground()
             diagnostics.append(["fixture": "shadow-setter-default", "shadow": probe.shadowColor?.description ?? "nil"])
@@ -473,6 +482,7 @@ private struct ChromeFixture: View {
                 }
                 for width: CGFloat in [320, 390] {
                     for large in [false, true] {
+                        progress("mount navbar \(theme)-\(Int(width))-\(large)")
                         let fixture = ChromeFixture(provider: dark ? buddy : open)
                             .environment(\.colorScheme, scheme)
                             .environment(\.dynamicTypeSize, large ? .accessibility3 : .large)
@@ -483,8 +493,11 @@ private struct ChromeFixture: View {
                         host.view.backgroundColor = .systemBackground
                         window.makeKeyAndVisible()
                         host.view.setNeedsLayout()
+                        progress("layout navbar \(theme)-\(Int(width))-\(large)")
                         host.view.layoutIfNeeded()
+                        progress("settle navbar \(theme)-\(Int(width))-\(large)")
                         try await Task.sleep(nanoseconds: 450_000_000)
+                        progress("inspect navbar \(theme)-\(Int(width))-\(large)")
                         let navigation = controllers(host).compactMap { $0 as? UINavigationController }.first
                         if let navigation {
                             let frost = frostedOverlay(navigation)

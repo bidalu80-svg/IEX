@@ -60,6 +60,18 @@ chrome_device=$(cat "$RUNNER_TEMP/provider-chrome-device.txt")
 chrome_container=$(cat "$RUNNER_TEMP/provider-chrome-container.txt")
 collect_chrome() {
   cp "$chrome_container/Documents/"provider-chrome-* provider-chrome-evidence/ 2>/dev/null || true
+  if [ ! -f "$chrome_container/Documents/provider-chrome-result.json" ]; then
+    xcrun simctl spawn "$chrome_device" log show --last 5m --style compact --predicate 'process == "ZeProviderChromeHarness"' > provider-chrome-evidence/process.log 2>&1 || true
+    mkdir -p provider-chrome-evidence/crashes
+    python3 - <<'PYCRASH'
+from pathlib import Path
+import shutil
+for root in [Path.home() / 'Library/Logs/DiagnosticReports', Path.home() / 'Library/Logs/CoreSimulator']:
+    for path in root.rglob('*ZeProviderChromeHarness*'):
+        if path.is_file() and path.suffix in ('.ips', '.crash', '.log'):
+            shutil.copy2(path, Path('provider-chrome-evidence/crashes') / path.name)
+PYCRASH
+  fi
   xcrun simctl terminate "$chrome_device" com.ze.provider-chrome-harness >/dev/null 2>&1 || true
 }
 trap collect_chrome EXIT
