@@ -45,6 +45,33 @@ final class ShareDriver: XCTestCase {
     private func dismissSystemShareSheet(_ app: XCUIApplication) throws -> String {
         let dismissNames = NSPredicate(format: "label IN %@ OR identifier IN %@",
             ["Close", "关闭", "Cancel", "取消"], ["Close", "关闭", "Cancel", "取消"])
+        // A presented remote container can exist before its share controls load.
+        // Wait for the same safe targets used below; never tap while polling.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let sheets = app.sheets.allElementsBoundByIndex
+            let activity = app.otherElements["ActivityListView"].firstMatch
+            let scopes = activity.exists ? [activity] + sheets : sheets
+            for scope in scopes where scope.exists {
+                let buttons = scope.buttons.matching(dismissNames).allElementsBoundByIndex.filter { $0.isHittable }
+                if buttons.count == 1 { return true }
+            }
+            let close = NSPredicate(format: "label IN %@ OR identifier IN %@", ["Close", "关闭"], ["Close", "关闭"])
+            let buttons = app.buttons.matching(close).allElementsBoundByIndex.filter { $0.isHittable }
+            let export = app.buttons["chatShare.export"].firstMatch
+            if buttons.count == 1 && (!export.exists || !export.isHittable) { return true }
+            let screen = app.frame.size
+            return sheets.contains { sheet in
+                guard sheet.exists else { return false }
+                let frame = sheet.frame
+                return frame.width > screen.width * 0.5 && frame.height > 150
+                    && frame.minY > 44 && frame.minY < screen.height - 180
+                    && frame.maxY <= screen.height + 2
+            }
+        }, object: nil)
+        guard XCTWaiter.wait(for: [ready], timeout: 25) == .completed else {
+            throw NSError(domain: "ShareDriver", code: 6, userInfo: [NSLocalizedDescriptionKey:
+                "System-share controls did not become ready within 25 seconds; no blind gesture used"])
+        }
         let sheets = app.sheets.allElementsBoundByIndex
         let activity = app.otherElements["ActivityListView"].firstMatch
         let scopes = activity.exists ? [activity] + sheets : sheets
