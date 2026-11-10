@@ -1137,7 +1137,7 @@ jobs:
 
 
   conversation-application:
-    if: ${{ inputs.animation_only != true }}
+    if: ${{ inputs.animation_only != true && inputs.provider_review_only != true }}
     name: Verify chat lifecycle, sharing and search in application
     runs-on: macos-15
     timeout-minutes: 60
