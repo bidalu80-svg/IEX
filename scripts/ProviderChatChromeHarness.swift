@@ -547,7 +547,7 @@ private struct ChromeFixture: View {
                                 "barBottom": barBottom, "maskLocations": mask?.locations ?? [],
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
-                            try check(frost != nil && frost!.frame.minY == 0 && frost!.frame.maxY >= barBottom + 40 && mask != nil,
+                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - (barBottom + 24)) <= 1 && mask != nil,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([
