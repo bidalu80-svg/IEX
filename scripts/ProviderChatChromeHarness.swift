@@ -189,16 +189,40 @@ private struct ChromeFixture: View {
         [root] + root.children.flatMap(controllers)
     }
 
+    private func imageContrast(_ image: UIImage) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: 64, height: 64,
+                                          bitsPerComponent: 8, bytesPerRow: 64 * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return false }
+            context.draw(source, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+            return true
+        }
+        guard rendered else { return 0 }
+        var minimum = 255, maximum = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) where pixels[index + 3] > 200 {
+            let intensity = (Int(pixels[index]) + Int(pixels[index + 1]) + Int(pixels[index + 2])) / 3
+            minimum = min(minimum, intensity)
+            maximum = max(maximum, intensity)
+        }
+        return max(0, maximum - minimum)
+    }
+
     private func run() async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         var checks: [String] = []
+        var failures: [String] = []
+        var diagnostics: [[String: Any]] = []
         var screenshots: [String] = []
         func check(_ pass: Bool, _ name: String) throws {
-            guard pass else { throw NSError(domain: "ProviderChrome", code: checks.count, userInfo: [NSLocalizedDescriptionKey: name]) }
+            guard pass else { failures.append(name); return }
             checks.append(name)
         }
         func write(_ success: Bool, _ error: String? = nil) {
-            var result: [String: Any] = ["success": success, "checks": checks, "screenshots": screenshots,
+            var result: [String: Any] = ["success": success && failures.isEmpty, "checks": checks, "failures": failures,
+                "diagnostics": diagnostics, "screenshots": screenshots,
                 "scope": "Actual production components on simulator; configuration fixtures; no physical-device or account balance verification"]
             if let error { result["error"] = error }
             if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
@@ -281,15 +305,29 @@ private struct ChromeFixture: View {
             owner.addChild(controller)
             owner.view.addSubview(controller.view)
             controller.didMove(toParent: owner)
+            guard let window else { throw NSError(domain: "ProviderChrome", code: -1) }
+            window.rootViewController = nav
+            window.makeKeyAndVisible()
             nav.loadViewIfNeeded()
+            nav.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 450_000_000)
+            let beforeShadow = owner.navigationItem.standardAppearance?.shadowColor?.description ?? "nil"
             controller.applyIfNeeded()
+            diagnostics.append([
+                "fixture": "synthetic-mounted",
+                "controllerNavigationFound": controller.navigationController != nil,
+                "controllerParent": controller.parent.map { String(describing: type(of: $0)) } ?? "nil",
+                "topIsOwner": nav.topViewController === owner,
+                "beforeApplyShadow": beforeShadow,
+                "standardShadow": owner.navigationItem.standardAppearance?.shadowColor?.description ?? "nil",
+                "scrollShadow": owner.navigationItem.scrollEdgeAppearance?.shadowColor?.description ?? "nil"
+            ])
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.clear, "Chat item removes separator")
             try check(owner.navigationItem.standardAppearance?.backgroundEffect != nil || UIAccessibility.isReduceTransparencyEnabled, "Chat item has translucent material")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
             controller.restore()
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
 
-            guard let window else { throw NSError(domain: "ProviderChrome", code: -1) }
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"
                 let scheme: ColorScheme = dark ? .dark : .light
@@ -299,10 +337,11 @@ private struct ChromeFixture: View {
                                      ("add-provider", AnyView(SettingsRowsGallery(adding: true)))] {
                     let renderer = ImageRenderer(content: view.environment(\.colorScheme, scheme))
                     renderer.scale = 3
-                    guard let data = renderer.uiImage?.pngData() else { throw NSError(domain: "ProviderChrome", code: -2) }
+                    guard let image = renderer.uiImage, let data = image.pngData() else { throw NSError(domain: "ProviderChrome", code: -2) }
                     let file = "provider-chrome-\(name)-\(theme).png"
                     try data.write(to: docs.appendingPathComponent(file))
                     screenshots.append(file)
+                    try check(imageContrast(image) > 24, "Gallery contains visible rendered content: \(name)-\(theme)")
                 }
                 for width: CGFloat in [320, 390] {
                     for large in [false, true] {
@@ -313,19 +352,33 @@ private struct ChromeFixture: View {
                         window.rootViewController = host
                         window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
                         host.view.frame = window.bounds
+                        host.view.backgroundColor = .systemBackground
+                        window.makeKeyAndVisible()
                         host.view.setNeedsLayout()
                         host.view.layoutIfNeeded()
                         try await Task.sleep(nanoseconds: 450_000_000)
                         let navigation = controllers(host).compactMap { $0 as? UINavigationController }.first
+                        diagnostics.append([
+                            "fixture": "\(theme)-\(Int(width))-\(large)",
+                            "controllerTree": controllers(host).map { String(describing: type(of: $0)) },
+                            "topController": navigation?.topViewController.map { String(describing: type(of: $0)) } ?? "nil",
+                            "standardShadow": navigation?.topViewController?.navigationItem.standardAppearance?.shadowColor?.description ?? "nil",
+                            "scrollShadow": navigation?.topViewController?.navigationItem.scrollEdgeAppearance?.shadowColor?.description ?? "nil"
+                        ])
                         try check(navigation?.topViewController?.navigationItem.standardAppearance?.shadowColor == UIColor.clear,
                                   "Actual NavigationStack has no hard separator: \(theme), \(Int(width)), large \(large)")
                         let format = UIGraphicsImageRendererFormat()
                         format.scale = 3
                         let renderer = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format)
-                        let image = renderer.image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+                        var drawn = false
+                        let image = renderer.image { _ in drawn = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
                         let file = "provider-chrome-navbar-\(theme)-\(Int(width))-\(large ? "large" : "normal").png"
                         try image.pngData()!.write(to: docs.appendingPathComponent(file))
                         screenshots.append(file)
+                        diagnostics.append(["screenshot": file, "drawHierarchySucceeded": drawn,
+                                            "contrast": imageContrast(image), "windowHidden": window.isHidden,
+                                            "hostAttachedToWindow": host.view.window != nil])
+                        try check(drawn && imageContrast(image) > 24, "Hosted navbar screenshot is rendered and nonblank: \(file)")
                     }
                 }
             }

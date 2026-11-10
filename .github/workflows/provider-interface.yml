@@ -1,0 +1,40 @@
+name: Verify provider interfaces
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: provider-interface-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-interface:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify WorkBuddy OAuth and billing protocol
+        run: python3 scripts/test-workbuddy.py
+      - name: Prepare model picker and WorkBuddy balance simulator
+        timeout-minutes: 12
+        run: bash scripts/test-model-picker-header.sh prepare
+      - name: Verify both WorkBuddy balance interfaces
+        timeout-minutes: 3
+        run: bash scripts/test-model-picker-header.sh verify
+      - name: Prepare provider icons and chat chrome simulator
+        if: ${{ !cancelled() }}
+        timeout-minutes: 12
+        run: bash scripts/test-provider-chat-chrome.sh prepare
+      - name: Verify provider icons and chat chrome
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        run: bash scripts/test-provider-chat-chrome.sh verify
+      - name: Upload provider interface evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-interface-review
+          path: |
+            provider-chrome-evidence/
+            model-picker-evidence/
+          retention-days: 7

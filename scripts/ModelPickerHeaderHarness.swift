@@ -168,7 +168,15 @@ struct ModelPickerHeaderHarness: App {
                     let name = "workbuddy-" + state + "-" + (scheme == .light ? "light" : "dark") + ".png"
                     try await renderHosted(view, scheme: scheme, destination: docs.appendingPathComponent(name))
                     workBuddyScreenshots.append(name)
+                    checks.append("Production header and detail render nonempty: " + name)
                 }
+            }
+            for mode in ["light", "dark"] {
+                let loadedPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-loaded-" + mode + ".png"))
+                let zeroPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-zero-" + mode + ".png"))
+                let errorPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-error-" + mode + ".png"))
+                try check(loadedPixels != zeroPixels && zeroPixels != errorPixels && loadedPixels != errorPixels,
+                    "Loaded, zero and error produce distinct production views: " + mode)
             }
             let switched = ProviderInstance(id:"workbuddy-switch",providerType:.workBuddy,credentialType:.oauth)
             login(switched.id)
@@ -243,18 +251,36 @@ struct ModelPickerHeaderHarness: App {
     @MainActor private func renderHosted<V: View>(_ view: V, scheme: ColorScheme, destination: URL) async throws {
         let controller = UIHostingController(rootView:view)
         controller.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
-        let window = UIWindow(frame:CGRect(x:0,y:0,width:390,height:650))
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            throw NSError(domain:"HeaderHarness",code:14,userInfo:[NSLocalizedDescriptionKey:"No active scene for quota capture"])
+        }
+        let previousKeyWindow = scene.windows.first(where: { $0.isKeyWindow })
+        let window = UIWindow(windowScene:scene)
+        window.frame = CGRect(x:0,y:0,width:390,height:650)
+        defer { window.isHidden = true; previousKeyWindow?.makeKey() }
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds
         controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
         try await Task.sleep(nanoseconds:250_000_000)
         controller.view.layoutIfNeeded()
-        let renderer = UIGraphicsImageRenderer(bounds:window.bounds)
-        let image = renderer.image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+        let renderer = UIGraphicsImageRenderer(bounds:controller.view.bounds)
+        var drewHierarchy = false
+        let image = renderer.image { _ in drewHierarchy = controller.view.drawHierarchy(in:controller.view.bounds,afterScreenUpdates:true) }
         guard let data = image.pngData() else { throw NSError(domain:"HeaderHarness",code:13) }
         try data.write(to:destination)
-        window.isHidden = true
+        guard drewHierarchy else { throw NSError(domain:"HeaderHarness",code:17,userInfo:[NSLocalizedDescriptionKey:"Quota drawHierarchy returned false: " + destination.lastPathComponent]) }
+        guard let cg = image.cgImage, let pixels = cg.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(pixels) else { throw NSError(domain:"HeaderHarness",code:15) }
+        var colors = Set<UInt32>()
+        let pixelBytes = cg.bitsPerPixel / 8
+        for y in stride(from:0,to:cg.height,by:4) {
+            for x in stride(from:0,to:cg.width,by:4) {
+                let i = y * cg.bytesPerRow + x * pixelBytes
+                colors.insert(UInt32(bytes[i]) << 16 | UInt32(bytes[i+1]) << 8 | UInt32(bytes[i+2]))
+            }
+        }
+        guard colors.count > 64 else { throw NSError(domain:"HeaderHarness",code:16,userInfo:[NSLocalizedDescriptionKey:"Quota capture is blank: " + destination.lastPathComponent]) }
     }
     private func card(title:String,id:String,quota:ProviderAPIQuota?,model:String,count:Int,background:Color) -> some View {
         VStack(alignment:.leading,spacing:10) {
