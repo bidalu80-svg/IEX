@@ -306,16 +306,7 @@ private struct InstanceRow: View {
     var body: some View {
         let _ = store.authRevision  // subscribe to OAuth state changes
         HStack(spacing: 12) {
-            if instance.providerType == .workBuddy {
-                Image("WorkBuddy").resizable().scaledToFit().frame(width: 25, height: 25)
-            } else if instance.providerType == .githubCopilot {
-                GitHubCopilotIcon()
-                    .frame(width: 25, height: 25)
-            } else {
-                Circle()
-                    .fill(isConfigured && instance.isEnabled ? Color.green : Color(UIColor.quaternaryLabel))
-                    .frame(width: 8, height: 8)
-            }
+            ProviderBrandIcon(type: instance.providerType, baseURL: instance.customBaseURL)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(instance.label)

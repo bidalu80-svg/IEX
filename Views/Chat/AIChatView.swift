@@ -544,6 +544,11 @@ struct AIChatView: View {
                     }
                 }
                 .overlay(alignment: .top) {
+                    ChatNavigationEdgeFade()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                .overlay(alignment: .top) {
                     if !isNavigationStatusCollapsed {
                         navigationStatusCapsule
                             .matchedGeometryEffect(
@@ -2089,6 +2094,7 @@ struct AIChatView: View {
             isGroupBound: display.isGroupBound(for: vm.sessionId),
             showFastBolt: codexFastModeEnabled && activeModelSupportsFastMode,
             resolvedText: resolved.map { "\($0.providerLabel) · \($0.modelName)" },
+            providerIconIdentity: navigationProviderIconIdentity,
             isModelStatusAuthenticated: vm.sessionId != nil && configStore.binding(for: vm.sessionId!) != nil
                 || !configStore.instances.isEmpty,
             fallbackTrigger: vm.fallbackTrigger,
@@ -2384,10 +2390,21 @@ struct AIChatView: View {
     }
 
     /// The same control occupies the centered lower slot while expanded and
-    /// the principal-title slot after collapse. A property animation, rather
-    /// than a timeline renderer, keeps the three-dot wave on the compositor.
+    /// the principal-title slot after collapse. Both slots resolve the same
+    /// session binding, including the group's current fallback entry.
+    private var navigationProvider: ProviderInstance? {
+        SessionModelDisplay(store: configStore, draftGroupId: vm.initialGroupId)
+            .resolvedInstanceAndModel(for: vm.sessionId)?.instance
+    }
+
+    private var navigationProviderIconIdentity: String {
+        guard let provider = navigationProvider else { return "unselected" }
+        return [provider.id, provider.providerType.rawValue, provider.customBaseURL ?? "", provider.label]
+            .joined(separator: "\u{001F}")
+    }
+
     private var navigationStatusCapsule: some View {
-        NavigationStatusCapsule(isCollapsed: isNavigationStatusCollapsed) {
+        NavigationStatusCapsule(provider: navigationProvider, isCollapsed: isNavigationStatusCollapsed) {
             withAnimation(.interpolatingSpring(stiffness: 310, damping: 28)) {
                 isNavigationStatusCollapsed.toggle()
             }
@@ -4863,116 +4880,171 @@ private struct NavTitleFrameModifier: ViewModifier {
     }
 }
 
+// BEGIN ProviderChatChrome
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
 
     func body(content: Content) -> some View {
-        if #available(iOS 26, *) {
-            // iOS 26: extend content behind nav bar so liquid-glass has
-            // something to show through; the collection view's
-            // contentInsetAdjustmentBehavior = .automatic keeps messages
-            // starting below the bar.
-            content
-                .ignoresSafeArea(.container, edges: .top)
-                .toolbarBackgroundVisibility(.visible, for: .navigationBar)
-        } else {
-            // iOS 16–18: opaque navbar background
-            content
-                .toolbarBackground(ChatColors.background, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .overlay(alignment: .top) {
-                    // [T-ios-geometry-observer-crash] onGeometryChange replaces
-                    // the GeometryReader scaffold (async-renderer SIGTRAP — see
-                    // the floating-bar site). The proxy measures the same
-                    // Color.clear the reader wrapped; ignoresSafeArea/frame
-                    // stay outside it exactly as before, and the action's
-                    // initial fire covers the old onAppear seed.
-                    Color.clear
-                        .onGeometryChange(for: CGFloat.self) { proxy in
-                            proxy.safeAreaInsets.top
-                        } action: { topSafeAreaInset = $0 }
-                        .ignoresSafeArea()
-                        .frame(height: 0)
-                }
+        Group {
+            if #available(iOS 26, *) {
+                content
+                    .ignoresSafeArea(.container, edges: .top)
+                    .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            } else {
+                content
+                    .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+                    .toolbarBackground(.visible, for: .navigationBar)
+                    .overlay(alignment: .top) {
+                        Color.clear
+                            .onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.safeAreaInsets.top
+                            } action: { topSafeAreaInset = $0 }
+                            .ignoresSafeArea()
+                            .frame(height: 0)
+                    }
+            }
         }
+        .background(ChatNavigationBarAppearance())
     }
 }
 
-
-/// Lightweight three-dot status capsule shared by the expanded message-area
-/// slot and the collapsed navigation-title slot. The pulse state belongs to
-/// this view rather than AIChatView so the toolbar's Equatable host cannot
-/// freeze the animation after a slot change.
-private struct NavigationStatusCapsule: View {
-    let isCollapsed: Bool
-    let onToggle: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isPulsing = false
+/// Extend the translucent navigation material into the conversation without a
+/// separator or a new layout inset. The mask reaches zero at the bottom edge.
+private struct ChatNavigationEdgeFade: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        let dotColor = isCollapsed ? Color.green : Color.blue
-
-        Button(action: onToggle) {
-            ZStack {
-                dotMask
-                    .foregroundStyle(dotColor.opacity(0.34))
-
-                LinearGradient(
-                    colors: [.clear, dotColor, .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 40, height: 14)
-                .offset(x: reduceMotion ? 0 : (isPulsing ? 26 : -26))
-                .animation(
-                    .linear(duration: 1.35).repeatForever(autoreverses: false),
-                    value: isPulsing
-                )
-            }
-            .mask(dotMask)
-            .frame(width: 40, height: 14)
-            .background(Color(UIColor.secondarySystemBackground), in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(Color(UIColor.separator).opacity(0.7), lineWidth: 0.5)
+        Group {
+            if reduceTransparency {
+                Rectangle().fill(ChatColors.background)
+            } else {
+                Rectangle().fill(.ultraThinMaterial)
             }
         }
-        .buttonStyle(.plain)
-        .contentShape(Capsule())
-        .onAppear { restartPulse() }
-        .onChange(of: reduceMotion) { _ in restartPulse() }
-        .onChange(of: isCollapsed) { _ in restartPulse() }
-        .animation(.easeInOut(duration: 0.22), value: isCollapsed)
-        .accessibilityLabel(isCollapsed ? "显示会话状态" : "隐藏会话状态")
-        .accessibilityHint("双击切换完整会话状态信息")
+        .frame(height: 22)
+        .mask(LinearGradient(stops: [
+            .init(color: .black, location: 0),
+            .init(color: .black.opacity(0.6), location: 0.35),
+            .init(color: .clear, location: 1)
+        ], startPoint: .top, endPoint: .bottom))
+    }
+}
+
+/// Scope the separator change to this chat's navigation item. Never modify
+/// UINavigationBar.appearance(), which would change settings and provider sheets.
+private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.applyIfNeeded()
+    }
+    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.restore()
     }
 
-    private var dotMask: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { _ in
-                Circle()
-                    .frame(width: 3.3, height: 3.3)
+    final class Controller: UIViewController {
+        private weak var item: UINavigationItem?
+        private var previousStandard: UINavigationBarAppearance?
+        private var previousScroll: UINavigationBarAppearance?
+        private var previousCompact: UINavigationBarAppearance?
+        private var previousCompactScroll: UINavigationBarAppearance?
+        private var installed: UINavigationBarAppearance?
+        private var installedScroll: UINavigationBarAppearance?
+        private var installedCompact: UINavigationBarAppearance?
+        private var installedCompactScroll: UINavigationBarAppearance?
+
+        override func loadView() {
+            view = UIView()
+            view.isUserInteractionEnabled = false
+            view.backgroundColor = .clear
+        }
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            applyIfNeeded()
+        }
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            applyIfNeeded()
+        }
+        func applyIfNeeded() {
+            guard let navigation = navigationController else { return }
+            var owner: UIViewController = self
+            while let parent = owner.parent, !(parent is UINavigationController) {
+                owner = parent
             }
+            guard navigation.topViewController === owner else { return }
+            let target = owner.navigationItem
+            if item === target, target.standardAppearance === installed { return }
+            if item !== target {
+                restore()
+                item = target
+                previousStandard = target.standardAppearance
+                previousScroll = target.scrollEdgeAppearance
+                previousCompact = target.compactAppearance
+                previousCompactScroll = target.compactScrollEdgeAppearance
+            }
+            guard let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance)
+                .copy() as? UINavigationBarAppearance else { return }
+            appearance.shadowColor = .clear
+            appearance.shadowImage = UIImage()
+            appearance.backgroundEffect = UIAccessibility.isReduceTransparencyEnabled
+                ? nil : UIBlurEffect(style: .systemUltraThinMaterial)
+            appearance.backgroundColor = UIColor(ChatColors.background)
+                .withAlphaComponent(UIAccessibility.isReduceTransparencyEnabled ? 1 : 0.25)
+            target.standardAppearance = appearance
+            target.scrollEdgeAppearance = appearance
+            target.compactAppearance = appearance
+            target.compactScrollEdgeAppearance = appearance
+            // UIKit appearance properties copy on assignment. Retain the values
+            // actually installed so scoped restoration survives those copies.
+            installed = target.standardAppearance
+            installedScroll = target.scrollEdgeAppearance
+            installedCompact = target.compactAppearance
+            installedCompactScroll = target.compactScrollEdgeAppearance
         }
-        .frame(width: 40, height: 14)
-    }
-
-    private func restartPulse() {
-        guard !reduceMotion else {
-            isPulsing = false
-            return
-        }
-
-        // Give SwiftUI one rendered frame at the initial offset before
-        // changing the value; this reliably starts repeatForever even when
-        // the capsule is inserted into an already-built toolbar.
-        isPulsing = false
-        DispatchQueue.main.async {
-            guard !reduceMotion else { return }
-            isPulsing = true
+        func restore() {
+            guard let target = item else { return }
+            if target.standardAppearance === installed { target.standardAppearance = previousStandard }
+            if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
+            if target.compactAppearance === installedCompact { target.compactAppearance = previousCompact }
+            if target.compactScrollEdgeAppearance === installedCompactScroll { target.compactScrollEdgeAppearance = previousCompactScroll }
+            item = nil
+            installed = nil
         }
     }
 }
+
+/// Circular mark for the selected provider, shared by expanded and collapsed
+/// slots. The existing toggle action remains available in both placements.
+private struct NavigationStatusCapsule: View {
+    let provider: ProviderInstance?
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            Group {
+                if let provider {
+                    ProviderBrandIcon(type: provider.providerType,
+                                      baseURL: provider.customBaseURL, size: 18)
+                } else {
+                    Image(systemName: "questionmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 26, height: 26)
+            .background(.ultraThinMaterial, in: Circle())
+            .clipShape(Circle())
+            .contentShape(Circle())
+            .padding(5)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(provider.map { "当前服务商：\($0.label)" } ?? "尚未选择服务商")
+        .accessibilityHint(isCollapsed ? "双击展开会话信息" : "双击收起会话信息")
+    }
+}
+// END ProviderChatChrome
 
 // MARK: - Remote Server Draft Presentation
 
@@ -5067,6 +5139,7 @@ private struct NavTitleKey: Equatable {
     /// Fast Mode is enabled on a Codex OAuth model.
     let showFastBolt: Bool
     let resolvedText: String?
+    let providerIconIdentity: String
     let isModelStatusAuthenticated: Bool
     let fallbackTrigger: Int
     /// The fallback-pulse @State lives on AIChatView but is RENDERED inside

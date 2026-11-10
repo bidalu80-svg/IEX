@@ -37,13 +37,31 @@ final class ProviderAPIQuotaStore: ObservableObject {
     private var activeRequests: [String: UUID] = [:]
     private var signatures: [String: String] = [:]
     private var lastAttempts: [String: Date] = [:]
+    private let workBuddyLoader: @MainActor (String) async throws -> ProviderAPIQuota
     private func signature(_ instance: ProviderInstance) -> String {
-        let key = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
-        let settings = "\(instance.providerType)|\(instance.customBaseURL ?? "")|\(instance.appendV1Suffix)|\(instance.azureMode)|\(instance.customUserAgent ?? "")|" + key
+        let key = instance.providerType == .workBuddy && instance.credentialType == .oauth
+            ? WorkBuddyBalanceAPI.cacheIdentity(instanceId: instance.id)
+            : ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+        let settings = "\(instance.credentialType)|\(instance.providerType)|\(instance.customBaseURL ?? "")|\(instance.appendV1Suffix)|\(instance.azureMode)|\(instance.customUserAgent ?? "")|" + key
         return SHA256.hash(data: Data(settings.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    private init() {}
+    init(workBuddyLoader: @escaping @MainActor (String) async throws -> ProviderAPIQuota = {
+        try await WorkBuddyBalanceAPI.fetch(instanceId: $0)
+    }) {
+        self.workBuddyLoader = workBuddyLoader
+    }
+
+    static func supportsQuota(_ instance: ProviderInstance) -> Bool {
+        instance.credentialType == .apiKey || (instance.providerType == .workBuddy && instance.credentialType == .oauth)
+    }
+
+    /// SwiftUI tasks must survive routine OAuth token rotation. Reading the
+    /// auth revision refreshes the view, while this identity changes only when
+    /// the account/session or actual provider configuration changes.
+    func refreshIdentity(_ instance: ProviderInstance) -> String {
+        instance.id + "|" + signature(instance)
+    }
 
     func state(for instanceID: String) -> ProviderAPIQuotaState {
         states[instanceID] ?? .idle
@@ -69,13 +87,18 @@ final class ProviderAPIQuotaStore: ObservableObject {
         guard !Task.isCancelled else { return }
         let current = signature(instance)
         guard activeRequests[instance.id] == nil || signatures[instance.id] != current else { return }
+        // A new identity may fail validation before starting an HTTP request.
+        // Retire the old flight now so its late result cannot overwrite that state.
+        if signatures[instance.id] != current { activeRequests[instance.id] = nil }
         signatures[instance.id] = current
         lastAttempts[instance.id] = Date()
-        guard instance.credentialType == .apiKey else {
+        let isWorkBuddyOAuth = instance.providerType == .workBuddy && instance.credentialType == .oauth
+        guard Self.supportsQuota(instance) else {
             states[instance.id] = .unavailable("此服务商使用 OAuth 登录，不支持 API Key 额度查询。")
             return
         }
-        guard let apiKey = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id), !apiKey.isEmpty else {
+        let apiKey = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+        guard isWorkBuddyOAuth || !apiKey.isEmpty else {
             states[instance.id] = .unavailable("尚未配置 API Key。")
             return
         }
@@ -86,14 +109,20 @@ final class ProviderAPIQuotaStore: ObservableObject {
         defer { if activeRequests[instance.id] == requestID { activeRequests[instance.id] = nil } }
 
         do {
-            let quota = try await ProviderAPIQuotaClient.fetch(instance: instance, apiKey: apiKey)
+            let quota: ProviderAPIQuota
+            if isWorkBuddyOAuth {
+                quota = try await workBuddyLoader(instance.id)
+            } else {
+                quota = try await ProviderAPIQuotaClient.fetch(instance: instance, apiKey: apiKey)
+            }
             try Task.checkCancellation()
             guard activeRequests[instance.id] == requestID else { return }
             guard signature(instance) == current else { states[instance.id] = .idle; return }
             states[instance.id] = .loaded(quota)
         } catch {
             guard activeRequests[instance.id] == requestID else { return }
-            states[instance.id] = Task.isCancelled ? .idle : .unavailable(error.localizedDescription)
+            guard signature(instance) == current else { states[instance.id] = .idle; return }
+            states[instance.id] = (Task.isCancelled || error is CancellationError) ? .idle : .unavailable(error.localizedDescription)
         }
     }
 }

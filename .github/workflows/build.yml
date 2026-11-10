@@ -292,10 +292,34 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/test-favorites-ui.sh
 
-      - name: Test model picker balances and rendered provider cards
+      - name: Prepare model picker and WorkBuddy balance simulator
+        if: ${{ inputs.animation_only != true }}
+        timeout-minutes: 12
+        run: bash scripts/test-model-picker-header.sh prepare
+
+      - name: Verify model picker and WorkBuddy balance interfaces
         if: ${{ !cancelled() && inputs.animation_only != true }}
-        timeout-minutes: 5
-        run: bash scripts/test-model-picker-header.sh
+        timeout-minutes: 3
+        run: bash scripts/test-model-picker-header.sh verify
+
+      - name: Prepare provider icons and chat chrome simulator
+        timeout-minutes: 12
+        run: bash scripts/test-provider-chat-chrome.sh prepare
+
+      - name: Verify provider icons, selection and translucent chat chrome
+        timeout-minutes: 3
+        run: bash scripts/test-provider-chat-chrome.sh verify
+
+      - name: Upload provider interface review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-interface-review
+          path: |
+            provider-chrome-evidence/
+            model-picker-evidence/
+            workbuddy-tests.log
+          retention-days: 7
 
       - name: Test rendered question cards and answer sheets
         if: ${{ inputs.animation_only != true }}
@@ -1034,6 +1058,18 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('### Animation-only verification\n\nThinking glyph render/easing, native visualization text layout and complete iOS app build/package were checked. Full conversation, sharing, search and unrelated UI regression were not run in this explicitly selected mode.\n')
           PYFOCUS
+
+      - name: Require provider interface verification before upload
+        if: ${{ inputs.animation_only != true }}
+        run: |
+          python3 - <<'PYPROVIDER'
+          import json, pathlib
+          chrome = json.loads(pathlib.Path('provider-chrome-evidence/provider-chrome-result.json').read_text())
+          quota = json.loads(pathlib.Path('model-picker-evidence/model-picker-result.json').read_text())
+          assert chrome['success'] and len(chrome['screenshots']) >= 16, chrome
+          assert quota['success'] and len(quota['workBuddyScreenshots']) == 6, quota
+          print('Provider icons, selected provider, navigation appearance and both WorkBuddy balance views passed.')
+          PYPROVIDER
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4

@@ -21,9 +21,49 @@ struct ProviderInstance {
     var azureMode = false
     var customUserAgent: String?
 }
-enum ProviderKeychainHelper {
+@MainActor enum ProviderKeychainHelper {
     static var keys: [String: String] = [:]
+    static var tokens: [String: Data] = [:]
     static func loadAPIKey(instanceId: String) -> String? { keys[instanceId] }
+    static func loadOAuthToken<T: Codable>(instanceId: String, as type: T.Type) -> T? {
+        tokens[instanceId].flatMap { try? JSONDecoder().decode(type, from: $0) }
+    }
+    static func saveOAuthToken<T: Codable>(_ token: T, instanceId: String) {
+        tokens[instanceId] = try? JSONEncoder().encode(token)
+    }
+    static func deleteOAuthToken(instanceId: String) { tokens[instanceId] = nil }
+}
+// Catalog storage is unrelated to quota; OAuth and billing are production sources.
+@MainActor enum WorkBuddyModelsAPI { static func invalidate(instanceId: String) {} }
+final class WorkBuddyQuotaFixtureProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var payload = "{}"
+    private static var delay: Double = 0
+    private static var requests = 0
+    static func set(_ payload: String, delay: Double = 0) {
+        lock.lock(); defer { lock.unlock() }
+        self.payload = payload; self.delay = delay; requests = 0
+    }
+    static var count: Int { lock.lock(); defer { lock.unlock() }; return requests }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        guard let url = request.url, ["www.codebuddy.cn", "www.workbuddy.ai"].contains(url.host ?? ""),
+              url.path.hasSuffix("/billing/meter/get-user-resource"), request.httpMethod == "POST",
+              request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer fixture-") == true,
+              request.value(forHTTPHeaderField: "X-Refresh-Token") == nil else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        }
+        Self.lock.lock()
+        let payload = Self.payload; let delay = Self.delay; Self.requests += 1
+        Self.lock.unlock()
+        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type":"application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
 }
 final class QuotaFixtureProtocol: URLProtocol {
     static var payload = "{}"
@@ -90,6 +130,89 @@ struct ModelPickerHeaderHarness: App {
             try check(QuotaFixtureProtocol.count == failedCount, "Unavailable quota is not re-probed on every redraw")
             URLProtocol.unregisterClass(QuotaFixtureProtocol.self)
 
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [WorkBuddyQuotaFixtureProtocol.self]
+            let session = WorkBuddyHTTP.makeSession(configuration: configuration)
+            let workBuddyStore = ProviderAPIQuotaStore(workBuddyLoader: { id in
+                try await WorkBuddyBalanceAPI.fetch(instanceId: id, session: session)
+            })
+            let paidPayload = #"{"code":0,"data":{"Response":{"Data":{"Accounts":[{"CapacitySize":100,"CapacityRemain":83,"CapacityUsed":17}]}}}}"#
+            let zeroPayload = #"{"code":0,"data":{"Response":{"Data":{"Accounts":[]}}}}"#
+            func login(_ id: String, uid: String = "fixture-user") {
+                let token = WorkBuddyTokenStorage(accessToken: "fixture-" + uid, refreshToken: "fixture-refresh",
+                    expiresAt: Date().addingTimeInterval(3600), realm: .cn, uid: uid,
+                    enterpriseID: nil, domain: nil, nickname: nil, deviceToken: nil)
+                ProviderKeychainHelper.saveOAuthToken(token, instanceId: id)
+            }
+            var workBuddyScreenshots: [String] = []
+            for state in ["loaded", "error", "zero"] {
+                let instance = ProviderInstance(id: "workbuddy-" + state, providerType: .workBuddy, credentialType: .oauth)
+                login(instance.id)
+                WorkBuddyQuotaFixtureProtocol.set(state == "loaded" ? paidPayload : (state == "zero" ? zeroPayload : #"{"code":401,"msg":"private-account-data","data":{}}"#))
+                await workBuddyStore.refresh(instance)
+                let quota: ProviderAPIQuota?
+                if case .loaded(let value) = workBuddyStore.state(for: instance.id) {
+                    quota = value
+                    try check(value.remaining == (state == "zero" ? 0 : 83), "OAuth account balance reaches real observable store: " + state)
+                } else {
+                    quota = nil
+                    guard state == "error", case .unavailable(let message) = workBuddyStore.state(for: instance.id) else { throw NSError(domain:"HeaderHarness",code:10) }
+                    try check(!message.contains("private-account-data"), "OAuth error state hides stale amount and sensitive server content")
+                }
+                for scheme in [ColorScheme.light, .dark] {
+                    let view = VStack(spacing: 0) {
+                        ModelPickerProviderHeader(title:"WorkBuddy",providerID:instance.id,quota:quota,canEdit:true,collapsed:true,onEdit:{},onToggle:{})
+                            .padding(16).background(Color(uiColor:.secondarySystemBackground))
+                        ProductionDetailQuota(instance: instance, quotaStore: workBuddyStore)
+                    }.environment(\.colorScheme,scheme).environment(\.locale,Locale(identifier:"zh-Hans"))
+                    let name = "workbuddy-" + state + "-" + (scheme == .light ? "light" : "dark") + ".png"
+                    try await renderHosted(view, scheme: scheme, destination: docs.appendingPathComponent(name))
+                    workBuddyScreenshots.append(name)
+                }
+            }
+            let switched = ProviderInstance(id:"workbuddy-switch",providerType:.workBuddy,credentialType:.oauth)
+            login(switched.id)
+            WorkBuddyQuotaFixtureProtocol.set(paidPayload)
+            await workBuddyStore.refreshIfNeeded(switched)
+            let beforeRotation = workBuddyStore.refreshIdentity(switched)
+            var rotatedToken = ProviderKeychainHelper.loadOAuthToken(instanceId: switched.id, as: WorkBuddyTokenStorage.self)!
+            rotatedToken.accessToken = "fixture-rotated-access"
+            rotatedToken.refreshToken = "fixture-rotated-refresh"
+            rotatedToken.expiresAt = Date().addingTimeInterval(7200)
+            ProviderKeychainHelper.saveOAuthToken(rotatedToken, instanceId: switched.id)
+            try check(workBuddyStore.refreshIdentity(switched) == beforeRotation, "OAuth token rotation keeps SwiftUI quota task identity stable")
+            let priorCount = WorkBuddyQuotaFixtureProtocol.count
+            await workBuddyStore.refreshIfNeeded(switched)
+            try check(WorkBuddyQuotaFixtureProtocol.count == priorCount, "OAuth same-account quota uses freshness cache")
+            WorkBuddyQuotaFixtureProtocol.set(zeroPayload)
+            WorkBuddyOAuthManager.shared.logout(instanceId:switched.id)
+            login(switched.id,uid:"fixture-other-user")
+            try check(workBuddyStore.refreshIdentity(switched) != beforeRotation, "Account switch changes SwiftUI quota task identity")
+            await workBuddyStore.refreshIfNeeded(switched)
+            guard case .loaded(let switchedQuota) = workBuddyStore.state(for:switched.id) else { throw NSError(domain:"HeaderHarness",code:11) }
+            try check(switchedQuota.remaining == 0 && WorkBuddyQuotaFixtureProtocol.count == 1, "Account switch invalidates cache and shows new account zero")
+            WorkBuddyQuotaFixtureProtocol.set(paidPayload,delay:0.3)
+            let late = Task { @MainActor in await workBuddyStore.refresh(switched) }
+            for _ in 0..<100 {
+                if WorkBuddyQuotaFixtureProtocol.count > 0 { break }
+                try await Task.sleep(nanoseconds:5_000_000)
+            }
+            try check(WorkBuddyQuotaFixtureProtocol.count == 1, "Cancellation fixture started actual billing request")
+            late.cancel()
+            await late.value
+            try check(workBuddyStore.state(for:switched.id) == .idle, "Cancelled OAuth query returns store to idle")
+            WorkBuddyQuotaFixtureProtocol.set(paidPayload,delay:0.3)
+            let logoutFlight = Task { @MainActor in await workBuddyStore.refresh(switched) }
+            for _ in 0..<100 {
+                if WorkBuddyQuotaFixtureProtocol.count > 0 { break }
+                try await Task.sleep(nanoseconds:5_000_000)
+            }
+            WorkBuddyOAuthManager.shared.logout(instanceId:switched.id)
+            await workBuddyStore.refresh(switched)
+            await logoutFlight.value
+            guard case .unavailable = workBuddyStore.state(for:switched.id) else { throw NSError(domain:"HeaderHarness",code:12) }
+            checks.append("Logout and early validation retire old flight without overwriting signed-out state")
+
             let credit = ProviderAPIQuota(remaining: 12.34, total: nil, used: nil, currency:"USD",sourcePath:"/fixture",updatedAt:Date())
             for width in [320.0,390.0] {
                 for scheme in [ColorScheme.light,.dark] {
@@ -112,10 +235,26 @@ struct ModelPickerHeaderHarness: App {
                     try check(abs(image.size.width-width)<0.5,"Header/card fits \(Int(width))pt \(scheme)")
                 }
             }
-            try JSONSerialization.data(withJSONObject:["success":true,"checks":checks],options:[.prettyPrinted,.sortedKeys]).write(to:docs.appendingPathComponent("model-picker-result.json"))
+            try JSONSerialization.data(withJSONObject:["success":true,"checks":checks,"workBuddyScreenshots":workBuddyScreenshots],options:[.prettyPrinted,.sortedKeys]).write(to:docs.appendingPathComponent("model-picker-result.json"))
         } catch {
             try? JSONSerialization.data(withJSONObject:["success":false,"checks":checks,"error":error.localizedDescription],options:[.prettyPrinted]).write(to:docs.appendingPathComponent("model-picker-result.json"))
         }
+    }
+    @MainActor private func renderHosted<V: View>(_ view: V, scheme: ColorScheme, destination: URL) async throws {
+        let controller = UIHostingController(rootView:view)
+        controller.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
+        let window = UIWindow(frame:CGRect(x:0,y:0,width:390,height:650))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.frame = window.bounds
+        controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        try await Task.sleep(nanoseconds:250_000_000)
+        controller.view.layoutIfNeeded()
+        let renderer = UIGraphicsImageRenderer(bounds:window.bounds)
+        let image = renderer.image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+        guard let data = image.pngData() else { throw NSError(domain:"HeaderHarness",code:13) }
+        try data.write(to:destination)
+        window.isHidden = true
     }
     private func card(title:String,id:String,quota:ProviderAPIQuota?,model:String,count:Int,background:Color) -> some View {
         VStack(alignment:.leading,spacing:10) {

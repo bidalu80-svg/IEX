@@ -19,7 +19,7 @@ import Foundation
 /// Intercept every URL, including unexpected ones: fixtures never fall back to
 /// real HTTP. The session explicitly installs this protocol; no global registration is used.
 final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
-    enum Scenario { case login, cancel, stateFailure }
+    enum Scenario { case login, cancel, stateFailure, billing, billingDenied, billingMalformed, billingFallback, billingHTTPDenied, billingDelayed, billingPages, billingExactPage, billingTooMany }
     private static let lock = NSLock()
     private static var scenario: Scenario = .login
     private static var counts: [String: Int] = [:]
@@ -37,16 +37,51 @@ final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func stopLoading() {}
 
+    private static func requestBody(_ request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open(); defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let length = stream.read(&buffer, maxLength: buffer.count)
+            guard length >= 0 else { return nil }
+            if length == 0 { break }
+            data.append(contentsOf: buffer.prefix(length))
+        }
+        return data
+    }
     private static func response(for request: URLRequest) throws -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         guard let url = request.url else { throw URLError(.badURL) }
-        guard url.scheme == "https", ["copilot.tencent.com", "www.workbuddy.ai"].contains(url.host ?? "") else {
+        guard url.scheme == "https", ["copilot.tencent.com", "www.workbuddy.ai", "www.codebuddy.cn"].contains(url.host ?? "") else {
             throw URLError(.unsupportedURL)
         }
         let path = url.path
         counts[path, default: 0] += 1
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         switch path {
+        case "/v2/billing/meter/get-user-resource", "/billing/meter/get-user-resource":
+            guard request.httpMethod == "POST",
+                  request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-balance-access",
+                  request.value(forHTTPHeaderField: "X-User-Id") == "balance-user",
+                  request.value(forHTTPHeaderField: "X-Refresh-Token") == nil,
+                  let body = requestBody(request),
+                  let json = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  json["ProductCode"] as? String == "p_tcaca",
+                  let page = json["PageNumber"] as? Int, page >= 1 else { throw URLError(.badServerResponse) }
+            if scenario == .billingPages || scenario == .billingExactPage || scenario == .billingTooMany {
+                let count = scenario == .billingTooMany || page == 1 ? 100 : (scenario == .billingExactPage ? 0 : 1)
+                let rows = Array(repeating: ["CapacitySize":2,"CapacityRemain":1,"CapacityUsed":1], count:count)
+                return ["code":0, "data":["Response":["Data":["Accounts":rows]]]]
+            }
+            if scenario == .billingDenied { return ["code":401, "msg":"sensitive-token", "data":[:]] }
+            if scenario == .billingMalformed { return ["code":0, "data":["Response":["Data":[:]]]] }
+            return ["code":0, "data":["Response":["Data":["Accounts":[
+                ["CapacitySize":100, "CapacityRemain":75, "CapacityUsed":25],
+                ["CapacitySize":999, "CapacityRemain":999, "CycleCapacitySize":20, "CycleCapacityRemain":8, "CycleCapacityUsed":12]
+            ]]]]]
+
         case "/v2/plugin/auth/state":
             guard request.httpMethod == "POST", query.contains(where: { $0.name == "platform" && $0.value == "CLI" }) else { throw URLError(.badURL) }
             if scenario == .stateFailure { return ["code":11217, "msg":"login ing...", "data": NSNull()] }
@@ -69,9 +104,14 @@ final class WorkBuddyFixtureProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         do {
             let object = try Self.response(for: request)
+            Self.lock.lock()
+            let currentScenario = Self.scenario
+            Self.lock.unlock()
+            if currentScenario == .billingDelayed { Thread.sleep(forTimeInterval: 0.3) }
             let data = try JSONSerialization.data(withJSONObject: object)
             guard let url = request.url else { throw URLError(.badURL) }
-            let response = HTTPURLResponse(url:url, statusCode:200, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"application/json"])!
+            let status = currentScenario == .billingHTTPDenied ? 401 : (currentScenario == .billingFallback && url.path == "/billing/meter/get-user-resource" ? 404 : 200)
+            let response = HTTPURLResponse(url:url, statusCode:status, httpVersion:"HTTP/1.1", headerFields:["Content-Type":"application/json"])!
             client?.urlProtocol(self, didReceive:response, cacheStoragePolicy:.notAllowed)
             client?.urlProtocol(self, didLoad:data)
             client?.urlProtocolDidFinishLoading(self)
@@ -117,6 +157,67 @@ func modelDisplayName(from id: String) -> String { id }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [WorkBuddyFixtureProtocol.self]
         let loginManager = WorkBuddyOAuthManager(configuration: configuration)
+        let billingSession = WorkBuddyHTTP.makeSession(configuration: configuration)
+        for realm in WorkBuddyRealm.allCases {
+            let token = WorkBuddyTokenStorage(accessToken: "fixture-balance-access", refreshToken: "never-send",
+                expiresAt: Date().addingTimeInterval(3600), realm: realm, uid: "balance-user",
+                enterpriseID: "enterprise", domain: "domain", nickname: nil, deviceToken: nil)
+            let id = "balance-" + realm.rawValue
+            ProviderKeychainHelper.saveOAuthToken(token, instanceId: id)
+            WorkBuddyFixtureProtocol.reset(.billing)
+            let quota = try await WorkBuddyBalanceAPI.fetch(instanceId: id, session: billingSession)
+            check(quota.remaining == 83 && quota.total == 120 && quota.used == 37 && quota.currency == "credits", "real OAuth billing response uses active package sums")
+            let path = realm == .cn ? "/v2/billing/meter/get-user-resource" : "/billing/meter/get-user-resource"
+            check(WorkBuddyFixtureProtocol.count(path) == 1, "correct CN/global billing path")
+            let request = try WorkBuddyBalanceAPI.request(credentials: token, path: path, page: 1, now: Date(timeIntervalSince1970: 0))
+            check(request.url?.host == (realm == .cn ? "www.codebuddy.cn" : "www.workbuddy.ai"), "billing host separate from chat host")
+            check(request.value(forHTTPHeaderField: "X-Enterprise-Id") == "enterprise" && request.value(forHTTPHeaderField: "X-Tenant-Id") == "enterprise", "enterprise account headers")
+            check(request.value(forHTTPHeaderField: "X-Device-Token") == nil, "no invented device credential")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            check(body["PackageEndTimeRangeBegin"] as? String == "1970-01-01 08:00:00", "billing filter uses UTC+8 independent of device timezone")
+            for scenario in [WorkBuddyFixtureProtocol.Scenario.billingDenied, .billingMalformed, .billingHTTPDenied] {
+                WorkBuddyFixtureProtocol.reset(scenario)
+                do { _ = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession); preconditionFailure("billing error must not become zero") }
+                catch { check(!error.localizedDescription.contains("sensitive-token"), "billing error redacts server content") }
+            }
+            if realm == .global {
+                WorkBuddyFixtureProtocol.reset(.billingFallback)
+                let fallback = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession)
+                check(fallback.remaining == 83 && WorkBuddyFixtureProtocol.count("/v2/billing/meter/get-user-resource") == 1, "global HTTP404 uses documented v2 fallback")
+            }
+            for scenario in [WorkBuddyFixtureProtocol.Scenario.billingPages, .billingExactPage] {
+                WorkBuddyFixtureProtocol.reset(scenario)
+                let paged = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession)
+                let expected: Decimal = scenario == .billingPages ? 101 : 100
+                check(paged.remaining == expected && paged.total == expected * 2 && WorkBuddyFixtureProtocol.count(path) == 2, "billing pagination sums complete 100+1 or 100+0 pages")
+            }
+            WorkBuddyFixtureProtocol.reset(.billingTooMany)
+            do { _ = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession); preconditionFailure("ten full pages must not publish partial total") }
+            catch { check(WorkBuddyFixtureProtocol.count(path) == 10, "billing pagination bound returns error after ten full pages") }
+            WorkBuddyFixtureProtocol.reset(.billingDelayed)
+            let flight = Task { @MainActor in try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession) }
+            for _ in 0..<100 {
+                if WorkBuddyFixtureProtocol.count(path) > 0 { break }
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            check(WorkBuddyFixtureProtocol.count(path) == 1, "delayed query actually reached HTTP")
+            let oldIdentity = WorkBuddyBalanceAPI.cacheIdentity(instanceId:id)
+            WorkBuddyOAuthManager.shared.logout(instanceId:id)
+            check(WorkBuddyBalanceAPI.cacheIdentity(instanceId:id) != oldIdentity, "logout invalidates cached balance identity")
+            do { _ = try await flight.value; preconditionFailure("late balance must not publish after logout") } catch is CancellationError {}
+            do { _ = try await WorkBuddyBalanceAPI.fetch(instanceId:id, session:billingSession); preconditionFailure("signed-out balance must fail") } catch {}
+        }
+        let empty = try WorkBuddyBalanceAPI.parse(payload: Data(#"{"Response":{"Data":{"Accounts":[]}}}"#.utf8), sourcePath: "/fixture")
+        check(empty.quota.remaining == 0, "explicit empty account collection is real zero")
+        for json in ["{}", #"{"Response":{"Data":{}}}"#, #"{"Response":{"Error":{"Code":"Unauthorized"},"Data":{"Accounts":[]}}}"#,
+            #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10}]}}}"#,
+            #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10,"CapacityRemain":true}]}}}"#,
+            #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10,"CapacityRemain":"1oops"}]}}}"#,
+            #"{"Response":{"Data":{"Accounts":[{"CapacitySize":10,"CapacityRemain":12}]}}}"#] {
+            expectFailure("malformed billing response must fail") { _ = try WorkBuddyBalanceAPI.parse(payload:Data(json.utf8),sourcePath:"/fixture") }
+        }
+        print("WorkBuddy balance fixtures passed: CN/global, package sums, period precedence, malformed/errors, zero, fixed hosts, headers, 404 fallback, logout isolation.")
+
 
         for realm in WorkBuddyRealm.allCases {
             WorkBuddyFixtureProtocol.reset(.login)
@@ -299,6 +400,10 @@ with tempfile.TemporaryDirectory(prefix="ze-workbuddy-fixtures-") as directory:
     support.write_text(SUPPORT, encoding="utf-8")
     binary = directory / "workbuddy-fixtures"
     sources = [ROOT / "Providers/WorkBuddy" / name for name in (
-        "WorkBuddyOAuthManager.swift", "WorkBuddyModelsAPI.swift", "WorkBuddyRequestAdapter.swift")]
+        "WorkBuddyOAuthManager.swift", "WorkBuddyModelsAPI.swift", "WorkBuddyRequestAdapter.swift", "WorkBuddyBalanceAPI.swift")]
+    quota = directory / "Quota.swift"
+    quota_source = (ROOT / "Providers/ProviderAPIQuota.swift").read_text(encoding="utf-8")
+    quota.write_text("import Foundation\n" + quota_source[quota_source.index("struct ProviderAPIQuota:"):quota_source.index("enum ProviderAPIQuotaState:")], encoding="utf-8")
+    sources.append(quota)
     subprocess.run([swift, "-swift-version", "5", "-parse-as-library", *map(str, sources), str(support), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

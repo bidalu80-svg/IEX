@@ -455,9 +455,7 @@ struct AddProviderView: View {
                     applyVoiceTemplate(template)
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: template.symbol)
-                            .font(.body)
-                            .foregroundStyle(template.tint)
+                        VoiceProviderBrandIcon(templateID: template.id)
                             .frame(width: 32, height: 32)
                             .background(template.tint.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -1148,42 +1146,8 @@ struct AddProviderView: View {
         }
     }
 
-    @ViewBuilder
     private func providerIcon(_ type: ProviderType) -> some View {
-        switch type {
-        case .anthropic:
-            Image(systemName: "sparkles")
-                .foregroundStyle(.purple)
-        case .gemini:
-            Image(systemName: "diamond")
-                .foregroundStyle(.blue)
-        case .openAI:
-            Image(systemName: "circle.hexagongrid")
-                .foregroundStyle(.green)
-        case .antigravity:
-            Image(systemName: "ant")
-                .foregroundStyle(.orange)
-        case .openRouter:
-            Image(systemName: "arrow.triangle.branch")
-                .foregroundStyle(.cyan)
-        case .openAIResponses:
-            Image(systemName: "arrow.trianglehead.2.counterclockwise")
-                .foregroundStyle(.mint)
-        case .xAI:
-            Image(systemName: "x.circle")
-                .foregroundStyle(.gray)
-        case .kimiCode:
-            Image(systemName: "moon.stars")
-                .foregroundStyle(.indigo)
-        case .workBuddy:
-            Image("WorkBuddy").resizable().scaledToFit().frame(width: 25, height: 25)
-        case .githubCopilot:
-            GitHubCopilotIcon()
-                .frame(width: 25, height: 25)
-        case .unsupported:
-            Image(systemName: "questionmark.circle")
-                .foregroundStyle(.gray)
-        }
+        ProviderBrandIcon(type: type)
     }
 
     private func providerColor(_ type: ProviderType) -> Color {

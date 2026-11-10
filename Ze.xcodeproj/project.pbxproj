@@ -544,6 +544,8 @@
 		619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */; };
 		5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */; };
 		7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */; };
+		D8D9ED0313002A6DAC4DB95C /* ProviderBrandIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */; };
+		4C7D3989A0DDFBA8250DE17D /* WorkBuddyBalanceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1228,6 +1230,8 @@
 		44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyRequestAdapter.swift; path = Providers/WorkBuddy/WorkBuddyRequestAdapter.swift; sourceTree = SOURCE_ROOT; };
 		BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyProvider.swift; path = Providers/WorkBuddy/WorkBuddyProvider.swift; sourceTree = SOURCE_ROOT; };
 		73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyLoginSheet.swift; path = Views/Providers/WorkBuddyLoginSheet.swift; sourceTree = SOURCE_ROOT; };
+		175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProviderBrandIcon.swift; path = Views/Providers/ProviderBrandIcon.swift; sourceTree = SOURCE_ROOT; };
+		DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyBalanceAPI.swift; path = Providers/WorkBuddy/WorkBuddyBalanceAPI.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1492,6 +1496,8 @@
 				73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */,
 				BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */,
 				44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */,
+				175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */,
+				DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */,
 				E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */,
 				8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */,
 				18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */,
@@ -2989,6 +2995,8 @@
 				7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */,
 				5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */,
 				619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */,
+				D8D9ED0313002A6DAC4DB95C /* ProviderBrandIcon.swift in Sources */,
+				4C7D3989A0DDFBA8250DE17D /* WorkBuddyBalanceAPI.swift in Sources */,
 				9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */,
 				890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */,
 				7CD272E08E5C0F210A3AB999 /* ChatGPTWebChallenge.swift in Sources */,

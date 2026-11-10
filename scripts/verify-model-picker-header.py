@@ -22,7 +22,7 @@ check("CFBooleanGetTypeID" in quota and "resolvedRemaining.isNaN" in quota,"Bool
 check("total_credits" in quota and "total_usage" in quota,"Credit APIs can report balance as credits minus usage")
 check("signature(instance)" in quota and "< 300" in quota and "< 60" in quota,"Credential-aware cache and failure backoff avoid repeated probing")
 check("activeRequests.count >= 3" in quota and "request.timeoutInterval = timeout" in quota and "timeout: 4" in quota,"Automatic queries are bounded and concurrency-limited")
-check(".task(id: item.instance)" in picker,"Provider configuration edits refresh their balance")
+check(".task(id: quotaRefreshIdentity(item.instance))" in picker,"Provider configuration edits refresh their balance")
 check(".secondarySystemBackground" in picker and 'Text("模型分组").font(.subheadline' in picker,"Group and provider headers use the requested inset-card layout")
 check(read("Ze.xcodeproj/project.pbxproj").count("/* ModelPickerProviderHeader.swift in Sources */")==2,"Shared header is compiled in app target")
 print(f"Model picker header structure checks passed: {checks}")

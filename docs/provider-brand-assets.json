@@ -1,0 +1,164 @@
+[
+  {
+    "asset": "ProviderBrandOpenAI.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/openai.svg",
+    "license": "MIT",
+    "sourceSHA256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186",
+    "assetSHA256": "d95a83615596521a120b7ce4cd67f8b96314488a0c939b72713ad9205d903d8c",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandAnthropic.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/anthropic.svg",
+    "license": "MIT",
+    "sourceSHA256": "e833fdfa7e7187a86a05b870925067556a506dcd4239089aed73e1e58c9366a3",
+    "assetSHA256": "a15b09cb3435a15899e7b66749927620e45f3f3b8b8948c74b7a19c5b5732e03",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandGemini.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/gemini-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "8ab0a9bafec11f7e69bcb9fc4ffd8f1bc927d1ddcbbb6ff36dee5ae8b5a9d602",
+    "assetSHA256": "81ca7ec1b9caa61bdac8199eb4420ef255191c3ad07ee5c59124d5e50895acf7",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandAntigravity.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/antigravity-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "652128cf55a28bb958563ee372d0bd00208d9e6fd446f523f77aafd811eef8ca",
+    "assetSHA256": "74db4875fa112c030b3e86a1773457f31bfff8958bd74cefecedc2906bcf5ea9",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandOpenRouter.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/openrouter.svg",
+    "license": "MIT",
+    "sourceSHA256": "ae671cc83de9bd45db97a47ed5e38a4e1bd9f93a12be495ba4b4f8b284026bca",
+    "assetSHA256": "a5144ce58b45fafc804e1d30dd21052588c4d92b08e48d1ca119faddbc0094f6",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandXAI.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/xai.svg",
+    "license": "MIT",
+    "sourceSHA256": "89eb7de9f0d02a41cfecd9109e253d7fd3529e27467dee4254faa67f3ac21451",
+    "assetSHA256": "bf63266cae37a9714627205ba06061a35ff1a1b85f61ceb0f2f43d7a48de35ce",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandKimi.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/kimi-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "0bdb95375d7c6e90a1850e91cd36770da2bc98fa33ec2d783f4a8fed027da85f",
+    "assetSHA256": "8945d7f3920a21885bb3264af47479033f681549887f0490f277e769f4509e8c",
+    "darkAssetSHA256": "bce9c96d5693ce2d52600c960bc7d7148f82d9a1ae683be351d0ab08ae8c9f59",
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandElevenLabs.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/elevenlabs.svg",
+    "license": "MIT",
+    "sourceSHA256": "152a4a89fd5228924b6ccc91a72675966df35e3b69d1cf93a67b6866cf846584",
+    "assetSHA256": "1bb6e634e7243d9130645053a1c2e0835c2a860098eba2d35ba8f0bf2389fb06",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandAzure.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/azure-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "abc639d094593943c1b201270f4903c74d02d2e26acf26abf592a29c222c5181",
+    "assetSHA256": "81d984504d0ca0efe6a4214d3bee68509e757fa102b4886fb4571284abfaaf21",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandMiniMax.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/minimax-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "7f7187fa6d9b341ac5f22f6c5a970523afb439dc45566d64eb4f4b9b604d6b01",
+    "assetSHA256": "5ebf0fd539eebf6749ff8cdb009357ccc092a9a6358c15a5cb5294b1e0065e54",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandBailian.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/bailian-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "5cc26dc961b2ecd0912f4e023c8ce745bcc52ac45b1c4baeadd7201f6b60de25",
+    "assetSHA256": "a992e0f1b951f38f782cd5d1f9def1cb5df0a89d282e915f42a8e01bbf60bbde",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandVolcengine.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/volcengine-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "84f9e2cd1da7e73dc6c9a0f2521745d39cae96c008752cdb1baf57a8c94393a1",
+    "assetSHA256": "3e5aa6c202533a524c794d5dfaf59042cee7d0235137192e1056519e77dc6e32",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandIFlytek.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/iflytekcloud-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "0012c7c24cf8d987a9e2fd17e9b555ff8082e4a7369b3e57dc0a827146bb0868",
+    "assetSHA256": "d8ea391d59127fc2bcf7d82d0c2c5fd2645ebb1e1a34d3b314624c47fc8d73ed",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandMiMo.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/xiaomimimo.svg",
+    "license": "MIT",
+    "sourceSHA256": "b04ad7dad52af2212c4567daf0ee6856f2c4625c92c680a27f9880295d558b71",
+    "assetSHA256": "99defcca38ec28c6edc0e6abc3cc43daceeeb836e51163a9135d2a51c7df3df1",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandDeepSeek.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/deepseek-color.svg",
+    "license": "MIT",
+    "sourceSHA256": "deba5f98a5c1796e20fcac3149bcd7eb8a32f0bdd04d048819400b1f28bd1439",
+    "assetSHA256": "36f326d524af6df25f3ac6166234ced75598bfccb5c292fa33cdf53965a3d650",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandMoonshot.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/moonshot.svg",
+    "license": "MIT",
+    "sourceSHA256": "435f41b74e6a87639b6bf860e9628f20cbe7d6229bece412d548f4cea3081852",
+    "assetSHA256": "1047c98136f5d29cafded944a31cf0f057f8b52832cb1ccd0bf1a82e8fa3f543",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandGroq.imageset",
+    "source": "https://raw.githubusercontent.com/lobehub/lobe-icons/ea434b96e75813517b377825e01c0df61dee8836/packages/static-svg/icons/groq.svg",
+    "license": "MIT",
+    "sourceSHA256": "078d5cf6e7a54905040c15ddacf5ea33c13042fe7739e820cedc2096e4406651",
+    "assetSHA256": "f10c0964f7200f53c7d26c6a9832502ebf90b905249c96bc1717f823c9b5a73f",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  },
+  {
+    "asset": "ProviderBrandDeepgram.imageset",
+    "source": "https://raw.githubusercontent.com/simple-icons/simple-icons/1bb2f6e6ea50f920de8d2f3d273ae48564a5eaee/icons/deepgram.svg",
+    "license": "CC0-1.0",
+    "sourceSHA256": "e6904363c90592bbb689e47aae10dc6ca5ae2f32ed9e1573a87c973be04bafb9",
+    "assetSHA256": "9a732035a07b537abf28141e199715cb77d08a66417bbca58d179b9823f814cf",
+    "darkAssetSHA256": null,
+    "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"
+  }
+]

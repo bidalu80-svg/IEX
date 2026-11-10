@@ -999,7 +999,7 @@ struct UnifiedModelPicker: View {
                         else { _ = collapsedInstanceIds.insert(item.instance.id) }
                     }
                 })
-                .task(id: item.instance) {
+                .task(id: quotaRefreshIdentity(item.instance)) {
                     guard !VoiceProviderResolver.isSystemEntry(item.instance.id) else { return }
                     await quotaStore.refreshIfNeeded(item.instance)
                 }
@@ -1023,6 +1023,11 @@ struct UnifiedModelPicker: View {
             }
         }
         .listRowBackground(Color(uiColor: .secondarySystemBackground))
+    }
+
+    private func quotaRefreshIdentity(_ instance: ProviderInstance) -> String {
+        let _ = store.authRevision
+        return quotaStore.refreshIdentity(instance)
     }
 
     private func pickerQuota(for id: String) -> ProviderAPIQuota? {

@@ -1,0 +1,339 @@
+import SwiftUI
+import UIKit
+
+// Configuration fixtures only. SessionModelDisplay, brand rendering and all
+// chat chrome are extracted unchanged from their production source files.
+enum ProviderType: String, CaseIterable {
+    case openAI, anthropic, gemini, antigravity, openRouter, openAIResponses
+    case xAI, kimiCode, githubCopilot, workBuddy, unsupported
+    var builtInModels: [String] { [] } // Only used by hidden unsupported type's subtitle.
+}
+enum ProviderCredential {
+    case apiKey, oauth, chatGPTWeb
+    var displayName: String { self == .apiKey ? "API Key" : "OAuth" }
+}
+struct ProviderInstance {
+    var id: String
+    var label: String
+    var providerType: ProviderType
+    var customBaseURL: String? = nil
+    var isEnabled = true
+    var hasAnyCredential = true
+    var credentialType: ProviderCredential = .apiKey
+}
+struct FixtureModel { var id: String; var displayName: String }
+struct ModelEntry {
+    var id: String; var providerInstanceId: String; var model: FixtureModel
+    var isHidden = false
+}
+struct FixtureGroup { var name: String; var memberEntryIds: [String] }
+enum FixtureSource { case directEntry(String, String?); case group(String, String) }
+struct FixtureBinding { var primarySource: FixtureSource }
+final class ProviderConfigStore: ObservableObject {
+    static let shared = ProviderConfigStore()
+    var authRevision = 0
+    var instances: [String: ProviderInstance] = [:]
+    var entries: [String: ModelEntry] = [:]
+    var groups: [String: FixtureGroup] = [:]
+    var bindings: [String: FixtureBinding] = [:]
+    var defaultPrimaryGroupId: String?
+    func instance(for id: String) -> ProviderInstance? { instances[id] }
+    func entry(for id: String) -> ModelEntry? { entries[id] }
+    func group(for id: String) -> FixtureGroup? { groups[id] }
+    func binding(for id: String) -> FixtureBinding? { bindings[id] }
+    func visibleEntries(for id: String) -> [ModelEntry] { entries.values.filter { $0.providerInstanceId == id && !$0.isHidden } }
+}
+enum ProviderKeychainHelper {
+    static func loadAPIKey(instanceId: String) -> String? { "fixture-key-display-only" }
+    static func loadOAuthString(instanceId: String, account: String) -> String? { nil }
+}
+final class FixtureOAuthManager {
+    static let shared = FixtureOAuthManager()
+    func isAuthenticated(instanceId: String) -> Bool { true }
+}
+typealias ChatGPTWebOAuthManager = FixtureOAuthManager
+typealias ClaudeOAuthManager = FixtureOAuthManager
+typealias GeminiOAuthManager = FixtureOAuthManager
+typealias CodexOAuthManager = FixtureOAuthManager
+typealias AntigravityOAuthManager = FixtureOAuthManager
+typealias OpenRouterOAuthManager = FixtureOAuthManager
+typealias XAIOAuthManager = FixtureOAuthManager
+typealias KimiOAuthManager = FixtureOAuthManager
+typealias WorkBuddyOAuthManager = FixtureOAuthManager
+typealias GitHubCopilotOAuthManager = FixtureOAuthManager
+
+private let voiceIDs = ["elevenlabs", "deepgram", "azure-tts", "minimax", "alibaba", "doubao", "xunfei", "mimo"]
+
+private struct SettingsRowsGallery: View {
+    let adding: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(adding ? "添加 AI 服务商" : "AI 服务商").font(.headline)
+            ForEach(ProviderType.allCases.filter { $0 != .unsupported && $0 != .antigravity }, id: \.self) { type in
+                Group {
+                    if adding {
+                        ProductionAddProviderRow(type: type)
+                    } else {
+                        InstanceRow(instance: ProviderInstance(id: type.rawValue, label: type.displayName, providerType: type,
+                            credentialType: type == .workBuddy || type == .githubCopilot ? .oauth : .apiKey))
+                    }
+                }.padding(12).background(Color(UIColor.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }.padding(16).frame(width: 390, alignment: .leading)
+            .background(Color(UIColor.systemGroupedBackground))
+    }
+}
+
+private struct BrandGallery: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("服务商本地图标 · 18 / 25 / 32 pt").font(.headline)
+            ForEach(ProviderType.allCases, id: \.self) { type in
+                HStack(spacing: 18) {
+                    ForEach([18, 25, 32], id: \.self) { size in
+                        ProviderBrandIcon(type: type, size: CGFloat(size)).frame(width: 40)
+                    }
+                    Text(type.displayName).font(.caption)
+                }.frame(height: 35)
+            }
+            Text("语音服务商").font(.headline)
+            ForEach(voiceIDs, id: \.self) { id in
+                HStack(spacing: 18) {
+                    VoiceProviderBrandIcon(templateID: id, size: 25).frame(width: 40)
+                    Text(id).font(.caption)
+                }.frame(height: 29)
+            }
+        }.padding(16).frame(width: 390, alignment: .leading)
+            .background(Color(UIColor.systemBackground))
+    }
+}
+
+private struct BadgeGallery: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("当前服务商圆形图标 · 展开 / 收起").font(.headline)
+            ForEach(ProviderType.allCases, id: \.self) { type in
+                HStack {
+                    ForEach([false, true], id: \.self) { collapsed in
+                        NavigationStatusCapsule(provider: ProviderInstance(id: type.rawValue, label: type.displayName, providerType: type),
+                                                isCollapsed: collapsed, onToggle: {})
+                    }
+                    Text(type.displayName).font(.caption)
+                }
+            }
+            HStack {
+                NavigationStatusCapsule(provider: nil, isCollapsed: false, onToggle: {})
+                Text("尚未选择服务商").font(.caption)
+            }
+        }.padding(16).frame(width: 390, alignment: .leading)
+            .background(Color(UIColor.systemBackground))
+    }
+}
+
+private struct ChromeFixture: View {
+    let provider: ProviderInstance
+    @State private var inset: CGFloat = 0
+    @State private var collapsed = false
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("当前会话服务商应随选择即时更新").font(.title2)
+                        .padding(20).background(Color.blue.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+                    ForEach(0..<8) { row in
+                        Text("消息 \(row + 1)：保留聊天滚动与模型切换，顶部以半透明材质平滑过渡。")
+                            .padding().frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.padding(.horizontal, 16)
+            }
+            .overlay(alignment: .top) {
+                ChatNavigationEdgeFade().allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .overlay(alignment: .top) {
+                if !collapsed {
+                    NavigationStatusCapsule(provider: provider, isCollapsed: false) { collapsed.toggle() }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    if collapsed {
+                        NavigationStatusCapsule(provider: provider, isCollapsed: true) { collapsed.toggle() }
+                    } else {
+                        VStack(spacing: 0) {
+                            Text("查询广东油价").font(.system(size: 12, weight: .semibold))
+                            Text("\(provider.label) · GPT 6.1 Sol").font(.system(size: 9))
+                        }
+                    }
+                }
+                ToolbarItem(placement: .navigationBarLeading) { Image(systemName: "line.3.horizontal") }
+                ToolbarItem(placement: .navigationBarTrailing) { Image(systemName: "gearshape") }
+            }
+            .modifier(NavBarStyleModifier(topSafeAreaInset: $inset))
+        }
+    }
+}
+
+@MainActor private final class ProviderChromeDelegate: NSObject, UIApplicationDelegate {
+    var window: UIWindow?
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = UIViewController()
+        self.window = window
+        window.makeKeyAndVisible()
+        Task { @MainActor in await run() }
+        return true
+    }
+
+    private func controllers(_ root: UIViewController) -> [UIViewController] {
+        [root] + root.children.flatMap(controllers)
+    }
+
+    private func run() async {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var checks: [String] = []
+        var screenshots: [String] = []
+        func check(_ pass: Bool, _ name: String) throws {
+            guard pass else { throw NSError(domain: "ProviderChrome", code: checks.count, userInfo: [NSLocalizedDescriptionKey: name]) }
+            checks.append(name)
+        }
+        func write(_ success: Bool, _ error: String? = nil) {
+            var result: [String: Any] = ["success": success, "checks": checks, "screenshots": screenshots,
+                "scope": "Actual production components on simulator; configuration fixtures; no physical-device or account balance verification"]
+            if let error { result["error"] = error }
+            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: docs.appendingPathComponent("provider-chrome-result.json"), options: .atomic)
+            }
+        }
+        do {
+            let store = ProviderConfigStore()
+            let open = ProviderInstance(id: "open", label: "自定义 OpenAI", providerType: .openAI)
+            let buddy = ProviderInstance(id: "buddy", label: "Wbnew", providerType: .workBuddy)
+            store.instances = ["open": open, "buddy": buddy]
+            store.entries = ["e1": ModelEntry(id: "e1", providerInstanceId: "open", model: FixtureModel(id: "gpt", displayName: "GPT")),
+                             "e2": ModelEntry(id: "e2", providerInstanceId: "buddy", model: FixtureModel(id: "auto", displayName: "Auto"))]
+            store.groups = ["g1": FixtureGroup(name: "默认组", memberEntryIds: ["e1", "e2"]),
+                            "g2": FixtureGroup(name: "WorkBuddy 组", memberEntryIds: ["e2"])]
+            store.defaultPrimaryGroupId = "g1"
+            let display = SessionModelDisplay(store: store)
+            try check(display.resolvedInstanceAndModel(for: nil)?.instance.id == "open", "Draft uses default group's actual provider")
+            try check(SessionModelDisplay(store: store, draftGroupId: "g2").resolvedInstanceAndModel(for: nil)?.instance.id == "buddy", "Draft explicit group overrides default provider")
+            store.bindings["chat"] = FixtureBinding(primarySource: .directEntry("e2", nil))
+            try check(display.resolvedInstanceAndModel(for: "chat")?.instance.id == "buddy", "Direct conversation binding resolves selected WorkBuddy instance")
+            store.bindings["chat"] = FixtureBinding(primarySource: .directEntry("e1", nil))
+            try check(display.resolvedInstanceAndModel(for: "chat")?.instance.id == "open", "Switching direct selection updates provider")
+            store.bindings["chat"] = FixtureBinding(primarySource: .group("g1", "e2"))
+            try check(display.resolvedInstanceAndModel(for: "chat")?.instance.id == "buddy", "Bound group uses selected entry rather than group first member")
+            store.instances["open"]?.isEnabled = false
+            try check(display.resolvedInstanceAndModel(for: nil)?.instance.id == "buddy", "Draft group skips disabled instance")
+            store.instances["open"]?.isEnabled = true
+            store.entries["e1"]?.isHidden = true
+            try check(display.resolvedInstanceAndModel(for: nil)?.instance.id == "buddy", "Draft group skips hidden model")
+            store.entries["e1"]?.isHidden = false
+            store.instances["open"]?.hasAnyCredential = false
+            try check(display.resolvedInstanceAndModel(for: nil)?.instance.id == "buddy", "Draft group skips missing credentials when usable provider exists")
+            store.bindings["missing"] = FixtureBinding(primarySource: .directEntry("deleted", nil))
+            try check(display.resolvedInstanceAndModel(for: "missing") == nil, "Deleted binding yields no provider instead of unrelated account")
+            store.defaultPrimaryGroupId = nil
+            try check(display.resolvedInstanceAndModel(for: nil) == nil, "Empty draft has no invented provider")
+
+            try check(ProviderBrandIcon.assetName(type: .openAI, baseURL: "https://api.deepseek.com/v1") == "ProviderBrandDeepSeek", "Known compatible hostname uses actual vendor mark")
+            try check(ProviderBrandIcon.assetName(type: .openAI, baseURL: "https://api.deepseek.com.evil.test/v1") == "ProviderBrandOpenAI", "Vendor hostname matching respects DNS boundary")
+            try check(ProviderBrandIcon.assetName(type: .anthropic, baseURL: "https://unknown.example/v1") == "ProviderBrandAnthropic", "Unknown compatible host retains selected protocol mark")
+            for type in ProviderType.allCases {
+                if let asset = ProviderBrandIcon.assetName(type: type) {
+                    try check(UIImage(named: asset) != nil, "Bundled vendor asset loads: \(type.rawValue)")
+                }
+            }
+            try check(UIImage(named: "WorkBuddy") != nil, "Existing WorkBuddy asset loads")
+            for id in voiceIDs {
+                let asset = VoiceProviderBrandIcon.assetName(templateID: id)
+                try check(asset.flatMap { UIImage(named: $0) } != nil, "Voice vendor asset loads: \(id)")
+            }
+            var toggleCount = 0
+            NavigationStatusCapsule(provider: buddy, isCollapsed: false, onToggle: { toggleCount += 1 }).onToggle()
+            NavigationStatusCapsule(provider: buddy, isCollapsed: true, onToggle: { toggleCount += 1 }).onToggle()
+            try check(toggleCount == 2, "Both badge variants preserve supplied toggle callbacks")
+            var badgeImages: [Data] = []
+            for type in [ProviderType.openAI, .anthropic, .workBuddy, .githubCopilot] {
+                let badge = NavigationStatusCapsule(provider: ProviderInstance(id: type.rawValue, label: type.displayName, providerType: type),
+                                                    isCollapsed: false, onToggle: {})
+                let renderer = ImageRenderer(content: badge.environment(\.colorScheme, .light))
+                renderer.scale = 3
+                guard let image = renderer.uiImage, let bytes = image.pngData() else {
+                    throw NSError(domain: "ProviderChrome", code: -4)
+                }
+                try check(image.size.width == image.size.height && image.size.width == 36,
+                          "Provider badge keeps square 36-point bounds for circular mask: \(type.rawValue)")
+                badgeImages.append(bytes)
+            }
+            try check(Set(badgeImages).count == badgeImages.count, "Different selected providers render distinct badge artwork")
+
+            // Exercise the actual controller's scoped apply/restore contract.
+            let unrelated = UINavigationBar()
+            let unrelatedShadow = unrelated.standardAppearance.shadowColor
+            let owner = UIViewController()
+            let previous = UINavigationBarAppearance()
+            previous.shadowColor = .red
+            owner.navigationItem.standardAppearance = previous
+            let nav = UINavigationController(rootViewController: owner)
+            let controller = ChatNavigationBarAppearance.Controller()
+            owner.addChild(controller)
+            owner.view.addSubview(controller.view)
+            controller.didMove(toParent: owner)
+            nav.loadViewIfNeeded()
+            controller.applyIfNeeded()
+            try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.clear, "Chat item removes separator")
+            try check(owner.navigationItem.standardAppearance?.backgroundEffect != nil || UIAccessibility.isReduceTransparencyEnabled, "Chat item has translucent material")
+            try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
+            controller.restore()
+            try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
+
+            guard let window else { throw NSError(domain: "ProviderChrome", code: -1) }
+            for dark in [false, true] {
+                let theme = dark ? "dark" : "light"
+                let scheme: ColorScheme = dark ? .dark : .light
+                window.overrideUserInterfaceStyle = dark ? .dark : .light
+                for (name, view) in [("brands", AnyView(BrandGallery())), ("badges", AnyView(BadgeGallery())),
+                                     ("instances", AnyView(SettingsRowsGallery(adding: false))),
+                                     ("add-provider", AnyView(SettingsRowsGallery(adding: true)))] {
+                    let renderer = ImageRenderer(content: view.environment(\.colorScheme, scheme))
+                    renderer.scale = 3
+                    guard let data = renderer.uiImage?.pngData() else { throw NSError(domain: "ProviderChrome", code: -2) }
+                    let file = "provider-chrome-\(name)-\(theme).png"
+                    try data.write(to: docs.appendingPathComponent(file))
+                    screenshots.append(file)
+                }
+                for width: CGFloat in [320, 390] {
+                    for large in [false, true] {
+                        let fixture = ChromeFixture(provider: dark ? buddy : open)
+                            .environment(\.colorScheme, scheme)
+                            .environment(\.dynamicTypeSize, large ? .accessibility3 : .large)
+                        let host = UIHostingController(rootView: fixture)
+                        window.rootViewController = host
+                        window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
+                        host.view.frame = window.bounds
+                        host.view.setNeedsLayout()
+                        host.view.layoutIfNeeded()
+                        try await Task.sleep(nanoseconds: 450_000_000)
+                        let navigation = controllers(host).compactMap { $0 as? UINavigationController }.first
+                        try check(navigation?.topViewController?.navigationItem.standardAppearance?.shadowColor == UIColor.clear,
+                                  "Actual NavigationStack has no hard separator: \(theme), \(Int(width)), large \(large)")
+                        let format = UIGraphicsImageRendererFormat()
+                        format.scale = 3
+                        let renderer = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format)
+                        let image = renderer.image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+                        let file = "provider-chrome-navbar-\(theme)-\(Int(width))-\(large ? "large" : "normal").png"
+                        try image.pngData()!.write(to: docs.appendingPathComponent(file))
+                        screenshots.append(file)
+                    }
+                }
+            }
+            write(true)
+        } catch { write(false, error.localizedDescription) }
+    }
+}
+
+@main struct ProviderChromeMain {
+    static func main() { UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, NSStringFromClass(ProviderChromeDelegate.self)) }
+}

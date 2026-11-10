@@ -48,6 +48,11 @@ struct ProviderInstanceDetailView: View {
         store.instance(for: instanceId)
     }
 
+    private var quotaRefreshIdentity: String {
+        let _ = store.authRevision
+        return instance.map { quotaStore.refreshIdentity($0) } ?? "missing"
+    }
+
     var body: some View {
         Group {
             if let instance = instance {
@@ -68,7 +73,7 @@ struct ProviderInstanceDetailView: View {
                 }
             }
         }
-        .task(id: instance?.id) {
+        .task(id: quotaRefreshIdentity) {
             if let instance {
                 await quotaStore.refreshIfNeeded(instance)
             }
@@ -278,15 +283,8 @@ struct ProviderInstanceDetailView: View {
                 imageEndpointSection(instance)
             }
 
-            // MARK: API Key quota
-            // [T-quota-section-all-providers] Balance lookup is not an
-            // OpenAI-only feature. Nesting this inside
-            // `supportsImageEndpointSetting` hid the section from Anthropic,
-            // Gemini and every other protocol, even though a relay fronting
-            // any of them can answer /user/balance, /api/user/self or a
-            // WorkBuddy pool. Gate on the credential type alone; the probe
-            // client decides what the host actually supports.
-            if instance.credentialType == .apiKey {
+            // API-key relays and the native WorkBuddy OAuth billing adapter.
+            if ProviderAPIQuotaStore.supportsQuota(instance) {
                 apiKeyQuotaSection(instance)
             }
 
@@ -846,11 +844,12 @@ struct ProviderInstanceDetailView: View {
     @ViewBuilder
     private func apiKeyQuotaSection(_ instance: ProviderInstance) -> some View {
         let quotaState = quotaStore.state(for: instance.id)
+        let isOAuth = instance.providerType == .workBuddy && instance.credentialType == .oauth
 
         Section {
             switch quotaState {
             case .idle:
-                Text("点击右侧刷新以查询 API Key 额度。")
+                Text(isOAuth ? "点击右侧刷新以查询 WorkBuddy 账号积分。" : "点击右侧刷新以查询 API Key 额度。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -865,14 +864,14 @@ struct ProviderInstanceDetailView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("API Key 可用额度")
+                            Text(isOAuth ? "WorkBuddy 可用积分" : "API Key 可用额度")
                                 .font(.body.weight(.medium))
                             Text("余额 · \(quotaCurrencyLabel(quota.currency))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 12)
-                        Text(quota.displayAmount.map { formatQuotaAmount($0, currency: quota.currency) } ?? "—")
+                        Text(quota.displayAmount.map { formatQuotaAmount($0, currency: quota.currency, displayCredits: isOAuth) } ?? "—")
                             .font(.title3.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.primary)
                     }
@@ -880,10 +879,10 @@ struct ProviderInstanceDetailView: View {
                     if quota.total != nil || quota.used != nil {
                         VStack(alignment: .leading, spacing: 5) {
                             if let used = quota.used {
-                                quotaDetailRow("已使用", amount: used, currency: quota.currency)
+                                quotaDetailRow("已使用", amount: used, currency: quota.currency, displayCredits: isOAuth)
                             }
                             if let total = quota.total {
-                                quotaDetailRow("总额度", amount: total, currency: quota.currency)
+                                quotaDetailRow("总额度", amount: total, currency: quota.currency, displayCredits: isOAuth)
                             }
                         }
                     }
@@ -916,27 +915,34 @@ struct ProviderInstanceDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(quotaState == .loading)
-                .accessibilityLabel("刷新 API Key 额度")
+                .accessibilityLabel(isOAuth ? "刷新 WorkBuddy 积分" : "刷新 API Key 额度")
             }
         } footer: {
-            Text("额度接口由服务商提供，Ze 仅使用当前实例的 API Key 查询，不会显示或记录密钥。")
+            Text(isOAuth ? "使用当前 WorkBuddy 登录账号查询可用积分，国内版与国际版、不同账号分别查询。" : "额度接口由服务商提供，Ze 仅使用当前实例的 API Key 查询，不会显示或记录密钥。")
         }
     }
 
-    private func quotaDetailRow(_ title: String, amount: Decimal, currency: String) -> some View {
+    private func quotaDetailRow(_ title: String, amount: Decimal, currency: String, displayCredits: Bool = false) -> some View {
         HStack {
             Text(title)
             Spacer()
-            Text(formatQuotaAmount(amount, currency: currency))
+            Text(formatQuotaAmount(amount, currency: currency, displayCredits: displayCredits))
                 .monospacedDigit()
         }
         .font(.caption)
         .foregroundStyle(.secondary)
     }
 
-    private func formatQuotaAmount(_ amount: Decimal, currency: String) -> String {
+    private func formatQuotaAmount(_ amount: Decimal, currency: String, displayCredits: Bool = false) -> String {
         let currencyCode = currency.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let formatter = NumberFormatter()
+        if displayCredits && currencyCode == "CREDITS" {
+            formatter.numberStyle = .decimal
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.minimumFractionDigits = 2
+            formatter.maximumFractionDigits = 6
+            return (formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "\(amount)") + " 积分"
+        }
         formatter.numberStyle = .currency
         formatter.currencyCode = currencyCode.isEmpty ? "USD" : currencyCode
         formatter.locale = Locale(identifier: "en_US")
