@@ -1070,8 +1070,8 @@ jobs:
           import json, pathlib
           chrome = json.loads(pathlib.Path('provider-chrome-evidence/provider-chrome-result.json').read_text())
           quota = json.loads(pathlib.Path('model-picker-evidence/model-picker-result.json').read_text())
-          assert chrome['success'] and len(chrome['screenshots']) >= 16, chrome
-          assert quota['success'] and len(quota['workBuddyScreenshots']) == 6, quota
+          assert chrome['success'] and len(chrome['screenshots']) >= 20, chrome
+          assert quota['success'] and len(quota['workBuddyScreenshots']) == 12, quota
           print('Provider icons, selected provider, navigation appearance and both WorkBuddy balance views passed.')
           PYPROVIDER
 

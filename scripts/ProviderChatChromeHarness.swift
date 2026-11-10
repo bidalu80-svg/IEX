@@ -147,9 +147,6 @@ private struct ChromeFixture: View {
                 }.padding(.horizontal, 16)
             }
             .overlay(alignment: .top) {
-                ChatNavigationEdgeFade().allowsHitTesting(false).accessibilityHidden(true)
-            }
-            .overlay(alignment: .top) {
                 if !collapsed {
                     NavigationStatusCapsule(provider: provider, isCollapsed: false) { collapsed.toggle() }
                         .padding(.top, 2)
@@ -188,6 +185,15 @@ private struct ChromeFixture: View {
 
     private func controllers(_ root: UIViewController) -> [UIViewController] {
         [root] + root.children.flatMap(controllers)
+    }
+
+    private func descendants(_ root: UIView) -> [UIView] {
+        [root] + root.subviews.flatMap(descendants)
+    }
+
+    private func frostedOverlay(_ navigation: UINavigationController) -> UIVisualEffectView? {
+        navigation.navigationBar.superview?.subviews.compactMap { $0 as? UIVisualEffectView }
+            .first { $0.layer.mask is CAGradientLayer }
     }
 
     private func imageContrast(_ image: UIImage) -> Int {
@@ -411,10 +417,18 @@ private struct ChromeFixture: View {
                 "scrollShadow": owner.navigationItem.scrollEdgeAppearance?.shadowColor?.description ?? "nil"
             ])
             try check(hasNoShadow(owner.navigationItem.standardAppearance), "Chat item removes separator")
-            try check(owner.navigationItem.standardAppearance?.backgroundEffect != nil || UIAccessibility.isReduceTransparencyEnabled, "Chat item has translucent material")
+            try check(owner.navigationItem.standardAppearance?.backgroundEffect == nil &&
+                      (owner.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0) == 0,
+                      "Native navigation background is clear so no solid rectangular plate remains")
+            let syntheticFrost = frostedOverlay(nav)
+            try check(syntheticFrost != nil && syntheticFrost?.isUserInteractionEnabled == false,
+                      "Separate gradient frost exists below toolbar without intercepting touches")
+            try check(syntheticFrost?.effect != nil || UIAccessibility.isReduceTransparencyEnabled,
+                      "Gradient overlay uses real UIKit backdrop blur")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
             controller.restore()
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
+            try check(frostedOverlay(nav) == nil, "Leaving chat removes its gradient frost overlay")
 
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"
@@ -446,6 +460,20 @@ private struct ChromeFixture: View {
                         host.view.layoutIfNeeded()
                         try await Task.sleep(nanoseconds: 450_000_000)
                         let navigation = controllers(host).compactMap { $0 as? UINavigationController }.first
+                        if let navigation {
+                            let frost = frostedOverlay(navigation)
+                            let bar = navigation.navigationBar
+                            let barBottom = bar.superview.map { bar.convert(bar.bounds, to: $0).maxY } ?? 0
+                            let mask = frost?.layer.mask as? CAGradientLayer
+                            diagnostics.append([
+                                "fixture": "frost-\(theme)-\(Int(width))-\(large)",
+                                "frostFrame": frost.map { NSStringFromCGRect($0.frame) } ?? "nil",
+                                "barBottom": barBottom, "maskLocations": mask?.locations ?? [],
+                                "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
+                            ])
+                            try check(frost != nil && frost!.frame.minY == 0 && frost!.frame.maxY >= barBottom + 40 && mask != nil,
+                                      "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
+                        }
                         diagnostics.append([
                             "fixture": "\(theme)-\(Int(width))-\(large)",
                             "controllerTree": controllers(host).map { String(describing: type(of: $0)) },
@@ -467,6 +495,30 @@ private struct ChromeFixture: View {
                                             "contrast": imageContrast(image), "windowHidden": window.isHidden,
                                             "hostAttachedToWindow": host.view.window != nil])
                         try check(drawn && imageContrast(image) > 24, "Hosted navbar screenshot is rendered and nonblank: \(file)")
+                        if !large {
+                            let scroll = descendants(host.view).compactMap { $0 as? UIScrollView }
+                                .first { $0.contentSize.height > $0.bounds.height }
+                            if let scroll {
+                                let offset = min(CGFloat(125), scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+                                scroll.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+                                host.view.layoutIfNeeded()
+                                try await Task.sleep(nanoseconds: 300_000_000)
+                                let rect = scroll.convert(scroll.bounds, to: window)
+                                let navBottom = navigation.map { $0.navigationBar.convert($0.navigationBar.bounds, to: window).maxY } ?? 0
+                                diagnostics.append(["fixture": "scrolled-\(theme)-\(Int(width))", "offset": scroll.contentOffset.y,
+                                                    "scrollViewportTop": rect.minY, "navigationBottom": navBottom,
+                                                    "adjustedInsetTop": scroll.adjustedContentInset.top])
+                                try check(scroll.contentOffset.y > 0, "Scrolling moves real message content beneath navigation: \(theme)-\(Int(width))")
+                                try check(rect.minY < navBottom - 20, "Message viewport extends behind navigation bar: \(theme)-\(Int(width))")
+                                let scrolledImage = renderer.image { _ in drawn = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+                                let scrolledFile = "provider-chrome-navbar-\(theme)-\(Int(width))-scrolled.png"
+                                try scrolledImage.pngData()!.write(to: docs.appendingPathComponent(scrolledFile))
+                                screenshots.append(scrolledFile)
+                                try check(drawn && imageContrast(scrolledImage) > 24, "Scrolled navigation screenshot contains actual rendered messages: \(theme)-\(Int(width))")
+                            } else {
+                                try check(false, "Actual message scroll view exists: \(theme)-\(Int(width))")
+                            }
+                        }
                     }
                 }
             }

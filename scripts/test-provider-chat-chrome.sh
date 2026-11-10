@@ -64,7 +64,7 @@ result=json.loads((root/'provider-chrome-result.json').read_text())
 print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['success'], result
 assert len(result['checks']) >= 20, result
-assert len(result['screenshots']) >= 16, result
+assert len(result['screenshots']) >= 20, result
 for name in result['screenshots']:
     assert (root/name).read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), name
 PY

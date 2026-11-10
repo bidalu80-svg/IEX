@@ -20,6 +20,7 @@ struct ProviderInstance {
     var appendV1Suffix = true
     var azureMode = false
     var customUserAgent: String?
+    var label: String { "WorkBuddy" }
 }
 @MainActor enum ProviderKeychainHelper {
     static var keys: [String: String] = [:]
@@ -160,23 +161,39 @@ struct ModelPickerHeaderHarness: App {
                     try check(!message.contains("private-account-data"), "OAuth error state hides stale amount and sensitive server content")
                 }
                 for scheme in [ColorScheme.light, .dark] {
-                    let view = VStack(spacing: 0) {
-                        ModelPickerProviderHeader(title:"WorkBuddy",providerID:instance.id,quota:quota,canEdit:true,collapsed:true,onEdit:{},onToggle:{})
-                            .padding(16).background(Color(uiColor:.secondarySystemBackground))
+                    let mode = scheme == .light ? "light" : "dark"
+                    let picker = ProductionPickerQuota(instance: instance, quotaStore: workBuddyStore)
+                        .environment(\.colorScheme,scheme).environment(\.locale,Locale(identifier:"zh-Hans"))
+                    let detail = NavigationStack {
                         ProductionDetailQuota(instance: instance, quotaStore: workBuddyStore)
+                            .navigationTitle("WorkBuddy")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement:.navigationBarLeading) { Button {} label: { Label("AI 服务商",systemImage:"chevron.left") } }
+                                ToolbarItem(placement:.navigationBarTrailing) { Image(systemName:"square.and.arrow.up") }
+                            }
                     }.environment(\.colorScheme,scheme).environment(\.locale,Locale(identifier:"zh-Hans"))
-                    let name = "workbuddy-" + state + "-" + (scheme == .light ? "light" : "dark") + ".png"
-                    try await renderHosted(view, scheme: scheme, destination: docs.appendingPathComponent(name))
-                    workBuddyScreenshots.append(name)
-                    checks.append("Production header and detail render nonempty: " + name)
+                    for surface in ["picker", "detail"] {
+                        let name = "workbuddy-" + surface + "-" + state + "-" + mode + ".png"
+                        if surface == "picker" {
+                            try await renderHosted(picker, scheme: scheme, destination: docs.appendingPathComponent(name))
+                        } else {
+                            try await renderHosted(detail, scheme: scheme, destination: docs.appendingPathComponent(name))
+                        }
+                        workBuddyScreenshots.append(name)
+                        checks.append("Separate production " + surface + " section renders nonempty: " + name)
+                    }
                 }
             }
             for mode in ["light", "dark"] {
-                let loadedPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-loaded-" + mode + ".png"))
-                let zeroPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-zero-" + mode + ".png"))
-                let errorPixels = try Data(contentsOf: docs.appendingPathComponent("workbuddy-error-" + mode + ".png"))
-                try check(loadedPixels != zeroPixels && zeroPixels != errorPixels && loadedPixels != errorPixels,
-                    "Loaded, zero and error produce distinct production views: " + mode)
+                for surface in ["picker", "detail"] {
+                    let prefix = "workbuddy-" + surface + "-"
+                    let loadedPixels = try Data(contentsOf: docs.appendingPathComponent(prefix + "loaded-" + mode + ".png"))
+                    let zeroPixels = try Data(contentsOf: docs.appendingPathComponent(prefix + "zero-" + mode + ".png"))
+                    let errorPixels = try Data(contentsOf: docs.appendingPathComponent(prefix + "error-" + mode + ".png"))
+                    try check(loadedPixels != zeroPixels && zeroPixels != errorPixels && loadedPixels != errorPixels,
+                        "Loaded, zero and error produce distinct separate views: " + surface + " " + mode)
+                }
             }
             let switched = ProviderInstance(id:"workbuddy-switch",providerType:.workBuddy,credentialType:.oauth)
             login(switched.id)
@@ -243,7 +260,7 @@ struct ModelPickerHeaderHarness: App {
                     try check(abs(image.size.width-width)<0.5,"Header/card fits \(Int(width))pt \(scheme)")
                 }
             }
-            try JSONSerialization.data(withJSONObject:["success":true,"checks":checks,"workBuddyScreenshots":workBuddyScreenshots],options:[.prettyPrinted,.sortedKeys]).write(to:docs.appendingPathComponent("model-picker-result.json"))
+            try JSONSerialization.data(withJSONObject:["success":true,"checks":checks,"workBuddyScreenshots":workBuddyScreenshots,"scope":"Separate picker and detail page fixtures; exact production sections, fixture navigation/model catalog; no live-account balance verification"],options:[.prettyPrinted,.sortedKeys]).write(to:docs.appendingPathComponent("model-picker-result.json"))
         } catch {
             try? JSONSerialization.data(withJSONObject:["success":false,"checks":checks,"error":error.localizedDescription],options:[.prettyPrinted]).write(to:docs.appendingPathComponent("model-picker-result.json"))
         }
@@ -256,7 +273,7 @@ struct ModelPickerHeaderHarness: App {
         }
         let previousKeyWindow = scene.windows.first(where: { $0.isKeyWindow })
         let window = UIWindow(windowScene:scene)
-        window.frame = CGRect(x:0,y:0,width:390,height:650)
+        window.frame = CGRect(x:0,y:0,width:390,height:844)
         defer { window.isHidden = true; previousKeyWindow?.makeKey() }
         window.rootViewController = controller
         window.makeKeyAndVisible()

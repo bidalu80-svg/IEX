@@ -544,11 +544,6 @@ struct AIChatView: View {
                     }
                 }
                 .overlay(alignment: .top) {
-                    ChatNavigationEdgeFade()
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-                .overlay(alignment: .top) {
                     if !isNavigationStatusCollapsed {
                         navigationStatusCapsule
                             .matchedGeometryEffect(
@@ -4885,49 +4880,10 @@ private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
 
     func body(content: Content) -> some View {
-        Group {
-            if #available(iOS 26, *) {
-                content
-                    .ignoresSafeArea(.container, edges: .top)
-                    .toolbarBackgroundVisibility(.visible, for: .navigationBar)
-            } else {
-                content
-                    .toolbarBackground(.regularMaterial, for: .navigationBar)
-                    .toolbarBackground(.visible, for: .navigationBar)
-                    .overlay(alignment: .top) {
-                        Color.clear
-                            .onGeometryChange(for: CGFloat.self) { proxy in
-                                proxy.safeAreaInsets.top
-                            } action: { topSafeAreaInset = $0 }
-                            .ignoresSafeArea()
-                            .frame(height: 0)
-                    }
-            }
-        }
-        .background(ChatNavigationBarAppearance())
-    }
-}
-
-/// Extend the translucent navigation material into the conversation without a
-/// separator or a new layout inset. The mask reaches zero at the bottom edge.
-private struct ChatNavigationEdgeFade: View {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    var body: some View {
-        Group {
-            if reduceTransparency {
-                Rectangle().fill(ChatColors.background)
-            } else {
-                Rectangle().fill(.regularMaterial)
-            }
-        }
-        .frame(height: 44)
-        .mask(LinearGradient(stops: [
-            .init(color: .black, location: 0),
-            .init(color: .black, location: 0.2),
-            .init(color: .black.opacity(0.65), location: 0.6),
-            .init(color: .clear, location: 1)
-        ], startPoint: .top, endPoint: .bottom))
+        content
+            .ignoresSafeArea(.container, edges: .top)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .background(ChatNavigationBarAppearance())
     }
 }
 
@@ -4952,6 +4908,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedScroll: UINavigationBarAppearance?
         private var installedCompact: UINavigationBarAppearance?
         private var installedCompactScroll: UINavigationBarAppearance?
+        private let frostedOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        private let fadeMask = CAGradientLayer()
 
         override func loadView() {
             view = UIView()
@@ -4966,6 +4924,40 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             super.viewDidAppear(animated)
             applyIfNeeded()
         }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            applyIfNeeded()
+        }
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            restore()
+        }
+
+        private func layoutFrostedOverlay(in navigation: UINavigationController) {
+            let bar = navigation.navigationBar
+            guard let host = bar.superview else { return }
+            if frostedOverlay.superview !== host {
+                frostedOverlay.removeFromSuperview()
+                frostedOverlay.isUserInteractionEnabled = false
+                frostedOverlay.accessibilityElementsHidden = true
+                host.insertSubview(frostedOverlay, belowSubview: bar)
+            }
+            let barBottom = bar.convert(bar.bounds, to: host).maxY
+            let height = max(1, barBottom + 48)
+            frostedOverlay.frame = CGRect(x: 0, y: 0, width: host.bounds.width, height: height)
+            fadeMask.frame = frostedOverlay.bounds
+            fadeMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
+                               UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
+            fadeMask.locations = [0, NSNumber(value: Double(max(0, barBottom - 8) / height)),
+                                  NSNumber(value: Double((barBottom + 18) / height)), 1]
+            fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
+            fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
+            frostedOverlay.layer.mask = fadeMask
+            frostedOverlay.effect = UIAccessibility.isReduceTransparencyEnabled
+                ? nil : UIBlurEffect(style: .systemMaterial)
+            frostedOverlay.backgroundColor = UIAccessibility.isReduceTransparencyEnabled
+                ? UIColor(ChatColors.background) : .clear
+        }
         func applyIfNeeded() {
             guard let navigation = navigationController else { return }
             var owner: UIViewController = self
@@ -4974,7 +4966,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             }
             guard navigation.topViewController === owner else { return }
             let target = owner.navigationItem
-            if item === target, target.standardAppearance === installed { return }
+            if item === target, target.standardAppearance === installed {
+                layoutFrostedOverlay(in: navigation)
+                return
+            }
             if item !== target {
                 restore()
                 item = target
@@ -4984,10 +4979,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 previousCompactScroll = target.compactScrollEdgeAppearance
             }
             let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance).copy()
-            appearance.backgroundEffect = UIAccessibility.isReduceTransparencyEnabled
-                ? nil : UIBlurEffect(style: .systemMaterial)
-            appearance.backgroundColor = UIColor(ChatColors.background)
-                .withAlphaComponent(UIAccessibility.isReduceTransparencyEnabled ? 1 : 0.35)
+            appearance.backgroundEffect = nil
+            appearance.backgroundImage = nil
+            appearance.backgroundColor = UIColor.clear
             appearance.shadowImage = nil
             appearance.shadowColor = UIColor.clear
             target.standardAppearance = appearance
@@ -5000,8 +4994,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             installedScroll = target.scrollEdgeAppearance
             installedCompact = target.compactAppearance
             installedCompactScroll = target.compactScrollEdgeAppearance
+            layoutFrostedOverlay(in: navigation)
         }
         func restore() {
+            frostedOverlay.removeFromSuperview()
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
             if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
@@ -5026,6 +5022,7 @@ private struct NavigationStatusCapsule: View {
                 if let provider {
                     ProviderBrandIcon(type: provider.providerType,
                                       baseURL: provider.customBaseURL, size: 18)
+                        .clipShape(Circle())
                 } else {
                     Image(systemName: "questionmark")
                         .font(.system(size: 12, weight: .medium))

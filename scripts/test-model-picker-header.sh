@@ -50,5 +50,5 @@ for attempt in $(seq 1 60); do
 done
 mkdir -p model-picker-evidence
 cp "$CONTAINER/Documents/model-picker-result.json" model-picker-evidence/
-python3 -c 'import json; d=json.load(open("model-picker-evidence/model-picker-result.json")); print(json.dumps(d,indent=2)); assert d["success"],d; assert len(d["workBuddyScreenshots"])==6,d'
+python3 -c 'import json; d=json.load(open("model-picker-evidence/model-picker-result.json")); print(json.dumps(d,indent=2)); assert d["success"],d; assert len(d["workBuddyScreenshots"])==12,d'
 cp "$CONTAINER/Documents/"*.png model-picker-evidence/
