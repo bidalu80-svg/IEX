@@ -1,6 +1,10 @@
-"""Import pinned, attributed vector brand assets. Build/runtime do not fetch icons."""
+"""Import pinned brand assets. Offline gradient rasterization needs resvg-py==0.5.0.
+
+Build/runtime do not fetch icons or depend on the importer/rendering package.
+"""
 import concurrent.futures
 import hashlib
+import importlib.metadata
 import json
 import re
 from pathlib import Path
@@ -46,7 +50,11 @@ def download(item):
     output = normalized.replace(b"currentColor", b"#000000")
     directory = ROOT / "Assets.xcassets" / f"ProviderBrand{name}.imageset"
     directory.mkdir(exist_ok=True)
-    (directory / "logo.svg").write_bytes(output)
+    source_path = directory / "logo.svg"
+    if name in ("Gemini", "Antigravity"):
+        source_path = ROOT / f"docs/provider-brand-source/{name.lower()}.svg"
+        source_path.parent.mkdir(exist_ok=True)
+    source_path.write_bytes(output)
     color = icon.endswith("-color")
     manifest = {
         "images": [{"filename": "logo.svg", "idiom": "universal"}],
@@ -55,6 +63,21 @@ def download(item):
                        "template-rendering-intent": "original" if color else "template"},
     }
     dark_hash = None
+    raster_hashes = {}
+    if name in ("Gemini", "Antigravity"):
+        # actool drops Gemini's layered transparent-gradient star and Antigravity's
+        # soft blurred gradients. Flatten the exact SVG without changing artwork.
+        import resvg_py
+        if importlib.metadata.version("resvg-py") != "0.5.0":
+            raise RuntimeError("Reproducible raster assets require resvg-py==0.5.0")
+        manifest["images"] = []
+        manifest["properties"].pop("preserves-vector-representation")
+        for scale in [1, 2, 3]:
+            filename = f"logo@{scale}x.png"
+            data = resvg_py.svg_to_bytes(svg_string=output.decode(), width=32 * scale, height=32 * scale)
+            (directory / filename).write_bytes(data)
+            manifest["images"].append({"filename": filename, "idiom": "universal", "scale": f"{scale}x"})
+            raster_hashes[filename] = hashlib.sha256(data).hexdigest()
     if name == "Kimi":
         # The source has a currentColor K and a blue dot. Keep the dot while
         # adapting only the monochrome ink to dark appearances.
@@ -67,6 +90,8 @@ def download(item):
     return {"asset": directory.name, "source": url, "license": license_name,
             "sourceSHA256": hashlib.sha256(raw).hexdigest(),
             "assetSHA256": hashlib.sha256(output).hexdigest(), "darkAssetSHA256": dark_hash,
+            "normalizedSVG": str(source_path.relative_to(ROOT)).replace("\\", "/"),
+            "rasterSHA256": raster_hashes,
             "modification": "Explicit viewBox-sized dimensions; remove web flex style; currentColor to black (white in Kimi dark appearance)"}
 
 

@@ -4984,8 +4984,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             }
             guard let appearance = (previousStandard ?? navigation.navigationBar.standardAppearance)
                 .copy() as? UINavigationBarAppearance else { return }
+            // Set color last: UIKit's shadowImage setter resets shadowColor.
+            appearance.shadowImage = nil
             appearance.shadowColor = .clear
-            appearance.shadowImage = UIImage()
             appearance.backgroundEffect = UIAccessibility.isReduceTransparencyEnabled
                 ? nil : UIBlurEffect(style: .systemUltraThinMaterial)
             appearance.backgroundColor = UIColor(ChatColors.background)
@@ -5032,11 +5033,9 @@ private struct NavigationStatusCapsule: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 26, height: 26)
+            .frame(width: 24, height: 24)
             .background(.ultraThinMaterial, in: Circle())
             .clipShape(Circle())
-            .contentShape(Circle())
-            .padding(5)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)

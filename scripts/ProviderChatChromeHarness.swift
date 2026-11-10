@@ -152,6 +152,7 @@ private struct ChromeFixture: View {
             .overlay(alignment: .top) {
                 if !collapsed {
                     NavigationStatusCapsule(provider: provider, isCollapsed: false) { collapsed.toggle() }
+                        .padding(.top, 2)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -208,6 +209,30 @@ private struct ChromeFixture: View {
             maximum = max(maximum, intensity)
         }
         return max(0, maximum - minimum)
+    }
+
+    private func opaqueExtent(_ image: UIImage) -> CGSize {
+        guard let source = image.cgImage else { return .zero }
+        let width = source.width, height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return false }
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return .zero }
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 128 {
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        return CGSize(width: CGFloat(max(0, maxX - minX + 1)) / image.scale,
+                      height: CGFloat(max(0, maxY - minY + 1)) / image.scale)
     }
 
     private func run() async {
@@ -287,11 +312,23 @@ private struct ChromeFixture: View {
                 guard let image = renderer.uiImage, let bytes = image.pngData() else {
                     throw NSError(domain: "ProviderChrome", code: -4)
                 }
-                try check(image.size.width == image.size.height && image.size.width == 36,
-                          "Provider badge keeps square 36-point bounds for circular mask: \(type.rawValue)")
+                try check(image.size.width == image.size.height && image.size.width == 24,
+                          "Provider badge keeps square 24-point bounds for circular mask: \(type.rawValue)")
                 badgeImages.append(bytes)
             }
             try check(Set(badgeImages).count == badgeImages.count, "Different selected providers render distinct badge artwork")
+            for scheme: ColorScheme in [.light, .dark] {
+                let renderer = ImageRenderer(content: ProviderBrandIcon(type: .gemini, size: 32).environment(\.colorScheme, scheme))
+                renderer.scale = 3
+                if let image = renderer.uiImage {
+                    let extent = opaqueExtent(image)
+                    diagnostics.append(["fixture": "gemini-32-\(scheme)", "opaqueWidth": extent.width, "opaqueHeight": extent.height])
+                    try check(extent.width >= 24 && extent.height >= 24,
+                              "Gemini renders its full star silhouette rather than a tiny dot: \(scheme)")
+                } else {
+                    try check(false, "Gemini icon produces an image: \(scheme)")
+                }
+            }
 
             // Exercise the actual controller's scoped apply/restore contract.
             let unrelated = UINavigationBar()
