@@ -286,9 +286,14 @@ private struct ChromeFixture: View {
             return true
         }
         guard rendered else { return 0 }
-        return stride(from: 0, to: pixels.count, by: 4).filter {
-            Int(pixels[$0 + 1]) > Int(pixels[$0]) + 25 && Int(pixels[$0 + 1]) > Int(pixels[$0 + 2]) + 10
-        }.count
+        var count = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[index])
+            let green = Int(pixels[index + 1])
+            let blue = Int(pixels[index + 2])
+            if green > red + 25 && green > blue + 10 { count += 1 }
+        }
+        return count
     }
 
     private func run() async {
