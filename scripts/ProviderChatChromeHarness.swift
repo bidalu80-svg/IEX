@@ -196,6 +196,10 @@ private struct ChromeFixture: View {
             .first { $0.layer.mask is CAGradientLayer }
     }
 
+    private func providerBadgeView(_ navigation: UINavigationController) -> UIView? {
+        navigation.navigationBar.superview?.subviews.first { $0 is UIContentView && $0.bounds.width == 24 && $0.bounds.height == 24 }
+    }
+
     private func imageContrast(_ image: UIImage) -> Int {
         guard let source = image.cgImage else { return 0 }
         var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
@@ -469,34 +473,34 @@ private struct ChromeFixture: View {
             controller.updateBadge(AnyView(expandedBadge))
             controller.applyIfNeeded()
             nav.view.layoutIfNeeded()
-            let mountedBadge = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
-            try check(mountedBadge != nil && mountedBadge?.parent === nav,
-                      "Mounted provider badge controller matches its navigation view hierarchy")
-            if let badgeView = mountedBadge?.view {
+            let mountedBadge = providerBadgeView(nav)
+            try check(mountedBadge != nil && nav.topViewController === owner,
+                      "Mounted provider content view leaves navigation's top controller unchanged")
+            if let badgeView = mountedBadge {
                 let hitPoint = badgeView.convert(CGPoint(x: badgeView.bounds.midX, y: badgeView.bounds.midY), to: nav.view)
                 let hit = nav.view.hitTest(hitPoint, with: nil)
                 try check(hit === badgeView || hit?.isDescendant(of: badgeView) == true,
                           "Visible provider badge receives hit testing above the noninteractive frost")
             }
             expandedBadge.onToggle()
-            try check(!nav.children.contains { $0 is UIHostingController<AnyView> },
+            try check(providerBadgeView(nav) == nil && nav.topViewController === owner,
                       "Expanded badge callback removes its hosted view when collapsed")
             let collapsedBadge = NavigationStatusCapsule(provider: buddy, isCollapsed: true) {
                 controller.updateBadge(AnyView(NavigationStatusCapsule(provider: buddy, isCollapsed: false, onToggle: {})))
                 controller.applyIfNeeded()
             }
             collapsedBadge.onToggle()
-            try check(nav.children.contains { $0 is UIHostingController<AnyView> },
+            try check(providerBadgeView(nav) != nil && nav.topViewController === owner,
                       "Collapsed badge callback restores provider host on expand")
-            let hostBeforeSwitch = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
+            let hostBeforeSwitch = providerBadgeView(nav)
             controller.updateBadge(AnyView(NavigationStatusCapsule(provider: open, isCollapsed: false, onToggle: {})))
             controller.applyIfNeeded()
-            let hostAfterSwitch = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
-            try check(hostBeforeSwitch === hostAfterSwitch, "Switching provider updates the existing host without duplicating child controllers")
+            let hostAfterSwitch = providerBadgeView(nav)
+            try check(hostBeforeSwitch === hostAfterSwitch && nav.topViewController === owner, "Switching provider reuses the content view without changing navigation ownership")
             controller.restore()
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
             try check(frostedOverlay(nav) == nil, "Leaving chat removes its gradient frost overlay")
-            try check(!nav.children.contains { $0 is UIHostingController<AnyView> }, "Leaving chat removes the provider badge child controller")
+            try check(providerBadgeView(nav) == nil && nav.topViewController === owner, "Leaving chat removes the provider badge view without changing navigation ownership")
 
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"

@@ -4907,7 +4907,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedCompactScroll: UINavigationBarAppearance?
         private let frostedOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
         private let fadeMask = CAGradientLayer()
-        private var badgeHost: UIHostingController<AnyView>?
+        private var badgeView: (UIView & UIContentView)?
         var onTopInset: ((CGFloat) -> Void)?
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
@@ -4915,19 +4915,21 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
 
         func updateBadge(_ badge: AnyView?) {
             guard let badge else {
-                badgeHost?.willMove(toParent: nil)
-                badgeHost?.view.removeFromSuperview()
-                badgeHost?.removeFromParent()
-                badgeHost = nil
+                badgeView?.removeFromSuperview()
+                badgeView = nil
                 return
             }
-            if let badgeHost {
-                badgeHost.rootView = badge
+            // A hosting configuration embeds SwiftUI without adding a page
+            // controller to UINavigationController's navigation stack.
+            let configuration = UIHostingConfiguration { badge }
+                .margins(.all, 0)
+                .minSize(width: 0, height: 0)
+            if let badgeView {
+                badgeView.configuration = configuration
             } else {
-                let hosting = UIHostingController(rootView: badge)
-                hosting.view.backgroundColor = .clear
-                if #available(iOS 16.4, *) { hosting.safeAreaRegions = [] }
-                badgeHost = hosting
+                let contentView = configuration.makeContentView()
+                contentView.backgroundColor = .clear
+                badgeView = contentView
             }
         }
 
@@ -4991,27 +4993,17 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 frostedOverlay.effect = reduceTransparency ? nil : UIBlurEffect(style: .systemMaterial)
                 frostedOverlay.backgroundColor = reduceTransparency ? UIColor(ChatColors.background) : .clear
             }
-            if let badgeHost {
-                // The badge view lives in navigation.view alongside the bar.
-                // Its controller must have the same navigation parent; parenting
-                // it to the page triggers UIViewControllerHierarchyInconsistency.
-                if badgeHost.parent !== navigation {
-                    badgeHost.willMove(toParent: nil)
-                    badgeHost.view.removeFromSuperview()
-                    badgeHost.removeFromParent()
-                    navigation.addChild(badgeHost)
-                    host.insertSubview(badgeHost.view, aboveSubview: frostedOverlay)
-                    badgeHost.didMove(toParent: navigation)
-                }
-                if badgeHost.view.superview !== host {
-                    badgeHost.view.removeFromSuperview()
-                    host.insertSubview(badgeHost.view, aboveSubview: frostedOverlay)
+            if let badgeView {
+                if badgeView.superview !== host {
+                    badgeView.removeFromSuperview()
+                    host.insertSubview(badgeView, aboveSubview: frostedOverlay)
                 }
                 let badgeFrame = CGRect(x: (host.bounds.width - 24) / 2,
                                         y: barBottom + 2, width: 24, height: 24)
-                if badgeHost.view.frame != badgeFrame { badgeHost.view.frame = badgeFrame }
+                if badgeView.frame != badgeFrame { badgeView.frame = badgeFrame }
             }
         }
+
         func applyIfNeeded() {
             guard let navigation = navigationController else { return }
             var owner: UIViewController = self
@@ -5051,9 +5043,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             layoutFrostedOverlay(in: navigation)
         }
         func restore() {
-            badgeHost?.willMove(toParent: nil)
-            badgeHost?.view.removeFromSuperview()
-            badgeHost?.removeFromParent()
+            badgeView?.removeFromSuperview()
             frostedOverlay.removeFromSuperview()
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
