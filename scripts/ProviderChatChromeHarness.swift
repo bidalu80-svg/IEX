@@ -461,9 +461,42 @@ private struct ChromeFixture: View {
             try check(syntheticFrost?.effect != nil || UIAccessibility.isReduceTransparencyEnabled,
                       "Gradient overlay uses real UIKit backdrop blur")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
+            var expandedBadge = NavigationStatusCapsule(provider: open, isCollapsed: false) {}
+            expandedBadge = NavigationStatusCapsule(provider: open, isCollapsed: false) {
+                controller.updateBadge(nil)
+                controller.applyIfNeeded()
+            }
+            controller.updateBadge(AnyView(expandedBadge))
+            controller.applyIfNeeded()
+            nav.view.layoutIfNeeded()
+            let mountedBadge = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
+            try check(mountedBadge != nil && mountedBadge?.parent === nav,
+                      "Mounted provider badge controller matches its navigation view hierarchy")
+            if let badgeView = mountedBadge?.view {
+                let hitPoint = badgeView.convert(CGPoint(x: badgeView.bounds.midX, y: badgeView.bounds.midY), to: nav.view)
+                let hit = nav.view.hitTest(hitPoint, with: nil)
+                try check(hit === badgeView || hit?.isDescendant(of: badgeView) == true,
+                          "Visible provider badge receives hit testing above the noninteractive frost")
+            }
+            expandedBadge.onToggle()
+            try check(!nav.children.contains { $0 is UIHostingController<AnyView> },
+                      "Expanded badge callback removes its hosted view when collapsed")
+            let collapsedBadge = NavigationStatusCapsule(provider: buddy, isCollapsed: true) {
+                controller.updateBadge(AnyView(NavigationStatusCapsule(provider: buddy, isCollapsed: false, onToggle: {})))
+                controller.applyIfNeeded()
+            }
+            collapsedBadge.onToggle()
+            try check(nav.children.contains { $0 is UIHostingController<AnyView> },
+                      "Collapsed badge callback restores provider host on expand")
+            let hostBeforeSwitch = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
+            controller.updateBadge(AnyView(NavigationStatusCapsule(provider: open, isCollapsed: false, onToggle: {})))
+            controller.applyIfNeeded()
+            let hostAfterSwitch = nav.children.compactMap { $0 as? UIHostingController<AnyView> }.first
+            try check(hostBeforeSwitch === hostAfterSwitch, "Switching provider updates the existing host without duplicating child controllers")
             controller.restore()
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
             try check(frostedOverlay(nav) == nil, "Leaving chat removes its gradient frost overlay")
+            try check(!nav.children.contains { $0 is UIHostingController<AnyView> }, "Leaving chat removes the provider badge child controller")
 
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"

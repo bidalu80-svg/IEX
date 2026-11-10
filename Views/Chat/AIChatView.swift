@@ -4992,11 +4992,16 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 frostedOverlay.backgroundColor = reduceTransparency ? UIColor(ChatColors.background) : .clear
             }
             if let badgeHost {
-                if let owner = navigation.topViewController, badgeHost.parent !== owner {
+                // The badge view lives in navigation.view alongside the bar.
+                // Its controller must have the same navigation parent; parenting
+                // it to the page triggers UIViewControllerHierarchyInconsistency.
+                if badgeHost.parent !== navigation {
                     badgeHost.willMove(toParent: nil)
+                    badgeHost.view.removeFromSuperview()
                     badgeHost.removeFromParent()
-                    owner.addChild(badgeHost)
-                    badgeHost.didMove(toParent: owner)
+                    navigation.addChild(badgeHost)
+                    host.insertSubview(badgeHost.view, aboveSubview: frostedOverlay)
+                    badgeHost.didMove(toParent: navigation)
                 }
                 if badgeHost.view.superview !== host {
                     badgeHost.view.removeFromSuperview()
