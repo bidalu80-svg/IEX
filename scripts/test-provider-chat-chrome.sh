@@ -41,7 +41,19 @@ PLIST
   printf '%s\n' "$chrome_device" > "$RUNNER_TEMP/provider-chrome-device.txt"
   printf '%s\n' "$chrome_container" > "$RUNNER_TEMP/provider-chrome-container.txt"
   rm -f "$chrome_container/Documents/provider-chrome-result.json"
-  xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN
+  # A successful install can precede FrontBoard's app registration on busy CI
+  # simulators. Retry only that documented launch result, never an app crash.
+  if ! xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN > provider-chrome-evidence/launch.log 2>&1; then
+    cat provider-chrome-evidence/launch.log
+    if ! python3 -c 'import pathlib,sys; s=pathlib.Path("provider-chrome-evidence/launch.log").read_text(); sys.exit(0 if "unknown to FrontBoard" in s else 1)'; then
+      exit 1
+    fi
+    sleep 3
+    xcrun simctl install "$chrome_device" "$chrome_app"
+    xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN | tee provider-chrome-evidence/launch-retry.log
+  else
+    cat provider-chrome-evidence/launch.log
+  fi
 fi
 if [ "$chrome_phase" = prepare ]; then exit 0; fi
 chrome_device=$(cat "$RUNNER_TEMP/provider-chrome-device.txt")

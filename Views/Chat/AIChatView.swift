@@ -543,17 +543,6 @@ struct AIChatView: View {
                             }
                     }
                 }
-                .overlay(alignment: .top) {
-                    if !isNavigationStatusCollapsed {
-                        navigationStatusCapsule
-                            .matchedGeometryEffect(
-                                id: "navigation-status-capsule",
-                                in: navigationStatusCapsuleNamespace,
-                                isSource: !isNavigationStatusCollapsed
-                            )
-                            .padding(.top, 2)
-                    }
-                }
                 .overlay(alignment: .bottom) {
                     // Tool preview + input bar stacked at the bottom.
                     // Both overlay on top of the message list for immersive scrolling.
@@ -753,7 +742,8 @@ struct AIChatView: View {
             onClose: closeChatSearch
         ))
         .environment(\.chatSessionId, vm.sessionId)
-        .modifier(NavBarStyleModifier(topSafeAreaInset: $topSafeAreaInset))
+        .modifier(NavBarStyleModifier(topSafeAreaInset: $topSafeAreaInset,
+                                      providerBadge: isNavigationStatusCollapsed ? nil : AnyView(navigationStatusCapsule)))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(showsCompactToolbarNavigation)
         // [T-ios-navbar-toolbar-host] The ENTIRE toolbar now lives inside an
@@ -4878,20 +4868,27 @@ private struct NavTitleFrameModifier: ViewModifier {
 // BEGIN ProviderChatChrome
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
+    var providerBadge: AnyView? = nil
 
     func body(content: Content) -> some View {
         content
             .ignoresSafeArea(.container, edges: .top)
             .toolbarBackground(.hidden, for: .navigationBar)
-            .background(ChatNavigationBarAppearance())
+            .background(ChatNavigationBarAppearance(providerBadge: providerBadge, onTopInset: { value in
+                if abs(topSafeAreaInset - value) > 0.5 { topSafeAreaInset = value }
+            }))
     }
 }
 
 /// Scope the separator change to this chat's navigation item. Never modify
 /// UINavigationBar.appearance(), which would change settings and provider sheets.
 private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
+    var providerBadge: AnyView? = nil
+    var onTopInset: ((CGFloat) -> Void)? = nil
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.onTopInset = onTopInset
+        controller.updateBadge(providerBadge)
         controller.applyIfNeeded()
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
@@ -4910,6 +4907,28 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedCompactScroll: UINavigationBarAppearance?
         private let frostedOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
         private let fadeMask = CAGradientLayer()
+        private var badgeHost: UIHostingController<AnyView>?
+        var onTopInset: ((CGFloat) -> Void)?
+        private var reportedTopInset: CGFloat = 0
+
+        func updateBadge(_ badge: AnyView?) {
+            guard let badge else {
+                badgeHost?.willMove(toParent: nil)
+                badgeHost?.view.removeFromSuperview()
+                badgeHost?.removeFromParent()
+                badgeHost = nil
+                return
+            }
+            if let badgeHost {
+                badgeHost.rootView = badge
+            } else {
+                let hosting = UIHostingController(rootView: badge)
+                hosting.view.backgroundColor = .clear
+                addChild(hosting)
+                hosting.didMove(toParent: self)
+                badgeHost = hosting
+            }
+        }
 
         override func loadView() {
             view = UIView()
@@ -4943,6 +4962,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 host.insertSubview(frostedOverlay, belowSubview: bar)
             }
             let barBottom = bar.convert(bar.bounds, to: host).maxY
+            if abs(reportedTopInset - barBottom) > 0.5 {
+                reportedTopInset = barBottom
+                DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
+            }
             let height = max(1, barBottom + 48)
             frostedOverlay.frame = CGRect(x: 0, y: 0, width: host.bounds.width, height: height)
             fadeMask.frame = frostedOverlay.bounds
@@ -4957,6 +4980,14 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 ? nil : UIBlurEffect(style: .systemMaterial)
             frostedOverlay.backgroundColor = UIAccessibility.isReduceTransparencyEnabled
                 ? UIColor(ChatColors.background) : .clear
+            if let badgeHost {
+                if badgeHost.view.superview !== host {
+                    badgeHost.view.removeFromSuperview()
+                    host.insertSubview(badgeHost.view, aboveSubview: frostedOverlay)
+                }
+                badgeHost.view.frame = CGRect(x: (host.bounds.width - 24) / 2,
+                                              y: barBottom + 2, width: 24, height: 24)
+            }
         }
         func applyIfNeeded() {
             guard let navigation = navigationController else { return }
@@ -4997,6 +5028,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             layoutFrostedOverlay(in: navigation)
         }
         func restore() {
+            badgeHost?.view.removeFromSuperview()
             frostedOverlay.removeFromSuperview()
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }

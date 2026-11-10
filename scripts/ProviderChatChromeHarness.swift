@@ -140,17 +140,16 @@ private struct ChromeFixture: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("当前会话服务商应随选择即时更新").font(.title2)
                         .padding(20).background(Color.blue.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
-                    ForEach(0..<8) { row in
+                    ForEach(0..<12) { row in
                         Text("消息 \(row + 1)：保留聊天滚动与模型切换，顶部以半透明材质平滑过渡。")
                             .padding().frame(maxWidth: .infinity, alignment: .leading)
                     }
-                }.padding(.horizontal, 16)
-            }
-            .overlay(alignment: .top) {
-                if !collapsed {
-                    NavigationStatusCapsule(provider: provider, isCollapsed: false) { collapsed.toggle() }
-                        .padding(.top, 2)
                 }
+                // The production UICollectionView automatically adjusts its
+                // content inset. Match that in this SwiftUI-only fixture while
+                // keeping its viewport extended behind the navigation bar.
+                .padding(.top, inset)
+                .padding(.horizontal, 16)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -167,7 +166,8 @@ private struct ChromeFixture: View {
                 ToolbarItem(placement: .navigationBarLeading) { Image(systemName: "line.3.horizontal") }
                 ToolbarItem(placement: .navigationBarTrailing) { Image(systemName: "gearshape") }
             }
-            .modifier(NavBarStyleModifier(topSafeAreaInset: $inset))
+            .modifier(NavBarStyleModifier(topSafeAreaInset: $inset, providerBadge: collapsed ? nil :
+                AnyView(NavigationStatusCapsule(provider: provider, isCollapsed: false) { collapsed.toggle() })))
         }
     }
 }
@@ -268,6 +268,27 @@ private struct ChromeFixture: View {
             if (values.max() ?? 0) - (values.min() ?? 0) > 40 { colored += 1 }
         }
         return Double(colored) / 4096
+    }
+
+    private func greenPixelCount(_ image: UIImage, around point: CGPoint) -> Int {
+        guard let source = image.cgImage else { return 0 }
+        let rect = CGRect(x: max(0, point.x - 15) * image.scale, y: max(0, point.y - 15) * image.scale,
+                          width: 30 * image.scale, height: 30 * image.scale)
+        guard let crop = source.cropping(to: rect) else { return 0 }
+        let width = crop.width, height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return false }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return 0 }
+        return stride(from: 0, to: pixels.count, by: 4).filter {
+            Int(pixels[$0 + 1]) > Int(pixels[$0]) + 25 && Int(pixels[$0 + 1]) > Int(pixels[$0 + 2]) + 10
+        }.count
     }
 
     private func run() async {
@@ -491,6 +512,12 @@ private struct ChromeFixture: View {
                         let file = "provider-chrome-navbar-\(theme)-\(Int(width))-\(large ? "large" : "normal").png"
                         try image.pngData()!.write(to: docs.appendingPathComponent(file))
                         screenshots.append(file)
+                        let barBottomInHost = navigation.map { $0.navigationBar.convert($0.navigationBar.bounds, to: host.view).maxY } ?? 0
+                        let badgeCenter = CGPoint(x: host.view.bounds.midX, y: barBottomInHost + 14)
+                        let badgePixels = greenPixelCount(image, around: badgeCenter)
+                        diagnostics.append(["fixture": "visible-badge-\(theme)-\(Int(width))-\(large)", "greenPixels": badgePixels,
+                                            "expectedCenterY": badgeCenter.y])
+                        try check(badgePixels > 30, "Current provider badge is visibly above frost below navigation: \(theme)-\(Int(width))-\(large)")
                         diagnostics.append(["screenshot": file, "drawHierarchySucceeded": drawn,
                                             "contrast": imageContrast(image), "windowHidden": window.isHidden,
                                             "hostAttachedToWindow": host.view.window != nil])
@@ -514,6 +541,8 @@ private struct ChromeFixture: View {
                                 let scrolledFile = "provider-chrome-navbar-\(theme)-\(Int(width))-scrolled.png"
                                 try scrolledImage.pngData()!.write(to: docs.appendingPathComponent(scrolledFile))
                                 screenshots.append(scrolledFile)
+                                try check(greenPixelCount(scrolledImage, around: badgeCenter) > 30,
+                                          "Provider badge remains visible when messages scroll beneath frost: \(theme)-\(Int(width))")
                                 try check(drawn && imageContrast(scrolledImage) > 24, "Scrolled navigation screenshot contains actual rendered messages: \(theme)-\(Int(width))")
                             } else {
                                 try check(false, "Actual message scroll view exists: \(theme)-\(Int(width))")
