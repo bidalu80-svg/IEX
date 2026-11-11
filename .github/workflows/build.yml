@@ -969,8 +969,8 @@ jobs:
           ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
           APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
           test -d "$APP_AUDIT"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.4"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "8"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "9"
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_AUDIT/Info.plist")" = "16.0"
           xcrun vtool -show-build "$APP_AUDIT/Ze" | tee ios-deployment-audit.log
           python3 - "$APP_AUDIT/Info.plist" ios-deployment-audit.log <<'PYIOS'
