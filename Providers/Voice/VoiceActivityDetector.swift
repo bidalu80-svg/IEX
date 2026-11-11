@@ -143,35 +143,51 @@ final class VoiceActivityDetector: NSObject {
 
     // MARK: - Control
 
+    #if DEBUG
+    /// Fails after real session acquisition but before microphone/tap setup.
+    /// Used only by the in-app cleanup regression; never enabled by user settings.
+    var debugStartFailureAfterSessionAcquired: Error?
+    #endif
+
     /// Begin listening. Caller must hold microphone permission first.
     func start() throws {
         guard !isRunning else { return }
         try configureSession()
-        try setupEngineAndVAD()
-        // `audioEngine.start()` can throw an Objective-C NSException (not a Swift
-        // Error) when the engine/route is in a bad state — Swift `try` can't
-        // catch it and it crashes via SIGABRT. Wrap in noff_try_objc.
-        var engineError: Error?
-        let started = noff_try_objc {
-            do { try self.audioEngine.start() } catch { engineError = error }
-        }
-        if let engineError {
-            VoiceLog.log("audioEngine start failed: \(engineError.localizedDescription)")
-            throw engineError
-        }
-        guard started else {
-            VoiceLog.log("audioEngine start threw ObjC exception")
+        do {
+            #if DEBUG
+            if let injectedError = debugStartFailureAfterSessionAcquired {
+                throw injectedError
+            }
+            #endif
+            try setupEngineAndVAD()
+            // Engine startup can throw either Swift Error or Objective-C exception.
+            // Both failures leave isRunning false and must balance session ownership.
+            var engineError: Error?
+            let started = noff_try_objc {
+                do { try self.audioEngine.start() } catch { engineError = error }
+            }
+            if let engineError {
+                VoiceLog.log("audioEngine start failed: \(engineError.localizedDescription)")
+                throw engineError
+            }
+            guard started else {
+                VoiceLog.log("audioEngine start threw ObjC exception")
+                throw VoiceProviderError.parseError("Audio engine failed to start")
+            }
+            VoiceLog.log("audioEngine started OK; isRunning=true")
+            rawAudioBuffer.removeAll(keepingCapacity: true)
+            samplesSinceSegmentEnd = 0
+            rawAudioStartTime = ProcessInfo.processInfo.systemUptime
+            isRunning = true
+            interruptedWhileRunning = false
+            registerSessionObservers()
+            logger.info("VAD started")
+        } catch {
+            // stop() intentionally ignores non-running engines; startup owns this
+            // failure cleanup so every acquired capture/suspension is released once.
             tearDown()
-            throw VoiceProviderError.parseError("Audio engine failed to start")
+            throw error
         }
-        VoiceLog.log("audioEngine started OK; isRunning=true")
-        rawAudioBuffer.removeAll(keepingCapacity: true)
-        samplesSinceSegmentEnd = 0
-        rawAudioStartTime = ProcessInfo.processInfo.systemUptime
-        isRunning = true
-        interruptedWhileRunning = false
-        registerSessionObservers()
-        logger.info("VAD started")
     }
 
     // MARK: - Interruption / route-change recovery (C2)

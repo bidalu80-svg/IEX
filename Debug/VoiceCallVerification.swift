@@ -25,6 +25,34 @@ import Foundation
                                             userInfo: [NSLocalizedDescriptionKey: message]) }
             checks.append(message)
         }
+        // Exercise the shipping VAD start/catch/teardown path without requesting
+        // microphone access. Keep an unrelated suspension held to detect both
+        // leaked ownership and accidental double-resume.
+        try require(!AudioSessionCoordinator.shared.isCapturing,
+                    "VAD startup-failure fixture begins without another recorder")
+        let backgroundAudio = BackgroundKeepAliveManager.shared
+        let originalSuspensions = backgroundAudio.silentAudioSuspendCount
+        backgroundAudio.suspendSilentAudioForMedia(caller: "VoiceCallVerification.sentinel")
+        do {
+            defer { backgroundAudio.resumeSilentAudioForMedia(caller: "VoiceCallVerification.sentinel") }
+            let detector = VoiceActivityDetector()
+            detector.debugStartFailureAfterSessionAcquired = VoiceProviderError.parseError("Injected VAD startup failure")
+            for attempt in 0..<20 {
+                var rejected = false
+                do { try detector.start() } catch { rejected = true }
+                try require(rejected && !detector.isRunning,
+                            "VAD startup failure \(attempt) leaves no running engine")
+                try require(!AudioSessionCoordinator.shared.isCapturing,
+                            "VAD startup failure \(attempt) releases capture intent")
+                try require(backgroundAudio.silentAudioSuspendCount == originalSuspensions + 1,
+                            "VAD startup failure \(attempt) balances only its own suspension")
+                detector.stop()
+                try require(backgroundAudio.silentAudioSuspendCount == originalSuspensions + 1,
+                            "VAD stop after failure \(attempt) does not double-release")
+            }
+        }
+        try require(backgroundAudio.silentAudioSuspendCount == originalSuspensions,
+                    "VAD failure fixture restores original background audio ownership")
         let audio = Audio()
         let call = VoiceCallCoordinator(audio: audio)
         let vm = AIChatViewModel()

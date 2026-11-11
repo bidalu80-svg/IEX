@@ -59,6 +59,11 @@ final class VoiceCallUITests: XCTestCase {
 
     @MainActor
     private func save(_ app: XCUIApplication, _ name: String) {
+        // AX switches to the destination tree before SwiftUI's 0.42 s spring
+        // has visually settled. This wait is for screenshot sampling only;
+        // control assertions still run against actual events with their limits.
+        // Keep the shipping animation enabled so the image is its final frame.
+        Thread.sleep(forTimeInterval: 0.8)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "voice-call-" + name
         attachment.lifetime = .keepAlways
