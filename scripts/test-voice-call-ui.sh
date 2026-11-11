@@ -28,10 +28,10 @@ assert len(targets)==1
 for t in targets:
     t['UITargetAppPath']=sys.argv[2]
     t['UITargetAppBundleIdentifier']='com.ze.voice-call-harness'
-(work/'VoiceCall.xctestrun').write_bytes(plistlib.dumps(d))
+(products/'VoiceCall.xctestrun').write_bytes(plistlib.dumps(d))
 PY
 set +e
-xcodebuild test-without-building -xctestrun "$voice_work/VoiceCall.xctestrun" -destination "platform=iOS Simulator,id=$voice_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -disable-concurrent-destination-testing -resultBundlePath voice-call-ui-evidence/VoiceCall.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 > voice-call-ui-evidence/test.log 2>&1
+xcodebuild test-without-building -xctestrun "$voice_work/DerivedData/Build/Products/VoiceCall.xctestrun" -destination "platform=iOS Simulator,id=$voice_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -disable-concurrent-destination-testing -resultBundlePath voice-call-ui-evidence/VoiceCall.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 > voice-call-ui-evidence/test.log 2>&1
 voice_result=$?
 set -e
 cat voice-call-ui-evidence/test.log

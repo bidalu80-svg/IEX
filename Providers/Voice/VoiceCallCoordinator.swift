@@ -15,7 +15,7 @@ protocol VoiceCallAudio: AnyObject {
     func transcribe(_ data: Data) async throws -> String
     func speak(_ text: String, onLevel: @escaping (Float) -> Void) async throws
     func stopPlayback()
-    func release()
+    func releaseResources()
 }
 
 @MainActor
@@ -88,7 +88,7 @@ final class VoiceCallCoordinator: ObservableObject {
         invalidateTurn()
         preparationTask?.cancel()
         preparationTask = nil
-        audio.release()
+        audio.releaseResources()
         prepared = false
         isActive = false
         isMuted = false

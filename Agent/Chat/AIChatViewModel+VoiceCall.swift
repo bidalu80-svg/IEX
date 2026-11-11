@@ -23,18 +23,30 @@ enum VoiceCallSpeechProjection {
                     fence = nil
                     fenceCount = 0
                 }
+                result.append("")
                 continue
             }
             if count >= 3 {
                 fence = marker
                 fenceCount = count
+                result.append("")
                 continue
             }
             // Four-space/tab indented Markdown code is not spoken either.
-            if line.hasPrefix("    ") || line.hasPrefix("\t") { continue }
+            if line.hasPrefix("    ") || line.hasPrefix("\t") {
+                result.append("")
+                continue
+            }
+            // A streamed '~' / '~~' may become a fence next token. Leading
+            // spaces may become indented code. Never publish these ambiguous
+            // prefixes, since audio already queued cannot be taken back.
+            if trimmed.isEmpty || trimmed.allSatisfy({ $0 == "~" }) {
+                result.append("")
+                continue
+            }
             var inlineDelimiter = 0
             var visible = ""
-            let characters = Array(line)
+            let characters = Array(line.drop(while: { $0 == " " || $0 == "\t" }))
             var index = 0
             while index < characters.count {
                 if characters[index] == "`" {
@@ -113,6 +125,7 @@ extension AIChatViewModel {
         voiceCallSessionID = sessionId // nil -> real ID is allowed for the first turn.
         voiceCallTurnID = turnID
         voiceCallText = ""
+        voiceCallTextBlocks = []
         voiceCallLastProjection = .distantPast
         voiceCallMessageStart = messages.count
         send(voiceCallText: text, voiceCallTurnID: turnID)
@@ -121,17 +134,33 @@ extension AIChatViewModel {
 
     func appendVoiceCallText(_ delta: String, turnID: UUID) {
         guard voiceCallTurnID == turnID, voiceCallCoordinator?.isActive == true else { return }
+        if voiceCallTextBlocks.isEmpty { voiceCallTextBlocks.append("") }
+        voiceCallTextBlocks[voiceCallTextBlocks.count - 1] += delta
         voiceCallText += delta
         // Avoid rescanning a long streamed Markdown answer on every token.
         guard Date().timeIntervalSince(voiceCallLastProjection) >= 0.15 else { return }
         voiceCallLastProjection = Date()
-        voiceCallCoordinator?.receiveAssistantText(VoiceCallSpeechProjection.visibleText(voiceCallText), turnID: turnID)
+        voiceCallCoordinator?.receiveAssistantText(projectedVoiceCallText, turnID: turnID)
+    }
+
+    func beginVoiceCallTextBlock(turnID: UUID) {
+        guard voiceCallTurnID == turnID, voiceCallCoordinator?.isActive == true else { return }
+        if !voiceCallTextBlocks.isEmpty { voiceCallText += "\n" }
+        voiceCallTextBlocks.append("")
+        voiceCallLastProjection = .distantPast
+        voiceCallCoordinator?.receiveAssistantText(projectedVoiceCallText, turnID: turnID)
+    }
+
+    private var projectedVoiceCallText: String {
+        // Each visible block owns its Markdown context. An unfinished fence in
+        // a pre-tool block must not swallow a later tool-round's final answer.
+        voiceCallTextBlocks.map(VoiceCallSpeechProjection.visibleText).joined(separator: "\n")
     }
 
     func finishVoiceCallTurn(_ turnID: UUID, error: String? = nil) {
         if voiceCallRetiringTurnID == turnID { voiceCallRetiringTurnID = nil }
         guard voiceCallTurnID == turnID else { return }
-        voiceCallCoordinator?.receiveAssistantText(VoiceCallSpeechProjection.visibleText(voiceCallText), turnID: turnID)
+        voiceCallCoordinator?.receiveAssistantText(projectedVoiceCallText, turnID: turnID)
         voiceCallTurnID = nil // clear ownership before invoking client callbacks
         voiceCallSessionID = sessionId
         let assistantError = messages.dropFirst(min(voiceCallMessageStart, messages.count))
@@ -147,5 +176,17 @@ extension AIChatViewModel {
         voiceCallRetiringTurnID = turnID
         if isProcessing { cancel() }
         else { voiceCallRetiringTurnID = nil }
+    }
+
+    /// Once partial text may have been spoken, automatic regeneration would
+    /// replay it. Stop only this call-owned task; ordinary text retry is intact.
+    func pauseVoiceCallAfterStreamError(_ error: Error, turnID: UUID) -> Bool {
+        guard voiceCallTurnID == turnID, !voiceCallText.isEmpty,
+              let coordinator = voiceCallCoordinator, coordinator.isActive else { return false }
+        coordinator.pause(reason: "回复连接中断，通话已暂停，避免重复播报。\n\(error.localizedDescription)")
+        // pause invokes the owner's cancellation synchronously in production;
+        // the token guard makes this idempotent and safe for injected clients.
+        cancelVoiceCallTurn(turnID)
+        return true
     }
 }

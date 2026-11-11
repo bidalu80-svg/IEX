@@ -338,6 +338,9 @@ extension AIChatViewModel {
                         result.thinkingText = ""
                     }
                     if currentTextBlockIdx == nil {
+                        if let callTurnID {
+                            await MainActor.run { self.beginVoiceCallTextBlock(turnID: callTurnID) }
+                        }
                         let idx = await MainActor.run {
                             guard msgIdx < messages.count else { return -1 }
                             let blockCount = messages[msgIdx].blocks.count
@@ -949,7 +952,24 @@ extension AIChatViewModel {
                 }
             }
         }
-        if let err = _streamError { throw err }
+        if let err = _streamError {
+            if let callTurnID {
+                let paused = await MainActor.run {
+                    // Preserve the final throttled partial text before the call
+                    // cancels its task. No regenerated audio may replay it.
+                    if let blockIdx = currentTextBlockIdx, !result.assistantText.isEmpty,
+                       msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                        self.setStreamingTextBlockContent(
+                            msgIdx: msgIdx, blockIdx: blockIdx, text: result.assistantText,
+                            parsedMarkdown: MarkdownContent(prepareMarkdownForRender(result.assistantText)),
+                            cacheAttributedString: true, requestScroll: false)
+                    }
+                    return self.pauseVoiceCallAfterStreamError(err, turnID: callTurnID)
+                }
+                if paused { throw CancellationError() }
+            }
+            throw err
+        }
         // Stream ended cleanly. First drain any un-extracted tail past
         // spokenTextOffset: the streaming look-ahead in extractSentencesStatic
         // intentionally STOPS on a digit-trailing `.`/`,` at the buffer end

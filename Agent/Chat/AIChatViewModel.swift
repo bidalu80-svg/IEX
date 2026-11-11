@@ -2127,6 +2127,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     var voiceCallTurnID: UUID?
     var voiceCallRetiringTurnID: UUID?
     var voiceCallText = ""
+    var voiceCallTextBlocks: [String] = []
     var voiceCallLastProjection = Date.distantPast
     var voiceCallSessionID: String?
     var voiceCallMessageStart = 0

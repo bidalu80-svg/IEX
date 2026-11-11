@@ -42,7 +42,7 @@ private final class TestCallAudio: VoiceCallAudio {
     // Intentionally hostile: cancellation doesn't finish our async callbacks.
     // The coordinator must reject their later results by generation/turn ID.
     func stopPlayback() { stopPlaybackCount += 1 }
-    func release() { releaseCount += 1; stopCapture(); stopPlayback() }
+    func releaseResources() { releaseCount += 1; stopCapture(); stopPlayback() }
 }
 
 @main

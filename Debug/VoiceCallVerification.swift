@@ -15,7 +15,7 @@ import Foundation
         func transcribe(_ data: Data) async throws -> String { "fixture" }
         func speak(_ text: String, onLevel: @escaping (Float) -> Void) async throws {}
         func stopPlayback() {}
-        func release() {}
+        func releaseResources() {}
     }
 
     static func runChecks() async throws -> [String] {
@@ -90,6 +90,19 @@ import Foundation
         try require(call.onSend?("不可覆盖任务", UUID()) == false && vm.messages.count == count,
                     "Call bridge rejects a busy conversation without sending another turn")
         vm.isProcessing = false
+        call.resume()
+        let interruptedTurn = UUID()
+        vm.voiceCallTurnID = interruptedTurn
+        vm.voiceCallText = ""
+        let networkError = NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)
+        try require(!vm.pauseVoiceCallAfterStreamError(networkError, turnID: interruptedTurn),
+                    "An error before voice text leaves normal retry available")
+        vm.voiceCallText = "已经播报的部分。"
+        try require(!vm.pauseVoiceCallAfterStreamError(networkError, turnID: UUID()),
+                    "A stale stream failure cannot pause another voice turn")
+        try require(vm.pauseVoiceCallAfterStreamError(networkError, turnID: interruptedTurn)
+                    && call.state == .paused && vm.voiceCallTurnID == nil,
+                    "A partial voice stream failure pauses and invalidates its owner before retry")
         return checks
     }
 }

@@ -254,7 +254,7 @@ final class VoiceCallAudioDriver: NSObject, VoiceCallAudio {
         else { continuation?.resume() }
     }
 
-    func release() {
+    func releaseResources() {
         stopCapture()
         stopPlayback()
         inputProvider = nil
