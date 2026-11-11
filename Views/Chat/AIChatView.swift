@@ -4978,10 +4978,23 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 fadeMask.frame = frostedOverlay.bounds
-                fadeMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
-                                   UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
-                fadeMask.locations = [0, NSNumber(value: Double(max(0, barBottom - 8) / height)),
-                                      NSNumber(value: Double((barBottom + 9) / height)), 1]
+                // Fade before the bar ends, not just in the short extension.
+                // A smoothstep curve has a flat slope at both ends, avoiding
+                // the dense lower shelf and sudden cutoff over dark images.
+                let fadeStart = max(0, barBottom - 32)
+                let fadeEnd = min(height, barBottom + 16)
+                var colors = [UIColor.black.cgColor]
+                var locations = [NSNumber(value: 0)]
+                for step in 0...16 {
+                    let t = CGFloat(step) / 16
+                    let alpha = (1 - t) * (1 - t) * (1 + 2 * t)
+                    colors.append(UIColor.black.withAlphaComponent(alpha).cgColor)
+                    locations.append(NSNumber(value: Double((fadeStart + (fadeEnd - fadeStart) * t) / height)))
+                }
+                colors.append(UIColor.clear.cgColor)
+                locations.append(1)
+                fadeMask.colors = colors
+                fadeMask.locations = locations
                 fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
                 fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
                 frostedOverlay.layer.mask = fadeMask

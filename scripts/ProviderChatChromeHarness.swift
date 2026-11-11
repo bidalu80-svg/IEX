@@ -172,6 +172,28 @@ private struct ChromeFixture: View {
     }
 }
 
+// A deterministic high-contrast backdrop makes a dense material tail visible.
+// Both mask variants are photographed over this exact view in the same mounted
+// navigation hierarchy, without changing the scroll position or material.
+private final class FrostTailBackdrop: UIView {
+    override func draw(_ rect: CGRect) {
+        UIColor.black.setFill()
+        UIRectFill(bounds)
+        let colors: [UIColor] = [.systemPink, .systemCyan, .systemYellow, .systemGreen]
+        for row in 0..<Int(ceil(bounds.height / 24)) {
+            let y = CGFloat(row) * 24 + 6
+            for column in 0..<4 {
+                colors[(row + column) % colors.count].setFill()
+                UIBezierPath(ovalIn: CGRect(x: CGFloat(column) * 17 + 12, y: y, width: 9, height: 9)).fill()
+            }
+            let text = "渐隐对照 · 彩点与文字 \(row) Aa 123"
+            (text as NSString).draw(at: CGPoint(x: 90, y: y - 3), withAttributes: [
+                .font: UIFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: UIColor.white
+            ])
+        }
+    }
+}
+
 @MainActor private final class ProviderChromeDelegate: NSObject, UIApplicationDelegate {
     var window: UIWindow?
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
@@ -194,6 +216,21 @@ private struct ChromeFixture: View {
     private func frostedOverlay(_ navigation: UINavigationController) -> UIVisualEffectView? {
         navigation.navigationBar.superview?.subviews.compactMap { $0 as? UIVisualEffectView }
             .first { $0.layer.mask is CAGradientLayer }
+    }
+
+    private func gradientAlpha(_ mask: CAGradientLayer, at y: CGFloat) -> CGFloat? {
+        guard let colors = mask.colors as? [CGColor], let locations = mask.locations,
+              colors.count == locations.count, colors.count >= 2, mask.bounds.height > 0 else { return nil }
+        let position = y / mask.bounds.height
+        for index in 1..<locations.count {
+            let start = CGFloat(truncating: locations[index - 1])
+            let end = CGFloat(truncating: locations[index])
+            if position <= end {
+                let fraction = end > start ? min(1, max(0, (position - start) / (end - start))) : 0
+                return colors[index - 1].alpha + (colors[index].alpha - colors[index - 1].alpha) * fraction
+            }
+        }
+        return colors.last?.alpha
     }
 
     private func providerBadgeView(_ navigation: UINavigationController) -> UIView? {
@@ -549,6 +586,11 @@ private struct ChromeFixture: View {
                             ])
                             try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - (barBottom + 24)) <= 1 && mask != nil,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
+                            let lowerTailAlpha = mask.flatMap { gradientAlpha($0, at: barBottom + 9) }
+                            diagnostics.append(["fixture": "lower-tail-\(theme)-\(Int(width))-\(large)",
+                                                "offsetBelowBar": 9, "alpha": lowerTailAlpha ?? -1])
+                            try check(lowerTailAlpha.map { $0 >= 0 && $0 < 0.1 } ?? false,
+                                      "Production frost lower tail is below 10 percent at bar bottom plus 9pt: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([
                             "fixture": "\(theme)-\(Int(width))-\(large)",
@@ -599,6 +641,46 @@ private struct ChromeFixture: View {
                                 try check(greenPixelCount(scrolledImage, around: badgeCenter) > 30,
                                           "Provider badge remains visible when messages scroll beneath frost: \(theme)-\(Int(width))")
                                 try check(drawn && imageContrast(scrolledImage) > 24, "Scrolled navigation screenshot contains actual rendered messages: \(theme)-\(Int(width))")
+                                if width == 390, let navigation, let frost = frostedOverlay(navigation),
+                                   let frostHost = frost.superview, let productionMask = frost.layer.mask as? CAGradientLayer {
+                                    let backdrop = FrostTailBackdrop(frame: frostHost.bounds)
+                                    backdrop.isOpaque = true
+                                    backdrop.isUserInteractionEnabled = false
+                                    frostHost.insertSubview(backdrop, belowSubview: frost)
+                                    defer {
+                                        frost.layer.mask = productionMask
+                                        backdrop.removeFromSuperview()
+                                    }
+                                    let bar = navigation.navigationBar
+                                    let bottom = bar.convert(bar.bounds, to: frostHost).maxY
+                                    let legacyMask = CAGradientLayer()
+                                    legacyMask.frame = productionMask.frame
+                                    legacyMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
+                                                         UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
+                                    legacyMask.locations = [0, NSNumber(value: Double(max(0, bottom - 8) / frost.bounds.height)),
+                                                            NSNumber(value: Double((bottom + 9) / frost.bounds.height)), 1]
+                                    legacyMask.startPoint = CGPoint(x: 0.5, y: 0)
+                                    legacyMask.endPoint = CGPoint(x: 0.5, y: 1)
+                                    for (variant, comparisonMask) in [("legacy", legacyMask), ("production", productionMask)] {
+                                        CATransaction.begin()
+                                        CATransaction.setDisableActions(true)
+                                        frost.layer.mask = comparisonMask
+                                        CATransaction.commit()
+                                        try await Task.sleep(nanoseconds: 200_000_000)
+                                        let comparison = renderer.image { _ in
+                                            drawn = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+                                        }
+                                        let comparisonFile = "provider-chrome-tail-\(theme)-\(variant).png"
+                                        try comparison.pngData()!.write(to: docs.appendingPathComponent(comparisonFile))
+                                        screenshots.append(comparisonFile)
+                                        diagnostics.append(["screenshot": comparisonFile, "variant": variant,
+                                                            "background": "identical-black-colored-dots-white-text",
+                                                            "scrollOffset": scroll.contentOffset.y, "barBottom": bottom,
+                                                            "alphaAtPlus9": gradientAlpha(comparisonMask, at: bottom + 9) ?? -1])
+                                        try check(drawn && imageContrast(comparison) > 24,
+                                                  "Tail comparison renders the same mounted navigation and black pattern: \(theme)-\(variant)")
+                                    }
+                                }
                             } else {
                                 try check(false, "Actual message scroll view exists: \(theme)-\(Int(width))")
                             }
