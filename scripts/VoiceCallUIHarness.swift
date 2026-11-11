@@ -34,9 +34,24 @@ private struct VoiceCallFixture: View {
                         Text("通话已结束").accessibilityIdentifier("fixture.ended")
                     }
                     Text("聊天消息保留在当前会话里。")
-                    Button("模拟回复") { responding = true }.accessibilityIdentifier("fixture.respond")
-                    Button("模拟系统中断") { paused = true }.accessibilityIdentifier("fixture.pause")
                 }
+            }
+            // Test controls must not move with the panel's spring transition.
+            // Otherwise XCTest can resolve the old frame and tap its neighbour
+            // while the production panel is still collapsing above it.
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    Button("模拟回复") { responding = true }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("fixture.respond")
+                    Button("模拟系统中断") { paused = true }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("fixture.pause")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.regularMaterial)
+                .buttonStyle(.bordered)
             }
             .navigationTitle("语音交互验证")
         }
