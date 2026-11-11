@@ -4873,6 +4873,8 @@ private final class ChatProgressiveFrostView: UIVisualEffectView {
     private var variableFilter: NSObject?
     private weak var backdrop: CALayer?
     private let fallbackMask = CAGradientLayer()
+    private let titleTint = CAGradientLayer()
+    private var lastStyle: UIUserInterfaceStyle = .unspecified
     private var lastSize = CGSize.zero
     private var lastBottom: CGFloat = -1
     private var lastScale: CGFloat = 0
@@ -4882,6 +4884,9 @@ private final class ChatProgressiveFrostView: UIVisualEffectView {
     init(frame: CGRect) {
         super.init(effect: UIBlurEffect(style: .regular))
         self.frame = frame
+        titleTint.startPoint = CGPoint(x: 0.5, y: 0)
+        titleTint.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.addSublayer(titleTint)
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         accessibilityIdentifier = "chat-progressive-frost"
@@ -4919,12 +4924,29 @@ private final class ChatProgressiveFrostView: UIVisualEffectView {
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         let scale = window?.screen.scale ?? traitCollection.displayScale
-        guard bounds.size != lastSize || barBottom != lastBottom || scale != lastScale || lastReduced != reduceTransparency else { return }
+        let style = traitCollection.userInterfaceStyle
+        guard bounds.size != lastSize || barBottom != lastBottom || scale != lastScale || lastReduced != reduceTransparency || lastStyle != style else { return }
+        lastStyle = style
         lastSize = bounds.size
         lastBottom = barBottom
         lastScale = scale
         lastReduced = reduceTransparency
         guard bounds.width > 0, bounds.height > 0 else { return }
+        // Keep navigation labels legible over images. This tint ends inside
+        // the bar; the blur-only tail below it has no white/gray plate.
+        let tint = style == .dark ? UIColor.black : UIColor.white
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        titleTint.frame = bounds
+        titleTint.colors = [tint.withAlphaComponent(0.96).cgColor,
+                            tint.withAlphaComponent(0.82).cgColor, tint.withAlphaComponent(0.65).cgColor,
+                            tint.withAlphaComponent(0.18).cgColor, tint.withAlphaComponent(0).cgColor]
+        titleTint.locations = [0, NSNumber(value: Double(max(0, barBottom - 36) / bounds.height)),
+                               NSNumber(value: Double(max(0, barBottom - 18) / bounds.height)),
+                               NSNumber(value: Double(max(0, barBottom - 5) / bounds.height)),
+                               NSNumber(value: Double(barBottom / bounds.height))]
+        titleTint.isHidden = reduceTransparency
+        CATransaction.commit()
         let fadeStart = max(0, barBottom - 44)
         let fadeEnd = min(bounds.height, barBottom + 18)
         if reduceTransparency {
