@@ -180,8 +180,10 @@ import UIKit
          "midX": rect.midX, "maxY": rect.maxY]
     }
 
-    /// Read the presentation tree as well as final layout. Model-layer geometry
-    /// alone jumps immediately to the target and cannot document a transition.
+    /// Preserve both UIKit conversion and presentation geometry. SwiftUI may
+    /// update ancestor transforms during a transition, so even `layout` here is
+    /// not guaranteed to be the final target. Assert geometry only after the
+    /// visible presentation has settled.
     private static func markerData(_ view: UIView, window: UIWindow) -> [String: Any] {
         let layout = view.convert(view.bounds, to: window)
         let presentation = view.layer.presentation()
@@ -249,16 +251,69 @@ import UIKit
                                         userInfo: ["sessionId": sessionID, "action": action])
     }
 
+    private static func waitForVoicePresentation(_ action: String, window: UIWindow) async throws {
+        var previous: [String: CGFloat]?
+        var stableSamples = 0
+        var samples: [[String: Any]] = []
+        defer {
+            voiceLayoutDiagnostics.append(["phase": "\(action)-await-settled", "samples": samples])
+            try? writeVoiceLayoutDiagnostics()
+        }
+        // Keep waitFor's existing 10s bound and 0.1s sampling. This waits for
+        // rendered state, rather than assuming async coordinator startup and
+        // the ensuing spring both fit into one second after notification.
+        try await waitFor("\(action): production voice presentation settled") {
+            if action == "stop" {
+                let absent = !descendants(window).contains { $0.accessibilityIdentifier == "chat.verify.voicePanel" }
+                samples.append(["panelAbsent": absent])
+                stableSamples = absent ? stableSamples + 1 : 0
+                return stableSamples >= 3
+            }
+            guard let panel = marker("chat.verify.voicePanel", in: window) else {
+                previous = nil
+                stableSamples = 0
+                samples.append(["panelPresent": false])
+                return false
+            }
+            let data = markerData(panel, window: window)
+            samples.append(data)
+            guard let opacity = data["opacity"] as? Float, opacity >= 0.99,
+                  let rect = data["presentation"] as? [String: CGFloat] else {
+                previous = nil
+                stableSamples = 0
+                return false
+            }
+            let unchanged = previous.map { old in
+                ["x", "y", "width", "height"].allSatisfy { key in
+                    guard let before = old[key], let now = rect[key] else { return false }
+                    return abs(before - now) <= 0.1
+                }
+            } ?? false
+            stableSamples = unchanged ? stableSamples + 1 : 1
+            previous = rect
+            return stableSamples >= 3
+        }
+        try require(stableSamples >= 3, "\(action): presentation settled for three consecutive 0.1s samples")
+    }
+
     /// Retain screenshots in memory while sampling so PNG encoding/file IO do
     /// not occupy the transition itself. Actual elapsed times are recorded: this
     /// is animation evidence, not an FPS/performance benchmark.
     private static func sampleVoiceTransition(_ action: String, sessionID: String,
                                               window: UIWindow) async throws {
+        let requested = CACurrentMediaTime()
+        voiceLayoutAction(action, sessionID: sessionID)
+        if action == "start" {
+            try await waitFor("production voice panel first appears") {
+                guard let panel = marker("chat.verify.voicePanel", in: window),
+                      let opacity = markerData(panel, window: window)["opacity"] as? Float else { return false }
+                return opacity > 0.01
+            }
+        }
+        let began = CACurrentMediaTime()
         let sampler = VoiceTransitionSampler(window: window)
         sampler.start()
         defer { sampler.stop() }
-        let began = CACurrentMediaTime()
-        voiceLayoutAction(action, sessionID: sessionID)
         var images: [(String, UIImage)] = []
         var captureTimes: [[String: Any]] = []
         for (index, targetTime) in [0.06, 0.16, 0.30, 0.55].enumerated() {
@@ -272,11 +327,14 @@ import UIKit
             images.append((name, image))
             captureTimes.append(["file": name, "requestedElapsed": targetTime, "actualElapsed": actualTime])
         }
-        let remaining = 1.0 - (CACurrentMediaTime() - began)
-        if remaining > 0 { await settle(remaining) }
+        var settleError: Error?
+        do { try await waitForVoicePresentation(action, window: window) }
+        catch { settleError = error }
         sampler.stop()
         voiceLayoutDiagnostics.append(["phase": action, "displayFrames": sampler.frames,
                                        "captures": captureTimes,
+                                       "captureOriginDelayAfterAction": began - requested,
+                                       "captureOrigin": action == "start" ? "first visible production panel" : "action dispatched",
                                        "scope": "Real AIChatView and navigation; injected audio; capture overhead included"])
         try writeVoiceLayoutDiagnostics()
         for (name, image) in images {
@@ -287,6 +345,7 @@ import UIKit
             try data.write(to: directory.appendingPathComponent(name), options: .atomic)
             screenshots.append(name)
         }
+        if let settleError { throw settleError }
         try require(sampler.frames.count >= 3, "\(action): actual display-link transition samples recorded")
         let titleCenters = sampler.frames.compactMap { frame -> CGFloat? in
             guard let title = frame["title"] as? [String: Any],
