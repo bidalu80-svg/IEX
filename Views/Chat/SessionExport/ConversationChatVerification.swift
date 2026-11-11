@@ -390,18 +390,15 @@ import UIKit
         try require(panelFrame.minY >= badgeFrame.maxY + 2 - 0.5,
                     "\(phase): voice panel clears provider badge by at least 2pt")
         try require(window.bounds.contains(panelFrame), "\(phase): whole voice panel stays inside visible window")
-        guard let target = DebugViewInspector().findTarget(identifier: "voiceCall.hangUp") else {
+        // The in-app AX walker does not expose all SwiftUI virtual elements.
+        // Measure a noninteractive marker on the actual shipping Button label;
+        // independent XCTest still finds voiceCall.hangUp and taps that control.
+        guard let hangup = marker("chat.verify.voiceHangUp", in: window) else {
             throw NSError(domain: "ConversationChatVerification", code: -10,
-                          userInfo: [NSLocalizedDescriptionKey: "\(phase): actual hang-up accessibility control missing"])
+                          userInfo: [NSLocalizedDescriptionKey: "\(phase): actual hang-up label geometry missing"])
         }
-        let hangupFrame: CGRect
-        switch target {
-        case .view(let view):
-            try require(isVisible(view, in: window), "\(phase): actual hang-up UIView is visible")
-            hangupFrame = view.convert(view.bounds, to: window)
-        case .element(_, let frame):
-            hangupFrame = window.convert(frame, from: nil)
-        }
+        try require(isVisible(hangup, in: window), "\(phase): actual hang-up label is visible")
+        let hangupFrame = hangup.convert(hangup.bounds, to: window)
         voiceLayoutDiagnostics.append(["phase": "\(phase)-hangup", "frame": rectData(hangupFrame)])
         try writeVoiceLayoutDiagnostics()
         try require(hangupFrame.width >= 40 && hangupFrame.height >= 40,

@@ -48,6 +48,7 @@ struct VoiceCallPanel: View {
                         .foregroundStyle(.white)
                         .frame(width: 48, height: 44)
                         .background(Color.red, in: Capsule())
+                        .background(VoiceCallControlGeometryMarker())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("挂断语音通话")
@@ -210,4 +211,20 @@ struct VoiceCallPanel: View {
                 .foregroundStyle(.secondary)
         }
     }
+}
+
+/// Non-accessibility background marker measures the shipping label's actual
+/// hit area in full-app geometry tests; it never replaces the button or action.
+private struct VoiceCallControlGeometryMarker: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+            view.accessibilityIdentifier = "chat.verify.voiceHangUp"
+        }
+        #endif
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
 }
