@@ -4879,7 +4879,7 @@ private final class ChatProgressiveFrostView: UIVisualEffectView {
     private var lastReduced: Bool?
     var isVariableBlurAvailable: Bool { variableFilter != nil }
 
-    override init(frame: CGRect) {
+    init(frame: CGRect) {
         super.init(effect: UIBlurEffect(style: .regular))
         self.frame = frame
         isUserInteractionEnabled = false
