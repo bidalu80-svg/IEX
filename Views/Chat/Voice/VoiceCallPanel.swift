@@ -110,7 +110,6 @@ struct VoiceCallPanel: View {
                         .accessibilityIdentifier("voiceCall.resume")
                 }
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("voiceCall.recovery")
             } else if canInterrupt {
                 Button(action: onInterrupt) {
                     Label("打断并说话", systemImage: "waveform")
@@ -143,7 +142,6 @@ struct VoiceCallPanel: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .accessibilityIdentifier("voiceCall.panel")
     }
 
     private var avatar: some View {
