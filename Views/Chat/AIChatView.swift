@@ -4981,8 +4981,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 // Fade before the bar ends, not just in the short extension.
                 // A smoothstep curve has a flat slope at both ends, avoiding
                 // the dense lower shelf and sudden cutoff over dark images.
-                let fadeStart = max(0, barBottom - 32)
-                let fadeEnd = min(height, barBottom + 16)
+                let fadeStart = max(0, barBottom - 16)
+                let fadeEnd = min(height, barBottom + 12)
                 var colors = [UIColor.black.cgColor]
                 var locations = [NSNumber(value: 0)]
                 for step in 0...16 {
