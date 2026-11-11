@@ -4866,87 +4866,109 @@ private struct NavTitleFrameModifier: ViewModifier {
 }
 
 // BEGIN ProviderChatChrome
-// A live backdrop with progressively weaker blur, rather than one tinted
-// material faded to clear. Public UIKit effects remain attached while scrolling.
-private final class ChatProgressiveFrostView: UIView {
-    private struct Band {
-        let effect: UIVisualEffectView
-        let mask: CAGradientLayer
-        let animator: UIViewPropertyAnimator
-    }
-    private var bands: [Band] = []
-    private var lastLayout = CGRect.null
-    private var lastBarBottom: CGFloat = -1
-    private var reduced = false
+// Adapted from nikstar/VariableBlur @ 5073a0d (MIT; see
+// docs/variable-blur-LICENSE.md). The gradient controls blur radius, not
+// transparency of a colored material. Keep dynamic private API use localized.
+private final class ChatProgressiveFrostView: UIVisualEffectView {
+    private var variableFilter: NSObject?
+    private weak var backdrop: CALayer?
+    private let fallbackMask = CAGradientLayer()
+    private var lastSize = CGSize.zero
+    private var lastBottom: CGFloat = -1
+    private var lastScale: CGFloat = 0
+    private var lastReduced: Bool?
+    var isVariableBlurAvailable: Bool { variableFilter != nil }
 
     override init(frame: CGRect) {
-        super.init(frame: frame)
+        super.init(effect: UIBlurEffect(style: .regular))
+        self.frame = frame
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         accessibilityIdentifier = "chat-progressive-frost"
-        // Pause distinct effects at distinct strengths: the tail loses blur
-        // radius as well as tint. No private filters or captured scroll images.
-        for strength in [CGFloat(1), 0.72, 0.44, 0.20, 0.06] {
-            let effect = UIVisualEffectView(effect: nil)
-            effect.isUserInteractionEnabled = false
-            let mask = CAGradientLayer()
-            mask.startPoint = CGPoint(x: 0.5, y: 0)
-            mask.endPoint = CGPoint(x: 0.5, y: 1)
-            effect.layer.mask = mask
-            addSubview(effect)
-            let animator = UIViewPropertyAnimator(duration: 1, curve: .linear) {
-                effect.effect = UIBlurEffect(style: .systemUltraThinMaterial)
-            }
-            animator.pausesOnCompletion = true
-            animator.startAnimation()
-            animator.pauseAnimation()
-            animator.fractionComplete = strength
-            bands.append(Band(effect: effect, mask: mask, animator: animator))
+        let selector = NSSelectorFromString("filterWithType:")
+        if let factory = NSClassFromString("CAFilter") as? NSObject.Type,
+           factory.responds(to: selector),
+           let result = factory.perform(selector, with: "variableBlur"),
+           let filter = result.takeUnretainedValue() as? NSObject,
+           let backdrop = subviews.first?.layer {
+            filter.setValue(14.0, forKey: "inputRadius")
+            filter.setValue(true, forKey: "inputNormalizeEdges")
+            variableFilter = filter
+            self.backdrop = backdrop
         }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    deinit {
-        for band in bands { band.animator.stopAnimation(true) }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if lastBottom >= 0 {
+            layout(barBottom: lastBottom, reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        // Upstream documents a crash when UIKit reapplies its material filters
+        // to a backdrop configured with variableBlur. This effect has no tint
+        // or theme-specific colors; only the fallback needs UIKit's callback.
+        if variableFilter == nil { super.traitCollectionDidChange(previousTraitCollection) }
+        if lastBottom >= 0 {
+            layout(barBottom: lastBottom, reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
+        }
     }
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
-        if reduced != reduceTransparency {
-            reduced = reduceTransparency
-            for band in bands { band.effect.isHidden = reduced }
-            backgroundColor = reduced ? UIColor(ChatColors.background) : .clear
+        let scale = window?.screen.scale ?? traitCollection.displayScale
+        guard bounds.size != lastSize || barBottom != lastBottom || scale != lastScale || lastReduced != reduceTransparency else { return }
+        lastSize = bounds.size
+        lastBottom = barBottom
+        lastScale = scale
+        lastReduced = reduceTransparency
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let fadeStart = max(0, barBottom - 44)
+        let fadeEnd = min(bounds.height, barBottom + 18)
+        if reduceTransparency {
+            backdrop?.filters = []
+            for view in subviews { view.alpha = 0 }
+            backgroundColor = UIColor(ChatColors.background)
+            return
         }
-        guard lastLayout != bounds || lastBarBottom != barBottom else { return }
-        lastLayout = bounds
-        lastBarBottom = barBottom
-        let height = max(1, bounds.height)
-        // Adjacent bands crossfade across 8pt, distributing the transition
-        // through the toolbar instead of leaving a dense stripe underneath it.
-        let boundaries = [max(0, barBottom - 30), max(0, barBottom - 18),
-                          max(0, barBottom - 6), barBottom + 6, barBottom + 18]
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for (index, band) in bands.enumerated() {
-            band.effect.frame = bounds
-            band.mask.frame = bounds
-            let end = min(height, boundaries[index] + 4)
-            let fadeOut = max(0, boundaries[index] - 4)
-            if index == 0 {
-                band.mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor, UIColor.clear.cgColor]
-                band.mask.locations = [0, NSNumber(value: Double(fadeOut / height)), NSNumber(value: Double(end / height)), 1]
-            } else {
-                let start = max(0, boundaries[index - 1] - 4)
-                let fadeIn = min(height, boundaries[index - 1] + 4)
-                band.mask.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor,
-                                    UIColor.black.cgColor, UIColor.black.cgColor,
-                                    UIColor.clear.cgColor, UIColor.clear.cgColor]
-                band.mask.locations = [0, NSNumber(value: Double(start / height)),
-                                       NSNumber(value: Double(fadeIn / height)), NSNumber(value: Double(fadeOut / height)),
-                                       NSNumber(value: Double(end / height)), 1]
+        backgroundColor = .clear
+        if let variableFilter, let backdrop {
+            // Draw at display resolution so the clear edge stays smooth.
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = max(1, scale)
+            format.opaque = false
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: bounds.height), format: format)
+            let image = renderer.image { context in
+                let pixel = 1 / format.scale
+                var y: CGFloat = 0
+                while y < bounds.height {
+                    let t = min(1, max(0, (y - fadeStart) / max(1, fadeEnd - fadeStart)))
+                    let radius = (1 - t) * (1 - t) * (1 + 2 * t)
+                    context.cgContext.setFillColor(UIColor.black.withAlphaComponent(radius).cgColor)
+                    context.cgContext.fill(CGRect(x: 0, y: y, width: 2, height: pixel))
+                    y += pixel
+                }
+            }
+            if let mask = image.cgImage {
+                variableFilter.setValue(mask, forKey: "inputMaskImage")
+                backdrop.filters = [variableFilter]
+                backdrop.setValue(max(1, scale), forKey: "scale")
+                subviews.first?.alpha = 1
+                for view in subviews.dropFirst() { view.alpha = 0 }
+                layer.mask = nil
+                return
             }
         }
-        CATransaction.commit()
+        // An OS without variableBlur keeps a public UIKit material fallback.
+        for view in subviews { view.alpha = 1 }
+        fallbackMask.frame = bounds
+        fallbackMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+        fallbackMask.locations = [0, NSNumber(value: Double(fadeStart / bounds.height)), 1]
+        fallbackMask.startPoint = CGPoint(x: 0.5, y: 0)
+        fallbackMask.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.mask = fallbackMask
     }
 }
 

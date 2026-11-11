@@ -553,6 +553,16 @@ private final class FrostTailBackdrop: UIView {
                       "Separate gradient frost exists below toolbar without intercepting touches")
             try check(syntheticFrost.map { descendants($0).contains { ($0 as? UIVisualEffectView)?.effect != nil } } == true || UIAccessibility.isReduceTransparencyEnabled,
                       "Gradient overlay uses real UIKit backdrop blur")
+            try check((syntheticFrost as? ChatProgressiveFrostView)?.isVariableBlurAvailable == true,
+                      "Open-source variableBlur backend is available on the tested simulator")
+            nav.overrideUserInterfaceStyle = .dark
+            nav.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            nav.overrideUserInterfaceStyle = .light
+            nav.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try check(frostedOverlay(nav) === syntheticFrost && nav.topViewController === owner,
+                      "Live light-dark-light changes preserve blur and navigation without crashing")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
             var expandedBadge = NavigationStatusCapsule(provider: open, isCollapsed: false) {}
             expandedBadge = NavigationStatusCapsule(provider: open, isCollapsed: false) {
