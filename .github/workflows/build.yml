@@ -64,6 +64,28 @@ jobs:
           python3 scripts/test-image-wire.py | tee image-wire-tests.log
           python3 scripts/test-openai-reasoning-wire.py | tee reasoning-wire-tests.log
 
+      - name: Test continuous voice call lifecycle
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" Providers/Voice/VoiceCallState.swift Providers/Voice/VoiceCallCoordinator.swift scripts/VoiceCallCoordinatorTests.swift -o "$RUNNER_TEMP/voice-call-tests"
+          "$RUNNER_TEMP/voice-call-tests" | tee voice-call-tests.log
+          python3 scripts/test-voice-call-chat-bridge.py | tee voice-call-projection-tests.log
+
+      - name: Verify continuous voice call controls on simulator
+        timeout-minutes: 10
+        run: bash scripts/test-voice-call-ui.sh
+
+      - name: Upload voice call verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-call-review
+          path: |
+            voice-call-tests.log
+            voice-call-projection-tests.log
+            voice-call-ui-evidence/
+          retention-days: 7
+
       - name: Test browser authorization and provider wire protocols
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"

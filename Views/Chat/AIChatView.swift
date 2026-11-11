@@ -387,6 +387,8 @@ struct AIChatView: View {
         nonmutating set { voiceMode.isVoiceActive = newValue }
     }
     @StateObject private var voiceVM = VoiceInputViewModel()
+    @StateObject private var voiceCallPresentation = ChatVoiceCallPresentation()
+    @State private var voiceCallExpanded = false
     /// Global read-replies state — observed so the voice-mode "Read replies" toggle
     /// reflects enabled/muted in lockstep with the global voice-output capsule.
     @ObservedObject private var voiceOutput = VoiceOutputState.shared
@@ -517,6 +519,12 @@ struct AIChatView: View {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
                 .safeAreaInset(edge: .top, spacing: 0) {
+                    if voiceCallPresentation.isActive, let provider = navigationProvider {
+                        ChatVoiceCallPanelHost(
+                            coordinator: voiceCallPresentation.coordinator,
+                            provider: provider,
+                            isExpanded: $voiceCallExpanded)
+                    }
                     if subAgentsEnabled, subAgentDockEnabled, !isReadOnly, let rootSessionId = vm.sessionId {
                         ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
                     }
@@ -631,6 +639,7 @@ struct AIChatView: View {
                         // Register the composer (tool preview + input bar) as a
                         // region the global speech capsule must not cover.
                         .capsuleProtectedFrame("inputBar")
+                        .disabled(voiceCallPresentation.isActive)
                         .opacity(showChatSearch ? 0 : 1)
                         .allowsHitTesting(!showChatSearch)
                         .accessibilityHidden(showChatSearch)
@@ -781,7 +790,10 @@ struct AIChatView: View {
             }, title: {
                 chatNavPrincipalContent
             }, trailing: {
-                trailingMenu
+                HStack(spacing: 12) {
+                    voiceCallButton
+                    trailingMenu
+                }
             })
             .equatable()
         )
@@ -1446,6 +1458,7 @@ struct AIChatView: View {
             injectPendingShareIfNeeded()
         }
         .onDisappear {
+            endVoiceCall()
             isChatViewVisible = false
             if speechManager.state == .recording {
                 speechManager.stopRecording()
@@ -1818,6 +1831,53 @@ struct AIChatView: View {
         )
     }
 
+    // MARK: - Continuous voice call
+
+    private var canStartVoiceCall: Bool {
+        !isReadOnly && !titleIsVisuallyLocked && vm.isReady && !vm.isProcessing && !vm.isLoadingSession
+            && vm.editingMessageIndex == nil && navigationProvider != nil
+    }
+
+    private var voiceCallButton: some View {
+        Button {
+            if voiceCallPresentation.isActive {
+                endVoiceCall()
+            } else {
+                startVoiceCall()
+            }
+        } label: {
+            Image(systemName: voiceCallPresentation.isActive ? "phone.fill" : "phone")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(voiceCallPresentation.isActive ? Color.green : ChatColors.primaryText)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!voiceCallPresentation.isActive && !canStartVoiceCall)
+        .accessibilityLabel(voiceCallPresentation.isActive ? "结束语音通话" : "开始语音通话")
+        .accessibilityIdentifier("chat.voiceCall")
+    }
+
+    private func startVoiceCall() {
+        guard canStartVoiceCall else { return }
+        voiceVM.stopListening()
+        if speechManager.state == .recording { speechManager.stopRecording() }
+        voiceInputActive = false
+        inputFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+        voiceCallExpanded = false
+        let call = voiceCallPresentation.coordinator
+        vm.bindVoiceCall(call)
+        call.start()
+    }
+
+    private func endVoiceCall() {
+        let call = voiceCallPresentation.coordinator
+        call.end()
+        vm.unbindVoiceCall(call)
+    }
+
     // MARK: - Toolbar Trailing Menu
 
     @ViewBuilder
@@ -2023,6 +2083,8 @@ struct AIChatView: View {
         ChatToolbarKey(
             navTitle: navTitleKey,
             showsCompactNavigation: showsCompactToolbarNavigation,
+            voiceCallActive: voiceCallPresentation.isActive,
+            voiceCallAvailable: canStartVoiceCall,
             messagesEmpty: vm.messages.isEmpty,
             hasSession: vm.sessionId != nil,
             isForcePulling: isForcePulling,
@@ -5313,9 +5375,52 @@ private struct NavTitleKey: Equatable {
 /// the principal title's inputs plus the trailing menu's eight displayed
 /// values. While this is unchanged, ChatToolbarHost.body — and therefore the
 /// ToolbarContent builder — never re-runs.
+/// Waveform and per-token transcript changes stay below the large chat body.
+/// Only entering/leaving a call invalidates the main toolbar/composer layout.
+@MainActor
+private final class ChatVoiceCallPresentation: ObservableObject {
+    let coordinator = VoiceCallCoordinator()
+    @Published private(set) var isActive = false
+    private var observation: AnyCancellable?
+
+    init() {
+        observation = coordinator.$isActive.removeDuplicates().sink { [weak self] active in
+            self?.isActive = active
+        }
+    }
+}
+
+private struct ChatVoiceCallPanelHost: View {
+    @ObservedObject var coordinator: VoiceCallCoordinator
+    let provider: ProviderInstance
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        VoiceCallPanel(
+            providerType: provider.providerType,
+            providerBaseURL: provider.customBaseURL,
+            providerName: provider.label,
+            status: coordinator.state.title,
+            startDate: coordinator.startDate,
+            audioLevel: coordinator.level,
+            isMuted: coordinator.isMuted,
+            canInterrupt: coordinator.state == .responding || coordinator.state == .speaking,
+            recoveryMessage: coordinator.state == .paused ? coordinator.error : nil,
+            transcript: coordinator.assistantTranscript.isEmpty
+                ? coordinator.transcript : coordinator.assistantTranscript,
+            isExpanded: $isExpanded,
+            onMute: { coordinator.toggleMute() },
+            onHangUp: { coordinator.end() },
+            onInterrupt: { coordinator.interruptAndListen() },
+            onResume: { coordinator.resume() })
+    }
+}
+
 private struct ChatToolbarKey: Equatable {
     let navTitle: NavTitleKey
     let showsCompactNavigation: Bool
+    let voiceCallActive: Bool
+    let voiceCallAvailable: Bool
     let messagesEmpty: Bool
     let hasSession: Bool
     let isForcePulling: Bool

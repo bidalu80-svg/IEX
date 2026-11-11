@@ -218,6 +218,7 @@ extension AIChatViewModel {
         msgIdx: Int,
         provider: any AgentProvider
     ) async throws -> StreamResult {
+        let callTurnID = VoiceCallTaskContext.turnID
         var result = StreamResult()
         var currentTextBlockIdx: Int? = nil
         var currentThinkingBlockIdx: Int? = nil
@@ -447,13 +448,16 @@ extension AIChatViewModel {
             case .textDelta(let text):
                 if let blockIdx = currentTextBlockIdx {
                     result.assistantText += text
+                    if let callTurnID {
+                        await MainActor.run { self.appendVoiceCallText(text, turnID: callTurnID) }
+                    }
 
                     // Streaming TTS: speak completed sentences as they arrive. Don't
                     // gate on the start-time `speakEnabled` snapshot — read it live
                     // so toggling read-replies ON mid-reply takes effect this turn.
                     // `speakQueued` itself re-checks `canSpeakNow`, so when off this
                     // just advances the spoken offset cheaply.
-                    let liveSpeak = await MainActor.run { self.speakEnabled }
+                    let liveSpeak = await MainActor.run { self.speakEnabled && callTurnID == nil && self.voiceCallCoordinator?.isActive != true }
                     if liveSpeak {
                         // On the FIRST textDelta of this TURN, clear THIS session's
                         // previous reply from the TTS queue so the new content takes

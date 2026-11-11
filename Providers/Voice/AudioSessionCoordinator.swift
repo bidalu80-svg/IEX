@@ -13,9 +13,10 @@ import UIKit
 //
 // Audio sources → intents (System TTS and cloud TTS are the SAME `replyTTS`
 // source, just different engines resolved from the Voice Output group):
-//   .capture            — mic recording (.record/.measurement)            [highest]
+//   .capture            — mic recording (.record/.measurement)            [highest normal intent]
 //   .mediaAttachment    — Markdown audio attachment / auto_play playback
 //   .replyTTS           — read-replies (cloud VoiceOutputPlayer OR System AVSpeech)
+//   .voiceCallPlayback  - dedicated sequential call speech; capture is stopped
 //   .backgroundKeepAlive— silent keep-alive track (background only)
 //   .interfaceFeedback  — short, optional completion/preview chime         [lowest]
 //
@@ -36,6 +37,7 @@ final class AudioSessionCoordinator {
         case replyTTS = 1
         case mediaAttachment = 2
         case capture = 3
+        case voiceCallPlayback = 4
     }
 
     private let logger = AppLogger(category: "AudioSession")
@@ -43,7 +45,7 @@ final class AudioSessionCoordinator {
 
     /// True while the mic is capturing — reply TTS is suppressed in this state.
     var isCapturing: Bool { active.contains(.capture) }
-    var canPlayInterfaceFeedback: Bool { !isCapturing && !interrupted && !AVAudioSession.sharedInstance().secondaryAudioShouldBeSilencedHint }
+    var canPlayInterfaceFeedback: Bool { !isCapturing && !active.contains(.voiceCallPlayback) && !interrupted && !AVAudioSession.sharedInstance().secondaryAudioShouldBeSilencedHint }
     private var interrupted = false
 
     // MARK: - Public API
@@ -52,8 +54,14 @@ final class AudioSessionCoordinator {
     /// its System AVSpeechSynthesizer in response (cloud TTS is stopped directly).
     static let replyTTSPreemptedNotification = Notification.Name("AudioSession.replyTTSPreempted")
 
+    /// An explicit media/read-aloud action suspends an in-page voice call.
+    static let foregroundPlaybackStartedNotification = Notification.Name("AudioSession.foregroundPlaybackStarted")
+
     /// Declare that `intent` now needs the audio session. Idempotent.
     func begin(_ intent: Intent) {
+        if intent == .mediaAttachment || intent == .replyTTS {
+            NotificationCenter.default.post(name: Self.foregroundPlaybackStartedNotification, object: nil)
+        }
         if intent == .capture { AppFeedback.stopSound() }
         // Media attachment preempts reply TTS (mutually exclusive voice content):
         // stop the cloud queue directly and notify the chat VM to stop System TTS,
@@ -97,7 +105,7 @@ final class AudioSessionCoordinator {
             return (.record, .measurement, [])
         case .mediaAttachment:
             return (.playback, .default, [.duckOthers])
-        case .replyTTS:
+        case .replyTTS, .voiceCallPlayback:
             return (.playback, .spokenAudio, [.duckOthers])
         case .backgroundKeepAlive:
             return (.playback, .default, [.mixWithOthers])

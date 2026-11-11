@@ -1546,6 +1546,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // Enabled AND not muted AND not capturing. `canPlay` folds in the temporary
         // mute (capsule speaker) on top of the full on/off `isEnabled`.
         VoiceOutputState.shared.canPlay && !VoiceModePreference.shared.isCapturing
+            && voiceCallCoordinator?.isActive != true && VoiceCallTaskContext.turnID == nil
     }
 
     /// True when a configured cloud TTS model is selected (not the offline System
@@ -2121,7 +2122,26 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Completion may be repeated by cleanup; callers must finish idempotently.
     internal var scheduledTurnCompletion: (() -> Void)?
 
+    // Voice calls own a separate receipt; never consume the scheduler's hook.
+    weak var voiceCallCoordinator: VoiceCallCoordinator?
+    var voiceCallTurnID: UUID?
+    var voiceCallRetiringTurnID: UUID?
+    var voiceCallText = ""
+    var voiceCallLastProjection = Date.distantPast
+    var voiceCallSessionID: String?
+    var voiceCallMessageStart = 0
+
     func send() {
+        if !isProcessing, voiceCallCoordinator?.isActive == true {
+            voiceCallCoordinator?.pause(reason: "对话开始处理其他消息，语音通话已暂停。")
+        }
+        send(voiceCallText: nil, voiceCallTurnID: nil)
+    }
+
+    func send(voiceCallText: String?, voiceCallTurnID callTurnID: UUID?) {
+        if let callTurnID {
+            guard voiceCallTurnID == callTurnID, voiceCallText != nil else { return }
+        }
         // Read-only mode — cannot send messages
         guard remoteDeviceId == nil else {
             let rejectedCompletion = scheduledTurnCompletion
@@ -2134,10 +2154,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // photo loads, or a stray still-loading placeholder) so only fully-loaded
         // files are sent. `canSend` already blocks sending while anything loads,
         // so in practice this just prunes failed chips the user left in place.
-        attachments.removeAll { $0.loadState != .ready }
+        if voiceCallText == nil { attachments.removeAll { $0.loadState != .ready } }
 
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pendingAttachments = attachments
+        let text = (voiceCallText ?? inputText).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pendingAttachments: [InputAttachment] = voiceCallText == nil ? attachments : []
         #if DEBUG
         logger.info("🔑DRAFT [vm=\(self.vmInstanceId)] send() text=\(text.count)ch attachments=\(pendingAttachments.count) isProcessing=\(self.isProcessing) sessionId=\(self.sessionId ?? "nil") draftId=\(self.draftId ?? "nil") inputText='\(String(self.inputText.prefix(30)))'")
         #else
@@ -2151,8 +2171,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             return
         }
 
-        let scheduledCompletion = scheduledTurnCompletion
-        scheduledTurnCompletion = nil
+        let scheduledCompletion = callTurnID == nil ? scheduledTurnCompletion : nil
+        if callTurnID == nil { scheduledTurnCompletion = nil }
         // Context prompts/auto-compaction can return before a model task exists.
         // Consume this hook now; it must never attach to a later user send.
         var scheduledCompletionTransferred = false
@@ -2178,7 +2198,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         // send with no voice session records "text". Attachment-only sends say
         // nothing about typing. (text is also written eagerly on switch-to-text
         // in the composer; saveInputModePreference no-ops when unchanged.)
-        if !text.isEmpty {
+        if !text.isEmpty, voiceCallText == nil {
             SpeechRecognitionManager.saveInputModePreference(voiceUsedInComposition ? "voice" : "text")
         }
 
@@ -2195,7 +2215,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
 
         // Check if context is near capacity
-        if skipCompactCheck {
+        if callTurnID != nil {
+            // Call submission checked capacity synchronously before entering send.
+            // Leave the composer's compaction intent and pending draft untouched.
+        } else if skipCompactCheck {
             skipCompactCheck = false
         } else {
             switch checkContextBeforeSend() {
@@ -2248,10 +2271,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         prevCommittedBlockCount = 0
         userDidCancel = false
 
-        inputText = ""
+        if voiceCallText == nil { inputText = "" }
 
-        // If editing a previous message, truncate conversation from that point first
-        if let editIdx = editingMessageIndex {
+        // Call input never edits or consumes a pending composer operation.
+        if voiceCallText == nil, let editIdx = editingMessageIndex {
             editingMessageIndex = nil
             // Remove the edited message and everything after it from UI
             if editIdx < messages.count {
@@ -2319,8 +2342,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         let userMsg = ChatMessage(role: .user, content: displayText)
         messages.append(userMsg)
 
-        // Snapshot and clear attachments synchronously so the UI clears immediately
-        clearAttachments()
+        // Snapshot and clear composer attachments only for a composer send.
+        if voiceCallText == nil { clearAttachments() }
         scrollToBottomSignal.send()
 
         isProcessing = true
@@ -2337,10 +2360,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 scheduledCompletion?()
                 return
             }
-            defer { scheduledCompletion?() }
+            defer {
+                scheduledCompletion?()
+                if let callTurnID { self.finishVoiceCallTurn(callTurnID) }
+            }
 
+            // A call hung up before this task starts must not persist or dispatch.
+            if callTurnID != nil, Task.isCancelled { return }
             // Lazily create session before persisting anything
             await self.ensureSession()
+            if callTurnID != nil, Task.isCancelled { return }
 
             // Defensive: ensure tracker reflects the real session ID after draft→real migration.
             if let sid = self.sessionId, self.isProcessing {
@@ -2529,8 +2558,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
             // Wait for kernel to finish booting
             while self.kernelStatus == .booting {
+                if callTurnID != nil, Task.isCancelled { return }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
             }
+            if callTurnID != nil, Task.isCancelled { return }
 
             if case .failed(let msg) = self.kernelStatus {
                 self.errorMessage = "Kernel not available: \(msg)"
@@ -2554,7 +2585,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             defer { concurrency.releaseSlot(sessionId: sid) }
 
             do {
-                try await self.runAgentLoop()
+                try await VoiceCallTaskContext.$turnID.withValue(callTurnID) {
+                    try await self.runAgentLoop()
+                }
             } catch is CancellationError {
                 logger.info("Agent loop cancelled")
                 self.handleUserCancelledCleanup()
@@ -2607,6 +2640,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
             // Freeze this turn's receipt before unrelated queued user turns run.
             // The task defer also calls this hook; receipt completion is idempotent.
+            if let callTurnID, !self.promptQueue.isEmpty {
+                self.finishVoiceCallTurn(callTurnID, error: "对话中还有排队消息，语音通话已暂停。")
+            }
             scheduledCompletion?()
             await self.drainQueuedPrompts()
 

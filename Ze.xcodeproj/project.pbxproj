@@ -546,6 +546,12 @@
 		7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */; };
 		D8D9ED0313002A6DAC4DB95C /* ProviderBrandIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */; };
 		4C7D3989A0DDFBA8250DE17D /* WorkBuddyBalanceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */; };
+		45A8C998F8CA574AA4BEB068 /* VoiceCallState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */; };
+		47CC817A1E4FD187FC418B43 /* VoiceCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */; };
+		55245B0ADB9011F9D13A944A /* VoiceCallAudioDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */; };
+		0F1053B9DCB9B6161524CBF2 /* VoiceCallPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */; };
+		F7FD1BDF79751FD9D9179828 /* AIChatViewModel+VoiceCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */; };
+		4842985E9CA4FF04C81872D5 /* VoiceCallVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253B005328ED088E433D78C /* VoiceCallVerification.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1232,6 +1238,12 @@
 		73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyLoginSheet.swift; path = Views/Providers/WorkBuddyLoginSheet.swift; sourceTree = SOURCE_ROOT; };
 		175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProviderBrandIcon.swift; path = Views/Providers/ProviderBrandIcon.swift; sourceTree = SOURCE_ROOT; };
 		DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyBalanceAPI.swift; path = Providers/WorkBuddy/WorkBuddyBalanceAPI.swift; sourceTree = SOURCE_ROOT; };
+		7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallState.swift"; sourceTree = SOURCE_ROOT; };
+		1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallCoordinator.swift"; sourceTree = SOURCE_ROOT; };
+		AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallAudioDriver.swift"; sourceTree = SOURCE_ROOT; };
+		02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Voice/VoiceCallPanel.swift"; sourceTree = SOURCE_ROOT; };
+		1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+VoiceCall.swift"; sourceTree = SOURCE_ROOT; };
+		6253B005328ED088E433D78C /* VoiceCallVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Debug/VoiceCallVerification.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1310,6 +1322,9 @@
 				E5VC00015 /* CorrectionSignalSource.swift */,
 				E5VC00012 /* PhoneticNormalizer.swift */,
 				E5VC00011 /* VoiceCorrectionDB.swift */,
+				7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */,
+				1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */,
+				AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */,
 				B7E2CB0D0D63E6D6FDB45568 /* VoiceActivityDetector.swift */,
 				424510790AF3FB2452D3CCE3 /* VoiceOutputPlayer.swift */,
 				5F3D1138DBE516F31D76ABF4 /* VoiceProviderTemplate.swift */,
@@ -1324,6 +1339,7 @@
 			isa = PBXGroup;
 			children = (
 				16FF3462D09402F14B610CD6 /* VoiceWaveformView.swift */,
+				02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */,
 				E8AB343B6D865C37CC5E9EDB /* VoiceInputPanel.swift */,
 				4D1A2B7331C508B0D3E77D28 /* InlineVoiceInputView.swift */,
 				7A302B074A0BE0AFED8EC7E9 /* SpeechPlayerControl.swift */,
@@ -1591,6 +1607,7 @@
 		E54000030 /* Debug */ = {
 			isa = PBXGroup;
 			children = (
+				6253B005328ED088E433D78C /* VoiceCallVerification.swift */,
 				E54000011 /* DebugServer.swift */,
 				E54000AB2 /* DebugAuth.swift */,
 				E54000041 /* DebugLocalDispatch.swift */,
@@ -2074,6 +2091,7 @@
 				E5VMC0012 /* AIChatViewModel+FileTools.swift */,
 				E5VMD0011 /* ZeURLPathDecoding.swift */,
 				E5VMC0013 /* AIChatViewModel+Offloading.swift */,
+				1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */,
 				E5VMC0014 /* AIChatViewModel+SSEStream.swift */,
 				E5VMC0015 /* AIChatViewModel+Persistence.swift */,
 				E5VMC0016 /* AIChatViewModel+BackgroundTask.swift */,
@@ -2839,6 +2857,7 @@
 				E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */,
 				E5VMD0001 /* ZeURLPathDecoding.swift in Sources */,
 				E5VMC0003 /* AIChatViewModel+Offloading.swift in Sources */,
+				F7FD1BDF79751FD9D9179828 /* AIChatViewModel+VoiceCall.swift in Sources */,
 				E5VMC0004 /* AIChatViewModel+SSEStream.swift in Sources */,
 				E5VMC0005 /* AIChatViewModel+Persistence.swift in Sources */,
 				E5VMC0006 /* AIChatViewModel+BackgroundTask.swift in Sources */,
@@ -2960,6 +2979,7 @@
 				E5L200102 /* RemindersOffload.m in Sources */,
 				E5L2000F4 /* ModelUseOffloadBridge.swift in Sources */,
 				E5D00037 /* AgentLoopModelsView.swift in Sources */,
+				4842985E9CA4FF04C81872D5 /* VoiceCallVerification.swift in Sources */,
 				E54000001 /* DebugServer.swift in Sources */,
 				E54000AB1 /* DebugAuth.swift in Sources */,
 				E54000031 /* DebugLocalDispatch.swift in Sources */,
@@ -3173,9 +3193,13 @@
 				A1B2C3D4E5F60718293A4B5C /* SystemVoiceCatalog.swift in Sources */,
 				241D530017827D7F0EB604DE /* VoiceProviderFactory.swift in Sources */,
 				489FD1413F4EE806C3F0C713 /* VoiceProviderResolver.swift in Sources */,
+				45A8C998F8CA574AA4BEB068 /* VoiceCallState.swift in Sources */,
+				47CC817A1E4FD187FC418B43 /* VoiceCallCoordinator.swift in Sources */,
+				55245B0ADB9011F9D13A944A /* VoiceCallAudioDriver.swift in Sources */,
 				57E63023C8A9A3C505DF411B /* VoiceActivityDetector.swift in Sources */,
 				2A4FD49F872431D703328384 /* VoiceOutputPlayer.swift in Sources */,
 				77BB9741AB0EFC449FDBDFED /* VoiceWaveformView.swift in Sources */,
+				0F1053B9DCB9B6161524CBF2 /* VoiceCallPanel.swift in Sources */,
 				38F28509AFBC2153A7C85E85 /* VoiceInputPanel.swift in Sources */,
 				30390D7AA90818BD4BDCE784 /* VoiceProviderTemplate.swift in Sources */,
 				5EF8347C1EAA0066EFF631F8 /* GroupVoiceModelsView.swift in Sources */,

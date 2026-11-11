@@ -211,6 +211,8 @@ import UIKit
                             "Reopen \(iteration) restores actual cached history composer draft")
                 try capture("06-reopened-history-\(iteration).png", window: window)
             }
+            try checkpoint("voice-call-draft-and-cancellation")
+            checks += try await VoiceCallVerification.runChecks()
             try checkpoint("complete")
             try writeResult(success: true, error: nil)
         } catch {
