@@ -10,6 +10,7 @@ import UIKit
     private static var screenshots: [String] = []
     private static var currentStage = "startup"
     private static var inputDiagnostics: [[String: Any]] = []
+    private static var voiceLayoutDiagnostics: [[String: Any]] = []
     private static let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("chat-verification")
 
@@ -170,6 +171,212 @@ import UIKit
         screenshots.append(name)
     }
 
+    private static func marker(_ identifier: String, in window: UIWindow) -> UIView? {
+        descendants(window).first { $0.accessibilityIdentifier == identifier && isVisible($0, in: window) }
+    }
+
+    private static func rectData(_ rect: CGRect) -> [String: CGFloat] {
+        ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height,
+         "midX": rect.midX, "maxY": rect.maxY]
+    }
+
+    /// Read the presentation tree as well as final layout. Model-layer geometry
+    /// alone jumps immediately to the target and cannot document a transition.
+    private static func markerData(_ view: UIView, window: UIWindow) -> [String: Any] {
+        let layout = view.convert(view.bounds, to: window)
+        let presentation = view.layer.presentation()
+        let rendered = presentation?.convert(presentation?.bounds ?? view.bounds,
+                                              to: window.layer.presentation() ?? window.layer) ?? layout
+        var opacity: Float = 1
+        var layer: CALayer? = presentation ?? view.layer
+        while let current = layer {
+            opacity *= current.opacity
+            layer = current.superlayer
+        }
+        return ["layout": rectData(layout), "presentation": rectData(rendered), "opacity": opacity]
+    }
+
+    @MainActor private final class VoiceTransitionSampler: NSObject {
+        weak var window: UIWindow?
+        var frames: [[String: Any]] = []
+        private var link: CADisplayLink?
+        private let began = CACurrentMediaTime()
+
+        init(window: UIWindow) {
+            self.window = window
+            super.init()
+        }
+
+        func start() {
+            let displayLink = CADisplayLink(target: self, selector: #selector(tick))
+            link = displayLink
+            displayLink.add(to: .main, forMode: .common)
+            sample()
+        }
+
+        func stop() {
+            guard link != nil else { return }
+            link?.invalidate()
+            link = nil
+            sample()
+        }
+
+        @objc private func tick() { sample() }
+
+        private func sample() {
+            guard let window else { return }
+            var entry: [String: Any] = ["elapsed": CACurrentMediaTime() - began]
+            let views = ConversationChatVerification.descendants(window)
+            for key in ["title", "voicePanel", "providerBadge"] {
+                if let view = views.first(where: {
+                    $0.accessibilityIdentifier == "chat.verify.\(key)"
+                        && ConversationChatVerification.isVisible($0, in: window)
+                }) {
+                    entry[key] = ConversationChatVerification.markerData(view, window: window)
+                }
+            }
+            frames.append(entry)
+        }
+    }
+
+    private static func writeVoiceLayoutDiagnostics() throws {
+        try JSONSerialization.data(withJSONObject: voiceLayoutDiagnostics, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("voice-layout-diagnostics.json"), options: .atomic)
+    }
+
+    private static func voiceLayoutAction(_ action: String, sessionID: String) {
+        NotificationCenter.default.post(name: Notification.Name("ZeChatVoiceLayoutVerification"), object: nil,
+                                        userInfo: ["sessionId": sessionID, "action": action])
+    }
+
+    /// Retain screenshots in memory while sampling so PNG encoding/file IO do
+    /// not occupy the transition itself. Actual elapsed times are recorded: this
+    /// is animation evidence, not an FPS/performance benchmark.
+    private static func sampleVoiceTransition(_ action: String, sessionID: String,
+                                              window: UIWindow) async throws {
+        let sampler = VoiceTransitionSampler(window: window)
+        sampler.start()
+        defer { sampler.stop() }
+        let began = CACurrentMediaTime()
+        voiceLayoutAction(action, sessionID: sessionID)
+        var images: [(String, UIImage)] = []
+        var captureTimes: [[String: Any]] = []
+        for (index, targetTime) in [0.06, 0.16, 0.30, 0.55].enumerated() {
+            let remaining = targetTime - (CACurrentMediaTime() - began)
+            if remaining > 0 { await settle(remaining) }
+            let name = "07-voice-\(action)-transition-\(index + 1).png"
+            let actualTime = CACurrentMediaTime() - began
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+            }
+            images.append((name, image))
+            captureTimes.append(["file": name, "requestedElapsed": targetTime, "actualElapsed": actualTime])
+        }
+        let remaining = 1.0 - (CACurrentMediaTime() - began)
+        if remaining > 0 { await settle(remaining) }
+        sampler.stop()
+        voiceLayoutDiagnostics.append(["phase": action, "displayFrames": sampler.frames,
+                                       "captures": captureTimes,
+                                       "scope": "Real AIChatView and navigation; injected audio; capture overhead included"])
+        try writeVoiceLayoutDiagnostics()
+        for (name, image) in images {
+            guard let data = image.pngData() else {
+                throw NSError(domain: "ConversationChatVerification", code: -7,
+                              userInfo: [NSLocalizedDescriptionKey: "Voice transition PNG encoding failed"])
+            }
+            try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+            screenshots.append(name)
+        }
+        try require(sampler.frames.count >= 3, "\(action): actual display-link transition samples recorded")
+        let titleCenters = sampler.frames.compactMap { frame -> CGFloat? in
+            guard let title = frame["title"] as? [String: Any],
+                  let presentation = title["presentation"] as? [String: CGFloat] else { return nil }
+            return presentation["midX"]
+        }
+        try require(titleCenters.count >= 3 && titleCenters.allSatisfy { abs($0 - window.bounds.midX) <= 2 },
+                    "\(action): long title remains centered throughout sampled transition")
+    }
+
+    @discardableResult
+    private static func verifyVoiceLayout(_ phase: String, panelExpected: Bool,
+                                          window: UIWindow) throws -> CGRect? {
+        guard let title = marker("chat.verify.title", in: window),
+              let navbar = descendants(window).compactMap({ $0 as? UINavigationBar })
+                .first(where: { isVisible($0, in: window) }) else {
+            throw NSError(domain: "ConversationChatVerification", code: -8,
+                          userInfo: [NSLocalizedDescriptionKey: "\(phase): real navigation/title marker missing"])
+        }
+        let titleFrame = title.convert(title.bounds, to: window)
+        let navFrame = navbar.convert(navbar.bounds, to: window)
+        var evidence: [String: Any] = ["phase": phase, "title": rectData(titleFrame),
+                                      "navbar": rectData(navFrame), "window": rectData(window.bounds)]
+        let panel = marker("chat.verify.voicePanel", in: window)
+        let panelFrame = panel.map { $0.convert($0.bounds, to: window) }
+        if let panelFrame { evidence["panel"] = rectData(panelFrame) }
+        let badge = marker("chat.verify.providerBadge", in: window)
+        let badgeFrame = badge.map { $0.convert($0.bounds, to: window) }
+        if let badgeFrame { evidence["badge"] = rectData(badgeFrame) }
+        voiceLayoutDiagnostics.append(evidence)
+        try writeVoiceLayoutDiagnostics()
+        try require(abs(titleFrame.midX - window.bounds.midX) <= 2,
+                    "\(phase): long history principal remains within 2pt of screen center")
+        try require(panelExpected == (panel != nil), "\(phase): production voice panel presence matches state")
+        guard panelExpected, let panelFrame else { return nil }
+        try require(panelFrame.minY >= navFrame.maxY + 28 - 0.5,
+                    "\(phase): voice panel starts at least 28pt below navigation bar")
+        guard let badgeFrame else {
+            throw NSError(domain: "ConversationChatVerification", code: -9,
+                          userInfo: [NSLocalizedDescriptionKey: "\(phase): actual provider badge marker missing"])
+        }
+        try require(panelFrame.minY >= badgeFrame.maxY + 2 - 0.5,
+                    "\(phase): voice panel clears provider badge by at least 2pt")
+        try require(window.bounds.contains(panelFrame), "\(phase): whole voice panel stays inside visible window")
+        guard let target = DebugViewInspector().findTarget(identifier: "voiceCall.hangUp") else {
+            throw NSError(domain: "ConversationChatVerification", code: -10,
+                          userInfo: [NSLocalizedDescriptionKey: "\(phase): actual hang-up accessibility control missing"])
+        }
+        let hangupFrame: CGRect
+        switch target {
+        case .view(let view):
+            try require(isVisible(view, in: window), "\(phase): actual hang-up UIView is visible")
+            hangupFrame = view.convert(view.bounds, to: window)
+        case .element(_, let frame):
+            hangupFrame = window.convert(frame, from: nil)
+        }
+        voiceLayoutDiagnostics.append(["phase": "\(phase)-hangup", "frame": rectData(hangupFrame)])
+        try writeVoiceLayoutDiagnostics()
+        try require(hangupFrame.width >= 40 && hangupFrame.height >= 40,
+                    "\(phase): actual hang-up control has a usable visible frame")
+        try require(panelFrame.insetBy(dx: -1, dy: -1).contains(hangupFrame)
+                    && window.bounds.contains(hangupFrame), "\(phase): hang-up fits inside visible panel")
+        return panelFrame
+    }
+
+    private static func verifyVoiceCallInHistory(sessionID: String, window: UIWindow) async throws {
+        try checkpoint("voice-call-real-history-layout")
+        window.endEditing(true)
+        await settle(0.7)
+        defer { voiceLayoutAction("stop", sessionID: sessionID) }
+        try capture("07-voice-before.png", window: window)
+        try verifyVoiceLayout("before", panelExpected: false, window: window)
+        try await sampleVoiceTransition("start", sessionID: sessionID, window: window)
+        try capture("07-voice-started.png", window: window)
+        let compact = try verifyVoiceLayout("started", panelExpected: true, window: window)
+        try await sampleVoiceTransition("expand", sessionID: sessionID, window: window)
+        try capture("07-voice-expanded.png", window: window)
+        let expanded = try verifyVoiceLayout("expanded", panelExpected: true, window: window)
+        try require((expanded?.height ?? 0) > (compact?.height ?? 0) + 20,
+                    "Expanded production voice panel is taller than compact panel")
+        try await sampleVoiceTransition("collapse", sessionID: sessionID, window: window)
+        try capture("07-voice-collapsed.png", window: window)
+        let collapsed = try verifyVoiceLayout("collapsed", panelExpected: true, window: window)
+        try require(abs((collapsed?.height ?? 0) - (compact?.height ?? 0)) <= 2,
+                    "Collapsed production voice panel returns to compact height")
+        try await sampleVoiceTransition("stop", sessionID: sessionID, window: window)
+        try capture("07-voice-stopped.png", window: window)
+        try verifyVoiceLayout("stopped", panelExpected: false, window: window)
+    }
+
     static func run() async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var appWindow: UIWindow?
@@ -190,7 +397,7 @@ import UIKit
             try checkpoint("persist-history-fixture")
             let historyMarker = "CHAT-LIFECYCLE-HISTORY-\(UUID().uuidString.prefix(8))"
             let session = await ChatStore.shared.createSession(modelId: LLMModel.claudeHaiku45.id,
-                                                               title: "聊天导航回归验证")
+                                                               title: "这是用于验证语音通话入口不会挤偏居中标题的长中文历史会话")
             await ChatStore.shared.appendMessages([
                 RawMessage(id: UUID().uuidString, sessionId: session.id, role: .user,
                            parts: [.text("请检查历史对话可以重新打开。")], createdAt: Date(),
@@ -281,6 +488,7 @@ import UIKit
                             "Reopen \(iteration) restores actual cached history composer draft")
                 try capture("06-reopened-history-\(iteration).png", window: window)
             }
+            try await verifyVoiceCallInHistory(sessionID: session.id, window: window)
             try checkpoint("voice-call-draft-and-cancellation")
             checks += try await VoiceCallVerification.runChecks()
             try checkpoint("complete")
@@ -296,6 +504,7 @@ import UIKit
             "success": success, "checks": checks, "stages": stages, "lastStage": currentStage,
             "screenshots": screenshots, "systemVersion": UIDevice.current.systemVersion,
             "inputDiagnostics": inputDiagnostics,
+            "voiceLayoutDiagnostics": voiceLayoutDiagnostics,
             "deviceModel": ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? UIDevice.current.model,
             "scope": "Production ContentView navigation and full AIChatView, real editable composer, persisted history, repeated home/reopen; original root retained.",
             "limitations": "Simulator runtime version recorded above; no physical-device or iOS 18.1 claim, no provider requests or device FPS measurement."

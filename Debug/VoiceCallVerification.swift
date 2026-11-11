@@ -25,6 +25,34 @@ import Foundation
                                             userInfo: [NSLocalizedDescriptionKey: message]) }
             checks.append(message)
         }
+        // Dependency contract: Silero evaluates 512 samples after APM's fixed
+        // 16 kHz resampling. Its end detector uses a full sliding window and a
+        // STRICT false-count ratio > threshold. This verifies the shipped call
+        // configuration's temporal boundaries, not acoustic recognition quality.
+        let callCapture = VoiceCallAudioDriver.captureConfiguration
+        let dictationCapture = VoiceActivityDetector.Configuration()
+        let decisionSeconds = 512.0 / 16_000.0
+        let window = Int(callCapture.voiceEndFrameCount)
+        let minimumSilenceFrames = Int(floor(Double(window) * Double(callCapture.voiceEndFalseRatio))) + 1
+        let minimumSilenceSeconds = Double(minimumSilenceFrames) * decisionSeconds
+        try require(minimumSilenceSeconds >= 1.5 && minimumSilenceSeconds <= 1.8,
+                    "Call endpoint waits 1.5–1.8 seconds of silence decisions")
+        for pause in [0.5, 0.8, 1.2, 1.5] {
+            let silentDecisions = Int(ceil(pause / decisionSeconds))
+            try require(Float(silentDecisions) / Float(window) <= callCapture.voiceEndFalseRatio,
+                        "A \(pause)-second mid-sentence pause stays below the call endpoint threshold")
+        }
+        try require(Float(minimumSilenceFrames - 1) / Float(window) <= callCapture.voiceEndFalseRatio
+                    && Float(minimumSilenceFrames) / Float(window) > callCapture.voiceEndFalseRatio,
+                    "Call endpoint crosses the upstream strict-ratio boundary at the intended silence duration")
+        try require(dictationCapture.voiceEndFrameCount == 156
+                    && dictationCapture.voiceStartFrameCount == 10
+                    && dictationCapture.voiceEndFalseRatio == callCapture.voiceEndFalseRatio,
+                    "Ordinary dictation retains its independent five-second endpoint configuration")
+        try require(callCapture.voiceStartFrameCount == 5
+                    && callCapture.startProbability == dictationCapture.startProbability
+                    && callCapture.endProbability == dictationCapture.endProbability,
+                    "Longer call pauses do not change speech-onset or probability sensitivity")
         // Exercise the shipping VAD start/catch/teardown path without requesting
         // microphone access. Keep an unrelated suspension held to detect both
         // leaked ownership and accidental double-resume.

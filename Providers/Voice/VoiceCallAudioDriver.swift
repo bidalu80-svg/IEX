@@ -101,6 +101,18 @@ final class VoiceCallAudioDriver: NSObject, VoiceCallAudio {
         }
     }
 
+    /// The upstream APM converts every input route to 16 kHz and Silero v5
+    /// consumes 512 samples per decision (32 ms), not one AVAudioEngine tap.
+    /// With falseRatio > 0.95, a 56-frame window needs at least 54 silence
+    /// decisions (~1.728 s). This leaves normal mid-sentence pauses intact.
+    /// Dictation keeps its independent default 156-frame (~5 s) window.
+    static var captureConfiguration: VoiceActivityDetector.Configuration {
+        var configuration = VoiceActivityDetector.Configuration()
+        configuration.voiceStartFrameCount = 5
+        configuration.voiceEndFrameCount = 56
+        return configuration
+    }
+
     func startCapture(onSegment: @escaping (Data) -> Void,
                       onLevel: @escaping (Float) -> Void) throws {
         stopCapture()
@@ -109,10 +121,7 @@ final class VoiceCallAudioDriver: NSObject, VoiceCallAudio {
         // persistent read-aloud toggle, voice speed, or selected provider.
         VoiceOutputState.shared.stop()
         if GlobalAudioPlayer.shared.isPlaying { GlobalAudioPlayer.shared.stop() }
-        var configuration = VoiceActivityDetector.Configuration()
-        configuration.voiceStartFrameCount = 5
-        configuration.voiceEndFrameCount = 25 // ~800 ms, independent of dictation.
-        let vad = VoiceActivityDetector(configuration: configuration)
+        let vad = VoiceActivityDetector(configuration: Self.captureConfiguration)
         vad.maxSegmentSeconds = 55
         let id = UUID()
         captureID = id

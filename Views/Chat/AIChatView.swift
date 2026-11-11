@@ -389,6 +389,10 @@ struct AIChatView: View {
     @StateObject private var voiceVM = VoiceInputViewModel()
     @StateObject private var voiceCallPresentation = ChatVoiceCallPresentation()
     @State private var voiceCallExpanded = false
+    @State private var chatViewportWidth: CGFloat = 0
+    #if DEBUG
+    @State private var verificationVoiceProvider: ProviderInstance?
+    #endif
     /// Global read-replies state — observed so the voice-mode "Read replies" toggle
     /// reflects enabled/muted in lockstep with the global voice-output capsule.
     @ObservedObject private var voiceOutput = VoiceOutputState.shared
@@ -519,11 +523,16 @@ struct AIChatView: View {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if voiceCallPresentation.isActive, let provider = navigationProvider {
+                    if voiceCallPresentation.isActive, let provider = activeCallProvider {
                         ChatVoiceCallPanelHost(
                             coordinator: voiceCallPresentation.coordinator,
                             provider: provider,
                             isExpanded: $voiceCallExpanded)
+                            .background(ChatCallLayoutMarker(identifier: "chat.verify.voicePanel"))
+                            // This page deliberately extends beneath the navigation bar.
+                            // The call controls must start after its measured bottom and badge.
+                            .padding(.top, topSafeAreaInset + 30)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     }
                     if subAgentsEnabled, subAgentDockEnabled, !isReadOnly, let rootSessionId = vm.sessionId {
                         ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
@@ -751,6 +760,11 @@ struct AIChatView: View {
             onClose: closeChatSearch
         ))
         .environment(\.chatSessionId, vm.sessionId)
+        .background(GeometryReader { geometry in
+            Color.clear
+                .onAppear { chatViewportWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { chatViewportWidth = $0 }
+        })
         .modifier(NavBarStyleModifier(topSafeAreaInset: $topSafeAreaInset,
                                       providerBadge: isNavigationStatusCollapsed ? nil : AnyView(navigationStatusCapsule)))
         .navigationBarTitleDisplayMode(.inline)
@@ -787,6 +801,7 @@ struct AIChatView: View {
                     .foregroundStyle(ChatColors.primaryText)
                 }
                 .accessibilityLabel("会话列表")
+                .frame(width: 88, alignment: .leading)
             }, title: {
                 chatNavPrincipalContent
             }, trailing: {
@@ -794,6 +809,7 @@ struct AIChatView: View {
                     voiceCallButton
                     trailingMenu
                 }
+                .frame(width: 88, alignment: .trailing)
             })
             .equatable()
         )
@@ -1446,6 +1462,25 @@ struct AIChatView: View {
         .onChange(of: vm.sessionId) { _ in
             refreshTitlePillSession()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ZeChatVoiceLayoutVerification"))) { note in
+            #if DEBUG
+            guard ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat"),
+                  note.userInfo?["sessionId"] as? String == vm.sessionId else { return }
+            switch note.userInfo?["action"] as? String {
+            case "start":
+                verificationVoiceProvider = ProviderInstance(label: "WorkBuddy", providerType: .workBuddy, credentialType: .apiKey)
+                inputFocused = false
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                voiceCallPresentation.coordinator.start()
+            case "stop": endVoiceCall()
+            case "expand", "collapse":
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                    voiceCallExpanded = note.userInfo?["action"] as? String == "expand"
+                }
+            default: break
+            }
+            #endif
+        }
         .onReceive(NotificationCenter.default.publisher(for: .sessionDidUpdate)) { note in
             guard let sid = vm.sessionId,
                   let updatedId = note.object as? String,
@@ -1833,6 +1868,13 @@ struct AIChatView: View {
 
     // MARK: - Continuous voice call
 
+    private var activeCallProvider: ProviderInstance? {
+        #if DEBUG
+        if let verificationVoiceProvider { return verificationVoiceProvider }
+        #endif
+        return navigationProvider
+    }
+
     private var canStartVoiceCall: Bool {
         !isReadOnly && !titleIsVisuallyLocked && vm.isReady && !vm.isProcessing && !vm.isLoadingSession
             && vm.editingMessageIndex == nil && navigationProvider != nil
@@ -2035,45 +2077,15 @@ struct AIChatView: View {
 
     // MARK: - Navigation Title + Model Selector
 
-    /// [T-ios-navbar-toolbar-host] Principal toolbar content, extracted from
-    /// the old inline ToolbarItem so ChatToolbarHost can render it. Layout
-    /// preserved verbatim:
-    /// [T-navbar-title-centering] iOS 18 and below let the principal toolbar
-    /// item shrink to its content width and anchor it left-of-center; iOS 19+
-    /// centers natively — wrap in an infinite-width HStack with bookend
-    /// Spacers on legacy iOS, and cap the width to (screen − ~140pt chrome)
-    /// so long titles truncate instead of pushing through the trailing menu.
-    @ViewBuilder
+    /// Reserve the same 88-point control band on both sides. A finite intrinsic
+    /// title width lets UINavigationBar center on the page, rather than shifting
+    /// an oversized principal view toward the smaller leading item.
     private var chatNavPrincipalContent: some View {
-        // Cap the title width to (screen − chrome) on ALL versions.
-        //
-        // [NavTitleGestureTruncation 2026-07-24] iOS 19+ previously left the
-        // titleView unconstrained, letting the system principal toolbar decide
-        // the truncation width from whatever space the left/right bar items
-        // leave. During an INTERACTIVE pop (edge-swipe), the system snapshots
-        // the nav bar and interpolates bar-item positions; at some drag/cancel
-        // frames the principal's available width widens, so lineLimit(1) stops
-        // truncating and a long title momentarily "un-truncates" to its full
-        // form — a jarring jump when the user cancels the swipe. Pinning an
-        // explicit, version-stable cap makes the truncation point identical in
-        // the steady state and every transition frame, so the title never
-        // pops to full. Does not affect normal-length titles (they're under
-        // the cap). This is a MITIGATION of the system snapshot behavior, not
-        // a fix of it: the top-crop of the snapshot itself is UIKit-level and
-        // out of SwiftUI's reach.
-        let cap = max(120, UIScreen.main.bounds.width - 180)
-        if #available(iOS 19, *) {
-            titleView
-                .frame(maxWidth: cap)
-        } else {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                titleView
-                    .frame(maxWidth: cap)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity)
-        }
+        let width = chatViewportWidth > 0 ? chatViewportWidth : UIScreen.main.bounds.width
+        let cap = max(60, width - 2 * (88 + 20))
+        return titleView
+            .frame(width: cap)
+            .background(ChatCallLayoutMarker(identifier: "chat.verify.title"))
     }
 
     /// [T-ios-navbar-toolbar-host] Everything the toolbar DISPLAYS (principal
@@ -2083,6 +2095,7 @@ struct AIChatView: View {
         ChatToolbarKey(
             navTitle: navTitleKey,
             showsCompactNavigation: showsCompactToolbarNavigation,
+            viewportWidth: chatViewportWidth,
             voiceCallActive: voiceCallPresentation.isActive,
             voiceCallAvailable: canStartVoiceCall,
             messagesEmpty: vm.messages.isEmpty,
@@ -5117,6 +5130,11 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             } else {
                 let contentView = configuration.makeContentView()
                 contentView.backgroundColor = .clear
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+                    contentView.accessibilityIdentifier = "chat.verify.providerBadge"
+                }
+                #endif
                 badgeView = contentView
             }
         }
@@ -5377,15 +5395,55 @@ private struct NavTitleKey: Equatable {
 /// ToolbarContent builder — never re-runs.
 /// Waveform and per-token transcript changes stay below the large chat body.
 /// Only entering/leaving a call invalidates the main toolbar/composer layout.
+private struct ChatCallLayoutMarker: UIViewRepresentable {
+    let identifier: String
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+            view.accessibilityIdentifier = identifier
+        }
+        #endif
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
+}
+
+#if DEBUG
+@MainActor private final class ChatCallLayoutAudio: VoiceCallAudio {
+    var onInterruption: ((String) -> Void)?
+    let inputLabel = "UI verification"
+    let outputLabel = "UI verification"
+    func prepare() async throws {}
+    func startCapture(onSegment: @escaping (Data) -> Void, onLevel: @escaping (Float) -> Void) throws {}
+    func stopCapture() {}
+    func transcribe(_ data: Data) async throws -> String { "" }
+    func speak(_ text: String, onLevel: @escaping (Float) -> Void) async throws {}
+    func stopPlayback() {}
+    func releaseResources() {}
+}
+#endif
+
 @MainActor
 private final class ChatVoiceCallPresentation: ObservableObject {
-    let coordinator = VoiceCallCoordinator()
+    let coordinator: VoiceCallCoordinator = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+            return VoiceCallCoordinator(audio: ChatCallLayoutAudio())
+        }
+        #endif
+        return VoiceCallCoordinator()
+    }()
     @Published private(set) var isActive = false
     private var observation: AnyCancellable?
 
     init() {
         observation = coordinator.$isActive.removeDuplicates().sink { [weak self] active in
-            self?.isActive = active
+            withAnimation(UIAccessibility.isReduceMotionEnabled ? .easeOut(duration: 0.15)
+                          : .spring(response: 0.44, dampingFraction: 0.92)) {
+                self?.isActive = active
+            }
         }
     }
 }
@@ -5419,6 +5477,7 @@ private struct ChatVoiceCallPanelHost: View {
 private struct ChatToolbarKey: Equatable {
     let navTitle: NavTitleKey
     let showsCompactNavigation: Bool
+    let viewportWidth: CGFloat
     let voiceCallActive: Bool
     let voiceCallAvailable: Bool
     let messagesEmpty: Bool
