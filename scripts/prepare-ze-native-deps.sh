@@ -149,10 +149,47 @@ test -f "$work_root/alpine-rootfs/meta.db"
 test -s "$output_dir/resources/alpine-rootfs.zip"
 cp -R "$ish_dir/app/RootfsPatch.bundle" "$output_dir/resources/RootfsPatch.bundle"
 
+# Host iSH generation above needs Homebrew LLVM; iOS libraries below must
+# resolve all compiler/linker tools from the same selected Xcode toolchain.
 ios_sdk="$(xcrun --sdk "$native_sdk" --show-sdk-path)"
+native_toolchain_bin="$(dirname "$(xcrun --sdk "$native_sdk" -f clang)")"
+export PATH="$native_toolchain_bin:$PATH"
+export AR="$(xcrun --sdk "$native_sdk" -f ar)"
+export RANLIB="$(xcrun --sdk "$native_sdk" -f ranlib)"
+export LD="$(xcrun --sdk "$native_sdk" -f ld)"
+native_evidence="$repo_root/native-build-evidence/$native_sdk"
+mkdir -p "$native_evidence"
+# Keep diagnostics even when configure exits before application logs exist.
+collect_native_diagnostics() {
+    local result=$?
+    trap - EXIT
+    for relative in lame-3.100/config.log ffmpeg-6.1.2/ffbuild/config.log; do
+        if [ -f "$work_root/$relative" ]; then
+            mkdir -p "$native_evidence/$(dirname "$relative")"
+            cp "$work_root/$relative" "$native_evidence/$relative" || true
+            if [ "$result" -ne 0 ]; then tail -n 160 "$work_root/$relative" >&2; fi
+        fi
+    done
+    exit "$result"
+}
+trap collect_native_diagnostics EXIT
 export CC="$(xcrun --sdk "$native_sdk" -f clang)"
 export CFLAGS="-target $native_target -isysroot $ios_sdk -Oz -fPIC -Wno-implicit-function-declaration"
-export LDFLAGS="-target $native_target -isysroot $ios_sdk"
+export LDFLAGS="-target $native_target -isysroot $ios_sdk -fuse-ld=$LD"
+# Run the same compile/link sanity check before configure; retain the actual
+# selected linker and diagnostics without retrying or hiding a failing build.
+cat > "$native_evidence/compiler-probe.c" <<'EOF'
+int main(void) { return 0; }
+EOF
+{
+    "$CC" --version
+    "$LD" -version_details
+    echo "SDK=$ios_sdk TARGET=$native_target"
+    "$CC" $CFLAGS $LDFLAGS -v "$native_evidence/compiler-probe.c" -o "$native_evidence/compiler-probe"
+} > "$native_evidence/compiler-probe.log" 2>&1 || {
+    cat "$native_evidence/compiler-probe.log" >&2
+    exit 1
+}
 (
     cd "$work_root/lame-3.100"
     ./configure \

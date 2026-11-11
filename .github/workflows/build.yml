@@ -1110,6 +1110,7 @@ jobs:
           name: build-log
           path: |
             build.log
+            native-build-evidence/
             ios-deployment-audit.log
             ipa-runtime-gate.json
             github-client-tests.log
@@ -1186,6 +1187,7 @@ jobs:
         with:
           name: conversation-application-review
           path: |
+            native-build-evidence/
             share-search-application-evidence/
             share-search-simulator-build.log
             share-search-simulator-resolve.log
