@@ -37,6 +37,7 @@ final class VoiceCallUITests: XCTestCase {
             app.buttons["fixture.pause"].tap()
             XCTAssertEqual(app.staticTexts["voiceCall.status"].label, "通话已暂停")
             XCTAssertTrue(app.buttons["voiceCall.resume"].waitForExistence(timeout: 3))
+            XCTAssertGreaterThanOrEqual(app.buttons["voiceCall.resume"].frame.height, 44)
             save(app, dark ? "paused-dark" : "paused-light")
             app.buttons["voiceCall.resume"].tap()
             XCTAssertFalse(app.buttons["voiceCall.resume"].exists)

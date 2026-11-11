@@ -104,10 +104,14 @@ struct VoiceCallPanel: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("继续通话", action: onResume)
-                        .font(.callout.weight(.semibold))
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("voiceCall.resume")
+                    Button(action: onResume) {
+                        Text("继续通话")
+                            .font(.callout.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("voiceCall.resume")
                 }
                 .frame(maxWidth: .infinity)
             } else if canInterrupt {
