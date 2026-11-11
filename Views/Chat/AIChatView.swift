@@ -4866,6 +4866,90 @@ private struct NavTitleFrameModifier: ViewModifier {
 }
 
 // BEGIN ProviderChatChrome
+// A live backdrop with progressively weaker blur, rather than one tinted
+// material faded to clear. Public UIKit effects remain attached while scrolling.
+private final class ChatProgressiveFrostView: UIView {
+    private struct Band {
+        let effect: UIVisualEffectView
+        let mask: CAGradientLayer
+        let animator: UIViewPropertyAnimator
+    }
+    private var bands: [Band] = []
+    private var lastLayout = CGRect.null
+    private var lastBarBottom: CGFloat = -1
+    private var reduced = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        accessibilityIdentifier = "chat-progressive-frost"
+        // Pause distinct effects at distinct strengths: the tail loses blur
+        // radius as well as tint. No private filters or captured scroll images.
+        for strength in [CGFloat(1), 0.72, 0.44, 0.20, 0.06] {
+            let effect = UIVisualEffectView(effect: nil)
+            effect.isUserInteractionEnabled = false
+            let mask = CAGradientLayer()
+            mask.startPoint = CGPoint(x: 0.5, y: 0)
+            mask.endPoint = CGPoint(x: 0.5, y: 1)
+            effect.layer.mask = mask
+            addSubview(effect)
+            let animator = UIViewPropertyAnimator(duration: 1, curve: .linear) {
+                effect.effect = UIBlurEffect(style: .systemUltraThinMaterial)
+            }
+            animator.pausesOnCompletion = true
+            animator.startAnimation()
+            animator.pauseAnimation()
+            animator.fractionComplete = strength
+            bands.append(Band(effect: effect, mask: mask, animator: animator))
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        for band in bands { band.animator.stopAnimation(true) }
+    }
+
+    func layout(barBottom: CGFloat, reduceTransparency: Bool) {
+        if reduced != reduceTransparency {
+            reduced = reduceTransparency
+            for band in bands { band.effect.isHidden = reduced }
+            backgroundColor = reduced ? UIColor(ChatColors.background) : .clear
+        }
+        guard lastLayout != bounds || lastBarBottom != barBottom else { return }
+        lastLayout = bounds
+        lastBarBottom = barBottom
+        let height = max(1, bounds.height)
+        // Adjacent bands crossfade across 8pt, distributing the transition
+        // through the toolbar instead of leaving a dense stripe underneath it.
+        let boundaries = [max(0, barBottom - 30), max(0, barBottom - 18),
+                          max(0, barBottom - 6), barBottom + 6, barBottom + 18]
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, band) in bands.enumerated() {
+            band.effect.frame = bounds
+            band.mask.frame = bounds
+            let end = min(height, boundaries[index] + 4)
+            let fadeOut = max(0, boundaries[index] - 4)
+            if index == 0 {
+                band.mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor, UIColor.clear.cgColor]
+                band.mask.locations = [0, NSNumber(value: Double(fadeOut / height)), NSNumber(value: Double(end / height)), 1]
+            } else {
+                let start = max(0, boundaries[index - 1] - 4)
+                let fadeIn = min(height, boundaries[index - 1] + 4)
+                band.mask.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor,
+                                    UIColor.black.cgColor, UIColor.black.cgColor,
+                                    UIColor.clear.cgColor, UIColor.clear.cgColor]
+                band.mask.locations = [0, NSNumber(value: Double(start / height)),
+                                       NSNumber(value: Double(fadeIn / height)), NSNumber(value: Double(fadeOut / height)),
+                                       NSNumber(value: Double(end / height)), 1]
+            }
+        }
+        CATransaction.commit()
+    }
+}
+
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
     var providerBadge: AnyView? = nil
@@ -4905,13 +4989,11 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedScroll: UINavigationBarAppearance?
         private var installedCompact: UINavigationBarAppearance?
         private var installedCompactScroll: UINavigationBarAppearance?
-        private let frostedOverlay = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        private let fadeMask = CAGradientLayer()
+        private let frostedOverlay = ChatProgressiveFrostView(frame: .zero)
         private var badgeView: (UIView & UIContentView)?
         var onTopInset: ((CGFloat) -> Void)?
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
-        private var lastReduceTransparency: Bool?
 
         func updateBadge(_ badge: AnyView?) {
             guard let badge else {
@@ -4975,37 +5057,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             if lastFrostFrame != nextFrame {
                 lastFrostFrame = nextFrame
                 frostedOverlay.frame = nextFrame
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                fadeMask.frame = frostedOverlay.bounds
-                // Fade before the bar ends, not just in the short extension.
-                // A smoothstep curve has a flat slope at both ends, avoiding
-                // the dense lower shelf and sudden cutoff over dark images.
-                let fadeStart = max(0, barBottom - 16)
-                let fadeEnd = min(height, barBottom + 12)
-                var colors = [UIColor.black.cgColor]
-                var locations = [NSNumber(value: 0)]
-                for step in 0...16 {
-                    let t = CGFloat(step) / 16
-                    let alpha = (1 - t) * (1 - t) * (1 + 2 * t)
-                    colors.append(UIColor.black.withAlphaComponent(alpha).cgColor)
-                    locations.append(NSNumber(value: Double((fadeStart + (fadeEnd - fadeStart) * t) / height)))
-                }
-                colors.append(UIColor.clear.cgColor)
-                locations.append(1)
-                fadeMask.colors = colors
-                fadeMask.locations = locations
-                fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
-                fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
-                frostedOverlay.layer.mask = fadeMask
-                CATransaction.commit()
             }
-            let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
-            if lastReduceTransparency != reduceTransparency {
-                lastReduceTransparency = reduceTransparency
-                frostedOverlay.effect = reduceTransparency ? nil : UIBlurEffect(style: .systemMaterial)
-                frostedOverlay.backgroundColor = reduceTransparency ? UIColor(ChatColors.background) : .clear
-            }
+            frostedOverlay.layout(barBottom: barBottom,
+                                  reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
             if let badgeView {
                 if badgeView.superview !== host {
                     badgeView.removeFromSuperview()

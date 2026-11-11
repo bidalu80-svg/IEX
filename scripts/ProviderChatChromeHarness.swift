@@ -172,23 +172,29 @@ private struct ChromeFixture: View {
     }
 }
 
-// A deterministic high-contrast backdrop makes a dense material tail visible.
-// Both mask variants are photographed over this exact view in the same mounted
-// navigation hierarchy, without changing the scroll position or material.
+// Deterministic backdrops follow the actual scroll offset. White Chinese text
+// content is the primary reference; black colored dots expose material tint.
 private final class FrostTailBackdrop: UIView {
+    var blackPattern = false
+    var contentStart: CGFloat = 0
+    var scrollOffset: CGFloat = 0
     override func draw(_ rect: CGRect) {
-        UIColor.black.setFill()
+        (blackPattern ? UIColor.black : UIColor.white).setFill()
         UIRectFill(bounds)
         let colors: [UIColor] = [.systemPink, .systemCyan, .systemYellow, .systemGreen]
-        for row in 0..<Int(ceil(bounds.height / 24)) {
-            let y = CGFloat(row) * 24 + 6
-            for column in 0..<4 {
-                colors[(row + column) % colors.count].setFill()
-                UIBezierPath(ovalIn: CGRect(x: CGFloat(column) * 17 + 12, y: y, width: 9, height: 9)).fill()
+        for row in 0..<50 {
+            let y = contentStart + CGFloat(row) * 28 - scrollOffset
+            guard y > -28 && y < bounds.height else { continue }
+            if blackPattern {
+                for column in 0..<4 {
+                    colors[(row + column) % colors.count].setFill()
+                    UIBezierPath(ovalIn: CGRect(x: CGFloat(column) * 17 + 12, y: y + 5, width: 9, height: 9)).fill()
+                }
             }
-            let text = "渐隐对照 · 彩点与文字 \(row) Aa 123"
-            (text as NSString).draw(at: CGPoint(x: 90, y: y - 3), withAttributes: [
-                .font: UIFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: UIColor.white
+            let text = blackPattern ? "彩点与文字 \(row) Aa 123" : "这是一段连续中文消息，观察顶部文字自然模糊。"
+            (text as NSString).draw(at: CGPoint(x: blackPattern ? 90 : 16, y: y), withAttributes: [
+                .font: UIFont.systemFont(ofSize: 15),
+                .foregroundColor: blackPattern ? UIColor.white : UIColor.black
             ])
         }
     }
@@ -213,24 +219,10 @@ private final class FrostTailBackdrop: UIView {
         [root] + root.subviews.flatMap(descendants)
     }
 
-    private func frostedOverlay(_ navigation: UINavigationController) -> UIVisualEffectView? {
-        navigation.navigationBar.superview?.subviews.compactMap { $0 as? UIVisualEffectView }
-            .first { $0.layer.mask is CAGradientLayer }
-    }
-
-    private func gradientAlpha(_ mask: CAGradientLayer, at y: CGFloat) -> CGFloat? {
-        guard let colors = mask.colors as? [CGColor], let locations = mask.locations,
-              colors.count == locations.count, colors.count >= 2, mask.bounds.height > 0 else { return nil }
-        let position = y / mask.bounds.height
-        for index in 1..<locations.count {
-            let start = CGFloat(truncating: locations[index - 1])
-            let end = CGFloat(truncating: locations[index])
-            if position <= end {
-                let fraction = end > start ? min(1, max(0, (position - start) / (end - start))) : 0
-                return colors[index - 1].alpha + (colors[index].alpha - colors[index - 1].alpha) * fraction
-            }
+    private func frostedOverlay(_ navigation: UINavigationController) -> UIView? {
+        navigation.navigationBar.superview?.subviews.first {
+            $0.accessibilityIdentifier == "chat-progressive-frost"
         }
-        return colors.last?.alpha
     }
 
     private func providerBadgeView(_ navigation: UINavigationController) -> UIView? {
@@ -354,6 +346,66 @@ private final class FrostTailBackdrop: UIView {
             guard pass else { failures.append(name); progress("FAILED: " + name); return }
             checks.append(name)
             progress(name)
+        }
+        func captureComparisons(host: UIViewController, navigation: UINavigationController, scroll: UIScrollView,
+                                theme: String, stage: String) async throws {
+            guard let frost = frostedOverlay(navigation), let frostHost = frost.superview else {
+                try check(false, "Production progressive frost exists for comparison: \(theme)-\(stage)")
+                return
+            }
+            let bar = navigation.navigationBar
+            let bottom = bar.convert(bar.bounds, to: frostHost).maxY
+            let legacy = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            legacy.frame = frost.frame
+            legacy.isUserInteractionEnabled = false
+            let mask = CAGradientLayer()
+            mask.frame = legacy.bounds
+            mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
+                           UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
+            mask.locations = [0, NSNumber(value: Double(max(0, bottom - 8) / legacy.bounds.height)),
+                              NSNumber(value: Double((bottom + 9) / legacy.bounds.height)), 1]
+            mask.startPoint = CGPoint(x: 0.5, y: 0)
+            mask.endPoint = CGPoint(x: 0.5, y: 1)
+            legacy.layer.mask = mask
+            legacy.isHidden = true
+            frostHost.insertSubview(legacy, aboveSubview: frost)
+            let backdrop = FrostTailBackdrop(frame: frostHost.bounds)
+            backdrop.isOpaque = true
+            backdrop.isUserInteractionEnabled = false
+            backdrop.contentStart = bottom + 34
+            backdrop.scrollOffset = scroll.contentOffset.y
+            frostHost.insertSubview(backdrop, belowSubview: frost)
+            defer {
+                frost.isHidden = false
+                legacy.removeFromSuperview()
+                backdrop.removeFromSuperview()
+            }
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 3
+            let renderer = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format)
+            for background in ["white-text", "black-pattern"] {
+                backdrop.blackPattern = background == "black-pattern"
+                backdrop.setNeedsDisplay()
+                for variant in ["legacy", "production"] {
+                    frost.isHidden = variant == "legacy"
+                    legacy.isHidden = variant != "legacy"
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                    var drawn = false
+                    let image = renderer.image { _ in
+                        drawn = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+                    }
+                    let file = "provider-chrome-tail-\(theme)-\(background)-\(stage)-\(variant).png"
+                    try image.pngData()!.write(to: docs.appendingPathComponent(file))
+                    screenshots.append(file)
+                    diagnostics.append(["screenshot": file, "variant": variant, "background": background,
+                                        "stage": stage, "scrollOffset": scroll.contentOffset.y, "barBottom": bottom,
+                                        "productionView": String(describing: type(of: frost)),
+                                        "visibleEffectViews": descendants(variant == "legacy" ? legacy : frost)
+                                            .compactMap { $0 as? UIVisualEffectView }.count])
+                    try check(drawn && imageContrast(image) > 24,
+                              "Frost comparison renders reference content in actual navigation: \(theme)-\(background)-\(stage)-\(variant)")
+                }
+            }
         }
         func write(_ success: Bool, _ error: String? = nil) {
             var result: [String: Any] = ["success": success && failures.isEmpty, "checks": checks, "failures": failures,
@@ -499,7 +551,7 @@ private final class FrostTailBackdrop: UIView {
             let syntheticFrost = frostedOverlay(nav)
             try check(syntheticFrost != nil && syntheticFrost?.isUserInteractionEnabled == false,
                       "Separate gradient frost exists below toolbar without intercepting touches")
-            try check(syntheticFrost?.effect != nil || UIAccessibility.isReduceTransparencyEnabled,
+            try check(syntheticFrost.map { descendants($0).contains { ($0 as? UIVisualEffectView)?.effect != nil } } == true || UIAccessibility.isReduceTransparencyEnabled,
                       "Gradient overlay uses real UIKit backdrop blur")
             try check(unrelated.standardAppearance.shadowColor == unrelatedShadow, "Unrelated navigation bar appearance is unchanged")
             var expandedBadge = NavigationStatusCapsule(provider: open, isCollapsed: false) {}
@@ -577,20 +629,14 @@ private final class FrostTailBackdrop: UIView {
                             let frost = frostedOverlay(navigation)
                             let bar = navigation.navigationBar
                             let barBottom = bar.superview.map { bar.convert(bar.bounds, to: $0).maxY } ?? 0
-                            let mask = frost?.layer.mask as? CAGradientLayer
                             diagnostics.append([
                                 "fixture": "frost-\(theme)-\(Int(width))-\(large)",
                                 "frostFrame": frost.map { NSCoder.string(for: $0.frame) } ?? "nil",
-                                "barBottom": barBottom, "maskLocations": mask?.locations ?? [],
+                                "barBottom": barBottom,
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
-                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - (barBottom + 24)) <= 1 && mask != nil,
+                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - (barBottom + 24)) <= 1,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
-                            let lowerTailAlpha = mask.flatMap { gradientAlpha($0, at: barBottom + 9) }
-                            diagnostics.append(["fixture": "lower-tail-\(theme)-\(Int(width))-\(large)",
-                                                "offsetBelowBar": 9, "alpha": lowerTailAlpha ?? -1])
-                            try check(lowerTailAlpha.map { $0 >= 0 && $0 < 0.1 } ?? false,
-                                      "Production frost lower tail is below 10 percent at bar bottom plus 9pt: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([
                             "fixture": "\(theme)-\(Int(width))-\(large)",
@@ -623,6 +669,10 @@ private final class FrostTailBackdrop: UIView {
                             let scroll = descendants(host.view).compactMap { $0 as? UIScrollView }
                                 .first { $0.contentSize.height > $0.bounds.height }
                             if let scroll {
+                                if width == 390, let navigation {
+                                    try await captureComparisons(host: host, navigation: navigation, scroll: scroll,
+                                                                 theme: theme, stage: "initial")
+                                }
                                 let offset = min(CGFloat(125), scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
                                 scroll.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
                                 host.view.layoutIfNeeded()
@@ -641,45 +691,9 @@ private final class FrostTailBackdrop: UIView {
                                 try check(greenPixelCount(scrolledImage, around: badgeCenter) > 30,
                                           "Provider badge remains visible when messages scroll beneath frost: \(theme)-\(Int(width))")
                                 try check(drawn && imageContrast(scrolledImage) > 24, "Scrolled navigation screenshot contains actual rendered messages: \(theme)-\(Int(width))")
-                                if width == 390, let navigation, let frost = frostedOverlay(navigation),
-                                   let frostHost = frost.superview, let productionMask = frost.layer.mask as? CAGradientLayer {
-                                    let backdrop = FrostTailBackdrop(frame: frostHost.bounds)
-                                    backdrop.isOpaque = true
-                                    backdrop.isUserInteractionEnabled = false
-                                    frostHost.insertSubview(backdrop, belowSubview: frost)
-                                    defer {
-                                        frost.layer.mask = productionMask
-                                        backdrop.removeFromSuperview()
-                                    }
-                                    let bar = navigation.navigationBar
-                                    let bottom = bar.convert(bar.bounds, to: frostHost).maxY
-                                    let legacyMask = CAGradientLayer()
-                                    legacyMask.frame = productionMask.frame
-                                    legacyMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
-                                                         UIColor.black.withAlphaComponent(0.72).cgColor, UIColor.clear.cgColor]
-                                    legacyMask.locations = [0, NSNumber(value: Double(max(0, bottom - 8) / frost.bounds.height)),
-                                                            NSNumber(value: Double((bottom + 9) / frost.bounds.height)), 1]
-                                    legacyMask.startPoint = CGPoint(x: 0.5, y: 0)
-                                    legacyMask.endPoint = CGPoint(x: 0.5, y: 1)
-                                    for (variant, comparisonMask) in [("legacy", legacyMask), ("production", productionMask)] {
-                                        CATransaction.begin()
-                                        CATransaction.setDisableActions(true)
-                                        frost.layer.mask = comparisonMask
-                                        CATransaction.commit()
-                                        try await Task.sleep(nanoseconds: 200_000_000)
-                                        let comparison = renderer.image { _ in
-                                            drawn = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-                                        }
-                                        let comparisonFile = "provider-chrome-tail-\(theme)-\(variant).png"
-                                        try comparison.pngData()!.write(to: docs.appendingPathComponent(comparisonFile))
-                                        screenshots.append(comparisonFile)
-                                        diagnostics.append(["screenshot": comparisonFile, "variant": variant,
-                                                            "background": "identical-black-colored-dots-white-text",
-                                                            "scrollOffset": scroll.contentOffset.y, "barBottom": bottom,
-                                                            "alphaAtPlus9": gradientAlpha(comparisonMask, at: bottom + 9) ?? -1])
-                                        try check(drawn && imageContrast(comparison) > 24,
-                                                  "Tail comparison renders the same mounted navigation and black pattern: \(theme)-\(variant)")
-                                    }
+                                if width == 390, let navigation {
+                                    try await captureComparisons(host: host, navigation: navigation, scroll: scroll,
+                                                                 theme: theme, stage: "scrolled")
                                 }
                             } else {
                                 try check(false, "Actual message scroll view exists: \(theme)-\(Int(width))")
