@@ -34,7 +34,7 @@ precondition((sonnetOff["output_config"] as? [String: Any])?["format"] != nil)
 let haikuOff = wire("claude-haiku-5-5", "off", ["output_config": ["effort": "xhigh"]]).0
 precondition((haikuOff["thinking"] as? [String: String]) == ["type": "disabled"])
 precondition((haikuOff["output_config"] as? [String: Any])?["effort"] as? String == "high")
-for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "anthropic/claude-haiku-5.5"] {
+for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "anthropic/claude-haiku-5.5", "claude-fable-5-2", "anthropic/claude-fable-5.2"] {
     precondition(ThinkingLevelCatalog.declaredMaxLevel(for: id) == .max)
     for level in ThinkingLevel.allCases where level.isEnabled {
         let effort = AgentContract.thinkingEffort(for: level, modelId: id)
@@ -58,7 +58,7 @@ for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "anthropi
     precondition(history.count == 3 && history[1]["content"] as? String == "partial")
     precondition(history.last?["role"] as? String == "user")
 }
-for id in ["claude-opus-5-5", "claude-sonnet-5-5"] {
+for id in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"] {
     let body = wire(id, nil, ["tool_choice": ["type": "tool", "name": "file_read", "disable_parallel_tool_use": true]]).0
     let choice = body["tool_choice"] as! [String: Any]
     precondition(choice["type"] as? String == "auto" && choice["name"] == nil)
@@ -85,4 +85,44 @@ RequestBodyPatcher.applyModelRequestRules(into: chatRequest)
 precondition(chatRequest.httpBody == chatBody)
 precondition(AgentContract.thinkingEffort(for: .xhigh, modelId: "claude-haiku-5-5") == "xhigh")
 precondition(AgentContract.thinkingEffort(for: .xhigh, modelId: "claude-sonnet-4-6") == "max")
-print("PASS: production Anthropic request patcher serialized all 5.5 model and effort cases")
+for id in ["claude-fable-5-2", "anthropic/claude-fable-5.2"] {
+    precondition(AnthropicContract.parseClaudeVersion(id)?.minor == 2)
+    precondition(!ThinkingLevelCatalog.supportsThinkingOff(for: id))
+    precondition(ThinkingLevelCatalog.normalizedLevel(.off, for: id, maximum: .max) == .low)
+    precondition(AgentContract.thinkingEffort(for: .xhigh, modelId: id) == "xhigh")
+    for priorType in ["disabled", "between_tools"] {
+        let off = wire(id, nil, ["thinking": ["type": priorType, "budget_tokens": 2048],
+            "output_config": ["effort": "max", "format": ["type": "json_schema"]]]).0
+        precondition((off["thinking"] as? [String: String]) == ["type": "adaptive", "display": "summarized"])
+        precondition((off["output_config"] as? [String: Any])?["effort"] as? String == "low")
+        precondition((off["output_config"] as? [String: Any])?["format"] != nil)
+    }
+    let off = wire(id, "off").0
+    precondition((off["thinking"] as? [String: Any])?["type"] as? String == "adaptive")
+    precondition((off["output_config"] as? [String: Any])?["effort"] as? String == "low")
+    for intent in [nil, "budget"] as [String?] {
+        let old = wire(id, intent, ["thinking": ["type": "enabled", "budget_tokens": 2048]]).0
+        precondition((old["thinking"] as? [String: Any])?["type"] as? String == "adaptive")
+        precondition((old["thinking"] as? [String: Any])?["budget_tokens"] == nil)
+        precondition((old["output_config"] as? [String: Any])?["effort"] as? String == "high")
+    }
+    for existingEffort in ["low", "medium", "high", "xhigh", "max"] {
+        for existingType in ["adaptive", "enabled"] {
+            let preserved = wire(id, nil, ["thinking": ["type": existingType, "budget_tokens": 2048],
+                "output_config": ["effort": existingEffort]]).0
+            precondition((preserved["output_config"] as? [String: Any])?["effort"] as? String == existingEffort)
+        }
+    }
+    let any = wire(id, nil, ["tool_choice": ["type": "any"]]).0
+    precondition((any["tool_choice"] as? [String: String])?["type"] == "auto")
+    // Last-mile normalization must leave signed history byte-equivalent as JSON
+    // content: Fable 5.2 validates thinking against the preceding conversation.
+    let history: [[String: Any]] = [["role": "user", "content": "hello"],
+        ["role": "assistant", "content": [["type": "thinking", "thinking": "", "signature": "opaque-signature"],
+            ["type": "text", "text": "answer"]]], ["role": "user", "content": "follow up"]]
+    let replay = wire(id, nil, ["messages": history]).0
+    precondition(NSArray(array: replay["messages"] as! [[String: Any]]).isEqual(to: history))
+}
+precondition(ThinkingRuleResolver.claudeRequestFamily("claude-fable-5-20") == nil)
+precondition(ThinkingRuleResolver.claudeRequestFamily("claude-fable-6") == nil)
+print("PASS: production Anthropic request patcher serialized 5.5 and Fable 5.2 models, effort levels, and preserved history")

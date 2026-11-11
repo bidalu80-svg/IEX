@@ -450,7 +450,7 @@ final class AnthropicAgentProvider: AgentProvider {
         case .low: return "low"
         case .medium: return "medium"
         case .high: return "high"
-        case .xhigh: return ThinkingRuleResolver.claude55Family(modelId ?? "") != nil ? "xhigh" : "max"
+        case .xhigh: return ThinkingRuleResolver.claudeRequestFamily(modelId ?? "") != nil ? "xhigh" : "max"
         case .max, .ultra: return "max"
         }
     }

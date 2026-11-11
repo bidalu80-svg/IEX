@@ -141,17 +141,26 @@ enum ThinkingRuleResolver {
         return nil
     }
 
+    /// Exact released families with verified Messages API request rules.
+    /// Fable 5.2: platform.claude.com/docs/en/models/fable-5-2/migration-guide.
+    static func claudeRequestFamily(_ modelId: String) -> String? {
+        let id = String(modelId.lowercased().split(separator: "/").last ?? "")
+            .replacingOccurrences(of: ".", with: "-")
+        if id == "claude-fable-5-2" { return "fable" }
+        return claude55Family(modelId)
+    }
+
     /// Last-mile Messages API normalization, also applied when no UI thinking
     /// intent was set (short requests and raw inherited SDK bodies).
-    static func applyClaude55RequestRules(to body: inout [String: Any]) {
-        guard let family = claude55Family(body["model"] as? String ?? "") else { return }
+    static func applyClaudeRequestRules(to body: inout [String: Any]) {
+        guard let family = claudeRequestFamily(body["model"] as? String ?? "") else { return }
         for key in ["temperature", "top_p", "top_k"] { body.removeValue(forKey: key) }
         var thinking = body["thinking"] as? [String: Any] ?? [:]
         var output = body["output_config"] as? [String: Any] ?? [:]
         let type = thinking["type"] as? String
         if type == "disabled" || type == "between_tools" {
             switch family {
-            case "opus":
+            case "opus", "fable":
                 thinking = ["type": "adaptive", "display": "summarized"]
                 output["effort"] = "low"
             case "sonnet":
@@ -168,7 +177,9 @@ enum ThinkingRuleResolver {
         } else if type != nil {
             thinking["type"] = "adaptive"
             thinking.removeValue(forKey: "budget_tokens")
-            if output["effort"] == nil, type == "enabled" { output["effort"] = "medium" }
+            if output["effort"] == nil, type == "enabled" {
+                output["effort"] = family == "fable" ? "high" : "medium"
+            }
         }
         if !thinking.isEmpty { body["thinking"] = thinking }
         if !output.isEmpty { body["output_config"] = output }

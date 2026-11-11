@@ -126,6 +126,13 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         maxOutputTokens: 128_000, supportsReasoning: true
     )
 
+    // Anthropic's Fable 5.2 model page, verified 2026-11-11.
+    static let claudeFable52 = LLMModel(
+        id: "claude-fable-5-2", displayName: "Claude Fable 5.2", provider: "Anthropic",
+        modalityOverride: .vision, contextWindow: 1_000_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
     static let claudeFable5 = LLMModel(
         id: "claude-fable-5",
         displayName: "Claude Fable 5",
@@ -184,7 +191,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
 
     static let allAnthropic: [LLMModel] = [
         .claudeOpus55, .claudeSonnet55, .claudeHaiku55,
-        .claudeFable5, .claudeOpus5, .claudeOpus48, .claudeOpus46, .claudeSonnet5, .claudeSonnet46, .claudeHaiku45,
+        .claudeFable52, .claudeFable5, .claudeOpus5, .claudeOpus48, .claudeOpus46, .claudeSonnet5, .claudeSonnet46, .claudeHaiku45,
     ]
 
     // MARK: - Gemini Models

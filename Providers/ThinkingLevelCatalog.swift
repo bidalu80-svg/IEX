@@ -1,10 +1,11 @@
 import Foundation
 
 enum ThinkingLevelCatalog {
-    /// Opus 5.5 always reasons; its lowest request setting is adaptive + low.
+    /// Opus 5.5 and Fable 5.2 always reason; their lowest request setting is adaptive + low.
     /// Unknown families retain the existing UI behavior until verified.
     static func supportsThinkingOff(for modelId: String) -> Bool {
-        ThinkingRuleResolver.claude55Family(modelId) != "opus"
+        let family = ThinkingRuleResolver.claudeRequestFamily(modelId)
+        return family != "opus" && family != "fable"
     }
 
     static func normalizedLevel(_ level: ThinkingLevel, for modelId: String,
@@ -39,7 +40,7 @@ enum ThinkingLevelCatalog {
         // xhigh" — the field report behind T-fallback-thinking-preclamp. Ark's
         // ladder tops out at high.
         ({ $0.contains("seed-") || $0.contains("bytedance-seed") }, .high),
-        ({ ThinkingRuleResolver.claude55Family($0) != nil }, .max),
+        ({ ThinkingRuleResolver.claudeRequestFamily($0) != nil }, .max),
         ({ $0.split(separator: "/").last == "deepseek-flash" || $0.contains("deepseek-v4") }, .max),
         // Claude Opus 4.x — model IDs use hyphens (claude-opus-4-8) in the
         // built-in catalog but third-party proxies may return dots

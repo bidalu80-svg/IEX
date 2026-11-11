@@ -1209,7 +1209,8 @@ enum RequestBodyPatcher {
         if useAdaptive {
             // Adaptive: thinking.type=adaptive, no budget_tokens; effort goes
             // under output_config.effort. If the caller only set a budget
-            // (legacy code path), default to "medium" so we still get thinking.
+            // (legacy code path), retain the medium fallback except Fable 5.2,
+            // whose documented default effort is high.
             //
             // [T-anthropic-thinking-display] Explicitly request
             // `display: "summarized"`. Adaptive thinking's `display` field
@@ -1224,7 +1225,7 @@ enum RequestBodyPatcher {
             // beta header — both were needed.
             json["thinking"] = ["type": "adaptive", "display": "summarized"]
             var oc = (json["output_config"] as? [String: Any]) ?? [:]
-            oc["effort"] = effort ?? "medium"
+            oc["effort"] = effort ?? (ThinkingRuleResolver.claudeRequestFamily(modelId) == "fable" ? "high" : "medium")
             json["output_config"] = oc
             // Strip any legacy budget that may have been left around.
             (json["thinking"] as? [String: Any]).map { _ in
@@ -1260,13 +1261,13 @@ enum RequestBodyPatcher {
         guard request.url?.path.split(separator: "/").last == "messages",
               let body = request.httpBody,
               var json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-              ThinkingRuleResolver.claude55Family(json["model"] as? String ?? "") != nil else { return }
-        ThinkingRuleResolver.applyClaude55RequestRules(to: &json)
+              ThinkingRuleResolver.claudeRequestFamily(json["model"] as? String ?? "") != nil else { return }
+        ThinkingRuleResolver.applyClaudeRequestRules(to: &json)
         if let encoded = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) {
             request.httpBody = encoded
         }
         // Adaptive thinking and effort are GA; stale budget-era betas are not
-        // required by any of these three models. Preserve unrelated OAuth betas.
+        // required by these verified model families. Preserve unrelated OAuth betas.
         if let value = request.value(forHTTPHeaderField: "anthropic-beta") {
             let retired: Set<String> = ["effort-2025-11-24", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14"]
             let kept = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
