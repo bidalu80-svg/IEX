@@ -51,6 +51,9 @@ import PDFKit
                 checkpoint("Verifying frozen task disclosure parity")
                 try await verifyTaskDisclosure(window: window, vm: vm)
             }
+            await runSuite("compact-images", window: window) {
+                try await verifyCompactImages(window: window, vm: vm)
+            }
             await runSuite("base-exports", window: window) {
                 try await verifyBasicExports(window: window, vm: vm)
             }
@@ -132,6 +135,161 @@ import PDFKit
         }
         suites.append(report)
         checkpoint("Suite \(name): \(errors.isEmpty ? "passed" : "failed; continuing independent verification")")
+    }
+
+    /// Measure the production transcript, picker and encoded exports, rather than
+    /// treating the attachment's configured constants as evidence of rendering.
+    private static func verifyCompactImages(window: UIWindow, vm: AIChatViewModel) async throws {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        for landscape in [false, true] {
+            let name = landscape ? "landscape" : "portrait"
+            let size = landscape ? CGSize(width: 1200, height: 800) : CGSize(width: 800, height: 1200)
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            let original = UIGraphicsImageRenderer(size: size, format: format).image { context in
+                UIColor.red.setFill(); context.fill(CGRect(origin: .zero, size: size))
+                UIColor.green.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: landscape ? 180 : size.width,
+                                    height: landscape ? size.height : 180))
+                UIColor.blue.setFill()
+                context.fill(CGRect(x: landscape ? size.width - 180 : 0,
+                                    y: landscape ? 0 : size.height - 180,
+                                    width: landscape ? 180 : size.width,
+                                    height: landscape ? size.height : 180))
+            }
+            let url = directory.appendingPathComponent("compact-\(name)-original.png")
+            guard let data = original.pngData() else { throw ChatExportError.writeFailed }
+            try data.write(to: url); files.append(url.lastPathComponent)
+            let block = AssistantBlock(kind: .text,
+                content: "COMPACT_BEFORE\n\n![\(name)](\(url.absoluteString))\n\nCOMPACT_AFTER")
+            let message = ChatMessage(role: .assistant, content: "", blocks: [block])
+            let liveVM = AIChatViewModel(); liveVM.messages = [message]
+            let liveHost = UIHostingController(rootView: CollectionViewMessageListV3(vm: liveVM, inputFocused: false,
+                maxContentWidth: 0, floatingBarHeight: 0, inputBarHeight: 0).environmentObject(liveVM))
+            window.overrideUserInterfaceStyle = landscape ? .dark : .light
+            window.rootViewController = liveHost
+            func fixtureView(in root: UIView) -> UIImageView? {
+                descendants(root).compactMap { $0 as? UIImageView }.first { imageView in
+                    guard let image = imageView.image else { return false }
+                    return image.size == size && imageView.window === window
+                }
+            }
+            try await waitUntil("\(name) original bitmap loads in actual collection transcript") {
+                window.layoutIfNeeded()
+                guard let image = fixtureView(in: liveHost.view) else { return false }
+                return abs(image.bounds.width - 224) <= 1 && abs(image.bounds.height - 224) <= 1
+            }
+            guard let liveImage = fixtureView(in: liveHost.view), let bitmap = liveImage.image else {
+                throw verificationError("\(name) live image disappeared")
+            }
+            try require(liveImage.contentMode == .scaleAspectFill && liveImage.clipsToBounds,
+                        "\(name) transcript crops only the display, retaining original bitmap")
+            try require(abs(liveImage.layer.cornerRadius - 24) < 0.1,
+                        "\(name) transcript has 24pt rounded corners")
+            let liveFrame = liveImage.convert(liveImage.bounds, to: window)
+            try require(liveFrame.minX < window.bounds.width * 0.2 && window.bounds.contains(liveFrame),
+                        "\(name) compact image is fully visible and left aligned")
+            try capture(window, name: "compact-\(name)-chat.png")
+
+            // Invoke the actual recognizer's action; the production router must
+            // still carry the unmodified source and message, never a crop URL.
+            var tappedSource: String?
+            var tappedMessage: UUID?
+            let observer = NotificationCenter.default.addObserver(forName: MarkdownImageTapRouter.tappedNotification,
+                object: nil, queue: .main) { notification in
+                    tappedSource = notification.userInfo?[MarkdownImageTapRouter.sourceURLKey] as? String
+                    tappedMessage = notification.userInfo?[MarkdownImageTapRouter.messageIdKey] as? UUID
+                }
+            let selector = NSSelectorFromString("handleTap")
+            let tap = liveImage.gestureRecognizers?.first { $0.responds(to: selector) }
+            _ = tap?.perform(selector)
+            NotificationCenter.default.removeObserver(observer)
+            try require(tap != nil && tappedSource == url.absoluteString && tappedMessage == message.id,
+                        "\(name) real thumbnail action routes the original image and owning message")
+
+            // The existing preview implementation must fit the entire original
+            // aspect ratio and keep zooming available; no thumbnail bitmap enters it.
+            let preview = ImagePreviewContentView(image: bitmap)
+            let previewController = UIViewController(); previewController.view = preview
+            window.rootViewController = previewController
+            window.layoutIfNeeded(); preview.layoutIfNeeded()
+            guard let fullImage = fixtureView(in: preview),
+                  let scroll = descendants(preview).compactMap({ $0 as? UIScrollView }).first else {
+                throw verificationError("\(name) existing preview image or zoom scroll view missing")
+            }
+            try require(fullImage.image?.size == size
+                        && abs(fullImage.frame.width / fullImage.frame.height - size.width / size.height) < 0.01,
+                        "\(name) existing preview preserves the complete original aspect ratio")
+            try require(scroll.maximumZoomScale > scroll.minimumZoomScale,
+                        "\(name) existing preview retains pinch zoom")
+            try capture(window, name: "compact-\(name)-full-preview.png")
+
+            let request = ChatShareSnapshot.request(messages: [message], title: "Compact image verification", vm: vm)
+            let picker = UIHostingController(rootView: ChatShareSelectionView(request: request))
+            window.rootViewController = picker
+            try await waitUntil("\(name) production share picker shows the same 224pt thumbnail") {
+                window.layoutIfNeeded()
+                guard let image = fixtureView(in: picker.view) else { return false }
+                return abs(image.bounds.width - 224) <= 1 && abs(image.bounds.height - 224) <= 1
+            }
+            try capture(window, name: "compact-\(name)-picker.png")
+            let groups = ChatShareCells.renderGroups(request.cells, selected: Set(request.cells.map(\.id)))
+            var options = ChatExportOptions(); options.hideHeader = true; options.dark = landscape
+            let png = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
+                title: "Compact image verification", options: options, progress: { _, _ in })
+            let pngURL = try save(png.url, name: "compact-\(name)-export.png")
+            guard let decoded = UIImage(contentsOfFile: pngURL.path) else { throw ChatExportError.writeFailed }
+            try verifyCompactPixels(decoded, pixelsPerPoint: png.scale, label: "\(name) encoded PNG")
+
+            options.format = .pdf
+            let pdf = try await ChatExportRenderer(vm: vm).render(groups: groups, messages: request.messages,
+                title: "Compact image verification", options: options, progress: { _, _ in })
+            let pdfURL = try save(pdf.url, name: "compact-\(name)-export.pdf")
+            guard let document = PDFDocument(url: pdfURL), let page = document.page(at: 0) else {
+                throw ChatExportError.writeFailed
+            }
+            let pageBounds = page.bounds(for: .mediaBox)
+            let rendered = page.thumbnail(of: CGSize(width: pageBounds.width * 2, height: pageBounds.height * 2), for: .mediaBox)
+            try verifyCompactPixels(rendered, pixelsPerPoint: CGFloat(rendered.cgImage!.width) / pageBounds.width,
+                                    label: "\(name) encoded PDF")
+            try rendered.pngData()!.write(to: directory.appendingPathComponent("compact-\(name)-pdf-page.png"))
+            files.append("compact-\(name)-pdf-page.png")
+            try require(document.findString("COMPACT_BEFORE", withOptions: []).isEmpty == false
+                        && document.findString("COMPACT_AFTER", withOptions: []).isEmpty == false,
+                        "\(name) PDF preserves searchable text before and after compact image")
+        }
+    }
+
+    /// Colored source margins are intentionally outside the square crop. Scan
+    /// encoded output at full resolution: a stretched or letterboxed original
+    /// produces a nonsquare red region and fails these bounds checks.
+    private static func verifyCompactPixels(_ image: UIImage, pixelsPerPoint: CGFloat, label: String) throws {
+        guard let cgImage = image.cgImage else { throw ChatExportError.writeFailed }
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let i = (y * width + x) * 4
+                    if bytes[i] > 220 && bytes[i + 1] < 45 && bytes[i + 2] < 45 {
+                        minX = min(minX, x); minY = min(minY, y)
+                        maxX = max(maxX, x); maxY = max(maxY, y)
+                    }
+                }
+            }
+            return true
+        }
+        try require(rendered && maxX >= minX && maxY >= minY, "\(label) contains actual rendered fixture image")
+        let measuredWidth = CGFloat(maxX - minX + 1) / pixelsPerPoint
+        let measuredHeight = CGFloat(maxY - minY + 1) / pixelsPerPoint
+        try require(abs(measuredWidth - 224) <= 2 && abs(measuredHeight - 224) <= 2,
+                    "\(label) image is 224pt square in encoded pixels (\(measuredWidth)x\(measuredHeight))")
+        try require(CGFloat(minX) < CGFloat(width) * 0.2, "\(label) image remains left aligned")
     }
 
     private static func verifyBasicExports(window: UIWindow, vm: AIChatViewModel) async throws {

@@ -54,6 +54,11 @@ jobs:
           python3 scripts/verify-scheduled-activity.py | tee scheduled-activity-structure.log
           xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Settings/ScheduledTasksView.swift
 
+      - name: Test shell file maintenance and main actor responsiveness
+        run: |
+          set -euo pipefail
+          python3 scripts/test-shell-file-maintenance.py | tee shell-file-maintenance-tests.log
+
       - name: Test model catalog and thinking request compatibility
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.0"
@@ -1138,6 +1143,7 @@ jobs:
             subagent-delivery-tests.log
             subagent-card-tests.log
             scheduled-task-tests.log
+            shell-file-maintenance-tests.log
             consecutive-tool-tests.log
             tool-collapse-structure.log
             user-message-collapse-structure.log

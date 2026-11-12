@@ -23,11 +23,9 @@ extension AIChatViewModel {
         let success: Bool
     }
 
-    /// Snapshot files in the static and per-session /var/ze buckets.
-    /// The latter must resolve through the current filesystem identity so a
-    /// child agent's writes are reported in the shared root workspace.
-    func snapshotZeFiles() -> [String: Date] {
-        let fm = FileManager.default
+    /// Freeze the filesystem identity before awaiting shell execution. Only the
+    /// seven root URLs are captured here; recursive I/O runs on the worker queue.
+    func shellFileMaintenanceContext() -> ShellFileMaintenance {
         let rootCandidates: [(linux: String, host: URL?)] = [
             (Self.zeAttachmentsLinuxDir, resolveHostPath(Self.zeAttachmentsLinuxDir)),
             (Self.zeOffloadsLinuxDir, resolveHostPath(Self.zeOffloadsLinuxDir)),
@@ -41,36 +39,10 @@ extension AIChatViewModel {
             candidate.host.map { (linux: candidate.linux, host: $0) }
         }
 
-        var result: [String: Date] = [:]
-        for (linuxBase, hostBase) in roots {
-            guard fm.fileExists(atPath: hostBase.path) else { continue }
-            let resolvedBase = hostBase.resolvingSymlinksInPath().path
-            var fileURLs: [URL] = []
-            autoreleasepool {
-                guard let enumerator = fm.enumerator(
-                    at: hostBase,
-                    includingPropertiesForKeys: [.contentModificationDateKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                ) else { return }
-                while let obj = enumerator.nextObject() {
-                    guard let fileURL = obj as? URL else { continue }
-                    fileURLs.append(fileURL)
-                }
-            }
-
-            for fileURL in fileURLs {
-                autoreleasepool {
-                    var isDir: ObjCBool = false
-                    guard fm.fileExists(atPath: fileURL.path, isDirectory: &isDir), !isDir.boolValue else { return }
-                    let resolvedFile = fileURL.resolvingSymlinksInPath().path
-                    let relativePath = resolvedFile.replacingOccurrences(of: resolvedBase, with: "")
-                    let linuxPath = linuxBase + relativePath
-                    let modDate = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
-                    result[linuxPath] = modDate
-                }
-            }
-        }
-        return result
+        return ShellFileMaintenance(
+            roots: roots.map { .init(linux: $0.linux, host: $0.host) },
+            metadataURL: RootfsManager.shared.rootfsPath.appendingPathComponent("meta.db", isDirectory: false)
+        )
     }
 
     /// Resolve a ze:// URL string to a host filesystem URL.
@@ -830,4 +802,146 @@ extension AIChatViewModel {
         return "First 20 lines:\n\(preview)"
     }
 
+}
+
+// MARK: - Shell file maintenance worker (Foundation + SQLite only)
+
+/// Immutable, per-command roots keep concurrent/child conversations isolated.
+/// A serial I/O queue owns all scans and batch connections; no view model or UI
+/// object crosses onto it. Awaiting the result releases MainActor for scene updates.
+struct ShellFileMaintenance: Sendable {
+    struct Root: Sendable {
+        let linux: String
+        let host: URL
+    }
+    struct Changes: Sendable {
+        let paths: [String]
+        let metadataError: String?
+    }
+    let roots: [Root]
+    let metadataURL: URL
+    private static let queue = DispatchQueue(label: "com.ze.shell-file-maintenance", qos: .utility)
+
+    func snapshot() async -> [String: Date] {
+        await withCheckedContinuation { continuation in
+            Self.queue.async { continuation.resume(returning: scan()) }
+        }
+    }
+
+    func scanAndRegisterChanges(since before: [String: Date]) async -> Changes {
+        await withCheckedContinuation { continuation in
+            Self.queue.async {
+                let after = scan()
+                let paths = after.compactMap { path, date in
+                    before[path] == nil || before[path]! < date ? path : nil
+                }.sorted()
+                do {
+                    try register(paths: paths)
+                    continuation.resume(returning: Changes(paths: paths, metadataError: nil))
+                } catch {
+                    continuation.resume(returning: Changes(paths: paths, metadataError: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    private func scan() -> [String: Date] {
+        dispatchPrecondition(condition: .onQueue(Self.queue))
+        let fm = FileManager.default
+        var result: [String: Date] = [:]
+        for root in roots {
+            guard fm.fileExists(atPath: root.host.path) else { continue }
+            let resolvedBase = root.host.resolvingSymlinksInPath().path
+            guard let enumerator = fm.enumerator(
+                at: root.host,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            while let fileURL = enumerator.nextObject() as? URL {
+                autoreleasepool {
+                    var isDir: ObjCBool = false
+                    guard fm.fileExists(atPath: fileURL.path, isDirectory: &isDir), !isDir.boolValue else { return }
+                    let resolvedFile = fileURL.resolvingSymlinksInPath().path
+                    // Preserve the guest bucket while requiring a real path boundary.
+                    guard resolvedFile.hasPrefix(resolvedBase + "/") else { return }
+                    let linuxPath = root.linux + resolvedFile.dropFirst(resolvedBase.count)
+                    let modified = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                    result[linuxPath] = modified
+                }
+            }
+        }
+        return result
+    }
+
+    private func register(paths: [String]) throws {
+        guard !paths.isEmpty else { return }
+        // Shared ancestors are inserted once for the whole batch, not once per
+        // descendant. These paths come from regular files in the snapshot.
+        var entries: [String: Bool] = [:]
+        for path in paths {
+            entries[path] = false
+            var parent = (path as NSString).deletingLastPathComponent
+            while parent != "/" && !parent.isEmpty {
+                if entries[parent] != nil { break }
+                entries[parent] = true
+                let next = (parent as NSString).deletingLastPathComponent
+                guard next != parent else { break }
+                parent = next
+            }
+        }
+        let ordered = entries.keys.sorted()
+        var handle: OpaquePointer?
+        let openResult = sqlite3_open_v2(metadataURL.path, &handle, SQLITE_OPEN_READWRITE, nil)
+        guard let db = handle else {
+            throw NSError(domain: "ShellFileMaintenance", code: Int(openResult))
+        }
+        defer { sqlite3_close(db) }
+        func failure() -> NSError {
+            NSError(domain: "ShellFileMaintenance", code: Int(sqlite3_errcode(db)), userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
+        }
+        guard openResult == SQLITE_OK else { throw failure() }
+        sqlite3_busy_timeout(db, 1_000)
+        func prepare(_ sql: String) throws -> OpaquePointer {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { throw failure() }
+            return statement
+        }
+        let lookup = try prepare("SELECT inode FROM paths WHERE path = ?")
+        defer { sqlite3_finalize(lookup) }
+        let insertStat = try prepare("INSERT INTO stats (stat) VALUES (?)")
+        defer { sqlite3_finalize(insertStat) }
+        let insertPath = try prepare("INSERT INTO paths (path, inode) VALUES (?, last_insert_rowid())")
+        defer { sqlite3_finalize(insertPath) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        // Bound write-lock duration; a large workspace must not starve iSH.
+        for start in stride(from: 0, to: ordered.count, by: 128) {
+            guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { throw failure() }
+            do {
+                for path in ordered[start..<min(start + 128, ordered.count)] {
+                    let bytes = Array(path.utf8)
+                    sqlite3_reset(lookup)
+                    sqlite3_bind_blob(lookup, 1, bytes, Int32(bytes.count), transient)
+                    let found = sqlite3_step(lookup)
+                    if found == SQLITE_ROW { continue }
+                    guard found == SQLITE_DONE else { throw failure() }
+                    var words: [UInt32] = [(entries[path] == true ? UInt32(0o040755) : UInt32(0o100644)).littleEndian, 0, 0, 0]
+                    sqlite3_reset(insertStat)
+                    _ = words.withUnsafeMutableBytes { raw in
+                        sqlite3_bind_blob(insertStat, 1, raw.baseAddress, Int32(raw.count), transient)
+                    }
+                    guard sqlite3_step(insertStat) == SQLITE_DONE else { throw failure() }
+                    sqlite3_reset(insertPath)
+                    sqlite3_bind_blob(insertPath, 1, bytes, Int32(bytes.count), transient)
+                    guard sqlite3_step(insertPath) == SQLITE_DONE else { throw failure() }
+                }
+                // A SELECT left on SQLITE_ROW keeps a read cursor alive.
+                sqlite3_reset(lookup)
+                guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else { throw failure() }
+            } catch {
+                sqlite3_reset(lookup)
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                throw error
+            }
+        }
+    }
 }

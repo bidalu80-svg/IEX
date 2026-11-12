@@ -3565,10 +3565,6 @@ final class ImageAttachment: NSTextAttachment {
     /// its `UIImageView.image` property).
     fileprivate var needsViewRebuild: Bool = false
     private(set) var loadedImage: UIImage?
-    /// Resolved file URL for lazy re-downsampling (no raw Data in memory).
-    private var resolvedFileURL: URL?
-    /// The maxPixelSize used for the current loadedImage (0 = initial full load).
-    private var downsampledAtPixelSize: CGFloat = 0
     private var isLoading = false
     /// Set when a ze:// file was not found; allows retry on next render.
     private var fileNotFound = false
@@ -3641,8 +3637,6 @@ final class ImageAttachment: NSTextAttachment {
     func invalidateLoadedImage() {
         loadedImage = nil
         loadedFingerprint = nil
-        downsampledAtPixelSize = 0
-        resolvedFileURL = nil
         fileNotFound = false
         retriesRemaining = 15
         needsViewRebuild = true
@@ -3655,128 +3649,20 @@ final class ImageAttachment: NSTextAttachment {
         UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in }
     }()
 
-    private static let placeholderHeight: CGFloat = 200
-    /// Match MarkdownUI's maxWidth: 400 for images
-    private static let maxImageWidth: CGFloat = 400
-    /// [T-md-image-shadow-clip] Breathing room reserved on EVERY side of the
-    /// rendered image inside its attachment box so the drop shadow
-    /// (radius 4, y-offset 2) draws fully instead of being clipped by the
-    /// text view's clipsToBounds at full-width images. attachmentBounds and
-    /// makeImageView MUST use the same value or the cell height drifts.
-    private static let imageShadowInset: CGFloat = 6
+    /// Compact chat thumbnail; the bitmap and gallery source remain uncropped.
+    /// A fixed square also keeps async loading from expanding the message row.
+    private static let maxImageWidth: CGFloat = 224
+    private static let imageCornerRadius: CGFloat = 24
+
+    private static func thumbnailSize(availableWidth: CGFloat) -> CGSize {
+        let side = availableWidth.isFinite ? max(1, min(availableWidth, maxImageWidth)) : maxImageWidth
+        return CGSize(width: side, height: side)
+    }
 
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
-        // Quantize the line-fragment width to a 4pt bucket. TextKit can call
-        // attachmentBounds many times per layout pass with widths that differ
-        // by sub-point floats (e.g. 329.83333 vs 330.0) as the container width
-        // flows through cell self-sizing. Without quantization the downstream
-        // `targetPixels` can toggle across the `downsampledAtPixelSize !=` guard
-        // and re-schedule downsample on every call, which mutates loadedImage
-        // and forces TextKit to re-typeset. Bucket is visually imperceptible.
-        let rawWidth = lineFrag.width
-        let width = (rawWidth / 4.0).rounded() * 4.0
         attachmentBoundsCallCount &+= 1
-        // [AttachHotPath] Per-call log capped at first 5 + every 50 to avoid log
-        // flooding while still proving cadence vs streaming token rate.
-        let cnt = attachmentBoundsCallCount
-        if cnt <= 5 || cnt % 50 == 0 {
-            AppLogger(category: "AttachHotPath").info("[IMG][BOUNDS] #\(cnt) src=\(Self.shortSrc(self.source)) ptr=\(ObjectIdentifier(self).hashValue & 0xFFFFFF) rawW=\(String(format: "%.1f", rawWidth)) bucketW=\(String(format: "%.0f", width)) hasImg=\(self.loadedImage != nil) sampledAt=\(Int(self.downsampledAtPixelSize))")
-        }
-
-        if let img = loadedImage {
-            // [T-md-image-shadow-clip] Inset the displayed image by
-            // shadowInset per side so the drop shadow renders INSIDE the
-            // attachment box. Previously the image filled the full box width;
-            // for full-width images the shadow spilled past the text view's
-            // bounds (clipsToBounds=true) and was visibly cut off left/right.
-            let boxWidth = min(min(width, img.size.width + Self.imageShadowInset * 2), Self.maxImageWidth)
-            let imgWidth = max(boxWidth - Self.imageShadowInset * 2, 40)
-            let aspect = img.size.height / max(img.size.width, 1)
-            let maxH = UIScreen.main.bounds.height / 2
-            let h = min(imgWidth * aspect, maxH)
-
-            // Re-downsample if the loaded image is much larger than needed.
-            // Target: 2x the actual display width for retina crispness.
-            // Re-reads from disk (not memory) to avoid holding raw Data in RAM.
-            // Guards:
-            //  - imgWidth >= maxImageWidth * 0.8: only downsample when layout width
-            //    is close to the final display width. TextKit may call attachmentBounds
-            //    with a very small lineFrag during intermediate layout passes; if we
-            //    downsample then, loadedImage is permanently replaced with a tiny
-            //    thumbnail (e.g. 112×200) and never recovers.
-            //  - targetPixels >= 600: absolute minimum to avoid destroying image quality.
-            //  - targetPixels is bucketed to 50pt so sub-point lineFrag jitter
-            //    cannot flip the `downsampledAtPixelSize != targetPixels` guard
-            //    and re-kick downsample on every attachmentBounds call.
-            let rawTargetPixels = imgWidth * 2
-            let targetPixels = (rawTargetPixels / 50.0).rounded() * 50.0
-            if imgWidth >= Self.maxImageWidth * 0.8,
-               targetPixels >= 600,
-               img.size.width > targetPixels * 1.5,
-               downsampledAtPixelSize != targetPixels {
-                AppLogger(category: "AttachHotPath").info("[IMG][BOUNDS][DOWNSAMPLE-FIRE] src=\(Self.shortSrc(self.source)) ptr=\(ObjectIdentifier(self).hashValue & 0xFFFFFF) targetPx=\(Int(targetPixels)) prevPx=\(Int(self.downsampledAtPixelSize)) imgW=\(Int(img.size.width)) bucketW=\(String(format: "%.0f", width))")
-                downsampledAtPixelSize = targetPixels
-                let fileURL = resolvedFileURL
-                Task.detached(priority: .utility) {
-                    guard let url = fileURL, let data = try? Data(contentsOf: url) else { return }
-                    guard let resized = downsampleImageData(data, maxPixelSize: targetPixels) else { return }
-                    await MainActor.run {
-                        AppLogger(category: "AttachHotPath").info("[IMG][BOUNDS][DOWNSAMPLE-APPLY] src=\(Self.shortSrc(self.source)) ptr=\(ObjectIdentifier(self).hashValue & 0xFFFFFF) newSize=\(Int(resized.size.width))x\(Int(resized.size.height)) — ASSIGNS loadedImage on main, will trigger TextKit re-layout")
-                        self.loadedImage = resized
-                        // Do NOT write back to NativeMediaImageCache — the shared
-                        // cache must keep the full-resolution image so that other
-                        // ImageAttachment instances (e.g. after markdown re-parse)
-                        // pick up the crisp original, not a downsampled copy.
-                    }
-                }
-            }
-
-            // Return the attachment box as `imgWidth` (already clamped by
-            // `maxImageWidth` and the image's own intrinsic width), NOT the
-            // raw `width`. TextKit can pass `lineFrag.width = 10_000_000.0`
-            // as an "unconstrained" probe during intermediate layout passes;
-            // returning that value unchanged gave TextKit an attachment box
-            // 10M points wide, which invalidates line-fragment geometry and
-            // causes neighbouring passes (at the real container width) to
-            // compute a different bounds, feeding a layout loop that can walk
-            // past the 5s watchdog budget. [AttachHang fix]
-            // Box = image + shadow breathing room on ALL sides (geometry must
-            // match makeImageView's container exactly, or the cell height
-            // drifts — the historical attachment-clip class of bugs).
-            return CGRect(x: 0, y: 0, width: imgWidth + Self.imageShadowInset * 2,
-                          height: h + Self.imageShadowInset * 2)
-        }
-        // No `loadedImage` yet — but if we've ever loaded this source before
-        // we have its pixel size recorded globally. Use that to compute the
-        // correct attachment height on the very first layout pass, instead of
-        // returning the 200pt placeholder. Without this:
-        //   1. First updateUIView creates a fresh ImageAttachment (cacheCount=0)
-        //   2. SwiftUI sizeThatFits → attachmentBounds → placeholder 200pt
-        //   3. Cell self-sizes to 276pt (placeholder + surrounding text)
-        //   4. Async image load completes, attachmentBounds now returns 280pt
-        //   5. invalidateCellSizeIfNeeded fires prev=271→new=358 delta=+87
-        //   6. That late grow is sometimes lost (deferSelfSizing rejects it,
-        //      SwiftUI's UIHostingConfiguration.systemLayoutSizeFitting still
-        //      caches 276pt from step 3, etc.)
-        //   7. Cell stays at 276pt; the UITextView inside grows to 358pt and
-        //      gets clipped by the cell's clipsToBounds — image bottom cut
-        //      off and the trailing prose after the image disappears.
-        // [AttachHang preload-bounds fix]
-        let canonicalSrc = Self.canonicalizeMarkdownImageSource(source)
-        if let knownSize = NativeMediaImageCache.shared.size(forSource: canonicalSrc) {
-            // [T-md-image-shadow-clip] Same inset geometry as the loaded path.
-            let boxWidth = min(min(width, knownSize.width + Self.imageShadowInset * 2), Self.maxImageWidth)
-            let imgWidth = max(boxWidth - Self.imageShadowInset * 2, 40)
-            let aspect = knownSize.height / max(knownSize.width, 1)
-            let maxH = UIScreen.main.bounds.height / 2
-            let h = min(imgWidth * aspect, maxH)
-            return CGRect(x: 0, y: 0, width: imgWidth + Self.imageShadowInset * 2,
-                          height: h + Self.imageShadowInset * 2)
-        }
-        // First time we see this source — fall back to placeholder. Same
-        // unconstrained-probe guard as the loaded path.
-        let placeholderWidth = min(width, Self.maxImageWidth)
-        return CGRect(x: 0, y: 0, width: placeholderWidth, height: Self.placeholderHeight)
+        let width = min(lineFrag.width, textContainer?.size.width ?? lineFrag.width)
+        return CGRect(origin: .zero, size: Self.thumbnailSize(availableWidth: width))
     }
 
     func beginLoadingIfNeeded() {
@@ -3813,8 +3699,7 @@ final class ImageAttachment: NSTextAttachment {
             loadedFingerprint = fpKey
             isLoading = false
             onLoad?()
-            // Memory-cache hit still grows the cell: placeholder bounds →
-            // image bounds at the recorded size. Cell needs to re-measure.
+            // Refresh the placeholder view with the loaded bitmap.
             NotificationCenter.default.post(name: .zeAttachmentSizeChanged, object: canonicalSrc)
             return
         }
@@ -3835,13 +3720,11 @@ final class ImageAttachment: NSTextAttachment {
         }
         imgLogger.info("[ZeImage][Load] dispatching async load src=\(src) isZeURL=\(isZeURL)")
         Task.detached(priority: .userInitiated) {
-            var fileURL: URL?
             let img: UIImage?
             if let url = URL(string: src), url.scheme == "ze" {
                 imgLogger.info("[ZeImage][Load] resolving ze:// URL src=\(src) host=\(url.host ?? "nil") path=\(url.path)")
                 if let resolved = resolveZeFileURLForNativeText(url: url) {
                     imgLogger.info("[ZeImage][Load] ze:// resolved to localPath=\(resolved.path)")
-                    fileURL = resolved
                     if let data = try? Data(contentsOf: resolved) {
                         imgLogger.info("[ZeImage][Load] read \(data.count) bytes from localPath=\(resolved.path)")
                         let downsampled = downsampleImageData(data)
@@ -3872,7 +3755,6 @@ final class ImageAttachment: NSTextAttachment {
             } else if let url = URL(string: src) {
                 // file URL or relative
                 imgLogger.info("[ZeImage][Load] trying file/relative URL scheme=\(url.scheme ?? "nil") path=\(url.path)")
-                fileURL = url
                 if let data = try? Data(contentsOf: url) {
                     imgLogger.info("[ZeImage][Load] file loaded \(data.count) bytes src=\(src)")
                     img = downsampleImageData(data)
@@ -3911,7 +3793,6 @@ final class ImageAttachment: NSTextAttachment {
             await MainActor.run {
                 self.loadedImage = img
                 self.loadedFingerprint = img != nil ? postLoadKey : nil
-                self.resolvedFileURL = fileURL
                 self.isLoading = false
                 if img == nil && isZeURL && self.retriesRemaining > 0 {
                     imgLogger.info("[ZeImage][Load] RETRY scheduled src=\(src) retriesRemaining=\(self.retriesRemaining)")
@@ -3955,39 +3836,15 @@ final class ImageAttachment: NSTextAttachment {
     }
 
     private func makeImageView(_ img: UIImage, width: CGFloat) -> UIView {
-        // [T-md-image-shadow-clip] Mirror attachmentBounds' inset geometry:
-        // the image is inset by imageShadowInset per side inside the
-        // attachment box so the shadow renders fully within the text view's
-        // clip bounds (it used to be cut off left/right on full-width images).
-        let boxWidth = min(min(width, img.size.width + Self.imageShadowInset * 2), Self.maxImageWidth)
-        let imgWidth = max(boxWidth - Self.imageShadowInset * 2, 40)
-        let aspect = img.size.height / max(img.size.width, 1)
-        let maxH = UIScreen.main.bounds.height / 2
-        let h = min(imgWidth * aspect, maxH)
-        imgLogger.info("[ZeImage][MakeView] layout src=\(self.source) displayWidth=\(imgWidth) displayHeight=\(h) aspect=\(aspect) maxImageWidth=\(Self.maxImageWidth)")
-
-        let shadowInset: CGFloat = Self.imageShadowInset
-        // Container == the attachment box (image + shadow room on all sides).
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: imgWidth + shadowInset * 2, height: h + shadowInset * 2))
+        let size = Self.thumbnailSize(availableWidth: width)
+        let container = UIView(frame: CGRect(origin: .zero, size: size))
         container.backgroundColor = .clear
-        container.clipsToBounds = false
 
-        // Shadow wrapper — positioned at the inset so the shadow's spill stays
-        // inside the container/attachment box.
-        let shadowView = UIView(frame: CGRect(x: shadowInset, y: shadowInset, width: imgWidth, height: h))
-        shadowView.backgroundColor = .clear
-        shadowView.layer.shadowColor = UIColor.black.cgColor
-        shadowView.layer.shadowOpacity = 0.15
-        shadowView.layer.shadowRadius = 4
-        shadowView.layer.shadowOffset = CGSize(width: 0, height: 2)
-        shadowView.layer.shadowPath = UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: imgWidth, height: h), cornerRadius: 8).cgPath
-
-        // Image view — clipped to rounded corners, black background for transparent/white images
         let imageView = UIImageView(image: img)
-        imageView.contentMode = .scaleAspectFit
+        imageView.contentMode = .scaleAspectFill
         imageView.backgroundColor = .black
-        imageView.frame = shadowView.bounds
-        imageView.layer.cornerRadius = 8
+        imageView.frame = container.bounds
+        imageView.layer.cornerRadius = min(Self.imageCornerRadius, size.width / 2)
         imageView.clipsToBounds = true
         imageView.isUserInteractionEnabled = true
 
@@ -3998,18 +3855,17 @@ final class ImageAttachment: NSTextAttachment {
         tap.addTarget(tap, action: #selector(ImageTapGesture.handleTap))
         imageView.addGestureRecognizer(tap)
 
-        shadowView.addSubview(imageView)
-        container.addSubview(shadowView)
+        container.addSubview(imageView)
         return container
     }
 
     private func makePlaceholderView(width: CGFloat) -> UIView {
-        let h = Self.placeholderHeight
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: h))
+        let size = Self.thumbnailSize(availableWidth: width)
+        let container = UIView(frame: CGRect(origin: .zero, size: size))
 
-        let bg = UIView(frame: CGRect(x: 0, y: 0, width: min(width, 400), height: h))
+        let bg = UIView(frame: container.bounds)
         bg.backgroundColor = .secondarySystemBackground
-        bg.layer.cornerRadius = 8
+        bg.layer.cornerRadius = min(Self.imageCornerRadius, size.width / 2)
         bg.clipsToBounds = true
         container.addSubview(bg)
 

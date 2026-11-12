@@ -335,7 +335,12 @@ extension AIChatViewModel {
                 }
             }
 
-            let preSnapshot = snapshotZeFiles()
+            let fileMaintenance = shellFileMaintenanceContext()
+            let preSnapshot = await fileMaintenance.snapshot()
+            // Stop can now be received while the background scan is running.
+            if commandCancelledByUser || userDidCancel || Task.isCancelled {
+                throw CancellationError()
+            }
             let result: CommandResult
             do {
                 var lineBuffer: [String] = []
@@ -414,22 +419,15 @@ extension AIChatViewModel {
             }
             toolSuccess = result.exitCode == 0
 
-            // Scan for new/modified files under /var/ze/
-            let postSnapshot = snapshotZeFiles()
-            let newOrModified = postSnapshot.filter { key, date in
-                preSnapshot[key] == nil || preSnapshot[key]! < date
+            // Recursive scans and fakefs registration must never monopolize
+            // MainActor: large generated workspaces previously hit 0x8BADF00D.
+            let changes = await fileMaintenance.scanAndRegisterChanges(since: preSnapshot)
+            if let error = changes.metadataError {
+                ctLogger.warning("[ShellFiles] Metadata registration failed: \(error)")
             }
-            if !newOrModified.isEmpty {
-                for (path, _) in newOrModified {
-                    var isDir: ObjCBool = false
-                    if let hostURL = resolveHostPath(path) {
-                        FileManager.default.fileExists(atPath: hostURL.path, isDirectory: &isDir)
-                    }
-                    ensureParentDirsInMetaDB(for: path)
-                    ensureFakefsMetadata(for: path, isDirectory: isDir.boolValue)
-                }
+            if !changes.paths.isEmpty {
                 toolOutput += "\n\n[ze] New/modified files:"
-                for path in newOrModified.keys.sorted() {
+                for path in changes.paths {
                     if let url = linuxPathToZeURL(path) {
                         toolOutput += "\n  \(url)"
                     }
