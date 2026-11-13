@@ -1169,7 +1169,13 @@ fileprivate final class MarkdownNSRenderer {
             // Fingerprint check: if the underlying file has been rewritten
             // since we last loaded (size or mtime changed), drop the
             // cached bitmap so the next draw re-reads from disk.
-            let currentFp = zeMediaCacheKey(for: source)
+            // Fingerprint the CANONICAL source: loadedFingerprint is recorded
+            // from the canonical form in the load path (and the group path in
+            // invalidateStaleGroupImages already canonicalizes). Keying the
+            // raw source here made the two fingerprints unmatchable whenever
+            // canonicalization changed the string (relative path, raw CJK in
+            // a ze:// path), so every render invalidated the loaded bitmap.
+            let currentFp = zeMediaCacheKey(for: ImageAttachment.canonicalizeMarkdownImageSource(source))
             if let loadedFp = cached.loadedFingerprint, loadedFp != currentFp {
                 AppLogger(category: "AttachHotPath").info("[IMG][RENDER] FINGERPRINT-DROP src=\(ImageAttachment.shortSrc(source)) old=\(loadedFp) new=\(currentFp) — bitmap invalidated, will reload")
                 imgLogger.info("[ZeImage][RenderAttach] FINGERPRINT CHANGED src=\(source) old=\(loadedFp) new=\(currentFp) — invalidating cached image")
@@ -7351,7 +7357,8 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 att.invalidateStaleGroupImages()
             } else if let messageId { att.messageId = messageId }
             if let loadedFp = att.loadedFingerprint {
-                let currentFp = zeMediaCacheKey(for: att.source)
+                // Canonical source, as in the load path — see renderImageAttachment.
+                let currentFp = zeMediaCacheKey(for: ImageAttachment.canonicalizeMarkdownImageSource(att.source))
                 if loadedFp != currentFp {
                     imgLogger.info("[ZeImage][CachedAttr] FINGERPRINT CHANGED src=\(att.source) old=\(loadedFp) new=\(currentFp) — invalidating cached image")
                     att.invalidateLoadedImage()
