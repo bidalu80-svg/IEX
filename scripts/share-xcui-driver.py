@@ -211,6 +211,13 @@ final class ShareDriver: XCTestCase {
                                       "point": NSCoder.string(for: point.screenPoint)]
                     if request.endX == 2 { point.doubleTap(); strategy = "xcui-visualization-double-tap" }
                     else { point.press(forDuration: 0.65); strategy = "xcui-visualization-long-press" }
+                case "swipeImageStrip":
+                    let strip = app.scrollViews[request.identifier ?? "markdown.imageGroup.strip"].firstMatch
+                    guard strip.waitForExistence(timeout: 10), strip.isHittable else {
+                        throw NSError(domain: "ShareDriver", code: 12, userInfo: [NSLocalizedDescriptionKey: "Thumbnail scroller did not become hittable"])
+                    }
+                    strip.swipeLeft()
+                    strategy = "xcui-image-strip-swipe"
                 case "tapImageMain":
                     let target = app.images[request.identifier ?? "markdown.imageGroup.main"].firstMatch
                     guard target.waitForExistence(timeout: 10), target.isHittable else {

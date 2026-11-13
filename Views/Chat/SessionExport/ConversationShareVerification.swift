@@ -215,7 +215,7 @@ import PDFKit
             } && mainImage(host.view)?.image?.size == sizes[0]
         }
         guard let firstMain = mainImage(host.view), thumbnail(1, in: host.view) != nil,
-              thumbnail(2, in: host.view) != nil, let last = thumbnail(4, in: host.view) else {
+              thumbnail(2, in: host.view) != nil, thumbnail(4, in: host.view) != nil else {
             throw verificationError("Live group controls missing")
         }
         try require(abs(firstMain.bounds.width - 224) < 1 && abs(firstMain.bounds.height - 224) < 1,
@@ -230,16 +230,20 @@ import PDFKit
         try await waitUntil("Third thumbnail selects the third full bitmap") { mainImage(host.view)?.image?.size == sizes[2] }
         try require(mainImage(host.view)?.convert(mainImage(host.view)!.bounds, to: window) == initialFrame,
                     "Switching different source aspect ratios does not change main view geometry")
-        guard let strip = descendants(host.view).compactMap({ $0 as? UIScrollView }).first(where: {
-            $0.contentSize.width > $0.bounds.width && last.isDescendant(of: $0)
-        }) else { throw verificationError("Five-image horizontal thumbnail scroller missing") }
-        strip.scrollRectToVisible(last.convert(last.bounds, to: strip), animated: false)
-        strip.layoutIfNeeded()
+        try require(descendants(host.view).compactMap { $0 as? UIScrollView }.contains {
+            $0.accessibilityIdentifier == "markdown.imageGroup.strip" && $0.contentSize.width > $0.bounds.width
+        }, "Five-image thumbnail strip has horizontally scrollable content")
+        try await requestUIAction("swipeImageStrip", details: ["identifier": "markdown.imageGroup.strip"])
         try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.4"])
         try await waitUntil("Scrolling the strip and selecting the fifth image switches the main view") {
             mainImage(host.view)?.image?.size == sizes[4]
         }
-        try require(strip.bounds.intersects(last.convert(last.bounds, to: strip)), "Selected fifth thumbnail remains visible in the scroller")
+        guard let currentLast = thumbnail(4, in: host.view),
+              let currentStrip = descendants(host.view).compactMap({ $0 as? UIScrollView }).first(where: {
+                  $0.accessibilityIdentifier == "markdown.imageGroup.strip" && currentLast.isDescendant(of: $0)
+              }) else { throw verificationError("Current fifth thumbnail or strip missing") }
+        try require(currentStrip.bounds.contains(currentLast.convert(currentLast.bounds, to: currentStrip)),
+                    "Selected fifth thumbnail remains fully visible in the scroller")
         try capture(window, name: "multi-chat-fifth.png")
         try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.2"])
         try await waitUntil("Third image is selected before preview and sharing") { mainImage(host.view)?.image?.size == sizes[2] }
