@@ -3714,6 +3714,13 @@ final class ImageAttachment: NSTextAttachment {
     /// resets it). Remote failures keep self-healing via the negative-cache
     /// TTL, so they never set it.
     private(set) var loadFailed = false
+    /// Fingerprint (see zeMediaCacheKey) of the most recent attempt that
+    /// read the source's bytes but could not decode them. A second failure
+    /// with the same fingerprint is deterministic — retrying identical
+    /// bytes can never succeed — so it is terminal immediately; a file
+    /// still being written changes fingerprint between attempts and keeps
+    /// its retry budget.
+    private var lastFailedFingerprint: String?
     /// Set when a ze:// file was not found; allows retry on next render.
     private var fileNotFound = false
     /// Number of file-not-found retries remaining (prevents infinite polling).
@@ -3829,6 +3836,7 @@ final class ImageAttachment: NSTextAttachment {
         loadedFingerprint = nil
         fileNotFound = false
         loadFailed = false
+        lastFailedFingerprint = nil
         retriesRemaining = 15
         needsViewRebuild = true
     }
@@ -3869,6 +3877,8 @@ final class ImageAttachment: NSTextAttachment {
         // Reset fileNotFound so we don't spin; it will be set again if still missing.
         fileNotFound = false
         guard retriesRemaining > 0 else {
+            // Budget spent with nothing to show: terminal (see loadFailed).
+            loadFailed = true
             imgLogger.warning("[ZeImage][Load] no retries left src=\(self.source)")
             return
         }
@@ -3917,11 +3927,16 @@ final class ImageAttachment: NSTextAttachment {
         imgLogger.info("[ZeImage][Load] dispatching async load src=\(src) isZeURL=\(isZeURL)")
         Task.detached(priority: .userInitiated) {
             let img: UIImage?
+            // True once the source's bytes were actually obtained; separates
+            // "file missing / fetch failed" (worth retrying) from "bytes read
+            // but undecodable" (deterministic — see the completion handler).
+            var dataRead = false
             if let url = URL(string: src), url.scheme == "ze" {
                 imgLogger.info("[ZeImage][Load] resolving ze:// URL src=\(src) host=\(url.host ?? "nil") path=\(url.path)")
                 if let resolved = resolveZeFileURLForNativeText(url: url) {
                     imgLogger.info("[ZeImage][Load] ze:// resolved to localPath=\(resolved.path)")
                     if let data = try? Data(contentsOf: resolved) {
+                        dataRead = true
                         imgLogger.info("[ZeImage][Load] read \(data.count) bytes from localPath=\(resolved.path)")
                         let downsampled = downsampleImageData(data)
                         if let downsampled {
@@ -3941,6 +3956,7 @@ final class ImageAttachment: NSTextAttachment {
             } else if let url = URL(string: src), url.scheme == "http" || url.scheme == "https" {
                 imgLogger.info("[ZeImage][Load] fetching HTTP(S) url=\(src)")
                 if let data = try? Data(contentsOf: url) {
+                    dataRead = true
                     // HTTP images: no local file URL for re-downsample (network-only)
                     imgLogger.info("[ZeImage][Load] HTTP fetched \(data.count) bytes src=\(src)")
                     img = downsampleImageData(data)
@@ -3952,6 +3968,7 @@ final class ImageAttachment: NSTextAttachment {
                 // file URL or relative
                 imgLogger.info("[ZeImage][Load] trying file/relative URL scheme=\(url.scheme ?? "nil") path=\(url.path)")
                 if let data = try? Data(contentsOf: url) {
+                    dataRead = true
                     imgLogger.info("[ZeImage][Load] file loaded \(data.count) bytes src=\(src)")
                     img = downsampleImageData(data)
                 } else {
@@ -3990,11 +4007,25 @@ final class ImageAttachment: NSTextAttachment {
                 self.loadedImage = img
                 self.loadedFingerprint = img != nil ? postLoadKey : nil
                 self.isLoading = false
-                if img == nil && isZeURL && self.retriesRemaining == 0 {
-                    // Retries exhausted: this failure is terminal (see loadFailed).
-                    self.loadFailed = true
+                if img != nil {
+                    self.lastFailedFingerprint = nil
+                } else {
+                    // Deterministic decode failure: the bytes were read and
+                    // the fingerprint is unchanged since the previous failed
+                    // attempt, so retrying identical bytes can never succeed.
+                    // Terminal NOW — a share export waits only ~5 s for its
+                    // fresh attachment instances and must not stay blocked by
+                    // the full ~15 s retry budget on every attempt.
+                    if dataRead && postLoadKey == self.lastFailedFingerprint {
+                        self.loadFailed = true
+                    }
+                    if dataRead { self.lastFailedFingerprint = postLoadKey }
+                    if self.retriesRemaining == 0 {
+                        // Retries exhausted: this failure is terminal (see loadFailed).
+                        self.loadFailed = true
+                    }
                 }
-                if img == nil && isZeURL && self.retriesRemaining > 0 {
+                if img == nil && isZeURL && self.retriesRemaining > 0 && !self.loadFailed {
                     imgLogger.info("[ZeImage][Load] RETRY scheduled src=\(src) retriesRemaining=\(self.retriesRemaining)")
                     self.fileNotFound = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in

@@ -1,4 +1,15 @@
 // Joined to the actual production drawing methods by test-pdf-vector-rendering.py.
+
+/// Stand-in for the app's ImageAttachment, which lives in
+/// SelectableMarkdownView.swift and is not part of this harness.
+/// ProductionRenderer.drawVectorInCurrentTraits calls
+/// ImageAttachment.isGalleryView(_:) (the reference was added to the
+/// renderer in 4a0661a, which is what broke this harness's compile);
+/// the fixture builds only plain text views and labels — never gallery
+/// views — so `false` is the fixture-correct answer.
+enum ImageAttachment {
+    static func isGalleryView(_ view: UIView) -> Bool { false }
+}
 @main @MainActor final class PDFVectorHarnessDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     private let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
