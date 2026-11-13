@@ -176,6 +176,8 @@ final class ShareDriver: XCTestCase {
         if let fallback = ProcessInfo.processInfo.environment["ZE_SHARE_DRIVER_DYLD_FALLBACK"], !fallback.isEmpty {
             app.launchEnvironment["DYLD_FALLBACK_LIBRARY_PATH"] = fallback
         }
+        let multiOnly = ProcessInfo.processInfo.environment["ZE_MULTI_IMAGE_ONLY"] == "true"
+        if multiOnly { app.launchArguments.append("--verify-multi-images-only") }
         app.launch()
         // Independent visualization, disclosure and export suites retain their
         // own action bounds and must all be allowed to publish a result.
@@ -188,7 +190,7 @@ final class ShareDriver: XCTestCase {
             if request.action == "finish" {
                 XCTAssertEqual(request.success, true, request.error ?? "Production share verification failed")
                 XCTAssertTrue(actionFailures.isEmpty, actionFailures.joined(separator: "\n"))
-                XCTAssertGreaterThanOrEqual(actions, 16, "Expected eight real share-button taps and eight interactive dismissals")
+                XCTAssertGreaterThanOrEqual(actions, multiOnly ? 7 : 23, "Expected real gallery gestures and, for the full run, system share interactions")
                 return
             }
             guard let sequence = request.sequence, !handled.contains(sequence), request.action != "wait" else {
@@ -487,6 +489,7 @@ def run_driver(args: argparse.Namespace) -> int:
                 "ZE_SHARE_DRIVER_BRIDGE": f"http://127.0.0.1:{server.server_port}",
                 "ZE_SHARE_DRIVER_SECRET": token,
                 "ZE_SHARE_DRIVER_BUNDLE": args.bundle,
+                "ZE_MULTI_IMAGE_ONLY": os.environ.get("ZE_MULTI_IMAGE_ONLY", "false"),
                 "ZE_SHARE_DRIVER_DYLD_FALLBACK": os.environ.get("SIMCTL_CHILD_DYLD_FALLBACK_LIBRARY_PATH", ""),
             })
             # The external app was already built/installed; no build dependency.

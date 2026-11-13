@@ -15,6 +15,10 @@ on:
         description: 'Run complete application verification with diagnostic simulator artifacts'
         type: boolean
         default: false
+      multi_image_only:
+        description: 'Run focused multi-image interactions and PNG/PDF export diagnosis'
+        type: boolean
+        default: false
       animation_only:
         description: 'Verify thinking animation and native card layout, then package iOS app'
         type: boolean
@@ -28,7 +32,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
+    if: ${{ inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
     name: Build Ze.app
     runs-on: macos-15
 
@@ -1186,6 +1190,8 @@ jobs:
           retention-days: 2
       - name: Verify full chat lifecycle, exports and search navigation
         timeout-minutes: 16
+        env:
+          ZE_MULTI_IMAGE_ONLY: ${{ inputs.multi_image_only }}
         run: bash scripts/test-share-search-application.sh
       - name: Upload application verification evidence
         if: always()

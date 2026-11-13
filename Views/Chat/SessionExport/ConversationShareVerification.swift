@@ -43,6 +43,14 @@ import PDFKit
             defer { window.rootViewController = previous; window.overrideUserInterfaceStyle = oldStyle }
             window.overrideUserInterfaceStyle = .light
             let vm = AIChatViewModel()
+            if ProcessInfo.processInfo.arguments.contains("--verify-multi-images-only") {
+                await runSuite("multi-images", window: window) {
+                    try await verifyMultiImageStrip(window: window, vm: vm)
+                }
+                let errors = suites.compactMap { $0["error"] as? String }.filter { !$0.isEmpty }
+                try result(success: errors.isEmpty, error: errors.isEmpty ? nil : errors.joined(separator: "\n"))
+                return
+            }
             await runSuite("visualizations", window: window) {
                 checkpoint("Verifying native and custom visualizations")
                 try await ZeVisualizationVerification.run(window: window, directory: directory)

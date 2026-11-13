@@ -55,7 +55,9 @@ if ! python3 scripts/share-xcui-driver.py prepare --work "$xcui_work" --device "
 fi
 mkdir -p "$evidence/xcui"
 if [ -f "$xcui_work/build.log" ]; then cp "$xcui_work/build.log" "$evidence/xcui/build.log"; fi
-for kind in chat share search; do
+verification_kinds="chat share search"
+if [ "${ZE_MULTI_IMAGE_ONLY:-false}" = true ]; then verification_kinds="share"; fi
+for kind in $verification_kinds; do
     xcrun simctl terminate "$device" "$bundle_id" >/dev/null 2>&1 || true
     # Delete only this generated result marker; retain earlier artifacts if a
     # fresh run fails, and rely on the fresh success manifest for validation.

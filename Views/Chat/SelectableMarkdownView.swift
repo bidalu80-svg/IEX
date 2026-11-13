@@ -3757,6 +3757,8 @@ final class ImageAttachment: NSTextAttachment {
         groupViews.allObjects.forEach { $0.refreshImages() }
     }
 
+    static func isGalleryView(_ view: UIView) -> Bool { view is MarkdownImageGroupView }
+
     func resizeGroupView(_ view: UIView, width: CGFloat) {
         guard let group = view as? MarkdownImageGroupView else { return }
         let side = Self.thumbnailSize(availableWidth: width).width

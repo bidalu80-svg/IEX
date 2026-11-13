@@ -950,7 +950,11 @@ final class ChatExportRenderer {
         var textViews: [UITextView] = []
         var labels: [UILabel] = []
         var hidden: [UIView] = []
-        func isPrivate(_ v: UIView) -> Bool { NSStringFromClass(type(of: v)).hasPrefix("_") }
+        func isPrivate(_ v: UIView) -> Bool {
+            // Private Swift classes have mangled names beginning with "_" too.
+            // The gallery is app content, not UITextView's duplicate glyph layer.
+            !ImageAttachment.isGalleryView(v) && NSStringFromClass(type(of: v)).hasPrefix("_")
+        }
         func walk(_ v: UIView) {
             guard !v.isHidden, v.alpha > 0.01 else { return }
             if let tv = v as? UITextView, tv.textLayoutManager == nil {
