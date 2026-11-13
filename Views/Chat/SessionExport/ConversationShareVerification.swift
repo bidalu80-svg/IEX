@@ -54,6 +54,9 @@ import PDFKit
             await runSuite("compact-images", window: window) {
                 try await verifyCompactImages(window: window, vm: vm)
             }
+            await runSuite("multi-images", window: window) {
+                try await verifyMultiImageStrip(window: window, vm: vm)
+            }
             await runSuite("base-exports", window: window) {
                 try await verifyBasicExports(window: window, vm: vm)
             }
@@ -139,6 +142,228 @@ import PDFKit
 
     /// Measure the production transcript, picker and encoded exports, rather than
     /// treating the attachment's configured constants as evidence of rendering.
+    private static func verifyMultiImageStrip(window: UIWindow, vm: AIChatViewModel) async throws {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        func groups(_ attributed: NSAttributedString) -> [ImageAttachment] {
+            var result: [ImageAttachment] = []
+            attributed.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attributed.length)) { value, _, _ in
+                if let image = value as? ImageAttachment { result.append(image) }
+            }
+            return result
+        }
+        let sizes = [CGSize(width: 800, height: 1200), CGSize(width: 1200, height: 800),
+                     CGSize(width: 900, height: 900), CGSize(width: 700, height: 1000), CGSize(width: 1000, height: 700)]
+        let colors: [UIColor] = [.red, .green, .blue, .orange, .purple]
+        var sources: [String] = []
+        for index in sizes.indices {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            let image = UIGraphicsImageRenderer(size: sizes[index], format: format).image { context in
+                colors[index].setFill(); context.fill(CGRect(origin: .zero, size: sizes[index]))
+            }
+            let url = directory.appendingPathComponent("multi-source-\(index).png")
+            guard let data = image.pngData() else { throw ChatExportError.writeFailed }
+            try data.write(to: url); sources.append(url.absoluteString); files.append(url.lastPathComponent)
+        }
+        let nodes = sources.map { InlineNode.image(source: $0, children: []) }
+        let pureParagraphs = nodes.map { BlockNode.paragraph(content: [$0]) }
+        let grouped = groups(renderMarkdownBlocks(pureParagraphs))
+        try require(grouped.count == 1 && grouped[0].groupSources == sources,
+                    "Five consecutive image paragraphs form one ordered image group")
+        let spaced: [InlineNode] = [nodes[0], .softBreak, nodes[1], .text("  "), .lineBreak, nodes[2]]
+        let inlineGroup = groups(renderMarkdownBlocks([.paragraph(content: spaced)]))
+        try require(inlineGroup.count == 1 && inlineGroup[0].groupSources == Array(sources.prefix(3)),
+                    "Whitespace-separated inline images form one ordered image group")
+        let separate = renderMarkdownBlocks([pureParagraphs[0], .paragraph(content: [.text("KEEP_BETWEEN")]), pureParagraphs[1]])
+        try require(groups(separate).count == 2 && groups(separate).allSatisfy { !$0.isImageGroup }
+                    && separate.string.contains("KEEP_BETWEEN"), "Ordinary text separates image groups and remains in order")
+        let headed = renderMarkdownBlocks([pureParagraphs[0], .heading(level: 2, content: [.text("KEEP_HEADING")]), pureParagraphs[1]])
+        try require(groups(headed).count == 2 && groups(headed).allSatisfy { !$0.isImageGroup },
+                    "Heading boundaries do not merge separate image groups")
+        let listed = renderMarkdownBlocks([.bulletedList(isTight: false,
+            items: [.init(children: [pureParagraphs[0]]), .init(children: [pureParagraphs[1]])])])
+        try require(groups(listed).count == 2 && groups(listed).allSatisfy { !$0.isImageGroup },
+                    "Separate list items never merge into one image group")
+        let single = groups(renderMarkdownBlocks([pureParagraphs[0]]))
+        try require(single.count == 1 && !single[0].isImageGroup
+                    && descendants(single[0].makeView(width: 224)).allSatisfy { $0.accessibilityIdentifier != "markdown.imageGroup" },
+                    "Single-image message keeps its existing view without a thumbnail strip")
+        guard let loadingGroup = grouped.first else { throw verificationError("Image group missing") }
+        let loadingView = loadingGroup.makeView(width: 224)
+        try require(loadingGroup.hasPendingImages && abs(loadingView.bounds.width - 224) < 0.1,
+                    "Unloaded group reserves compact geometry while all source images are pending")
+
+        let markdown = "MULTI_BEFORE\n\n" + sources.enumerated().map { "![Image \($0.offset + 1)](\($0.element))" }.joined(separator: "\n\n") + "\n\nMULTI_AFTER"
+        let block = AssistantBlock(kind: .text, content: markdown)
+        let message = ChatMessage(role: .assistant, content: "", blocks: [block])
+        let liveVM = AIChatViewModel(); liveVM.messages = [message]
+        func liveHost() -> UIHostingController<some View> {
+            UIHostingController(rootView: CollectionViewMessageListV3(vm: liveVM, inputFocused: false,
+                maxContentWidth: 0, floatingBarHeight: 0, inputBarHeight: 0).environmentObject(liveVM))
+        }
+        func mainImage(_ root: UIView) -> UIImageView? {
+            descendants(root).compactMap { $0 as? UIImageView }.first { $0.accessibilityIdentifier == "markdown.imageGroup.main" }
+        }
+        func thumbnail(_ index: Int, in root: UIView) -> UIButton? {
+            descendants(root).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "markdown.imageGroup.thumbnail.\(index)" }
+        }
+        let host = liveHost(); window.rootViewController = host; window.overrideUserInterfaceStyle = .light
+        try await waitUntil("Live transcript loads all five original images into one thumbnail strip") {
+            window.layoutIfNeeded()
+            return sizes.indices.allSatisfy { index in
+                guard let button = thumbnail(index, in: host.view) else { return false }
+                return descendants(button).compactMap { $0 as? UIImageView }.contains { $0.image?.size == sizes[index] }
+            } && mainImage(host.view)?.image?.size == sizes[0]
+        }
+        guard let firstMain = mainImage(host.view), thumbnail(1, in: host.view) != nil,
+              thumbnail(2, in: host.view) != nil, let last = thumbnail(4, in: host.view) else {
+            throw verificationError("Live group controls missing")
+        }
+        try require(abs(firstMain.bounds.width - 224) < 1 && abs(firstMain.bounds.height - 224) < 1,
+                    "Multi-image main view retains the original 224pt square")
+        let initialFrame = firstMain.convert(firstMain.bounds, to: window)
+        try capture(window, name: "multi-chat-first.png")
+        try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.1"])
+        try await waitUntil("Second thumbnail selects the second full bitmap") { mainImage(host.view)?.image?.size == sizes[1] }
+        try require(thumbnail(1, in: host.view)?.isSelected == true && thumbnail(0, in: host.view)?.isSelected == false,
+                    "Thumbnail selected state moves from first to second")
+        try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.2"])
+        try await waitUntil("Third thumbnail selects the third full bitmap") { mainImage(host.view)?.image?.size == sizes[2] }
+        try require(mainImage(host.view)?.convert(mainImage(host.view)!.bounds, to: window) == initialFrame,
+                    "Switching different source aspect ratios does not change main view geometry")
+        guard let strip = descendants(host.view).compactMap({ $0 as? UIScrollView }).first(where: {
+            $0.contentSize.width > $0.bounds.width && last.isDescendant(of: $0)
+        }) else { throw verificationError("Five-image horizontal thumbnail scroller missing") }
+        strip.scrollRectToVisible(last.convert(last.bounds, to: strip), animated: false)
+        strip.layoutIfNeeded()
+        try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.4"])
+        try await waitUntil("Scrolling the strip and selecting the fifth image switches the main view") {
+            mainImage(host.view)?.image?.size == sizes[4]
+        }
+        try require(strip.bounds.intersects(last.convert(last.bounds, to: strip)), "Selected fifth thumbnail remains visible in the scroller")
+        try capture(window, name: "multi-chat-fifth.png")
+        try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.2"])
+        try await waitUntil("Third image is selected before preview and sharing") { mainImage(host.view)?.image?.size == sizes[2] }
+        var tappedSource: String?; var tappedMessage: UUID?
+        let observer = NotificationCenter.default.addObserver(forName: MarkdownImageTapRouter.tappedNotification,
+            object: nil, queue: .main) { notification in
+                tappedSource = notification.userInfo?[MarkdownImageTapRouter.sourceURLKey] as? String
+                tappedMessage = notification.userInfo?[MarkdownImageTapRouter.messageIdKey] as? UUID
+            }
+        try await requestUIAction("tapImageMain", details: ["identifier": "markdown.imageGroup.main"])
+        NotificationCenter.default.removeObserver(observer)
+        try require(tappedSource == sources[2] && tappedMessage == message.id,
+                    "Main-image preview routes the currently selected original and owning message")
+
+        block.content += "\n\nSTREAM_APPEND"
+        let rehost = liveHost(); window.rootViewController = rehost
+        try await waitUntil("New renderer after a streaming append retains the selected third image") {
+            window.layoutIfNeeded(); return mainImage(rehost.view)?.image?.size == sizes[2]
+        }
+        try capture(window, name: "multi-chat-recreated.png")
+        let request = ChatShareSnapshot.request(messages: [message], title: "Multiple image verification", vm: vm)
+        try require(request.imageSelection.selectedSource(messageId: message.id, sources: sources) == sources[2],
+                    "Share request captures the current selected main image")
+        MarkdownImageSelectionState.live.select(source: sources[0], messageId: message.id, sources: sources)
+        try require(request.imageSelection.selectedSource(messageId: message.id, sources: sources) == sources[2],
+                    "Later live-chat selection does not mutate the captured share request")
+        var pickerSelection = request.initialSelection
+        let picker = UIHostingController(rootView: ChatShareSelectionView(request: request,
+            onSelectionChanged: { pickerSelection = $0 }))
+        window.rootViewController = picker
+        try await waitUntil("Share picker displays the selected third image with the same thumbnail strip") {
+            window.layoutIfNeeded(); return mainImage(picker.view)?.image?.size == sizes[2] && thumbnail(4, in: picker.view) != nil
+        }
+        guard thumbnail(1, in: picker.view) != nil else { throw verificationError("Share thumbnail missing") }
+        let selectedRowsBefore = pickerSelection
+        try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.1"])
+        try await waitUntil("Share picker thumbnail switches its main image independently") {
+            mainImage(picker.view)?.image?.size == sizes[1]
+        }
+        try require(pickerSelection == selectedRowsBefore, "Selecting a share thumbnail preserves selected message rows")
+        try require(MarkdownImageSelectionState.live.selectedSource(messageId: message.id, sources: sources) == sources[0],
+                    "Share thumbnail changes do not modify the live conversation")
+        try capture(window, name: "multi-share-picker-second.png")
+        let cells = ChatShareCells.renderGroups(request.cells, selected: Set(request.cells.map(\.id)))
+        var options = ChatExportOptions(); options.hideHeader = true
+        let mutation = Task { @MainActor in
+            try await Task.sleep(nanoseconds: 10_000_000)
+            request.imageSelection.select(source: sources[4], messageId: message.id, sources: sources)
+        }
+        defer { mutation.cancel() }
+        let png = try await ChatExportRenderer(vm: vm).render(groups: cells, messages: request.messages,
+            title: "Multiple image verification", options: options, imageSelection: request.imageSelection, progress: { _, _ in })
+        try await mutation.value
+        try require(request.imageSelection.selectedSource(messageId: message.id, sources: sources) == sources[4],
+                    "External selection changes while export retains its frozen second image")
+        let pngURL = try save(png.url, name: "multi-export-second.png")
+        guard let image = UIImage(contentsOfFile: pngURL.path) else { throw ChatExportError.writeFailed }
+        try verifyMultiImagePixels(image, pixelsPerPoint: png.scale, label: "Encoded multi-image PNG")
+        request.imageSelection.select(source: sources[1], messageId: message.id, sources: sources)
+        options.format = .pdf
+        let pdf = try await ChatExportRenderer(vm: vm).render(groups: cells, messages: request.messages,
+            title: "Multiple image verification", options: options, imageSelection: request.imageSelection, progress: { _, _ in })
+        let pdfURL = try save(pdf.url, name: "multi-export-second.pdf")
+        guard let document = PDFDocument(url: pdfURL), let page = document.page(at: 0) else { throw ChatExportError.writeFailed }
+        let pageBounds = page.bounds(for: .mediaBox)
+        let raster = page.thumbnail(of: CGSize(width: pageBounds.width * 2, height: pageBounds.height * 2), for: .mediaBox)
+        try verifyMultiImagePixels(raster, pixelsPerPoint: CGFloat(raster.cgImage!.width) / pageBounds.width, label: "Encoded multi-image PDF")
+        try raster.pngData()!.write(to: directory.appendingPathComponent("multi-pdf-page.png")); files.append("multi-pdf-page.png")
+        for marker in ["MULTI_BEFORE", "MULTI_AFTER", "STREAM_APPEND"] {
+            try require(document.findString(marker, withOptions: []).isEmpty == false,
+                        "Multi-image PDF retains searchable surrounding text \(marker)")
+        }
+    }
+
+    /// Separate vertical color runs distinguish the 224pt main image from the
+    /// small strip images in the actual encoded output, without inspecting constants.
+    private static func verifyMultiImagePixels(_ image: UIImage, pixelsPerPoint: CGFloat, label: String) throws {
+        guard let cg = image.cgImage else { throw ChatExportError.writeFailed }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var runs = [[CGRect]](repeating: [], count: 3)
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            for color in 0..<3 {
+                var active: CGRect?
+                for y in 0...height {
+                    var left = width, right = -1
+                    if y < height {
+                        for x in 0..<width {
+                            let i = (y * width + x) * 4
+                            if bytes[i + color] > 220 && bytes[i + (color + 1) % 3] < 45 && bytes[i + (color + 2) % 3] < 45 {
+                                left = min(left, x); right = max(right, x)
+                            }
+                        }
+                    }
+                    if right >= left {
+                        let row = CGRect(x: left, y: y, width: right - left + 1, height: 1)
+                        active = active.map { $0.union(row) } ?? row
+                    } else if let complete = active {
+                        runs[color].append(CGRect(x: complete.minX / pixelsPerPoint, y: complete.minY / pixelsPerPoint,
+                            width: complete.width / pixelsPerPoint, height: complete.height / pixelsPerPoint))
+                        active = nil
+                    }
+                }
+            }
+            return true
+        }
+        try require(rendered, "\(label) pixels decoded")
+        try require(runs[1].contains { abs($0.width - 224) <= 2 && abs($0.height - 224) <= 2 },
+                    "\(label) renders selected second green image as the 224pt main square")
+        for color in 0..<3 {
+            try require(runs[color].contains { abs($0.width - 48) <= 2 && abs($0.height - 48) <= 2 },
+                        "\(label) contains 48pt thumbnail for source \(color + 1)")
+        }
+        try require(!runs[0].contains { $0.width > 100 && $0.height > 100 }
+                    && !runs[2].contains { $0.width > 100 && $0.height > 100 },
+                    "\(label) keeps the other images compact instead of stacking full images")
+    }
+
+
     private static func verifyCompactImages(window: UIWindow, vm: AIChatViewModel) async throws {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         for landscape in [false, true] {

@@ -1797,6 +1797,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "If you construct a ze:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).\n"
             + "When you write files to /var/ze/, the tool result includes a ze_url you can embed directly in Markdown.\n"
             + "Supported inline types: images (.png/.jpg/.gif/.webp), audio (.mp3/.m4a/.wav), video (.mp4/.mov/.m4v).\n"
+            + "Multi-image display: consecutive Markdown images (separated only by whitespace or blank lines) form one compact square gallery with a clickable thumbnail strip below. Example: ![First](ze://workspace/first.png)\n\n![Second](ze://workspace/second.png). Use separate original image files; do not stitch them into a contact sheet. Put captions before or after the group. Insert ordinary prose between images when they should remain separate. Tapping the main square still opens the original full-image preview.\n"
             + "Audio auto-play: append ?auto_play=true to an audio ze:// URL to auto-play when rendered (e.g. ![audio](ze://attachments/song.mp3?auto_play=true)). Use sparingly — only when the user explicitly asks to hear audio immediately.\n"
             + "For non-media files, use Markdown links: [filename](ze://workspace/filename).\n"
             + "Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](ze://...) link.\n"

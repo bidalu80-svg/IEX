@@ -211,6 +211,21 @@ final class ShareDriver: XCTestCase {
                                       "point": NSCoder.string(for: point.screenPoint)]
                     if request.endX == 2 { point.doubleTap(); strategy = "xcui-visualization-double-tap" }
                     else { point.press(forDuration: 0.65); strategy = "xcui-visualization-long-press" }
+                case "tapImageMain":
+                    let target = app.images[request.identifier ?? "markdown.imageGroup.main"].firstMatch
+                    guard target.waitForExistence(timeout: 10), target.isHittable else {
+                        throw NSError(domain: "ShareDriver", code: 11, userInfo: [NSLocalizedDescriptionKey: "Main image did not become hittable"])
+                    }
+                    target.tap()
+                    strategy = "xcui-main-image-tap"
+                case "tapImageThumbnail":
+                    let button = app.buttons[request.identifier ?? "markdown.imageGroup.thumbnail.0"].firstMatch
+                    let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true AND enabled == true"), object: button)
+                    guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+                        throw NSError(domain: "ShareDriver", code: 10, userInfo: [NSLocalizedDescriptionKey: "Image thumbnail did not become hittable"])
+                    }
+                    button.tap()
+                    strategy = "xcui-image-thumbnail-tap"
                 case "open":
                     let button = app.buttons[request.identifier ?? "chatShare.export"].firstMatch
                     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true AND enabled == true"), object: button)

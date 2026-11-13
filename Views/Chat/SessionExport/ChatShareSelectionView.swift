@@ -37,6 +37,8 @@ struct ChatShareRequest: Identifiable {
     let title: String
     /// Tool capsules read the chat's view model from the environment.
     let vm: AIChatViewModel
+    /// Capture the current image choices once. Picker changes never affect chat.
+    var imageSelection: MarkdownImageSelectionState = MarkdownImageSelectionState.live.copy()
 }
 
 /// Row frames for drag-select, kept outside SwiftUI state: they change on every scroll
@@ -66,6 +68,7 @@ struct ChatShareSelectionView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selection: Set<String> = []
     @State private var showOptions = false
+    @State private var previewImageSelection: MarkdownImageSelectionState?
     @State private var frames = ChatShareRowFrames()
     /// An active drag-select: the row it started on, whether it selects or
     /// deselects, and the selection before it began (so dragging back undoes).
@@ -178,6 +181,8 @@ struct ChatShareSelectionView: View {
                 }
             }
             .environmentObject(request.vm)
+            .environment(\.markdownImageSelectionState, request.imageSelection)
+            .environment(\.markdownImageSelectionOnly, true)
             .onChange(of: selection) { onSelectionChanged?($0) }
             .navigationTitle(selection.isEmpty
                              ? ShareLocalized("Select Messages")
@@ -196,6 +201,7 @@ struct ChatShareSelectionView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
+                    previewImageSelection = request.imageSelection.copy()
                     showOptions = true
                 } label: {
                     Label(String(format: ShareLocalized("Share (%lld)"), selection.count), systemImage: "square.and.arrow.up")
@@ -214,7 +220,8 @@ struct ChatShareSelectionView: View {
                     count: selection.count,
                     messages: request.messages,
                     title: request.title,
-                    vm: request.vm)
+                    vm: request.vm,
+                    imageSelection: previewImageSelection ?? request.imageSelection)
             }
         }
     }
@@ -223,7 +230,9 @@ struct ChatShareSelectionView: View {
         let isOn = selection.contains(cell.id)
         return ChatShareCellContent(cell: cell, message: message,
                                     onToggleSteps: { toggleDisclosure(cell.messageId) })
-            .allowsHitTesting(cell.kind == .taskHeader)
+            // Text rows expose only thumbnail controls through the Markdown
+            // hit-test filter. Other content still falls through to row selection.
+            .allowsHitTesting(cell.kind == .taskHeader || cell.kind == .text)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Selected: a tint plus a check badge floating at the leading edge
@@ -439,6 +448,8 @@ struct ChatSharePreviewSheet: View {
     let vm: AIChatViewModel
 
     let onRendered: ((URL) -> Void)?
+    /// One preview owns an independent snapshot, shared by its PNG/PDF renders.
+    @StateObject private var imageSelection: MarkdownImageSelectionState
 
     private struct RenderKey: Hashable {
         let format: ChatExportOptions.Format
@@ -446,6 +457,7 @@ struct ChatSharePreviewSheet: View {
         let dark: Bool
         let adaptiveTables: Bool
         let hideHeader: Bool
+        let imageSelectionRevision: Int
     }
 
     private struct Rendered {
@@ -498,13 +510,15 @@ struct ChatSharePreviewSheet: View {
     private let estimatedTooTall: [EstimateKey: Bool]
 
     init(groups: [[ChatShareCell]], count: Int, messages: [ChatMessage], title: String,
-         vm: AIChatViewModel, initialOptions: ChatExportOptions? = nil, onRendered: ((URL) -> Void)? = nil) {
+         vm: AIChatViewModel, initialOptions: ChatExportOptions? = nil,
+         imageSelection: MarkdownImageSelectionState? = nil, onRendered: ((URL) -> Void)? = nil) {
         self.groups = groups
         self.count = count
         self.messages = messages
         self.title = title
         self.vm = vm
         self.onRendered = onRendered
+        _imageSelection = StateObject(wrappedValue: (imageSelection ?? MarkdownImageSelectionState.live).copy())
         if let initialOptions {
             _wideLayout = State(initialValue: initialOptions.wideLayout)
             _adaptiveTables = State(initialValue: initialOptions.adaptiveTables)
@@ -543,7 +557,7 @@ struct ChatSharePreviewSheet: View {
 
     private var key: RenderKey {
         RenderKey(format: format, wideLayout: wideLayout, dark: dark, adaptiveTables: adaptiveTables,
-                  hideHeader: hideHeader)
+                  hideHeader: hideHeader, imageSelectionRevision: imageSelection.revision)
     }
 
     /// A photo-editor style control strip at the bottom — width, tables, appearance, title —
@@ -731,7 +745,7 @@ struct ChatSharePreviewSheet: View {
             let options = ChatExportOptions(format: key.format, wideLayout: key.wideLayout, dark: key.dark,
                                             adaptiveTables: key.adaptiveTables, hideHeader: key.hideHeader)
             let result = try await renderer.render(groups: groups, messages: messages, title: title,
-                                                   options: options) { done, total in
+                                                   options: options, imageSelection: imageSelection) { done, total in
                 if activeKey == key { progress = (done, total) }
             }
             try Task.checkCancellation()

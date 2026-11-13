@@ -341,6 +341,61 @@ func renderMarkdownBlocks(_ blocks: [BlockNode]) -> NSAttributedString {
     return renderer.render(blocks: blocks)
 }
 
+/// Selection belongs to a conversation/image run, not a recycled cell. Sharing
+/// receives a copy so selecting a share thumbnail never mutates the live chat.
+final class MarkdownImageSelectionState: ObservableObject {
+    static let live = MarkdownImageSelectionState()
+    @Published private(set) var revision = 0
+    private var values: [String: String] = [:]
+    private let lock = NSLock()
+
+    private func key(messageId: UUID?, sources: [String]) -> String {
+        "\(messageId?.uuidString ?? "standalone"):\(sources.first ?? "")"
+    }
+
+    func selectedSource(messageId: UUID?, sources: [String]) -> String {
+        lock.lock(); defer { lock.unlock() }
+        if let selected = values[key(messageId: messageId, sources: sources)], sources.contains(selected) {
+            return selected
+        }
+        return sources.first ?? ""
+    }
+
+    func select(source: String, messageId: UUID?, sources: [String]) {
+        guard sources.contains(source) else { return }
+        let slot = key(messageId: messageId, sources: sources)
+        lock.lock()
+        let changed = values[slot] != source
+        values[slot] = source
+        lock.unlock()
+        if changed { revision &+= 1 }
+    }
+
+    func copy() -> MarkdownImageSelectionState {
+        let result = MarkdownImageSelectionState()
+        lock.lock(); result.values = values; lock.unlock()
+        result.revision = revision
+        return result
+    }
+}
+
+private struct MarkdownImageSelectionKey: EnvironmentKey {
+    static let defaultValue = MarkdownImageSelectionState.live
+}
+private struct MarkdownImageSelectionOnlyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+extension EnvironmentValues {
+    var markdownImageSelectionState: MarkdownImageSelectionState {
+        get { self[MarkdownImageSelectionKey.self] }
+        set { self[MarkdownImageSelectionKey.self] = newValue }
+    }
+    var markdownImageSelectionOnly: Bool {
+        get { self[MarkdownImageSelectionOnlyKey.self] }
+        set { self[MarkdownImageSelectionOnlyKey.self] = newValue }
+    }
+}
+
 // MARK: - MarkdownNSRenderer
 
 /// Converts `[BlockNode]` → `NSMutableAttributedString` for display in a UITextView.
@@ -372,6 +427,7 @@ fileprivate final class MarkdownNSRenderer {
     private var headingBottomMargin: CGFloat { theme.baseFontSize }
 
     /// Reuse existing media attachments across re-renders to avoid reload flicker during streaming.
+    var imageSelectionState = MarkdownImageSelectionState.live
     var imageAttachmentCache: [String: ImageAttachment] = [:]
     var videoAttachmentCache: [String: VideoAttachment] = [:]
     var audioAttachmentCache: [String: AudioAttachment] = [:]
@@ -507,10 +563,28 @@ fileprivate final class MarkdownNSRenderer {
     }
 
     private func renderBlockSequence(_ blocks: [BlockNode], listDepth: Int, quoteDepth: Int, tightSpacing: Bool) -> RenderedBlock {
-        mergeRenderedBlocks(
-            blocks.map { renderBlock($0, listDepth: listDepth, quoteDepth: quoteDepth) },
-            tightSpacing: tightSpacing
-        )
+        // Consecutive image-only paragraphs form one gallery. Never cross a
+        // prose, heading, quote or list-item boundary while collecting a run.
+        var rendered: [RenderedBlock] = []
+        var index = 0
+        while index < blocks.count {
+            if case .paragraph(let inlines) = blocks[index], Self.imageOnlySources(inlines) != nil {
+                var combined = inlines
+                var end = index + 1
+                while end < blocks.count {
+                    guard case .paragraph(let next) = blocks[end], Self.imageOnlySources(next) != nil else { break }
+                    combined.append(.softBreak)
+                    combined.append(contentsOf: next)
+                    end += 1
+                }
+                rendered.append(renderParagraph(combined, quoteDepth: quoteDepth))
+                index = end
+            } else {
+                rendered.append(renderBlock(blocks[index], listDepth: listDepth, quoteDepth: quoteDepth))
+                index += 1
+            }
+        }
+        return mergeRenderedBlocks(rendered, tightSpacing: tightSpacing)
     }
 
     private func mergeRenderedBlocks(_ blocks: [RenderedBlock], tightSpacing: Bool) -> RenderedBlock {
@@ -1190,10 +1264,62 @@ fileprivate final class MarkdownNSRenderer {
     }
 
 
+    private static func gallerySource(_ inline: InlineNode) -> String? {
+        guard case .image(let source, _) = inline else { return nil }
+        let ext = URL(string: source)?.pathExtension.lowercased() ?? ""
+        return nativeAudioExts.contains(ext) || nativeVideoExts.contains(ext) ? nil : source
+    }
+
+    private static func imageWhitespace(_ inline: InlineNode) -> Bool {
+        switch inline {
+        case .softBreak, .lineBreak: return true
+        case .text(let text): return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default: return false
+        }
+    }
+
+    private static func imageOnlySources(_ inlines: [InlineNode]) -> [String]? {
+        var sources: [String] = []
+        for inline in inlines {
+            if let source = gallerySource(inline) { sources.append(source) }
+            else if !imageWhitespace(inline) { return nil }
+        }
+        return sources.isEmpty ? nil : sources
+    }
+
     private func renderInlines(_ inlines: [InlineNode], baseAttributes attrs: [NSAttributedString.Key: Any]) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        for inline in inlines {
-            result.append(renderInline(inline, attributes: attrs))
+        var index = 0
+        while index < inlines.count {
+            if let first = Self.gallerySource(inlines[index]) {
+                var sources = [first]
+                var end = index + 1
+                var cursor = end
+                while cursor < inlines.count {
+                    if let source = Self.gallerySource(inlines[cursor]) {
+                        sources.append(source); end = cursor + 1
+                    } else if !Self.imageWhitespace(inlines[cursor]) { break }
+                    cursor += 1
+                }
+                if sources.count > 1 {
+                    let key = "gallery:" + sources.map { "\($0.utf8.count):\($0)" }.joined()
+                    let attachment: ImageAttachment
+                    if let cached = imageAttachmentCache[key] { attachment = cached }
+                    else {
+                        attachment = ImageAttachment(sources: sources, theme: theme, messageId: messageId)
+                        imageAttachmentCache[key] = attachment
+                    }
+                    attachment.configureGroup(messageId: messageId, selectionState: imageSelectionState)
+                    attachment.invalidateStaleGroupImages()
+                    let group = NSMutableAttributedString(attachment: attachment)
+                    group.addAttributes(attrs, range: NSRange(location: 0, length: group.length))
+                    result.append(group)
+                    index = end
+                    continue
+                }
+            }
+            result.append(renderInline(inlines[index], attributes: attrs))
+            index += 1
         }
         return result
     }
@@ -3564,7 +3690,17 @@ final class ImageAttachment: NSTextAttachment {
     /// reusing the previous view (which still holds the stale bitmap in
     /// its `UIImageView.image` property).
     fileprivate var needsViewRebuild: Bool = false
-    private(set) var loadedImage: UIImage?
+    private(set) var loadedImage: UIImage? {
+        didSet { refreshGroupViews() }
+    }
+    private var groupChildren: [ImageAttachment] = []
+    private var groupViews = NSHashTable<MarkdownImageGroupView>.weakObjects()
+    fileprivate var selectionState = MarkdownImageSelectionState.live
+    var isImageGroup: Bool { !groupChildren.isEmpty }
+    var groupSources: [String] { [source] + groupChildren.map(\.source) }
+    var hasPendingImages: Bool { loadedImage == nil || groupChildren.contains { $0.loadedImage == nil } }
+    fileprivate var groupItems: [ImageAttachment] { [self] + groupChildren }
+
     private var isLoading = false
     /// Set when a ze:// file was not found; allows retry on next render.
     private var fileNotFound = false
@@ -3586,6 +3722,46 @@ final class ImageAttachment: NSTextAttachment {
         super.init(data: nil, ofType: nil)
         self.image = Self.transparentImage
         AppLogger(category: "AttachHotPath").info("[IMG][CTOR] src=\(Self.shortSrc(source)) ptr=\(ObjectIdentifier(self).hashValue & 0xFFFFFF)")
+    }
+
+    convenience init(sources: [String], theme: SelectableMarkdownTheme, messageId: UUID? = nil) {
+        precondition(!sources.isEmpty)
+        self.init(source: sources[0], theme: theme, messageId: messageId)
+        groupChildren = sources.dropFirst().map { ImageAttachment(source: $0, theme: theme, messageId: messageId) }
+        for child in groupChildren {
+            child.onLoad = { [weak self] in self?.refreshGroupViews() }
+        }
+    }
+
+    func configureGroup(messageId: UUID?, selectionState: MarkdownImageSelectionState) {
+        self.messageId = messageId
+        groupChildren.forEach { $0.messageId = messageId }
+        if self.selectionState !== selectionState {
+            self.selectionState = selectionState
+            groupViews.allObjects.forEach { $0.bindSelectionState() }
+        }
+        refreshGroupViews()
+    }
+
+    func invalidateStaleGroupImages() {
+        guard isImageGroup else { return }
+        for item in groupItems {
+            if let fingerprint = item.loadedFingerprint,
+               fingerprint != zeMediaCacheKey(for: Self.canonicalizeMarkdownImageSource(item.source)) {
+                item.invalidateLoadedImage()
+            }
+        }
+    }
+
+    private func refreshGroupViews() {
+        groupViews.allObjects.forEach { $0.refreshImages() }
+    }
+
+    func resizeGroupView(_ view: UIView, width: CGFloat) {
+        guard let group = view as? MarkdownImageGroupView else { return }
+        let side = Self.thumbnailSize(availableWidth: width).width
+        group.frame.size = CGSize(width: side, height: side + MarkdownImageGroupView.stripSpacing + MarkdownImageGroupView.stripHeight)
+        group.setNeedsLayout()
     }
 
     fileprivate static func shortSrc(_ s: String) -> String {
@@ -3662,10 +3838,15 @@ final class ImageAttachment: NSTextAttachment {
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         attachmentBoundsCallCount &+= 1
         let width = min(lineFrag.width, textContainer?.size.width ?? lineFrag.width)
-        return CGRect(origin: .zero, size: Self.thumbnailSize(availableWidth: width))
+        var size = Self.thumbnailSize(availableWidth: width)
+        if isImageGroup { size.height += MarkdownImageGroupView.stripSpacing + MarkdownImageGroupView.stripHeight }
+        return CGRect(origin: .zero, size: size)
     }
 
     func beginLoadingIfNeeded() {
+        // Children refresh the fixed-size gallery directly, even after the
+        // parent's TextKit callback is cleared when its first image loads.
+        groupChildren.forEach { $0.beginLoadingIfNeeded() }
         guard loadedImage == nil, !isLoading else {
             imgLogger.info("[ZeImage][Load] skip src=\(self.source) alreadyLoaded=\(self.loadedImage != nil) isLoading=\(self.isLoading)")
             return
@@ -3820,6 +4001,13 @@ final class ImageAttachment: NSTextAttachment {
 
 
     func makeView(width: CGFloat) -> UIView {
+        if isImageGroup {
+            let side = Self.thumbnailSize(availableWidth: width).width
+            let view = MarkdownImageGroupView(attachment: self, side: side)
+            groupViews.add(view)
+            beginLoadingIfNeeded()
+            return view
+        }
         makeViewCallCount &+= 1
         // [AttachHotPath] makeView call counter — the GROUND-TRUTH signal:
         // if this fires more than once per attachment per layout pass, the
@@ -3886,6 +4074,131 @@ final class ImageAttachment: NSTextAttachment {
         bg.addSubview(label)
 
         return container
+    }
+}
+
+/// UIKit controls keep thumbnail selection inside the image attachment. The
+/// attachment owns no view strongly, so recycled transcript/export views release.
+private final class MarkdownImageGroupView: UIView {
+    static let stripSpacing: CGFloat = 8
+    static let stripHeight: CGFloat = 52
+    private let attachment: ImageAttachment
+    private let mainImage = UIImageView()
+    private let emptyIcon = UIImageView(image: UIImage(systemName: "photo"))
+    private let strip = UIScrollView()
+    private let mainTap = ImageTapGesture(target: nil, action: nil)
+    private var buttons: [UIButton] = []
+    private var thumbnails: [UIImageView] = []
+    private var selectionObserver: AnyCancellable?
+    private var lastSelectedSource: String?
+    private var revealSelection = true
+
+    init(attachment: ImageAttachment, side: CGFloat) {
+        self.attachment = attachment
+        super.init(frame: CGRect(x: 0, y: 0, width: side,
+                                 height: side + Self.stripSpacing + Self.stripHeight))
+        accessibilityIdentifier = "markdown.imageGroup"
+        mainImage.accessibilityIdentifier = "markdown.imageGroup.main"
+        mainImage.isAccessibilityElement = true
+        mainImage.accessibilityTraits = .image
+        mainImage.contentMode = .scaleAspectFill
+        mainImage.backgroundColor = .secondarySystemBackground
+        mainImage.clipsToBounds = true
+        mainImage.isUserInteractionEnabled = true
+        mainTap.addTarget(mainTap, action: #selector(ImageTapGesture.handleTap))
+        mainImage.addGestureRecognizer(mainTap)
+        addSubview(mainImage)
+        emptyIcon.tintColor = .tertiaryLabel
+        emptyIcon.contentMode = .scaleAspectFit
+        emptyIcon.isUserInteractionEnabled = false
+        mainImage.addSubview(emptyIcon)
+        strip.accessibilityIdentifier = "markdown.imageGroup.strip"
+        strip.showsHorizontalScrollIndicator = false
+        strip.alwaysBounceVertical = false
+        strip.alwaysBounceHorizontal = false
+        strip.delaysContentTouches = false
+        addSubview(strip)
+        for (index, item) in attachment.groupItems.enumerated() {
+            let button = UIButton(type: .custom)
+            button.accessibilityIdentifier = "markdown.imageGroup.thumbnail.\(index)"
+            button.accessibilityLabel = "第 \(index + 1) 张图片"
+            button.layer.cornerRadius = 12
+            button.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                self.attachment.selectionState.select(source: item.source,
+                    messageId: self.attachment.messageId, sources: self.attachment.groupSources)
+                item.beginLoadingIfNeeded()
+            }, for: .touchUpInside)
+            let thumbnail = UIImageView()
+            thumbnail.contentMode = .scaleAspectFill
+            thumbnail.backgroundColor = .secondarySystemBackground
+            thumbnail.layer.cornerRadius = 10
+            thumbnail.clipsToBounds = true
+            thumbnail.isUserInteractionEnabled = false
+            button.addSubview(thumbnail)
+            buttons.append(button); thumbnails.append(thumbnail)
+            strip.addSubview(button)
+        }
+        bindSelectionState()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func bindSelectionState() {
+        selectionObserver = attachment.selectionState.$revision.dropFirst().sink { [weak self] _ in
+            self?.refreshImages()
+        }
+        refreshImages()
+    }
+
+    func refreshImages() {
+        let items = attachment.groupItems
+        let selected = attachment.selectionState.selectedSource(messageId: attachment.messageId,
+                                                                  sources: attachment.groupSources)
+        let selectedIndex = items.firstIndex { $0.source == selected } ?? 0
+        if selected != lastSelectedSource { revealSelection = true; lastSelectedSource = selected }
+        let current = items[selectedIndex]
+        mainImage.image = current.loadedImage
+        emptyIcon.isHidden = current.loadedImage != nil
+        mainTap.attachedImage = current.loadedImage
+        mainTap.sourceURL = current.source
+        mainTap.messageId = attachment.messageId
+        mainTap.isEnabled = current.loadedImage != nil
+        for (index, item) in items.enumerated() {
+            thumbnails[index].image = item.loadedImage
+            let button = buttons[index]
+            button.isSelected = index == selectedIndex
+            button.layer.borderWidth = button.isSelected ? 2 : 0
+            button.layer.borderColor = UIColor.systemGray3.cgColor
+        }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let side = bounds.width
+        mainImage.frame = CGRect(x: 0, y: 0, width: side, height: side)
+        mainImage.layer.cornerRadius = min(24, side / 2)
+        emptyIcon.frame = CGRect(x: max(0, (side - 28) / 2), y: max(0, (side - 28) / 2),
+                                 width: min(28, side), height: min(28, side))
+        strip.frame = CGRect(x: 0, y: side + Self.stripSpacing, width: side, height: Self.stripHeight)
+        for index in buttons.indices {
+            buttons[index].frame = CGRect(x: CGFloat(index) * 60, y: 0, width: 52, height: 52)
+            thumbnails[index].frame = CGRect(x: 2, y: 2, width: 48, height: 48)
+        }
+        strip.contentSize = CGSize(width: CGFloat(buttons.count) * 60 - 8, height: Self.stripHeight)
+        if revealSelection, let selected = buttons.first(where: \.isSelected) {
+            strip.scrollRectToVisible(selected.frame, animated: false)
+            revealSelection = false
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            buttons.forEach { $0.layer.borderColor = UIColor.systemGray3.cgColor }
+        }
     }
 }
 
@@ -4565,6 +4878,19 @@ final class ZeLayoutManager: NSLayoutManager {
 
 /// Non-editable, selectable UITextView subclass for rendering Markdown as NSAttributedString.
 final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate {
+    var markdownImageSelectionOnly = false
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        guard markdownImageSelectionOnly else { return hit }
+        var current = hit
+        while let view = current, view !== self {
+            if view.accessibilityIdentifier == "markdown.imageGroup.strip" { return hit }
+            current = view.superview
+        }
+        return nil
+    }
+
     private var attachmentViews: [UIView] = []
     /// Returns true if the text storage contains NSTextAttachment objects but no attachment views
     /// have been created yet. Used by updateUIView to detect the LazyVStack reappear case where
@@ -5095,7 +5421,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             let point = gestureRecognizer.location(in: self)
             var touched = hitTest(point, with: nil)
             while let view = touched, view !== self {
-                if view is ZeCustomVisualizationPreview { return false }
+                if view is ZeCustomVisualizationPreview || view.accessibilityIdentifier == "markdown.imageGroup.strip" { return false }
                 touched = view.superview
             }
         }
@@ -5628,6 +5954,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             if let existingView = previousViewMap[attachId] {
                 var stale = false
                 if let imageAttach = attachment as? ImageAttachment {
+                    imageAttach.resizeGroupView(existingView, width: boundingRect.width)
                     // File was rewritten since last load — force a rebuild
                     // so the new bitmap reaches the UIImageView inside.
                     if imageAttach.needsViewRebuild {
@@ -5640,7 +5967,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                     // `beginLoadingIfNeeded` could fire `onLoad` synchronously
                     // and recurse back into `refreshAttachmentViews` during
                     // `updateAttachmentViews`. [AttachHang defensive guard]
-                    if imageAttach.loadedImage == nil {
+                    if imageAttach.hasPendingImages {
                         imageAttach.onLoad = { [weak self] in
                             DispatchQueue.main.async { self?.refreshAttachmentViews() }
                         }
@@ -5810,7 +6137,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
                 // onLoad when the image isn't already loaded, so a memory-cache
                 // hit during beginLoadingIfNeeded can't synchronously recurse
                 // into refreshAttachmentViews. [AttachHang defensive guard]
-                if imageAttach.loadedImage == nil {
+                if imageAttach.hasPendingImages {
                     imageAttach.onLoad = { [weak self] in
                         DispatchQueue.main.async { self?.refreshAttachmentViews() }
                     }
@@ -6550,6 +6877,8 @@ struct SelectableMarkdownView: UIViewRepresentable {
     @Environment(\.chatSearchHighlights) private var searchCenter
     @Environment(\.chatSearchDimmed) private var searchDimmed
     @Environment(\.chatSnapshotRendering) private var snapshotRendering
+    @Environment(\.markdownImageSelectionState) private var imageSelectionState
+    @Environment(\.markdownImageSelectionOnly) private var imageSelectionOnly
     let markdown: String
     var cachedContent: MarkdownContent?
     var cachedAttributedString: NSAttributedString?
@@ -6588,7 +6917,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // fresh TableAttachment objects → layoutManager sees attachments
         // with no identity continuity and keeps the early-stream glyph
         // rects cached.
-        if !snapshotRendering, let mid = messageId {
+        if !snapshotRendering, imageSelectionState === MarkdownImageSelectionState.live, !imageSelectionOnly, let mid = messageId {
             let key = "\(mid.uuidString):\(blockId?.uuidString ?? "_")"
             if let existing = Self.rendererCache[key] { coord.renderer = existing }
             Self.rendererCache[key] = coord.renderer
@@ -6599,6 +6928,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             }
         }
         coord.renderer.visualizationOwner = visualizationOwner
+        coord.renderer.imageSelectionState = imageSelectionState
         return coord
     }
 
@@ -6639,6 +6969,13 @@ struct SelectableMarkdownView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelectableMarkdownTextView, context: Context) {
+        textView.markdownImageSelectionOnly = imageSelectionOnly
+        if context.coordinator.renderer.imageSelectionState !== imageSelectionState {
+            context.coordinator.renderer.imageSelectionState = imageSelectionState
+            context.coordinator.lastMarkdown = ""
+            context.coordinator.lastRenderedContentHash = nil
+        }
+
         let updateStart = CFAbsoluteTimeGetCurrent()
         context.coordinator.renderer.visualizationOwner = visualizationOwner
         context.coordinator.openURL = openURL
@@ -6915,7 +7252,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             guard let prebuilt = cachedAttributedString, prebuilt.length > 0 else { return false }
             var found = false
             prebuilt.enumerateAttribute(.attachment, in: NSRange(location: 0, length: prebuilt.length), options: []) { value, _, stop in
-                if value is TableAttachment || value is ZeVisualizationAttachment {
+                if value is TableAttachment || value is ZeVisualizationAttachment || (value as? ImageAttachment)?.isImageGroup == true {
                     found = true
                     stop.pointee = true
                 }
@@ -6959,7 +7296,10 @@ struct SelectableMarkdownView: UIViewRepresentable {
                                       in: NSRange(location: 0, length: attributed.length),
                                       options: []) { value, _, _ in
             guard let att = value as? ImageAttachment else { return }
-            if let messageId { att.messageId = messageId }
+            if att.isImageGroup {
+                att.configureGroup(messageId: messageId, selectionState: imageSelectionState)
+                att.invalidateStaleGroupImages()
+            } else if let messageId { att.messageId = messageId }
             if let loadedFp = att.loadedFingerprint {
                 let currentFp = zeMediaCacheKey(for: att.source)
                 if loadedFp != currentFp {
@@ -7455,7 +7795,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 guard let pre = cachedAttributedString, pre.length > 0 else { return false }
                 var found = false
                 pre.enumerateAttribute(.attachment, in: NSRange(location: 0, length: pre.length), options: []) { value, _, stop in
-                    if value is TableAttachment || value is ZeVisualizationAttachment { found = true; stop.pointee = true }
+                    if value is TableAttachment || value is ZeVisualizationAttachment || (value as? ImageAttachment)?.isImageGroup == true { found = true; stop.pointee = true }
                 }
                 return found
             }()
@@ -7481,6 +7821,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                     : splitStreamingTableTail(markdown)
                 let preparedPrefix = prepareMarkdownForRender(split.prefix)
                 let blocks = MarkdownContent(preparedPrefix).blocks
+                coord.renderer.imageSelectionState = imageSelectionState
                 coord.renderer.messageId = messageId
                 coord.renderer.blockId = blockId
                 let rendered = autoreleasepool { coord.renderer.render(blocks: blocks) }

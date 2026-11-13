@@ -288,6 +288,7 @@ final class MarkdownRenderView: UIView, UIGestureRecognizerDelegate {
             if let existingView = previousViewMap[attachId] {
                 var stale = false
                 if let imageAttach = attachment as? ImageAttachment {
+                    imageAttach.resizeGroupView(existingView, width: boundingRect.width)
                     imageAttach.onLoad = { [weak self] in
                         DispatchQueue.main.async { self?.refreshAttachmentViews() }
                     }

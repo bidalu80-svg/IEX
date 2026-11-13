@@ -286,7 +286,7 @@ struct ChatShareCellContent: View {
                     if let tableChunks {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(tableChunks.enumerated()), id: \.offset) { _, chunk in
-                                SelectableMarkdownView(markdown: chunk.text)
+                                SelectableMarkdownView(markdown: chunk.text, messageId: message.id)
                                     .frame(width: chunk.width, alignment: .leading)
                             }
                         }
@@ -531,6 +531,7 @@ final class ChatExportRenderer {
     private var style: UIUserInterfaceStyle = .light
     private var pageColor: UIColor = .white
     private var adaptiveTables = false
+    private var imageSelection = MarkdownImageSelectionState()
 
     private let stage: UIView
     /// The chat's view model: the tool capsules read it from the environment.
@@ -569,6 +570,7 @@ final class ChatExportRenderer {
         let host = UIHostingController(rootView: AnyView(
             view.environment(\.colorScheme, style == .dark ? .dark : .light)
                 .environment(\.chatSnapshotRendering, true)
+                .environment(\.markdownImageSelectionState, imageSelection)
                 .environment(\.chatSearchHighlights, nil)
                 .environment(\.chatSessionId, vm.sessionId)
                 .environmentObject(vm)))
@@ -621,7 +623,7 @@ final class ChatExportRenderer {
         if let custom = view as? ZeCustomVisualizationPreview, custom.isPending { pending += 1 }
         if let text = view as? UITextView {
             text.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.textStorage.length)) { value, range, _ in
-                if let image = value as? ImageAttachment, image.loadedImage == nil { pending += 1 }
+                if let image = value as? ImageAttachment, image.hasPendingImages { pending += 1 }
                 if let table = value as? TableAttachment, adaptiveTables, !table.exportWrapToWidth {
                     table.exportWrapToWidth = true
                     table.needsViewRebuild = true
@@ -700,9 +702,12 @@ final class ChatExportRenderer {
     /// Renders the selected cells. `groups` is `ChatShareCells.renderGroups`: each group
     /// is the selected part of one unit and is laid out (and page-broken) as one block.
     func render(groups: [[ChatShareCell]], messages: [ChatMessage], title: String,
-                options: ChatExportOptions,
+                options: ChatExportOptions, imageSelection: MarkdownImageSelectionState? = nil,
                 progress: @escaping (Int, Int) -> Void) async throws -> Result {
         try Task.checkCancellation()
+        // Capture before the first suspension; later chat/picker taps cannot
+        // change any page or image midway through this export.
+        self.imageSelection = (imageSelection ?? MarkdownImageSelectionState.live).copy()
         let started = Date()
         let byId = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         adaptiveTables = options.adaptiveTables
