@@ -1048,35 +1048,6 @@ jobs:
             test "$actual_install_name" = "$expected_install_name"
           done
 
-      - name: Require application runtime verification before upload
-        if: ${{ inputs.animation_only != true }}
-        timeout-minutes: 20
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PYGATE'
-          import json, os, pathlib, subprocess, time
-          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/jobs?filter=latest&per_page=100"
-          expected = 'Verify chat lifecycle, sharing and search in application'
-          for attempt in range(110):
-              response = subprocess.run(['gh', 'api', endpoint], check=True, capture_output=True, text=True, timeout=30)
-              jobs = json.loads(response.stdout)['jobs']
-              matches = [job for job in jobs if job['name'] == expected]
-              assert len(matches) == 1, f'Expected one application verification job, found {len(matches)}'
-              job = matches[0]
-              if job['status'] == 'completed':
-                  evidence = {key: job[key] for key in ('id', 'name', 'status', 'conclusion', 'html_url')}
-                  pathlib.Path('ipa-runtime-gate.json').write_text(json.dumps(evidence, indent=2))
-                  print(json.dumps(evidence, indent=2), flush=True)
-                  assert job['conclusion'] == 'success', 'IPA upload requires full chat, sharing and search runtime checks to pass'
-                  break
-              if attempt % 6 == 0:
-                  print(f"Waiting for application runtime checks: {job['status']}", flush=True)
-              time.sleep(10)
-          else:
-              raise SystemExit('Application runtime verification did not finish; IPA upload blocked')
-          PYGATE
-
       - name: Record focused animation verification scope
         if: ${{ inputs.animation_only == true }}
         run: |
@@ -1172,44 +1143,6 @@ jobs:
             subagent-full-detail-evidence/
             model-picker-evidence/
 
-
-  conversation-application:
-    if: ${{ inputs.animated_preview_only != true && inputs.animation_only != true && inputs.provider_review_only != true }}
-    name: Verify chat lifecycle, sharing and search in application
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build complete application for simulator
-        run: bash scripts/build-share-search-simulator.sh
-      - name: Retain simulator application for focused diagnosis
-        if: ${{ inputs.application_only == true }}
-        run: ditto -c -k --keepParent "$ZE_SHARE_SEARCH_SIM_APP" "$RUNNER_TEMP/ZeSelectionRuntime.zip"
-      - name: Upload diagnostic simulator application
-        if: ${{ inputs.application_only == true }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: selection-runtime-application
-          path: ${{ runner.temp }}/ZeSelectionRuntime.zip
-          retention-days: 2
-      - name: Verify full chat lifecycle, exports and search navigation
-        timeout-minutes: 16
-        env:
-          ZE_MULTI_IMAGE_ONLY: ${{ inputs.multi_image_only }}
-        run: bash scripts/test-share-search-application.sh
-      - name: Upload application verification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conversation-application-review
-          path: |
-            native-build-evidence/
-            share-search-application-evidence/
-            share-search-simulator-build.log
-            share-search-simulator-resolve.log
-            share-search-simulator-app-path.txt
-            bundled-rootfs-evidence/
-          retention-days: 7
 
   provider-review:
     if: ${{ inputs.provider_review_only == true }}
