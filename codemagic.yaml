@@ -1,0 +1,957 @@
+# Codemagic trial lane for IEX — ported from .github/workflows/build.yml (Build Ze.app)
+# at commit 3bba287 on 2026-11-14. Manual triggering only: no automatic triggers are
+# configured, so the 500 free macOS M2 minutes/month are spent deliberately.
+#
+# Porting notes (differences from the GitHub Actions original):
+# - actions/checkout is implicit; upload-artifact steps map to `artifacts:` below.
+# - "Summarize compiler errors" (if: failure()) and "Record focused animation
+#   verification scope" (animation_only mode bookkeeping) are dropped.
+# - Steps that are continue-on-error in GHA (favorites UI, macOS ish AOT, PDF glyph
+#   diagnosis) are wrapped to warn-and-continue here too.
+# - GH_TOKEN is not set: GHA injects github.token and some test scripts read it
+#   opportunistically. If a connector test fails on auth, add GH_TOKEN under
+#   Codemagic app environment variables.
+workflows:
+  iex-build:
+    name: IEX Build Ze.app (Codemagic trial)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: latest
+    scripts:
+      - name: "Show Xcode version"
+        script: |
+          xcode-select -p
+          xcodebuild -version
+      - name: "Test scheduled-task calendar and persistence"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-scheduled-tasks.py
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Agent/Background/ScheduledTaskModels.swift scripts/ScheduledTaskTests.swift -o "$RUNNER_TEMP/scheduled-task-tests"
+          "$RUNNER_TEMP/scheduled-task-tests" | tee scheduled-task-tests.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Agent/Background/ScheduledTaskModels.swift Agent/Background/ScheduledTaskStore.swift scripts/ScheduledTaskReceiptTests.swift -o "$RUNNER_TEMP/scheduled-receipt-tests"
+          "$RUNNER_TEMP/scheduled-receipt-tests" | tee -a scheduled-task-tests.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Agent/Background/ScheduledTaskModels.swift Agent/Background/ScheduledTaskActivityPolicy.swift scripts/ScheduledTaskActivityTests.swift -o "$RUNNER_TEMP/scheduled-activity-tests"
+          "$RUNNER_TEMP/scheduled-activity-tests" | tee -a scheduled-task-tests.log
+          python3 scripts/verify-scheduled-activity.py | tee scheduled-activity-structure.log
+          xcrun swiftc -frontend -parse Agent/Background/ScheduledTaskStore.swift Views/Settings/ScheduledTasksView.swift
+      - name: "Test shell file maintenance and main actor responsiveness"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-shell-file-maintenance.py | tee shell-file-maintenance-tests.log
+      - name: "Test model catalog and thinking request compatibility"
+        script: |
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+          set -euo pipefail
+          python3 scripts/test-model-compatibility.py | tee model-compatibility-tests.log
+          python3 scripts/test-image-model-capabilities.py | tee image-model-tests.log
+          python3 scripts/test-image-wire.py | tee image-wire-tests.log
+          python3 scripts/test-openai-reasoning-wire.py | tee reasoning-wire-tests.log
+      - name: "Test continuous voice call lifecycle"
+        script: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx13.0" Providers/Voice/VoiceCallState.swift Providers/Voice/VoiceCallCoordinator.swift scripts/VoiceCallCoordinatorTests.swift -o "$RUNNER_TEMP/voice-call-tests"
+          "$RUNNER_TEMP/voice-call-tests" | tee voice-call-tests.log
+          python3 scripts/test-voice-call-chat-bridge.py | tee voice-call-projection-tests.log
+      - name: "Verify continuous voice call controls on simulator"
+        script: |
+          bash scripts/test-voice-call-ui.sh
+      - name: "Test browser authorization and provider wire protocols"
+        script: |
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+          set -euo pipefail
+          python3 scripts/test-web-oauth.py | tee web-oauth-tests.log
+          python3 scripts/test-web-challenge.py | tee web-challenge-tests.log
+          python3 scripts/test-chatgpt-web.py | tee chatgpt-web-tests.log
+          python3 scripts/test-workbuddy.py | tee workbuddy-tests.log
+          xcrun swiftc -parse-as-library Providers/AgentProvider.swift scripts/ProviderToolCapabilityTests.swift -o "$RUNNER_TEMP/provider-tool-capability-tests"
+          "$RUNNER_TEMP/provider-tool-capability-tests"
+          xcrun swiftc -frontend -parse Providers/OpenAI/ChatGPTWeb/*.swift Providers/WorkBuddy/*.swift
+      - name: "Test visualization data, cache and iOS 16 components"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-visualization.py 2>&1 | tee visualization-tests.log
+      - name: "Test sound and vibration preferences and iOS 16 feedback"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-feedback.py 2>&1 | tee feedback-tests.log
+      - name: "Prepare model picker and WorkBuddy balance simulator"
+        script: |
+          bash scripts/test-model-picker-header.sh prepare
+      - name: "Verify model picker and WorkBuddy balance interfaces"
+        script: |
+          bash scripts/test-model-picker-header.sh verify
+      - name: "Prepare provider icons and chat chrome simulator"
+        script: |
+          bash scripts/test-provider-chat-chrome.sh prepare
+      - name: "Verify provider icons, selection and translucent chat chrome"
+        script: |
+          bash scripts/test-provider-chat-chrome.sh verify
+      - name: "Verify sound and vibration settings and actual tone playback"
+        script: |
+          bash scripts/test-feedback-ui.sh
+      - name: "Test question card state and answer validation"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-question-core.py | tee question-core-tests.log
+          python3 scripts/test-question-layout.py | tee question-layout-tests.log
+      - name: "Test child agent lifecycle and card identity"
+        script: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library Agent/Chat/ZeSubAgentCoordinator.swift scripts/SubAgentLifecycleHarness.swift -o "$RUNNER_TEMP/subagent-lifecycle-tests"
+          "$RUNNER_TEMP/subagent-lifecycle-tests" | tee subagent-lifecycle-tests.log
+          python3 scripts/test-subagent-delivery.py | tee subagent-delivery-tests.log
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          source = Path("Views/Chat/ToolLiveSheet.swift").read_text()
+          parser = source.split("// BEGIN ZeSubAgentBlockLink", 1)[1].split("// END ZeSubAgentBlockLink", 1)[0]
+          Path(os.environ["RUNNER_TEMP"], "ZeSubAgentBlockLink.swift").write_text("import Foundation\n" + parser)
+          PY
+          xcrun swiftc -parse-as-library "$RUNNER_TEMP/ZeSubAgentBlockLink.swift" scripts/SubAgentBlockLinkTests.swift -o "$RUNNER_TEMP/subagent-card-tests"
+          "$RUNNER_TEMP/subagent-card-tests" | tee subagent-card-tests.log
+          xcrun swiftc -frontend -parse Views/Chat/ZeSubAgentViews.swift Views/Chat/ToolLiveSheet.swift Views/Chat/AssistantBlockView.swift
+      - name: "Typecheck production card rendering fixtures"
+        script: |
+          set -euo pipefail
+          python3 scripts/extract-question-ui.py "$RUNNER_TEMP/QuestionUIProduction.swift"
+          python3 scripts/extract-subagent-ui.py "$RUNNER_TEMP/SubAgentUIProduction.swift"
+          python3 scripts/extract-question-reference.py "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/ZeQuestionReferenceHarness.app" question-reference-evidence
+          python3 scripts/extract-subagent-reference.py "$RUNNER_TEMP/SubAgentReferenceProduction.swift" "$RUNNER_TEMP/ZeSubAgentReferenceHarness.app" subagent-reference-evidence
+          python3 scripts/extract-subagent-full-detail.py "$RUNNER_TEMP/SubAgentFullDetailReference.swift" "$RUNNER_TEMP/ZeFullDetailReference.app" subagent-full-detail-evidence
+          for source in "$RUNNER_TEMP/QuestionUIProduction.swift" "$RUNNER_TEMP/SubAgentUIProduction.swift" "$RUNNER_TEMP/QuestionReferenceProduction.swift" "$RUNNER_TEMP/SubAgentReferenceProduction.swift" "$RUNNER_TEMP/SubAgentFullDetailReference.swift"; do
+            xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library \
+              -target "$(uname -m)-apple-ios16.0-simulator" \
+              -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$source"
+          done
+          xcrun --sdk iphonesimulator swiftc -typecheck -parse-as-library -D ZE_DETAIL \
+            -target "$(uname -m)-apple-ios16.0-simulator" \
+            -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$RUNNER_TEMP/ZeSubAgentFullDetailProduction.swift"
+      - name: "Test consecutive tool grouping and screenshot preservation"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-tool-collapse.py | tee tool-collapse-structure.log
+          python3 scripts/verify-user-message-collapse.py | tee user-message-collapse-structure.log
+          python3 scripts/verify-question-card-collapse.py | tee question-card-structure.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" Shared/ConsecutiveToolCallsPolicy.swift scripts/ConsecutiveToolCallsTests.swift -o "$RUNNER_TEMP/consecutive-tool-tests"
+          "$RUNNER_TEMP/consecutive-tool-tests" | tee consecutive-tool-tests.log
+          xcrun swiftc -frontend -parse Agent/MessageList/CollectionViewMessageListV3.swift Views/Chat/ConsecutiveToolCallsHeader.swift Views/Chat/ChatMessageViews.swift Views/Chat/AssistantBlockView.swift
+      - name: "Test model-created scheduled tasks and thinking glyph"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-agent-scheduled-tools.py | tee agent-scheduled-tools-structure.log
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift
+      - name: "Prepare thinking animation simulator"
+        script: |
+          bash scripts/test-thinking-glyph-ui.sh prepare
+      - name: "Verify reference dot-cube motion and rendered frames"
+        script: |
+          python3 scripts/verify-thinking-cube-atlas.py
+          bash scripts/test-thinking-glyph-ui.sh verify
+      - name: "Verify native visualization text wrapping and layout"
+        script: |
+          bash scripts/test-native-visualization-layout.sh
+      - name: "Test GitHub connector structure and Swift syntax"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-github-connector.py | tee github-connector-structure.log
+          xcrun swiftc -frontend -parse Shared/GitHub/GitHubModels.swift
+          xcrun swiftc -frontend -parse Shared/GitHub/GitHubAccountStore.swift
+          xcrun swiftc -frontend -parse Shared/GitHub/GitHubAIToolGateway.swift
+          xcrun swiftc -frontend -parse Views/Connectors/GitHubConnectorView.swift
+          bash scripts/test-github-client.sh | tee github-client-tests.log
+      - name: "Test kernel ownership and browser recovery"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-kernel-runtime.py | tee kernel-runtime-tests.log
+          python3 scripts/test-native-cancellation.py | tee native-cancellation-tests.log
+          python3 scripts/test-kernel-locks.py | tee kernel-lock-tests.log
+          python3 scripts/test-task-start-failure.py | tee task-start-tests.log
+          python3 scripts/test-path-cache-invalidation.py | tee path-cache-tests.log
+          python3 scripts/test-fakefs-metadata.py | tee fakefs-metadata-tests.log
+          python3 scripts/test-fork-admission.py | tee fork-admission-tests.log
+          python3 scripts/test-kernel-cpu-sensor.py | tee kernel-cpu-tests.log
+          python3 scripts/test-rootfs-recovery.py | tee rootfs-recovery-tests.log
+          bash Vendor/ZeNative/ish/kernel/offload_tests/path_scope/run.sh | tee kernel-offload-tests.log
+          python3 scripts/test-browser-parity.py
+      - name: "Test API key quota UI and parser structure"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-api-key-quota.py | tee api-key-quota-structure.log
+          python3 scripts/verify-model-picker-header.py | tee model-picker-structure.log
+          xcrun swiftc -frontend -parse Views/Providers/UnifiedModelPicker.swift
+          xcrun swiftc -frontend -parse Providers/ProviderAPIQuota.swift
+          xcrun swiftc -frontend -parse Views/Providers/ProviderInstanceDetailView.swift
+      - name: "Test response idle timeout structure"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-sse-idle-timeout.py | tee sse-idle-timeout-structure.log
+          xcrun swiftc -frontend -parse Providers/AgentProvider.swift
+          xcrun swiftc -frontend -parse Providers/LLMProviderFactory.swift
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+SSEStream.swift
+      - name: "Parse session export sources"
+        script: |
+          set -euo pipefail
+          for file in \
+            Views/Chat/SessionExport/SessionExportModels.swift \
+            Views/Chat/SessionExport/SessionExportTypography.swift \
+            Views/Chat/SessionExport/SessionExportRenderer.swift \
+            Views/Chat/SessionExport/SessionExportNativeRenderer.swift \
+            Views/Chat/SessionExport/SessionShareSheet.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+      - name: "Test conversation search and sharing behavior"
+        script: |
+          set -euo pipefail
+          python3 scripts/test-chat-search.py | tee chat-search-tests.log
+          python3 scripts/test-share-reference-model.py | tee chat-share-model-tests.log
+      - name: "Test foldable pane layout"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-foldable-layout.py | tee foldable-layout-structure.log
+          xcrun swiftc -target "$(uname -m)-apple-macosx13.0" \
+            Views/Layout/AdaptivePaneLayout.swift scripts/FoldableLayoutTests.swift \
+            -o "$RUNNER_TEMP/foldable-layout-tests"
+          "$RUNNER_TEMP/foldable-layout-tests"
+          for file in \
+            Views/Layout/AdaptivePaneLayout.swift \
+            Views/Layout/ChatScrollMemory.swift \
+            Views/ContentView.swift \
+            Views/Chat/AIChatView.swift \
+            Agent/Chat/ChatLifecycleSupport.swift \
+            Agent/MessageList/CollectionViewMessageListV3.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+      - name: "Test background floating window"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-floating-window.py | tee floating-window-structure.log
+          for file in \
+            Shared/AgentActivityAttributes.swift \
+            Agent/Background/AgentLiveActivityManager.swift \
+            Agent/Background/BackgroundKeepAliveManager.swift \
+            Agent/Background/ChatPiPController.swift \
+            AgentWidget/AgentLiveActivityWidget.swift \
+            Views/ContentView.swift; do
+            xcrun swiftc -frontend -parse "$file"
+          done
+      - name: "Test AOJIT status surface"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-aojit-status.py | tee aojit-status-structure.log
+          xcrun swiftc -frontend -parse Shared/Config/ConfigRegistry+Builtins.swift
+          xcrun swiftc -frontend -parse Agent/ISH/AOJITAcceleration.swift
+      - name: "Test media favorites and preview actions"
+        script: |
+          set -euo pipefail
+          python3 scripts/verify-media-favorites.py | tee media-favorites-structure.log
+          xcrun swiftc -frontend -parse Shared/MediaFavoritesStore.swift
+          xcrun swiftc -frontend -parse Views/Settings/MediaFavoritesView.swift
+          xcrun swiftc -frontend -parse Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift
+      - name: "Test favorites success feedback and square layout on simulator"
+        script: |
+          (
+            bash scripts/test-favorites-ui.sh
+          ) || echo '::warning:: step failed; continuing (continue-on-error in GitHub Actions)'
+      - name: "Test rendered question cards and answer sheets"
+        script: |
+          bash scripts/test-question-ui.sh
+      - name: "Render pinned reference question cards and comparison images"
+        script: |
+          set -euo pipefail
+          bash scripts/test-question-reference-ui.sh
+          python3 -m pip install --break-system-packages Pillow
+          python3 scripts/compare-question-ui.py
+      - name: "Test rendered child agent cards and animation lifecycle"
+        script: |
+          bash scripts/test-subagent-ui.sh
+      - name: "Render pinned reference child cards and comparison images"
+        script: |
+          set -euo pipefail
+          bash scripts/test-subagent-reference-ui.sh
+          python3 scripts/compare-subagent-ui.py
+      - name: "Render complete child detail reference comparisons"
+        script: |
+          bash scripts/test-subagent-full-detail.sh
+      - name: "Compare conversation search and sharing controls"
+        script: |
+          set -euo pipefail
+          bash scripts/test-share-search-reference-ui.sh
+          bash scripts/test-share-search-production-ui.sh
+          python3 scripts/compare-share-search-ui.py
+      - name: "Create ProviderCustomization.xcconfig"
+        script: |
+          cp Configs/ProviderCustomization.xcconfig.example Configs/ProviderCustomization.xcconfig
+      - name: "Create stub deps"
+        script: |
+          ROOT="$PWD"
+          UP1="$(pwd)/.."
+          UP2="$(pwd)/../.."
+          
+          # scripts/ is referenced as $SRCROOT/../../scripts/ (2 levels up)
+          mkdir -p "$UP2/scripts"
+          echo 'IyEvYmluL2Jhc2gKT1VUPSR7U1JDUk9PVDotJFBXRH0vR2VuZXJhdGVkL0RlYnVnU2tpbGxHZW5lcmF0ZWQuc3dpZnQKbWtkaXIgLXAgIiQoZGlybmFtZSAiJE9VVCIpIgpjYXQgPiAiJE9VVCIgPDwgJ1NUVUInCiNpZiBERUJVRwplbnVtIERlYnVnU2tpbGxHZW5lcmF0ZWQgewogICAgc3RhdGljIGxldCBza2lsbE1hcmtkb3duQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50UHl0aG9uQjY0ID0gIiIKICAgIHN0YXRpYyBsZXQgY2xpZW50Tm9kZUI2NCA9ICIiCiAgICBzdGF0aWMgbGV0IGNsaWVudEJhc2hCNjQgPSAiIgp9CiNlbmRpZgpTVFVC' | base64 -d > "$UP2/scripts/gen_debug_skill.sh"
+          chmod +x "$UP2/scripts/gen_debug_skill.sh"
+          
+          # shared/ is referenced as ../shared/ (1 level up)
+          mkdir -p "$UP1/shared/bashism"
+          echo '[]' > "$UP1/shared/bashism/bashism_rules.json"
+          echo '[]' > "$UP1/shared/bashism/bashism_test_vectors.json"
+          
+          # Generated/ is inside the repo
+          mkdir -p "$ROOT/Generated"
+          printf '#if DEBUG\nenum DebugSkillGenerated {\n    static let skillMarkdownB64 = ""\n    static let clientPythonB64 = ""\n    static let clientNodeB64 = ""\n    static let clientBashB64 = ""\n}\n#endif\n' > "$ROOT/Generated/DebugSkillGenerated.swift"
+          
+          # deps/ + build/ are referenced as ../../deps/ and ../../build/ (2 levels up)
+          mkdir -p "$UP2/deps/include/ish"
+          mkdir -p "$UP2/deps/include/fs"
+          mkdir -p "$UP2/deps/include/kernel"
+          printf '%s\n' \
+            '#ifndef NATIVE_OFFLOAD_H' \
+            '#define NATIVE_OFFLOAD_H' \
+            'typedef int (*native_offload_handler_t)(int argc, char **argv, int stdin_fd, int stdout_fd, int stderr_fd);' \
+            'int native_offload_add_handler(const char *name, native_offload_handler_t handler);' \
+            '#endif' \
+            > "$UP2/deps/include/kernel/native_offload.h"
+          # stub kernel/fs.h (referenced by NativeOffloadUtils.m)
+          printf '%s\n' \
+            '#ifndef KERNEL_FS_H' \
+            '#define KERNEL_FS_H' \
+            '#define O_RDONLY_ 0' \
+            '#define O_WRONLY_ 1' \
+            '#define O_CREAT_ 64' \
+            '#define O_TRUNC_ 512' \
+            '#define O_NONBLOCK 2048' \
+            '#define O_APPEND_ 1024' \
+            '#define AT_PWD (-100)' \
+            '#define S_IFCHR 0020000' \
+            '#define TTY_CONSOLE_MAJOR 4' \
+            '#define TTY_ALTERNATE_MAJOR 5' \
+            '#define DEV_TTY_MINOR 0' \
+            '#define DEV_CONSOLE_MINOR 1' \
+            '#define DEV_PTMX_MINOR 2' \
+            '#define MEM_MAJOR 1' \
+            '#define DEV_NULL_MINOR 3' \
+            '#define DEV_ZERO_MINOR 5' \
+            '#define DEV_FULL_MINOR 7' \
+            '#define DEV_RANDOM_MINOR 8' \
+            '#define DEV_URANDOM_MINOR 9' \
+            '#define TTY_PSEUDO_SLAVE_MAJOR 136' \
+            '#endif' \
+            > "$UP2/deps/include/kernel/fs.h"
+          # stub fs/fd.h
+          printf '%s\n' \
+            '#ifndef FS_FD_H' '#define FS_FD_H' \
+            '#include <sys/types.h>' \
+            'struct fd;' \
+            'void fd_close(struct fd *fd);' \
+            'struct fd *generic_open(const char *path, int flags, int mode);' \
+            '#ifndef IS_ERR' \
+            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+            '#endif' \
+            '#ifndef PTR_ERR' \
+            '#define PTR_ERR(p) ((int)(long)(p))' \
+            '#endif' \
+            '#endif' \
+            > "$UP2/deps/include/fs/fd.h"
+          # stub fs/path.h
+          printf '%s\n' \
+            '#ifndef FS_PATH_H' \
+            '#define FS_PATH_H' \
+            'int generic_mkdirat(int dirfd, const char *path, int mode);' \
+            'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
+            'int dev_make(int major, int minor);' \
+            'int create_stdio(const char *path, int major, int num);' \
+            '#endif' \
+            > "$UP2/deps/include/fs/path.h"
+          echo 'I2lmbmRlZiBERVZJQ0VTX0gKI2RlZmluZSBERVZJQ0VTX0gKI2VuZGlm' | base64 -d > "$UP2/deps/include/fs/devices.h"
+          # stub all remaining ish/kernel/, ish/fs/, ish/emu/ headers
+          mkdir -p "$UP2/deps/include/ish/kernel" "$UP2/deps/include/ish/fs" "$UP2/deps/include/ish/emu"
+          cp "$UP2/deps/include/kernel/fs.h" "$UP2/deps/include/ish/kernel/fs.h"
+          cp "$UP2/deps/include/fs/fd.h" "$UP2/deps/include/ish/fs/fd.h"
+          cp "$UP2/deps/include/fs/path.h" "$UP2/deps/include/ish/fs/path.h"
+          cp "$UP2/deps/include/fs/devices.h" "$UP2/deps/include/ish/fs/devices.h"
+          # stub ish/kernel/task.h — struct task, pid_get_task, MAX_PID
+          printf '%s\n' \
+            '#ifndef STUB_TASK_H' '#define STUB_TASK_H' \
+            '#include <sys/types.h>' '#include <stdint.h>' '#include <pthread.h>' \
+            'typedef unsigned long dword_t;' 'typedef pid_t pid_t_;' \
+            'struct cpu_state { int stub; };' \
+            'struct task { struct cpu_state cpu; pid_t pid; struct task *parent; struct task_group *group; struct fd_table *files; pthread_t thread; unsigned long pending; };' \
+            'struct pid { struct task *task; };' \
+            'struct task_group { pid_t pgid; void *fs_context; };' \
+            'struct fd_table { struct fd *files[256]; };' \
+            'extern struct task *current;' \
+            'struct task *pid_get_task(dword_t pid);' \
+            'struct pid *pid_get(int pid);' \
+            'int trylock(void *lock);' \
+            '#define MAX_PID 4096' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/task.h"
+          # stub ish/kernel/calls.h — fd/path/fs functions
+          printf '%s\n' \
+            '#ifndef STUB_CALLS_H' '#define STUB_CALLS_H' \
+            '#include <sys/types.h>' '#include <stdint.h>' '#include "ish/kernel/fs.h"' \
+            'typedef unsigned long dword_t;' \
+            'struct fd_ops { ssize_t (*read)(struct fd *fd, void *buf, size_t size); ssize_t (*write)(struct fd *fd, const void *buf, size_t size); };' \
+            'struct fd { int real_fd; const struct fd_ops *ops; };' \
+            'struct winsize_ { unsigned short row, col, xpixel, ypixel; };' \
+            'void fd_close(struct fd *fd);' \
+            'struct fd *adhoc_fd_create(const void *ops);' \
+            'extern const void *realfs_fdops;' \
+            'struct fd *generic_open(const char *path, int flags, int mode);' \
+            'int generic_mkdirat(int dirfd, const char *path, int mode);' \
+            'int generic_mknodat(int dirfd, const char *path, int mode, int dev);' \
+            'int dev_make(int major, int minor);' \
+            'int create_stdio(const char *path, int major, int num);' \
+            '#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)' \
+            '#define PTR_ERR(p) ((int)(long)(p))' \
+            '#define _ENAMETOOLONG 36' \
+            '#define ENVP_APPEND(kv) do{}while(0)' \
+            '#define KERNEL_ENVP_APPEND(kv) do{}while(0)' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/calls.h"
+          # stub ish/kernel/signal.h — siginfo_, send_signal (3 args), SIGTERM_/SIGKILL_
+          printf '%s\n' \
+            '#ifndef STUB_SIGNAL_H' '#define STUB_SIGNAL_H' \
+            '#include <sys/types.h>' \
+            'struct siginfo_ { int si_signo; int si_code; };' \
+            'void send_signal(struct task *t, int sig, struct siginfo_ info);' \
+            'void lock(void *lock);' 'void unlock(void *lock);' \
+            'extern int pids_lock;' \
+            '#define SIGINFO_NIL {}' \
+            '#define SIGTERM_ 15' \
+            '#define SIGKILL_ 9' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/signal.h"
+          # stub ish/kernel/init.h — process functions
+          printf '%s\n' \
+            '#ifndef STUB_INIT_H' '#define STUB_INIT_H' \
+            'struct task;' \
+            'int become_new_init_child(void);' \
+            'int become_first_process(void);' \
+            'int do_execve(const char *path, int argc, const char *argv, const char *envp);' \
+            'int task_start(struct task *t);' \
+            'int mount_root(void *fs, const char *path);' \
+            'int do_mount(void *fs, const char *type, const char *target, const char *opts, unsigned long flags);' \
+            'extern int fakefs;' \
+            'extern int procfs;' \
+            'extern int devptsfs;' \
+            '#endif' \
+            > "$UP2/deps/include/ish/kernel/init.h"
+          # stub ish/fs/tty.h — tty driver types and functions
+          printf '%s\n' \
+            '#ifndef STUB_TTY_H' '#define STUB_TTY_H' \
+            '#include <sys/types.h>' '#include <stdbool.h>' \
+            'struct tty { int num; };' \
+            'struct tty_driver_ops {' \
+            '  int (*init)(struct tty *tty);' \
+            '  int (*write)(struct tty *tty, const void *buf, size_t len, bool blocking);' \
+            '  void (*cleanup)(struct tty *tty);' \
+            '};' \
+            'struct tty_driver { const struct tty_driver_ops *ops; };' \
+            '#define DEFINE_TTY_DRIVER(name, driver_ops, major, count) struct tty_driver name = { .ops = driver_ops }' \
+            'void tty_input(struct tty *tty, const void *buf, size_t len, bool blocking);' \
+            'void tty_set_winsize(struct tty *tty, struct winsize_ ws);' \
+            'struct tty *pty_open_fake(struct tty_driver *driver);' \
+            'extern struct tty_driver *tty_drivers[];' \
+            'void set_console_device(int major, int minor);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/tty.h"
+          # stub ish/fs/fake.h — fakefs functions
+          printf '%s\n' \
+            '#ifndef STUB_FAKE_H' '#define STUB_FAKE_H' \
+            '#include <sys/types.h>' '#include <stdbool.h>' '#include <stdint.h>' \
+            'void fakefs_set_rootfs_data_path(const char *path);' \
+            'int fakefs_bind_mount(const char *linux_path, const char *host_path, bool read_only);' \
+            'int fakefs_bind_unmount(const char *linux_path);' \
+            'void FsApplyOverlay(void);' \
+            'struct fakefs_change_event { const char *linux_path; int op; int64_t timestamp_ns; uint64_t fs_context; };' \
+            'typedef void (^fakefs_change_consumer_t)(const struct fakefs_change_event *batch, int count);' \
+            'void fakefs_install_change_consumer(fakefs_change_consumer_t consumer);' \
+            'uint64_t fakefs_change_dropped_count(void);' \
+            'void fakefs_set_path_translate_hook(void *hook);' \
+            'void fakefs_set_path_reverse_hook(void *hook);' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/fake.h"
+          # stub ish/fs/dev.h — device functions
+          printf '%s\n' \
+            '#ifndef STUB_DEV_H' '#define STUB_DEV_H' \
+            '#include "ish/fs/tty.h"' \
+            '#endif' \
+            > "$UP2/deps/include/ish/fs/dev.h"
+          # stub ish/emu/cpu.h — cpu throttle hook
+          printf '%s\n' \
+            '#ifndef STUB_CPU_H' '#define STUB_CPU_H' \
+            'struct cpu_state;' \
+            'void cpu_poke(struct cpu_state *cpu);' \
+            'void ish_set_timer_tick_hook(int (*hook)(void));' \
+            '#endif' \
+            > "$UP2/deps/include/ish/emu/cpu.h"
+          for h in ish/fs/real.h; do
+            printf '%s\n' \
+              '#ifndef STUB_'"$(echo "$h" | tr '/.' '__')" \
+              '#define STUB_'"$(echo "$h" | tr '/.' '__')" \
+              '#endif' \
+              > "$UP2/deps/include/$h"
+          done
+          echo 'I2lmbmRlZiBJU0hfSAojZGVmaW5lIElTSF9ICiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGJvb2wuaD4KI2luY2x1ZGUgPHN5cy90eXBlcy5oPgpzdHJ1Y3QgdGNiOwpzdHJ1Y3QgdGFzazsKc3RydWN0IG1vdW50OwojZW5kaWY=' | base64 -d > "$UP2/deps/include/ish/ish.h"
+          for f in kernel.h emu.h interrupt.h task.h thread.h; do touch "$UP2/deps/include/ish/$f"; done
+          # stub FFmpeg/FFmpeg.h (used by FFmpegOffload.m)
+          mkdir -p "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg"
+          printf '%s\n' \
+            '#ifndef FFMPEG_H' \
+            '#define FFMPEG_H' \
+            'int ffmpeg_main(int argc, char **argv);' \
+            'void ffmpeg_reset_statics(void);' \
+            '#endif' \
+            > "$UP2/deps/frameworks/FFmpeg.framework/Headers/FFmpeg/FFmpeg.h"
+          
+          mkdir -p "$UP2/deps/libs"
+          printf 'void ze_ci_native_stub(void) {}\n' > "$UP2/deps/libs/native_stub.c"
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
+            "$UP2/deps/libs/native_stub.c" -o "$UP2/deps/libs/native_stub.o"
+          # FFmpegOffload.m references these FFmpeg globals and entry points.
+          # The CI package intentionally uses a placeholder FFmpeg binary, so
+          # export compatible symbols rather than leaving them to flat-namespace
+          # lookup at app launch.
+          printf '%s\n' \
+            '#include <stdint.h>' \
+            '_Thread_local int noff_stdout_fd = -1;' \
+            '_Thread_local int noff_stderr_fd = -1;' \
+            'void noff_av_log_redirect_start(void) {}' \
+            'void noff_av_log_redirect_stop(void) {}' \
+            'int nb_input_files = 0;' \
+            'int nb_output_files = 0;' \
+            'int nb_filtergraphs = 0;' \
+            'void *input_files = 0;' \
+            'void *output_files = 0;' \
+            'void *filtergraphs = 0;' \
+            'int64_t stats_period = 500000;' \
+            'int stdin_interaction = 1;' \
+            'float audio_drift_threshold = 0.1f;' \
+            'float dts_delta_threshold = 10.0f;' \
+            'float dts_error_threshold = 108000.0f;' \
+            'float frame_drop_threshold = 0.0f;' \
+            'int do_benchmark = 0;' \
+            'int do_benchmark_all = 0;' \
+            'int do_hex_dump = 0;' \
+            'int do_pkt_dump = 0;' \
+            'int copy_ts = 0;' \
+            'int start_at_zero = 0;' \
+            'int copy_tb = -1;' \
+            'int debug_ts = 0;' \
+            'int exit_on_error = 0;' \
+            'int abort_on_flags = 0;' \
+            'int print_stats = -1;' \
+            'float max_error_rate = 0.6666667f;' \
+            'int filter_complex_nbthreads = 0;' \
+            'int vstats_version = 2;' \
+            'int auto_conversion_filters = 1;' \
+            'int do_psnr = 0;' \
+            'int ignore_unknown_streams = 0;' \
+            'int copy_unknown_streams = 0;' \
+            'int recast_media = 0;' \
+            'void *vstats_file = 0;' \
+            'void *vstats_filename = 0;' \
+            'void *progress_avio = 0;' \
+            'void *filter_nbthreads = 0;' \
+            'void *filter_hw_device = 0;' \
+            'void *sdp_filename = 0;' \
+            'int nb_output_dumped = 0;' \
+            'int hide_banner = 0;' \
+            'void ffmpeg_reset_statics(void) {}' \
+            'int ffmpeg_main(int argc, char **argv) { (void)argc; (void)argv; return 1; }' \
+            > "$UP2/deps/libs/ffmpeg_stub.c"
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -c \
+            "$UP2/deps/libs/ffmpeg_stub.c" -o "$UP2/deps/libs/ffmpeg_stub.o"
+          for lib in ish_emu ish fakefs; do
+            libtool -static -o "$UP2/deps/libs/lib${lib}.a" "$UP2/deps/libs/native_stub.o"
+          done
+          
+          for fw in slirp.0 ffi.8 gmodule-2.0.0 pixman-1.0 zstd.1 iconv.2 gio-2.0.0 intl.8 gthread-2.0.0 qemu-aarch64-softmmu gobject-2.0.0 glib-2.0.0 jpeg.62 gstnet-1.0.0 opus.0 gstcheck-1.0.0 gstcontroller-1.0.0 png16.16 json-glib-1.0.0 gcrypt.20 virglrenderer.1 gstbase-1.0.0 ssl.1.1 gstrtsp-1.0.0 EGL gstreamer-1.0.0 gstsdp-1.0.0 epoxy.0 crypto.1.1 gstvideo-1.0.0 swtpm.0 phodav-3.0.0 gstfft-1.0.0 gstaudio-1.0.0 gstpbutils-1.0.0 gstallocators-1.0.0 gstapp-1.0.0 gpg-error.0 gstrtp-1.0.0 gstriff-1.0.0 GLESv2 gsttag-1.0.0 soup-3.0.0; do
+            mkdir -p "$UP2/build/frameworks/$fw.framework"
+          done
+          
+          for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
+            FRAMEWORK_DIR="$UP2/deps/frameworks/$fw.framework"
+            mkdir -p "$FRAMEWORK_DIR/Headers"
+            # Xcode embeds these as dynamic frameworks.  A bare static archive
+            # is not a valid installable framework and its temporary CI object
+            # paths can survive into LC_ID_DYLIB, which breaks re-signing.
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0">' \
+              '<dict>' \
+              '  <key>CFBundleDevelopmentRegion</key><string>en</string>' \
+              '  <key>CFBundleExecutable</key><string>'"$fw"'</string>' \
+              '  <key>CFBundleIdentifier</key><string>com.ze.ci.stub.'"$fw"'</string>' \
+              '  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>' \
+              '  <key>CFBundleName</key><string>'"$fw"'</string>' \
+              '  <key>CFBundlePackageType</key><string>FMWK</string>' \
+              '  <key>CFBundleShortVersionString</key><string>1.0</string>' \
+              '  <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>' \
+              '  <key>CFBundleVersion</key><string>1</string>' \
+              '  <key>MinimumOSVersion</key><string>16.0</string>' \
+              '</dict>' \
+              '</plist>' \
+              > "$FRAMEWORK_DIR/Info.plist"
+            FRAMEWORK_OBJECTS=("$UP2/deps/libs/native_stub.o")
+            if [ "$fw" = "FFmpeg" ]; then
+              FRAMEWORK_OBJECTS=("$UP2/deps/libs/ffmpeg_stub.o" "$UP2/deps/libs/native_stub.o")
+            fi
+            xcrun --sdk iphoneos clang \
+              -target arm64-apple-ios16.0 \
+              -dynamiclib "${FRAMEWORK_OBJECTS[@]}" \
+              -install_name "@rpath/$fw.framework/$fw" \
+              -o "$FRAMEWORK_DIR/$fw"
+            actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
+            expected_install_name="@rpath/$fw.framework/$fw"
+            test "$actual_install_name" = "$expected_install_name"
+            plutil -lint "$FRAMEWORK_DIR/Info.plist"
+            if [ "$fw" = "FFmpeg" ]; then
+              nm -gU "$FRAMEWORK_DIR/$fw" | grep -Eq '[[:space:]]_abort_on_flags$'
+              nm -gU "$FRAMEWORK_DIR/$fw" | grep -Eq '[[:space:]]_ffmpeg_main$'
+            fi
+          done
+          
+          mkdir -p "$UP2/deps/resources"
+          touch "$UP2/deps/resources/RootfsPatch.bundle"
+          touch "$UP2/deps/resources/alpine-rootfs.zip"
+      - name: "Build Ze native dependencies"
+        script: |
+          set -euo pipefail
+          
+          for package in ninja llvm lld libarchive pkg-config; do
+            brew list "$package" >/dev/null 2>&1 || brew install "$package"
+          done
+          MESON_VENV="$RUNNER_TEMP/meson-venv"
+          python3 -m venv "$MESON_VENV"
+          "$MESON_VENV/bin/pip" install meson
+          export PATH="$MESON_VENV/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+          
+          UP2="$(pwd)/../.."
+          bash scripts/prepare-ze-native-deps.sh "$UP2/deps"
+          
+          test -f "$UP2/deps/libs/libish.a"
+          test -f "$UP2/deps/libs/libish_emu.a"
+          test -f "$UP2/deps/libs/libfakefs.a"
+          test -f "$UP2/deps/resources/alpine-rootfs.zip"
+          test -d "$UP2/deps/resources/RootfsPatch.bundle"
+          for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
+            test -f "$UP2/deps/frameworks/$fw.framework/$fw"
+            test -f "$UP2/deps/frameworks/$fw.framework/Info.plist"
+          done
+      - name: "Build macOS ish and record AOT images"
+        script: |
+          (
+            set -uo pipefail
+            # [T-aot-committed] The 22 images recorded by the manual "Record AOT
+            # images" workflow live in aot/ as .o, so a normal build only links
+            # them: no ish build, no rootfs download, no recording. The fallback
+            # below stays for a tree that has none (fresh clone, or after gen.c
+            # changed and the images must be re-recorded).
+            if compgen -G "aot/*.o" > /dev/null; then
+              count=$(ls aot/*.o | wc -l | tr -d ' ')
+              echo "── using $count committed images ($(du -sh aot | cut -f1))"
+              echo "AOT_OBJECTS=$(ls "$PWD"/aot/*.o | tr '\n' ' ')" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            export PATH="$PWD/.venv-aot/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+            python3 -m venv .venv-aot
+            .venv-aot/bin/pip install --quiet meson
+            meson setup build-macos Vendor/ZeNative/ish \
+              --buildtype=release -Dlog='' -Dkernel=ish -Dengine=asbestos \
+              -Dguest_arch=arm64 -Djit=true
+            ninja -C build-macos ish tools/fakefsify
+            # Rootfs for the recorder: same Alpine the app ships.
+            curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
+              https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz
+            # record.sh invokes `ish -r <rootfs>`, and -r is the REALFS path
+            # (-f is fakefs). Hand it an unpacked Alpine tree, not fakefsify's
+            # data/ + meta.db layout, or the guest cannot find /bin/sh.
+            mkdir -p /tmp/aot-rootfs
+            tar -xzf /tmp/alpine.tar.gz -C /tmp/aot-rootfs
+            mkdir -p aot /tmp/aot-rootfs/tmp
+            
+            SUMMARY="$RUNNER_TEMP/aot-summary.txt"
+            : > "$SUMMARY"
+            record() {
+              name=$1
+              shift
+              echo "── record.sh $*"
+              # A guest workload can hang (V8 startup under emulation does), and
+              # record.sh has no deadline of its own: one bad entry held the whole
+              # step for over an hour. macOS has no coreutils `timeout`, so perl's
+              # alarm+exec does the same job.
+              if perl -e 'alarm shift; exec @ARGV' "${AOT_TIMEOUT:-240}" Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
+                size=$(wc -c < "$4" 2>/dev/null || echo 0)
+                printf '%-12s %8s bytes\n' "$name" "$size" >> "$SUMMARY"
+                ls -l "$4" 2>/dev/null || true
+              else
+                printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
+                echo "❌ record.sh failed for $4"
+              fi
+            }
+            
+            # [T-aot-full-set] The default build records only the two modules that
+            # are already in the minirootfs: ~10 s, and enough for the shell and
+            # libc paths that dominate. The other 23 need ~120 MB of packages
+            # installed *inside the emulator*, which took over an hour and made
+            # every IPA build wait for it. They belong in the manual
+            # "Record AOT images" workflow, whose artifacts get committed and
+            # linked from here. AOT_FULL=1 still runs the whole set inline for
+            # anyone who wants it.
+            if [ "${AOT_FULL:-0}" = "1" ]; then
+              rel="$(cut -d. -f1,2 /tmp/aot-rootfs/etc/alpine-release)"
+              mkdir -p /tmp/aot-rootfs/etc/apk
+              printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
+                "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
+              printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
+              [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
+              PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default pcre2-tools bzip2"
+              echo "── apk add $PACKAGES"
+              build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
+                || echo "⚠️  apk add failed; only libraries already present will record"
+              while IFS='|' read -r name module workload timeout; do
+                [ -n "${name:-}" ] || continue
+                case "$name" in '#'*) continue ;; esac
+                case "$workload" in
+                  @*) cp "${workload#@}" "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
+                  *)  printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
+                esac
+                AOT_TIMEOUT="$timeout" record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
+              done < scripts/aot-manifest.txt
+            else
+              printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
+              printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
+              record musl build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl
+              record busybox build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox
+            fi
+            
+            echo "── recorded images"
+            cat "$SUMMARY"
+            { echo '### AOT images'; echo '```'; cat "$SUMMARY"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            
+            SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+            OBJS=""
+            for f in aot/*.S; do
+              [ -f "$f" ] || continue
+              o="${f%.S}.o"
+              xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "$o" && OBJS="$OBJS $PWD/$o"
+            done
+            echo "AOT_OBJECTS=$OBJS" >> "$GITHUB_ENV"
+            echo "── $(ls aot/*.S 2>/dev/null | wc -l | tr -d ' ') images, $(du -sh aot 2>/dev/null | cut -f1) on disk"
+            ls -lh aot/ || true
+          ) || echo '::warning:: step failed; continuing (continue-on-error in GitHub Actions)'
+      - name: "Resolve SPM dependencies"
+        script: |
+          set -euo pipefail
+          # Xcode 16.4's SwiftPM downloads binary artifacts directly into its
+          # shared cache. A failed HTTP retry can collide with that same path.
+          # Seed the affected archive in a private cache after checking the
+          # checksum published by RealTimeCutVADLibrary 1.0.14's Package.swift.
+          ZE_SPM_CACHE_ROOT="$RUNNER_TEMP/ze-spm-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$ZE_SPM_CACHE_ROOT/artifacts"
+          VAD_ARCHIVE_URL="https://github.com/helloooideeeeea/RealTimeCutVADLibraryForXCFramework/releases/download/v1.0.3/RealTimeCutVADCXXLibrary.xcframework.zip"
+          VAD_CACHE_KEY="https___github_com_helloooideeeeea_RealTimeCutVADLibraryForXCFramework_releases_download_v1_0_3_RealTimeCutVADCXXLibrary_xcframework_zip"
+          VAD_DOWNLOAD="$ZE_SPM_CACHE_ROOT/vad-download.zip"
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 20 \
+            --max-time 300 "$VAD_ARCHIVE_URL" -o "$VAD_DOWNLOAD"
+          echo "00c4a8cd5a22e634f34d744eb06aa88a4494e12a5f9d4573989129a1f4c7e76d  $VAD_DOWNLOAD" | shasum -a 256 -c -
+          unzip -tq "$VAD_DOWNLOAD"
+          mv "$VAD_DOWNLOAD" "$ZE_SPM_CACHE_ROOT/artifacts/$VAD_CACHE_KEY"
+          echo "ZE_SPM_CACHE_ROOT=$ZE_SPM_CACHE_ROOT" >> "$GITHUB_ENV"
+          xcodebuild -resolvePackageDependencies \
+            -project Ze.xcodeproj \
+            -scheme Ze \
+            -packageCachePath "$ZE_SPM_CACHE_ROOT" \
+            -clonedSourcePackagesDirPath .spm
+      - name: "Build (Debug, no signing)"
+        script: |
+          # [T-aot-target-scope] AOT objects reach the linker through a
+          # user-defined setting that only the Ze target's OTHER_LDFLAGS
+          # references. Setting OTHER_LDFLAGS on the command line applies to
+          # EVERY target in the build, so ZeShare.appex and ZeFileProvider.appex
+          # were handed aot_*.o as well and failed with
+          #   Undefined symbols: _gadget_adc_reg / _gadget_add_ext
+          # Those two extensions do not link libish_emu, which is where the
+          # gadgets live, so they can never resolve them.
+          #
+          # ZE_AOT_OBJECTS is allowed to be empty: inside pbxproj `$(...)`
+          # expands normally and an empty expansion contributes no argument.
+          # (A command-line OTHER_LDFLAGS was different: `$(inherited)` there
+          # reached the linker as a literal.)
+          xcodebuild build \
+            -project Ze.xcodeproj \
+            -scheme Ze \
+            -configuration Debug \
+            -destination generic/platform=iOS \
+            -packageCachePath "$ZE_SPM_CACHE_ROOT" \
+            -clonedSourcePackagesDirPath .spm \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_DEBUG_DYLIB=NO \
+            ZE_AOT_OBJECTS="${AOT_OBJECTS:-}" \
+            2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
+      - name: "Diagnose searchable PDF glyphs and page boundaries"
+        script: |
+          (
+            python3 scripts/test-pdf-vector-rendering.py
+          ) || echo '::warning:: step failed; continuing (continue-on-error in GitHub Actions)'
+      - name: "Package unsigned IPA"
+        script: |
+          APP_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path '*/Build/Products/Debug-iphoneos/Ze.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "Ze.app was not found after the build."
+            exit 1
+          fi
+          
+          IPA_STAGING="$RUNNER_TEMP/ze-ipa"
+          mkdir -p "$IPA_STAGING/Payload"
+          cp -R "$APP_PATH" "$IPA_STAGING/Payload/Ze.app"
+          ditto -c -k --sequesterRsrc --keepParent "$IPA_STAGING/Payload" "$GITHUB_WORKSPACE/Ze-unsigned.ipa"
+      - name: "Audit unsigned IPA bundle"
+        script: |
+          test -f Ze-unsigned.ipa
+          IPA_AUDIT="$RUNNER_TEMP/ze-ipa-audit"
+          rm -rf "$IPA_AUDIT"
+          mkdir -p "$IPA_AUDIT"
+          ditto -x -k Ze-unsigned.ipa "$IPA_AUDIT"
+          APP_AUDIT="$IPA_AUDIT/Payload/Ze.app"
+          test -d "$APP_AUDIT"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_AUDIT/Info.plist")" = "1.1.5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_AUDIT/Info.plist")" = "9"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_AUDIT/Info.plist")" = "16.0"
+          xcrun vtool -show-build "$APP_AUDIT/Ze" | tee ios-deployment-audit.log
+          python3 - "$APP_AUDIT/Info.plist" ios-deployment-audit.log <<'PYIOS'
+          import pathlib, plistlib, re, sys
+          info = plistlib.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          assert info['MinimumOSVersion'] == '16.0', info['MinimumOSVersion']
+          targets = re.findall(r'\bminos\s+(\S+)', pathlib.Path(sys.argv[2]).read_text())
+          assert targets and all(x in ('16.0', '16.0.0') for x in targets), targets
+          print('Ze Info.plist and Mach-O deployment target: iOS 16.0')
+          PYIOS
+          test -f "$APP_AUDIT/Assets.car"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Light:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Light"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundleAlternateIcons:AppIcon-Dark:CFBundleIconName' "$APP_AUDIT/Info.plist")" = "AppIcon-Dark"
+          # Alternate icons are compiled by actool into Assets.car. Reject the
+          # obsolete loose-PNG directory so re-signers see one unambiguous icon
+          # declaration instead of two unrelated packaging mechanisms.
+          test ! -e "$APP_AUDIT/AlternateIcons"
+          # Xcode 16 Debug builds may split the executable into a tiny
+          # launcher plus Ze.debug.dylib.  Third-party re-signers often do
+          # not sign that auxiliary dylib, so reject that launch-only layout.
+          test ! -e "$APP_AUDIT/Ze.debug.dylib"
+          if otool -L "$APP_AUDIT/Ze" | grep -Fq '@rpath/Ze.debug.dylib'; then
+            echo "The app still depends on Ze.debug.dylib."
+            exit 1
+          fi
+          # [T-aot-audit] The images reach the app as bare object files in
+          # OTHER_LDFLAGS. If ZE_AOT_OBJECTS is empty, or dead-stripping drops
+          # the __ish_aot section, the toggle still works and the speed is
+          # still absent — exactly the failure that made AOJIT look fake. Fail
+          # the build instead of shipping an IPA without them.
+          AOT_BYTES=$(otool -l "$APP_AUDIT/Ze" | awk '/sectname __ish_aot/{f=1} f && /^ *size /{print $2; exit}')
+          echo "── __ish_aot section: ${AOT_BYTES:-missing}"
+          test -n "${AOT_BYTES:-}"
+          test "$((AOT_BYTES))" -gt 8000000
+          for fw in FFmpeg libavcodec libavformat libavutil libavfilter libswresample libswscale; do
+            FRAMEWORK_DIR="$APP_AUDIT/Frameworks/$fw.framework"
+            test -f "$FRAMEWORK_DIR/Info.plist"
+            actual_install_name="$(otool -D "$FRAMEWORK_DIR/$fw" | tail -n 1)"
+            expected_install_name="@rpath/$fw.framework/$fw"
+            test "$actual_install_name" = "$expected_install_name"
+          done
+      - name: "Require provider interface verification before upload"
+        script: |
+          python3 - <<'PYPROVIDER'
+          import json, pathlib
+          chrome = json.loads(pathlib.Path('provider-chrome-evidence/provider-chrome-result.json').read_text())
+          quota = json.loads(pathlib.Path('model-picker-evidence/model-picker-result.json').read_text())
+          assert chrome['success'] and len(chrome['screenshots']) >= 20, chrome
+          assert quota['success'] and len(quota['workBuddyScreenshots']) == 12, quota
+          print('Provider icons, selected provider, navigation appearance and both WorkBuddy balance views passed.')
+          PYPROVIDER
+    artifacts:
+      - "Ze-unsigned.ipa"
+      - "agent-scheduled-tools-structure.log"
+      - "api-key-quota-structure.log"
+      - "browser-parity-evidence/**"
+      - "build.log"
+      - "chat-search-tests.log"
+      - "chat-share-model-tests.log"
+      - "chatgpt-web-tests.log"
+      - "consecutive-tool-tests.log"
+      - "fakefs-metadata-tests.log"
+      - "favorites-ui-evidence/**"
+      - "feedback-tests.log"
+      - "feedback-ui-evidence/**"
+      - "fork-admission-tests.log"
+      - "github-client-tests.log"
+      - "image-model-tests.log"
+      - "image-wire-tests.log"
+      - "ios-deployment-audit.log"
+      - "ipa-runtime-gate.json"
+      - "kernel-cpu-tests.log"
+      - "kernel-lock-tests.log"
+      - "kernel-offload-tests.log"
+      - "kernel-runtime-tests.log"
+      - "model-compatibility-tests.log"
+      - "model-picker-evidence/**"
+      - "model-picker-structure.log"
+      - "native-build-evidence/**"
+      - "native-cancellation-tests.log"
+      - "native-layout-evidence/**"
+      - "path-cache-tests.log"
+      - "pdf-vector-evidence/**"
+      - "provider-chrome-evidence/**"
+      - "question-comparison-evidence/**"
+      - "question-core-tests.log"
+      - "question-layout-tests.log"
+      - "question-reference-evidence/**"
+      - "question-ui-evidence/**"
+      - "reasoning-wire-tests.log"
+      - "rootfs-recovery-tests.log"
+      - "scheduled-activity-structure.log"
+      - "scheduled-task-tests.log"
+      - "share-model-reference-evidence/**"
+      - "share-search-comparison-evidence/**"
+      - "share-search-production-evidence/**"
+      - "share-search-reference-evidence/**"
+      - "shell-file-maintenance-tests.log"
+      - "subagent-card-tests.log"
+      - "subagent-comparison-evidence/**"
+      - "subagent-delivery-tests.log"
+      - "subagent-full-detail-evidence/**"
+      - "subagent-lifecycle-tests.log"
+      - "subagent-reference-evidence/**"
+      - "subagent-ui-evidence/**"
+      - "task-start-tests.log"
+      - "thinking-glyph-evidence/**"
+      - "tool-collapse-structure.log"
+      - "user-message-collapse-structure.log"
+      - "visualization-tests.log"
+      - "voice-call-projection-tests.log"
+      - "voice-call-tests.log"
+      - "voice-call-ui-evidence/**"
+      - "web-challenge-tests.log"
+      - "web-oauth-tests.log"
+      - "workbuddy-tests.log"
+
+  iex-animated-preview:
+    name: IEX Animated Image Preview (Codemagic trial)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    scripts:
+      - name: Verify production GIF and WebP preview and real playback controls
+        script: bash scripts/test-animated-image-preview.sh
+      - name: Verify browser DOM fixture readiness
+        script: swift scripts/browser/BrowserUseDOMRectCloneTests.swift
+    artifacts:
+      - animated-image-preview-evidence/**
