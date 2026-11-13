@@ -15,6 +15,10 @@ on:
         description: 'Run complete application verification with diagnostic simulator artifacts'
         type: boolean
         default: false
+      animated_preview_only:
+        description: 'Compile only production image preview and verify GIF/WebP controls'
+        type: boolean
+        default: false
       multi_image_only:
         description: 'Run focused multi-image interactions and PNG/PDF export diagnosis'
         type: boolean
@@ -32,7 +36,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
+    if: ${{ inputs.animated_preview_only != true && inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
     name: Build Ze.app
     runs-on: macos-15
 
@@ -1170,7 +1174,7 @@ jobs:
 
 
   conversation-application:
-    if: ${{ inputs.animation_only != true && inputs.provider_review_only != true }}
+    if: ${{ inputs.animated_preview_only != true && inputs.animation_only != true && inputs.provider_review_only != true }}
     name: Verify chat lifecycle, sharing and search in application
     runs-on: macos-15
     timeout-minutes: 60
@@ -1210,3 +1214,21 @@ jobs:
   provider-review:
     if: ${{ inputs.provider_review_only == true }}
     uses: ./.github/workflows/provider-interface.yml
+
+  animated-image-preview:
+    if: ${{ inputs.animated_preview_only == true }}
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production GIF and WebP preview and real playback controls
+        run: bash scripts/test-animated-image-preview.sh
+      - name: Verify browser DOM fixture readiness
+        run: swift scripts/browser/BrowserUseDOMRectCloneTests.swift
+      - name: Upload preview verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: animated-image-preview-review
+          path: animated-image-preview-evidence/
+          retention-days: 7

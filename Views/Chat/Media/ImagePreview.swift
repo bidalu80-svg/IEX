@@ -812,7 +812,6 @@ struct AnimatedImagePreviewSurface: View {
     let onDismiss: () -> Void
     var onSingleTap: (() -> Void)? = nil
     @StateObject private var player = PreviewAnimationPlayer()
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -851,10 +850,12 @@ struct AnimatedImagePreviewSurface: View {
             let resolved = sourceURL.scheme == "ze" ? resolveZeFileURLCached(url: sourceURL) : sourceURL
             guard let resolved else { return }
             await player.prepare(url: resolved)
-            if scenePhase != .active { player.pause() }
+            if UIApplication.shared.applicationState != .active { player.pause() }
         }
         .onChange(of: active) { if !$0 { player.release() } }
-        .onChange(of: scenePhase) { if $0 != .active { player.pause() } }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            player.pause()
+        }
         .onDisappear { player.release() }
     }
 

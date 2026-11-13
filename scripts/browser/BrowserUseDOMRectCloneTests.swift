@@ -73,7 +73,21 @@ final class Probe: NSObject {
     func run() async {
         wv.loadHTMLString("<html><body><div id=d style='width:100px;height:50px'>hello</div></body></html>",
                           baseURL: URL(string: "https://example.invalid"))
-        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        // WKWebView's content process can start slowly on a shared CI runner.
+        // Gate on the fixture DOM, not an assumed startup delay. Assertions below
+        // still exercise the unmodified production structured-clone wrapper.
+        let deadline = Date().addingTimeInterval(15)
+        var fixtureReady = false
+        while Date() < deadline {
+            let ready = try? await wv.evaluateJavaScript(
+                "document.readyState === 'complete' && document.getElementById('d') !== null")
+            if ready as? Bool == true { fixtureReady = true; break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard fixtureReady else {
+            print("❌ fixture DOM did not become ready within 15 seconds")
+            exit(1)
+        }
 
         print("— THE BUG: DOM types that previously vanished or crashed —")
         await check("DOMRect direct", "return document.getElementById('d').getBoundingClientRect();", "\"width\":100")
