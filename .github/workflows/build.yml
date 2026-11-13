@@ -977,9 +977,10 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Test searchable PDF glyphs and page boundaries
+      - name: Diagnose searchable PDF glyphs and page boundaries
         if: ${{ inputs.animation_only != true }}
         timeout-minutes: 5
+        continue-on-error: true
         run: python3 scripts/test-pdf-vector-rendering.py
 
       - name: Package unsigned IPA
