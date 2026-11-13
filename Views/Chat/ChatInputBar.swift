@@ -638,6 +638,7 @@ struct UserAttachmentList: View {
             return GalleryItem(
                 id: fpKey,
                 title: meta.fileName,
+                sourceURL: URL(string: meta.zeURL),
                 onFavorite: {
                     guard let url = URL(string: meta.zeURL),
                           let fileURL = resolveZeFileURLCached(url: url) else { throw MediaFavoriteActionError.missingFile }

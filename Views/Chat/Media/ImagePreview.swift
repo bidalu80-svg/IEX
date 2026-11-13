@@ -6,6 +6,7 @@
 //  drag/save/share. Extracted from AIChatView.swift.
 //
 
+import ImageIO
 import Photos
 import SwiftUI
 import UIKit
@@ -131,6 +132,7 @@ struct ImagePreviewContent: UIViewRepresentable {
     var dismissThreshold: CGFloat = 80
     /// Maximum zoom scale for pinch / double-tap.
     var maximumScale: CGFloat = 3.0
+    var updatesImage = false
 
     func makeUIView(context: Context) -> ImagePreviewContentView {
         let view = ImagePreviewContentView(image: image)
@@ -143,6 +145,7 @@ struct ImagePreviewContent: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ImagePreviewContentView, context: Context) {
+        if updatesImage { view.replaceAnimationFrame(image) }
         view.onDismiss = onDismiss
         view.onSingleTap = onSingleTap
         view.horizontalDragLocked = horizontalDragLocked
@@ -181,6 +184,7 @@ final class ImagePreviewContentView: UIView, UIScrollViewDelegate, UIGestureReco
     init(image: UIImage) {
         self.imageView = UIImageView(image: image)
         super.init(frame: .zero)
+        self.imageView.accessibilityIdentifier = "imagePreview.bitmap"
 
         backgroundColor = .clear
         backdrop.backgroundColor = .black
@@ -247,6 +251,14 @@ final class ImagePreviewContentView: UIView, UIScrollViewDelegate, UIGestureReco
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    func replaceAnimationFrame(_ image: UIImage) {
+        guard imageView.image !== image else { return }
+        let previousSize = imageView.image?.size
+        imageView.image = image
+        // Animation frames share a canvas. Preserve pinch zoom and pan position.
+        if previousSize != image.size { setNeedsLayout() }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -386,6 +398,7 @@ final class ImagePreviewContentView: UIView, UIScrollViewDelegate, UIGestureReco
 
 struct ImagePreviewView: View {
     let image: UIImage
+    var sourceURL: URL? = nil
     var onFavorite: (() throws -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var saveStatus: SaveStatus = .idle
@@ -407,10 +420,8 @@ struct ImagePreviewView: View {
             // zoom canvas extend edge-to-edge; the chrome VStack below stays
             // safe-area-bound so buttons don't slide under the notch.
             Color.black.ignoresSafeArea()
-            ImagePreviewContent(
-                image: image,
-                onDismiss: { dismiss() }
-            )
+            AnimatedImagePreviewSurface(poster: image, sourceURL: sourceURL,
+                onDismiss: { dismiss() })
             .ignoresSafeArea()
 
             // Top bar overlay — inside ZStack to match ZeVideoFullscreenPlayer
@@ -561,7 +572,7 @@ struct AsyncImagePreviewView: View {
 
     var body: some View {
         if let image = loadedImage {
-            ImagePreviewView(image: image)
+            ImagePreviewView(image: image, sourceURL: url)
         } else {
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -592,3 +603,263 @@ struct AsyncImagePreviewView: View {
     }
 }
 
+
+
+// MARK: - On-demand animated image preview
+
+/// Lives only inside fullscreen preview. ImageIO work is serialized off the main
+/// actor and retains at most two downsampled frames, never the whole animation.
+actor PreviewAnimationDecoder {
+    static let maximumBytes = 64 * 1024 * 1024
+    let durations: [TimeInterval]
+    private let source: CGImageSource
+    private var frames: [Int: UIImage] = [:]
+    private var order: [Int] = []
+
+    enum Failure: Error { case tooLarge, invalidImage, invalidFrame }
+
+    init(data: Data) throws {
+        guard data.count <= Self.maximumBytes else { throw Failure.tooLarge }
+        guard let source = CGImageSourceCreateWithData(data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary) else { throw Failure.invalidImage }
+        self.source = source
+        let count = CGImageSourceGetCount(source)
+        let type = (CGImageSourceGetType(source) as String?) ?? ""
+        guard count <= 20_000 else { throw Failure.tooLarge }
+        guard count > 1, type == "com.compuserve.gif" || type.contains("webp") else {
+            durations = []; return
+        }
+        let canvas = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] ?? [:]
+        let width = (canvas[kCGImagePropertyPixelWidth as String] as? NSNumber)?.doubleValue ?? 0
+        let height = (canvas[kCGImagePropertyPixelHeight as String] as? NSNumber)?.doubleValue ?? 0
+        // ImageIO may composite a full GIF canvas before thumbnailing it.
+        guard width > 0, height > 0, width * height <= 16_777_216 else { throw Failure.tooLarge }
+        var delays: [TimeInterval] = []
+        for index in 0..<count {
+            let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any] ?? [:]
+            let animation = (props["{GIF}"] ?? props["{WebP}"]) as? [String: Any] ?? [:]
+            let raw = (animation["UnclampedDelayTime"] as? NSNumber)?.doubleValue
+                ?? (animation["DelayTime"] as? NSNumber)?.doubleValue ?? 0.1
+            // Broken/zero timing must not create a tight main-thread update loop.
+            delays.append(raw.isFinite && raw >= 0.02 ? min(raw, 60) : 0.1)
+        }
+        durations = delays
+    }
+
+    static func open(_ url: URL) async throws -> PreviewAnimationDecoder {
+        let data: Data
+        if url.isFileURL {
+            data = try await Task.detached(priority: .userInitiated) {
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size <= maximumBytes else { throw Failure.tooLarge }
+                return try Data(contentsOf: url, options: .mappedIfSafe)
+            }.value
+        } else {
+            let (bytes, response) = try await URLSession.shared.bytes(from: url)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw Failure.invalidImage
+            }
+            guard response.expectedContentLength <= Int64(maximumBytes) else { throw Failure.tooLarge }
+            var received = Data()
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                guard received.count < maximumBytes else { throw Failure.tooLarge }
+                received.append(byte)
+            }
+            data = received
+        }
+        try Task.checkCancellation()
+        return try PreviewAnimationDecoder(data: data)
+    }
+
+    func frame(at index: Int) throws -> UIImage {
+        try Task.checkCancellation()
+        guard durations.indices.contains(index) else { throw Failure.invalidFrame }
+        if let cached = frames[index] { return cached }
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: true, kCGImageSourceThumbnailMaxPixelSize: 1536]
+        guard let bitmap = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else {
+            throw Failure.invalidFrame
+        }
+        try Task.checkCancellation()
+        let image = UIImage(cgImage: bitmap)
+        frames[index] = image; order.append(index)
+        while order.count > 2 { frames.removeValue(forKey: order.removeFirst()) }
+        return image
+    }
+
+    #if DEBUG
+    var retainedFrameCount: Int { frames.count }
+    #endif
+}
+
+@MainActor final class PreviewAnimationPlayer: ObservableObject {
+    @Published private(set) var frame: UIImage?
+    @Published private(set) var duration: TimeInterval = 0
+    @Published private(set) var position: TimeInterval = 0
+    @Published private(set) var isPlaying = false
+    @Published private(set) var errorMessage: String?
+    private var decoder: PreviewAnimationDecoder?
+    private var starts: [TimeInterval] = []
+    private var delays: [TimeInterval] = []
+    private var work: Task<Void, Never>?
+    private var generation = UUID()
+    private var resumeAfterScrub = false
+
+    func prepare(url: URL) async {
+        release()
+        let ticket = generation
+        do {
+            let source = try await PreviewAnimationDecoder.open(url)
+            try Task.checkCancellation()
+            guard ticket == generation else { return }
+            let times = await source.durations
+            guard !times.isEmpty else { return }
+            decoder = source; delays = times
+            var total: TimeInterval = 0
+            starts = times.map { delay in defer { total += delay }; return total }
+            duration = total
+            let firstFrame = try await source.frame(at: 0)
+            guard ticket == generation, !Task.isCancelled else { return }
+            frame = firstFrame
+            play()
+        } catch is CancellationError {
+            if ticket == generation { release() }
+        } catch {
+            guard ticket == generation else { return }
+            release()
+            errorMessage = "动图加载失败，当前显示封面"
+        }
+    }
+
+    func pause() { work?.cancel(); work = nil; isPlaying = false }
+
+    func play() {
+        guard let decoder, duration > 0 else { return }
+        pause(); isPlaying = true
+        let ticket = generation
+        work = Task { [weak self] in
+            guard let self else { return }
+            var index = self.index(at: self.position)
+            while !Task.isCancelled && self.isPlaying && ticket == self.generation {
+                let started = ProcessInfo.processInfo.systemUptime
+                do {
+                    let image = try await decoder.frame(at: index)
+                    try Task.checkCancellation()
+                    guard ticket == self.generation else { return }
+                    self.frame = image; self.position = self.starts[index]
+                    let delay = max(0.005, self.delays[index] - (ProcessInfo.processInfo.systemUptime - started))
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    index = (index + 1) % self.delays.count
+                } catch is CancellationError { return }
+                catch { self.pause(); self.errorMessage = "动图播放中断"; return }
+            }
+        }
+    }
+
+    func seek(to seconds: TimeInterval) {
+        guard let decoder, duration > 0 else { return }
+        let resume = isPlaying
+        pause()
+        position = max(0, min(seconds, duration))
+        let index = index(at: position), ticket = generation
+        work = Task { [weak self] in
+            do {
+                let image = try await decoder.frame(at: index)
+                try Task.checkCancellation()
+                guard let self, ticket == self.generation else { return }
+                self.frame = image
+                if resume { self.play() }
+            } catch is CancellationError { }
+            catch {
+                guard let self, ticket == self.generation else { return }
+                self.errorMessage = "动图定位失败"
+            }
+        }
+    }
+
+    func scrub(_ editing: Bool) {
+        if editing { resumeAfterScrub = isPlaying; pause() }
+        else if resumeAfterScrub { resumeAfterScrub = false; play() }
+    }
+
+    func release() {
+        generation = UUID(); pause(); decoder = nil
+        starts = []; delays = []; frame = nil; duration = 0; position = 0
+        errorMessage = nil; resumeAfterScrub = false
+    }
+
+    private func index(at time: TimeInterval) -> Int {
+        var low = 0, high = starts.count
+        while low < high {
+            let mid = (low + high) / 2
+            if starts[mid] <= time { low = mid + 1 } else { high = mid }
+        }
+        return max(0, low - 1)
+    }
+
+    deinit { work?.cancel() }
+}
+
+/// Shared by the existing single preview and paged gallery; never used in rows.
+struct AnimatedImagePreviewSurface: View {
+    let poster: UIImage
+    let sourceURL: URL?
+    var active = true
+    var chromeVisible = true
+    var horizontalDragLocked = false
+    let onDismiss: () -> Void
+    var onSingleTap: (() -> Void)? = nil
+    @StateObject private var player = PreviewAnimationPlayer()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ImagePreviewContent(image: player.frame ?? poster, onDismiss: onDismiss,
+                horizontalDragLocked: horizontalDragLocked, onSingleTap: onSingleTap, updatesImage: true)
+                .ignoresSafeArea()
+            if chromeVisible && (player.duration > 0 || player.errorMessage != nil) {
+                VStack(spacing: 8) {
+                    if player.duration > 0 {
+                        HStack(spacing: 12) {
+                            Button { player.isPlaying ? player.pause() : player.play() } label: {
+                                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                    .frame(width: 44, height: 44)
+                            }
+                            .accessibilityLabel(player.isPlaying ? "暂停动图" : "播放动图")
+                            .accessibilityIdentifier("animatedImage.playPause")
+                            Slider(value: Binding(get: { player.position }, set: { player.seek(to: $0) }),
+                                in: 0...max(player.duration, 0.001), onEditingChanged: { player.scrub($0) })
+                                .accessibilityLabel("动图播放进度")
+                                .accessibilityIdentifier("animatedImage.progress")
+                            Text("\(time(player.position)) / \(time(player.duration))")
+                                .font(.caption.monospacedDigit())
+                                .accessibilityIdentifier("animatedImage.time")
+                        }
+                    }
+                    if let error = player.errorMessage { Text(error).font(.caption) }
+                }
+                .foregroundStyle(.white).tint(.white)
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal, 20).padding(.bottom, 76)
+            }
+        }
+        .task(id: active ? sourceURL : nil) {
+            guard active, let sourceURL else { player.release(); return }
+            let resolved = sourceURL.scheme == "ze" ? resolveZeFileURLCached(url: sourceURL) : sourceURL
+            guard let resolved else { return }
+            await player.prepare(url: resolved)
+            if scenePhase != .active { player.pause() }
+        }
+        .onChange(of: active) { if !$0 { player.release() } }
+        .onChange(of: scenePhase) { if $0 != .active { player.pause() } }
+        .onDisappear { player.release() }
+    }
+
+    private func time(_ seconds: TimeInterval) -> String {
+        let value = max(0, Int(seconds))
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
+}

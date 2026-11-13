@@ -190,7 +190,7 @@ final class ShareDriver: XCTestCase {
             if request.action == "finish" {
                 XCTAssertEqual(request.success, true, request.error ?? "Production share verification failed")
                 XCTAssertTrue(actionFailures.isEmpty, actionFailures.joined(separator: "\n"))
-                XCTAssertGreaterThanOrEqual(actions, multiOnly ? 7 : 23, "Expected real gallery gestures and, for the full run, system share interactions")
+                XCTAssertGreaterThanOrEqual(actions, multiOnly ? 13 : 29, "Expected real gallery gestures and, for the full run, system share interactions")
                 return
             }
             guard let sequence = request.sequence, !handled.contains(sequence), request.action != "wait" else {
@@ -231,14 +231,21 @@ final class ShareDriver: XCTestCase {
                     }
                     target.tap()
                     strategy = "xcui-main-image-tap"
-                case "tapImageThumbnail":
+                case "seekAnimation":
+                    let slider = app.sliders[request.identifier ?? "animatedImage.progress"].firstMatch
+                    guard slider.waitForExistence(timeout: 10), slider.isHittable else {
+                        throw NSError(domain: "ShareDriver", code: 13, userInfo: [NSLocalizedDescriptionKey: "Animation progress slider missing"])
+                    }
+                    slider.adjust(toNormalizedSliderPosition: CGFloat(request.endX ?? 0.9))
+                    strategy = "xcui-animation-seek"
+                case "tapImageThumbnail", "tapAnimationControl":
                     let button = app.buttons[request.identifier ?? "markdown.imageGroup.thumbnail.0"].firstMatch
                     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true AND enabled == true"), object: button)
                     guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
                         throw NSError(domain: "ShareDriver", code: 10, userInfo: [NSLocalizedDescriptionKey: "Image thumbnail did not become hittable"])
                     }
                     button.tap()
-                    strategy = "xcui-image-thumbnail-tap"
+                    strategy = request.action == "tapAnimationControl" ? "xcui-animation-play-pause" : "xcui-image-thumbnail-tap"
                 case "open":
                     let button = app.buttons[request.identifier ?? "chatShare.export"].firstMatch
                     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true AND enabled == true"), object: button)

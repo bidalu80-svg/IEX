@@ -22,12 +22,14 @@ import UIKit
 struct GalleryItem: Identifiable, Equatable {
     let id: String              // unique per session — typically the source URL string
     let title: String           // human-readable caption (usually file name)
+    let sourceURL: URL?
     let onFavorite: (() throws -> Void)?
     let load: () async -> UIImage?
 
-    init(id: String, title: String, onFavorite: (() throws -> Void)? = nil, load: @escaping () async -> UIImage?) {
+    init(id: String, title: String, sourceURL: URL? = nil, onFavorite: (() throws -> Void)? = nil, load: @escaping () async -> UIImage?) {
         self.id = id
         self.title = title
+        self.sourceURL = sourceURL
         self.onFavorite = onFavorite
         self.load = load
     }
@@ -93,6 +95,8 @@ struct MessageImageGallery: View {
                     GalleryPage(
                         item: item,
                         image: loaded[item.id],
+                        active: index == currentIndex,
+                        chromeVisible: chromeVisible,
                         onDismiss: { dismiss() },
                         onSingleTap: { toggleChrome() }
                     )
@@ -281,6 +285,8 @@ struct MessageImageGallery: View {
 private struct GalleryPage: View {
     let item: GalleryItem
     let image: UIImage?
+    let active: Bool
+    let chromeVisible: Bool
     let onDismiss: () -> Void
     let onSingleTap: () -> Void
 
@@ -288,12 +294,9 @@ private struct GalleryPage: View {
         ZStack {
             Color.clear
             if let image {
-                ImagePreviewContent(
-                    image: image,
-                    onDismiss: onDismiss,
-                    horizontalDragLocked: true,
-                    onSingleTap: onSingleTap
-                )
+                AnimatedImagePreviewSurface(poster: image, sourceURL: item.sourceURL,
+                    active: active, chromeVisible: chromeVisible, horizontalDragLocked: true,
+                    onDismiss: onDismiss, onSingleTap: onSingleTap)
             } else {
                 ProgressView()
                     .tint(.white)

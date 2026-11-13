@@ -47,9 +47,18 @@ import PDFKit
                 await runSuite("multi-images", window: window) {
                     try await verifyMultiImageStrip(window: window, vm: vm)
                 }
+                await runSuite("animated-image-preview", window: window) {
+                    try await verifyAnimatedImagePreview(window: window)
+                }
                 let errors = suites.compactMap { $0["error"] as? String }.filter { !$0.isEmpty }
                 try result(success: errors.isEmpty, error: errors.isEmpty ? nil : errors.joined(separator: "\n"))
                 return
+            }
+            await runSuite("multi-images", window: window) {
+                try await verifyMultiImageStrip(window: window, vm: vm)
+            }
+            await runSuite("animated-image-preview", window: window) {
+                try await verifyAnimatedImagePreview(window: window)
             }
             await runSuite("visualizations", window: window) {
                 checkpoint("Verifying native and custom visualizations")
@@ -61,9 +70,6 @@ import PDFKit
             }
             await runSuite("compact-images", window: window) {
                 try await verifyCompactImages(window: window, vm: vm)
-            }
-            await runSuite("multi-images", window: window) {
-                try await verifyMultiImageStrip(window: window, vm: vm)
             }
             await runSuite("base-exports", window: window) {
                 try await verifyBasicExports(window: window, vm: vm)
@@ -150,6 +156,96 @@ import PDFKit
 
     /// Measure the production transcript, picker and encoded exports, rather than
     /// treating the attachment's configured constants as evidence of rendering.
+
+    private static func verifyAnimatedImagePreview(window: UIWindow) async throws {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        func color(_ image: UIImage?) -> Int {
+            guard let cg = image?.cgImage else { return -1 }
+            var bytes = [UInt8](repeating: 0, count: 4)
+            let ok = bytes.withUnsafeMutableBytes { buffer -> Bool in
+                guard let context = CGContext(data: buffer.baseAddress, width: 1, height: 1,
+                    bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(cg, in: CGRect(x: 0, y: 0, width: 1, height: 1)); return true
+            }
+            guard ok else { return -1 }
+            return (0..<3).max { bytes[$0] < bytes[$1] } ?? -1
+        }
+        func bitmap(_ root: UIView) -> UIImage? {
+            descendants(root).compactMap { $0 as? UIImageView }.first {
+                $0.accessibilityIdentifier == "imagePreview.bitmap"
+            }?.image
+        }
+        let fixtures: [(String, String)] = [
+            ("gif", "R0lGODlhoAB4AIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAKAAAACwAAAAAoAB4AAAI3wABCBxIsKDBgwgTKlzIsKHDhxAjSpxIsaLFixgzatzIsaPHjyBDihxJsqTJkyhTqlzJsqXLlzBjypxJs6bNmzhz6tzJs6fPn0CDCh1KtKjRo0iTKl3KtKnTp1CjSp1KtarVq1izat3KtavXr2DDih1LtqzZs2jTql3Ltq3bt3Djyp1Lt67du3jz6t3Lt6/fv4ADCx5MuLDhw4gTK17MuLHjx5AjS55MubLly5gza97MubPnz6BDix5NurTp06hTq17NurXr17Bjy55Nu7bt27hz697Nu7fv38CDCx+uNSAAIfkEATwAAQAsAAAAAKAAeACBAIAAAAAAAAAAAAAACN8AAQgcSLCgwYMIEypcyLChw4cQI0qcSLGixYsYM2rcyLGjx48gQ4ocSbKkyZMoU6pcybKly5cwY8qcSbOmzZs4c+rcybOnz59AgwodSrSo0aNIkypdyrSp06dQo0qdSrWq1atYs2rdyrWr169gw4odS7as2bNo06pdy7at27dw48qdS7eu3bt48+rdy7ev37+AAwseTLiw4cOIEytezLix48eQI0ueTLmy5cuYM2vezLmz58+gQ4seTbq06dOoU6tezbq169ewY8ueTbu27du4c+vezbu379/AgwsfrjUgACH5BAFQAAEALAAAAACgAHgAgQAA/wAAAAAAAAAAAAjfAAEIHEiwoMGDCBMqXMiwocOHECNKnEixosWLGDNq3Mixo8ePIEOKHEmypMmTKFOqXMmypcuXMGPKnEmzps2bOHPq3Mmzp8+fQIMKHUq0qNGjSJMqXcq0qdOnUKNKnUq1qtWrWLNq3cq1q9evYMOKHUu2rNmzaNOqXcu2rdu3cOPKnUu3rt27ePPq3cu3r9+/gAMLHky4sOHDiBMrXsy4sePHkCNLnky5suXLmDNr3sy5s+fPoEOLHk26tOnTqFOrXs26tevXsGPLnk27tu3buHPr3s27t+/fwIMLH641IAA7"),
+            ("webp", "UklGRrQAAABXRUJQVlA4WAoAAAACAAAAnwAAdwAAQU5JTQYAAAAAAAAAAABBTk1GKAAAAAAAAAAAAJ8AAHcAAJABAAJWUDhMDwAAAC+fwB0ABxD9j/4HIqL/AQBBTk1GKAAAAAAAAAAAAJ8AAHcAAFgCAABWUDhMDwAAAC+fwB0AB1DAiP4HIqL/AQBBTk1GKAAAAAAAAAAAAJ8AAHcAACADAABWUDhMDwAAAC+fwB0ABxDR//4HIqL/AQA=")
+        ]
+        for (format, encoded) in fixtures {
+            guard let data = Data(base64Encoded: encoded) else { throw verificationError("Invalid animation fixture") }
+            let url = directory.appendingPathComponent("animation-source.\(format)")
+            try data.write(to: url); files.append(url.lastPathComponent)
+            let decoder = try PreviewAnimationDecoder(data: data)
+            let durations = await decoder.durations
+            try require(durations.count == 3 && abs(durations.reduce(0, +) - 1.8) < 0.02,
+                        "\(format) decodes all three frame delays from the original file")
+            for index in 0..<3 {
+                let frame = try await decoder.frame(at: index)
+                try require(color(frame) == index && frame.size == CGSize(width: 160, height: 120),
+                            "\(format) decoded frame \(index) has correct pixels and original aspect ratio")
+            }
+            let retained = await decoder.retainedFrameCount
+            try require(retained <= 2, "\(format) decoder retains at most two frames")
+            guard let poster = downsampleImageData(data) else { throw verificationError("Animation cover missing") }
+            try require(color(poster) == 0 && poster.images == nil,
+                        "\(format) transcript cover remains one static first frame")
+            let player = PreviewAnimationPlayer()
+            await player.prepare(url: url)
+            try await waitUntil("\(format) preview starts playback") { player.isPlaying && player.frame != nil }
+            player.pause()
+            let paused = player.position
+            try await Task.sleep(nanoseconds: 250_000_000)
+            try require(!player.isPlaying && player.position == paused, "\(format) pause stops playback timing")
+            player.seek(to: 1.2)
+            try await waitUntil("\(format) paused seek renders the third frame") { color(player.frame) == 2 }
+            try require(!player.isPlaying && abs(player.position - 1.2) < 0.01,
+                        "\(format) seek retains the requested position without restarting paused playback")
+            player.play()
+            try await waitUntil("\(format) resumed playback loops back to the first frame") { color(player.frame) == 0 }
+            player.release()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try require(player.frame == nil && player.duration == 0 && !player.isPlaying,
+                        "\(format) teardown releases decoder and blocks late frame updates")
+
+            let host = UIHostingController(rootView: AnimatedImagePreviewSurface(poster: poster,
+                sourceURL: url, onDismiss: {}))
+            window.rootViewController = host
+            try await waitUntil("\(format) actual fullscreen preview animates its rendered bitmap") {
+                window.layoutIfNeeded(); return color(bitmap(host.view)) == 2
+            }
+            try await requestUIAction("tapAnimationControl", details: ["identifier": "animatedImage.playPause"])
+            try await requestUIAction("seekAnimation", details: ["identifier": "animatedImage.progress", "endX": 0.9])
+            try await waitUntil("\(format) real progress slider seeks rendered preview to the third frame") {
+                color(bitmap(host.view)) == 2
+            }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            try require(color(bitmap(host.view)) == 2, "\(format) paused rendered frame stays still after seeking")
+            try capture(window, name: "animation-\(format)-paused-seek.png")
+            try await requestUIAction("tapAnimationControl", details: ["identifier": "animatedImage.playPause"])
+            try await waitUntil("\(format) real play button resumes rendered frame changes") { color(bitmap(host.view)) == 0 }
+            // Reuse the page surface with active=false, as gallery paging does.
+            host.rootView = AnimatedImagePreviewSurface(poster: poster, sourceURL: url,
+                active: false, onDismiss: {})
+            try await Task.sleep(nanoseconds: 900_000_000)
+            try require(color(bitmap(host.view)) == 0, "\(format) inactive gallery page returns to static cover")
+            window.rootViewController = UIViewController()
+        }
+        let still = Data(base64Encoded: "UklGRiIAAABXRUJQVlA4TBUAAAAvn8AdAAcQ/Y/+BwAU6f9/ieh/6hUA")!
+        let decoder = try PreviewAnimationDecoder(data: still)
+        let durations = await decoder.durations
+        try require(durations.isEmpty && downsampleImageData(still) != nil,
+                    "Static WebP decodes as a still image without playback controls")
+    }
+
     private static func verifyMultiImageStrip(window: UIWindow, vm: AIChatViewModel) async throws {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         func groups(_ attributed: NSAttributedString) -> [ImageAttachment] {

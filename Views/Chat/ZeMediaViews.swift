@@ -653,7 +653,7 @@ private struct ZeImageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .onTapGesture { showFullscreen = true }
                 .fullScreenCover(isPresented: $showFullscreen) {
-                    ImagePreviewView(image: image, onFavorite: {
+                    ImagePreviewView(image: image, sourceURL: url, onFavorite: {
                         guard let fileURL = resolveZeFileURLCached(url: url) else { throw MediaFavoriteActionError.missingFile }
                         _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName: url.lastPathComponent)
                     })
@@ -754,7 +754,7 @@ struct ZeImageFilePreviewView: View {
 
     var body: some View {
         if let image = loadedImage {
-            ImagePreviewView(image: image, onFavorite: {
+            ImagePreviewView(image: image, sourceURL: fileURL, onFavorite: {
                 _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName: fileURL.lastPathComponent)
             })
         } else {

@@ -4231,7 +4231,7 @@ private final class ImageTapGesture: UITapGestureRecognizer {
         let scrollView = self.view?.enclosingScrollView()
         let savedOffset = scrollView?.contentOffset
         let preview = ScrollRestoringDismissWrapper(scrollView: scrollView, savedOffset: savedOffset) {
-            ImagePreviewView(image: image)
+            ImagePreviewView(image: image, sourceURL: sourceURL.flatMap { URL(string: ImageAttachment.canonicalizeMarkdownImageSource($0)) })
         }
         let hosting = UIHostingController(rootView: preview)
         hosting.modalPresentationStyle = .overFullScreen

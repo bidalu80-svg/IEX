@@ -2939,6 +2939,7 @@ struct AIChatView: View {
             return GalleryItem(
                 id: "\(index)|\(ref.messageId)|\(fpKey)",
                 title: ref.title,
+                sourceURL: URL(string: canonical),
                 onFavorite: {
                     guard let url = URL(string: canonical),
                           let fileURL = resolveZeFileURLCached(url: url) else { throw MediaFavoriteActionError.missingFile }
