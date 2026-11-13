@@ -212,12 +212,16 @@ final class ShareDriver: XCTestCase {
                     if request.endX == 2 { point.doubleTap(); strategy = "xcui-visualization-double-tap" }
                     else { point.press(forDuration: 0.65); strategy = "xcui-visualization-long-press" }
                 case "swipeImageStrip":
-                    let strip = app.scrollViews[request.identifier ?? "markdown.imageGroup.strip"].firstMatch
-                    guard strip.waitForExistence(timeout: 10), strip.isHittable else {
-                        throw NSError(domain: "ShareDriver", code: 12, userInfo: [NSLocalizedDescriptionKey: "Thumbnail scroller did not become hittable"])
+                    guard let x = request.startX, let y = request.startY,
+                          let endX = request.endX, let endY = request.endY else {
+                        throw NSError(domain: "ShareDriver", code: 12, userInfo: [NSLocalizedDescriptionKey: "Measured thumbnail strip coordinates missing"])
                     }
-                    strip.swipeLeft()
-                    strategy = "xcui-image-strip-swipe"
+                    let origin = app.coordinate(withNormalizedOffset: .zero)
+                    let start = origin.withOffset(CGVector(dx: x, dy: y))
+                    let end = origin.withOffset(CGVector(dx: endX, dy: endY))
+                    targetGeometry = ["start": NSCoder.string(for: start.screenPoint), "end": NSCoder.string(for: end.screenPoint)]
+                    start.press(forDuration: 0.05, thenDragTo: end)
+                    strategy = "xcui-measured-image-strip-drag"
                 case "tapImageMain":
                     let target = app.images[request.identifier ?? "markdown.imageGroup.main"].firstMatch
                     guard target.waitForExistence(timeout: 10), target.isHittable else {

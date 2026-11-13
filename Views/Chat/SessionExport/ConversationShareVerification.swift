@@ -230,10 +230,14 @@ import PDFKit
         try await waitUntil("Third thumbnail selects the third full bitmap") { mainImage(host.view)?.image?.size == sizes[2] }
         try require(mainImage(host.view)?.convert(mainImage(host.view)!.bounds, to: window) == initialFrame,
                     "Switching different source aspect ratios does not change main view geometry")
-        try require(descendants(host.view).compactMap { $0 as? UIScrollView }.contains {
+        guard let measuredStrip = descendants(host.view).compactMap({ $0 as? UIScrollView }).first(where: {
             $0.accessibilityIdentifier == "markdown.imageGroup.strip" && $0.contentSize.width > $0.bounds.width
-        }, "Five-image thumbnail strip has horizontally scrollable content")
-        try await requestUIAction("swipeImageStrip", details: ["identifier": "markdown.imageGroup.strip"])
+        }) else { throw verificationError("Five-image thumbnail strip lacks horizontally scrollable content") }
+        try require(measuredStrip.contentSize.width > measuredStrip.bounds.width,
+                    "Five-image thumbnail strip has horizontally scrollable content")
+        let stripFrame = measuredStrip.convert(measuredStrip.bounds, to: window)
+        try await requestUIAction("swipeImageStrip", details: ["startX": stripFrame.maxX - 12,
+            "startY": stripFrame.midY, "endX": stripFrame.minX + 12, "endY": stripFrame.midY])
         try await requestUIAction("tapImageThumbnail", details: ["identifier": "markdown.imageGroup.thumbnail.4"])
         try await waitUntil("Scrolling the strip and selecting the fifth image switches the main view") {
             mainImage(host.view)?.image?.size == sizes[4]
