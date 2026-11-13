@@ -736,22 +736,30 @@ actor PreviewAnimationDecoder {
     func pause() { work?.cancel(); work = nil; isPlaying = false }
 
     func play() {
-        guard let decoder, duration > 0 else { return }
+        guard let decoder, duration > 0, !delays.isEmpty else { return }
         pause(); isPlaying = true
         let ticket = generation
+        // Snapshot the timeline together with the decoder: prepare()/release()
+        // replace starts/delays on self while this loop is suspended at its
+        // awaits, and reading them live can pair a stale index with a shorter
+        // array (EXC_BREAKPOINT inside this closure, crash 2026-11-14). The
+        // loop below only ever indexes these snapshots, which are consistent
+        // with `decoder` by construction.
+        let starts = self.starts
+        let delays = self.delays
         work = Task { [weak self] in
             guard let self else { return }
-            var index = self.index(at: self.position)
+            var index = min(self.index(at: self.position), starts.count - 1)
             while !Task.isCancelled && self.isPlaying && ticket == self.generation {
                 let started = ProcessInfo.processInfo.systemUptime
                 do {
                     let image = try await decoder.frame(at: index)
                     try Task.checkCancellation()
                     guard ticket == self.generation else { return }
-                    self.frame = image; self.position = self.starts[index]
-                    let delay = max(0.005, self.delays[index] - (ProcessInfo.processInfo.systemUptime - started))
+                    self.frame = image; self.position = starts[index]
+                    let delay = max(0.005, delays[index] - (ProcessInfo.processInfo.systemUptime - started))
                     try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    index = (index + 1) % self.delays.count
+                    index = (index + 1) % delays.count
                 } catch is CancellationError { return }
                 catch { self.pause(); self.errorMessage = "动图播放中断"; return }
             }

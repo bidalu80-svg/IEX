@@ -3698,10 +3698,22 @@ final class ImageAttachment: NSTextAttachment {
     fileprivate var selectionState = MarkdownImageSelectionState.live
     var isImageGroup: Bool { !groupChildren.isEmpty }
     var groupSources: [String] { [source] + groupChildren.map(\.source) }
-    var hasPendingImages: Bool { loadedImage == nil || groupChildren.contains { $0.loadedImage == nil } }
+    var hasPendingImages: Bool {
+        (loadedImage == nil && !loadFailed) || groupChildren.contains { $0.loadedImage == nil && !$0.loadFailed }
+    }
     fileprivate var groupItems: [ImageAttachment] { [self] + groupChildren }
 
     private var isLoading = false
+    /// Terminal ze:// load failure: retries exhausted, so no bitmap will ever
+    /// arrive for this attachment. Distinct from "still loading": export waits
+    /// on hasPendingImages, and a terminally failed attachment must read as
+    /// ready (placeholder) rather than pending forever - otherwise one bad
+    /// file makes its whole conversation un-exportable (attachmentNotReady).
+    /// Only the ze:// path sets this: it has no self-heal once retries are
+    /// gone (revival is invalidateLoadedImage on a fingerprint change, which
+    /// resets it). Remote failures keep self-healing via the negative-cache
+    /// TTL, so they never set it.
+    private(set) var loadFailed = false
     /// Set when a ze:// file was not found; allows retry on next render.
     private var fileNotFound = false
     /// Number of file-not-found retries remaining (prevents infinite polling).
@@ -3816,6 +3828,7 @@ final class ImageAttachment: NSTextAttachment {
         loadedImage = nil
         loadedFingerprint = nil
         fileNotFound = false
+        loadFailed = false
         retriesRemaining = 15
         needsViewRebuild = true
     }
@@ -3977,6 +3990,10 @@ final class ImageAttachment: NSTextAttachment {
                 self.loadedImage = img
                 self.loadedFingerprint = img != nil ? postLoadKey : nil
                 self.isLoading = false
+                if img == nil && isZeURL && self.retriesRemaining == 0 {
+                    // Retries exhausted: this failure is terminal (see loadFailed).
+                    self.loadFailed = true
+                }
                 if img == nil && isZeURL && self.retriesRemaining > 0 {
                     imgLogger.info("[ZeImage][Load] RETRY scheduled src=\(src) retriesRemaining=\(self.retriesRemaining)")
                     self.fileNotFound = true
