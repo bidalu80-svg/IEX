@@ -1,6 +1,9 @@
 # Codemagic trial lane for IEX — ported from .github/workflows/build.yml (Build Ze.app)
 # at commit 3bba287 on 2026-11-14. Manual triggering only: no automatic triggers are
 # configured, so the 500 free macOS M2 minutes/month are spent deliberately.
+# 2026-11-14: comment-only change to re-trigger the GitHub Actions verification
+# run for the 36159e9 fixes (run #620 attempt 1 died on an unrelated step-21
+# CI flake before compiling). No app change in this commit.
 #
 # Porting notes (differences from the GitHub Actions original):
 # - actions/checkout is implicit; upload-artifact steps map to `artifacts:` below.
