@@ -26,6 +26,13 @@ final class SoulHeaderUITests: XCTestCase {
             let slider = app.sliders.firstMatch
             XCTAssertTrue(slider.waitForExistence(timeout: 5))
             slider.adjust(toNormalizedSliderPosition: 1)
+            // adjust() can stop short of the end (one run landed on 71 of 80);
+            // tap the track's right end until the value really is the maximum.
+            var sliderAttempts = 0
+            while (Double(slider.value as? String ?? "") ?? 0) < 80, sliderAttempts < 3 {
+                slider.coordinate(withNormalizedOffset: CGVector(dx: 0.995, dy: 0.5)).tap()
+                sliderAttempts += 1
+            }
             save(app, "soul-size-maximum-\(arguments.joined())")
             app.buttons["完成"].tap()
             XCTAssertTrue(avatar.waitForExistence(timeout: 5))
