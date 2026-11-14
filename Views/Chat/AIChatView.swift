@@ -2191,6 +2191,7 @@ struct AIChatView: View {
                         .padding(-5)
                 }
             }
+            .zIndex(1)
             .accessibilityLabel("编辑灵魂：\(soulName)")
             .accessibilityIdentifier("chat.soulAvatar")
             .contextMenu {
