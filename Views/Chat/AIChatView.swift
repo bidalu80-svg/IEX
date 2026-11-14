@@ -2185,6 +2185,12 @@ struct AIChatView: View {
             .buttonStyle(.plain)
             .contentShape(Circle())
             .modifier(ChatNavigationGlassSurface(isCircle: true))
+            .background {
+                if vm.isProcessing {
+                    SoulAvatarGlowRing()
+                        .padding(-5)
+                }
+            }
             .accessibilityLabel("编辑灵魂：\(soulName)")
             .accessibilityIdentifier("chat.soulAvatar")
             .contextMenu {
@@ -4750,6 +4756,27 @@ private struct ChatNavigationGlassSurface: ViewModifier {
         } else {
             content.background(.ultraThinMaterial, in: Capsule())
         }
+    }
+}
+
+/// Breathing halo around the Soul avatar, shown only while the agent is
+/// processing; hidden entirely when idle.
+private struct SoulAvatarGlowRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(LinearGradient(colors: [.indigo, .blue, .cyan],
+                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+            .blur(radius: 7)
+            .opacity(reduceMotion ? 0.55 : (pulsing ? 0.9 : 0.35))
+            .scaleEffect(reduceMotion ? 1 : (pulsing ? 1.07 : 1.0))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onAppear { pulsing = true }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 1.3).repeatForever(autoreverses: true),
+                       value: pulsing)
     }
 }
 

@@ -2,7 +2,7 @@ extension Notification.Name { static let soulMdChanged = Notification.Name("ZeSo
 enum SoulStore { static var cachedMetadata = SoulMetadata.default }
 enum SoulAvatarStore { static func load() -> UIImage? { nil } }
 private struct FixtureSession { let id: String }
-private struct FixtureVM { let fallbackTrigger = 0 }
+private struct FixtureVM { let fallbackTrigger = 0; let isProcessing = false }
 private struct ChatCallLayoutMarker: UIViewRepresentable {
     let identifier: String
     func makeUIView(context: Context) -> UIView {
