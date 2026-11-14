@@ -45,4 +45,21 @@ keyboard_data=$(xcrun simctl get_app_container "$keyboard_device" com.ze.keyboar
 if [ -f "$keyboard_data/Documents/keyboard-motion.json" ]; then
   cp "$keyboard_data/Documents/keyboard-motion.json" keyboard-viewport-evidence/
 fi
+if [ "$keyboard_result" -eq 0 ]; then
+  python3 - <<'PY'
+import json
+from pathlib import Path
+rows = json.loads(Path('keyboard-viewport-evidence/keyboard-motion.json').read_text())
+ys = [r['composerBottom'] for r in rows]
+low, high = min(ys), max(ys)
+# Endpoint-only XCTest assertions missed the original hosting-view snap.
+# Require several actual presentation positions during the dismissal as well.
+moving = {round(b['composerBottom'], 1) for a, b in zip(rows, rows[1:])
+          if b['composerBottom'] > a['composerBottom'] + 0.2
+          and low + 10 < b['composerBottom'] < high - 10}
+assert high - low > 100, ('missing keyboard transition', low, high)
+assert len(moving) >= 4, ('composer snapped instead of moving', sorted(moving))
+print('PASS: dismissal presentation has', len(moving), 'distinct intermediate positions')
+PY
+fi
 exit "$keyboard_result"
