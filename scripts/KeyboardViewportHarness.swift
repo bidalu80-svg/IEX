@@ -88,6 +88,10 @@ struct KeyboardFixture: View {
     @State private var text = ""
     @FocusState private var focused: Bool
     @State private var avoidsKeyboard = true
+    @State private var showPreview = false
+    private var previews: Bool { ProcessInfo.processInfo.arguments.contains("--preview") }
+    private var previewOnly: Bool { ProcessInfo.processInfo.arguments.contains("--preview-only") }
+    private var navigationFade: Bool { ProcessInfo.processInfo.arguments.contains("--navigation-fade") }
     private var long: Bool { ProcessInfo.processInfo.arguments.contains("--long") }
     private var browse: Bool { ProcessInfo.processInfo.arguments.contains("--browse") }
     private var fade: Bool { ProcessInfo.processInfo.arguments.contains("--fade") }
@@ -96,7 +100,7 @@ struct KeyboardFixture: View {
         // representable's AnyView(...) once produced an unbalanced call
         // that failed the harness compile in 14s and — via the step's
         // continue-on-error — still showed green. Keep it flat.
-        let content: AnyView = fade
+        let content: AnyView = (fade || navigationFade)
             ? AnyView(Color.blue)
             : AnyView(
                 ZStack(alignment: .bottom) {
@@ -106,10 +110,26 @@ struct KeyboardFixture: View {
                     HStack {
                         Button("Dismiss") { focused = false }.accessibilityIdentifier("dismiss")
                         Button("Voice mode") { focused = false; avoidsKeyboard.toggle() }.accessibilityIdentifier("voice")
-                    }.padding(10).background(.regularMaterial)
+                    }.padding(10).background(.regularMaterial).padding(.top, 80)
                 }
             )
         return ChatKeyboardViewport(content: content, composer: AnyView(
+            VStack(spacing: 0) {
+                if previews {
+                    ChatToolPreviewLayout(showsStatus: !previewOnly, showsPreview: true) {
+                        Text("Tool status").frame(maxWidth: .infinity).frame(height: 34)
+                    } preview: {
+                        Button { showPreview = true } label: {
+                            Color.orange.frame(width: 100, height: 65)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("preview-card")
+                    }
+                    .sheet(isPresented: $showPreview) {
+                        Button("Close preview") { showPreview = false }
+                            .accessibilityIdentifier("close-preview")
+                    }
+                }
             HStack {
                 TextField("Message", text: $text, axis: .vertical)
                     .lineLimit(1...4).focused($focused).accessibilityIdentifier("composer")
@@ -118,11 +138,35 @@ struct KeyboardFixture: View {
             .padding(12).background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 18))
             .background(KeyboardProbe())
             .padding(.horizontal, 12).padding(.bottom, 8)
-        ), avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fade ? 200 : 0)
+            }
+        ), avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fade ? 200 : 0,
+           usesWindowHeaderFade: navigationFade)
+        .ignoresSafeArea(.container, edges: .top)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .background(Color.white)
     }
 }
 
 @main struct KeyboardHarnessApp: App {
-    var body: some Scene { WindowGroup { KeyboardFixture() } }
+    var body: some Scene {
+        WindowGroup {
+            if ProcessInfo.processInfo.arguments.contains("--navigation-fade") {
+                NavigationStack {
+                    KeyboardFixture()
+                        .navigationTitle("Header")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                NavigationLink("Next") {
+                                    Color.green.ignoresSafeArea().accessibilityIdentifier("next-page")
+                                }.accessibilityIdentifier("next")
+                            }
+                        }
+                }
+            } else {
+                KeyboardFixture()
+            }
+        }
+    }
 }
