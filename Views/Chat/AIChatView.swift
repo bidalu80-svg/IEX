@@ -2173,17 +2173,18 @@ struct AIChatView: View {
         let measuredNameWidth = ceil((providerName as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
         ]).width) + 28
-        let pillWidth = min(chatHeaderSize.width, max(64, measuredNameWidth))
+        let pillWidth = min(chatHeaderSize.width, max(128, measuredNameWidth))
         return VStack(spacing: 0) {
             Button {
                 inputFocused = false
                 showSoulSettings = true
             } label: {
                 SoulAvatarView(size: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize), fitsImage: true)
-                    .background(Color(uiColor: .systemBackground), in: Circle())
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .contentShape(Circle())
+            .modifier(ChatNavigationGlassSurface(isCircle: true))
             .accessibilityLabel("编辑灵魂：\(soulName)")
             .accessibilityIdentifier("chat.soulAvatar")
             .contextMenu {
@@ -2232,7 +2233,7 @@ struct AIChatView: View {
             }
             .accessibilityLabel("当前服务商：\(providerName)，选择模型")
             .accessibilityIdentifier("chat.providerName")
-            .padding(.top, -8)
+            .padding(.top, -9)
 
             navigationStatusCapsule
                 .padding(.top, 4)
