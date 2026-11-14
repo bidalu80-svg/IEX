@@ -13,7 +13,12 @@ final class SoulHeaderUITests: XCTestCase {
             XCTAssertEqual(avatar.frame.midX, app.frame.midX, accuracy: 3)
             XCTAssertEqual(name.frame.midX, app.frame.midX, accuracy: 3)
             XCTAssertLessThanOrEqual(name.frame.minY, avatar.frame.maxY + 1)
-            XCTAssertGreaterThanOrEqual(name.frame.minY, avatar.frame.maxY - 10)
+            // Overlap window: the Muse reference tucks the pill ~13pt under
+            // the avatar, and a two-line (long-name) pill rides ~3pt higher
+            // still (measured 105.2 vs avatar bottom 118 in run #642). The
+            // old -10 bound predates that target; -15 keeps a guardrail
+            // against runaway overlap without rejecting the design.
+            XCTAssertGreaterThanOrEqual(name.frame.minY, avatar.frame.maxY - 15)
             XCTAssertLessThanOrEqual(name.frame.width, 200)
             // No frame lower bound for the pill: XCUI reports the label's intrinsic
             // width (78.3pt) regardless of the rendered capsule (measured from the
