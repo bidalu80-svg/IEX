@@ -4784,7 +4784,6 @@ private struct SoulAvatarGlowRing: View {
 /// A theme-colored opacity gradient fades the conversation without blurring
 /// its glyphs. Native glass is applied only to the individual controls.
 private final class ChatProgressiveFrostView: UIView {
-    private let fade = CAGradientLayer()
     private var lastBottom: CGFloat = 0
 
     override init(frame: CGRect) {
@@ -4792,9 +4791,7 @@ private final class ChatProgressiveFrostView: UIView {
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         accessibilityIdentifier = "chat-progressive-frost"
-        fade.startPoint = CGPoint(x: 0.5, y: 0)
-        fade.endPoint = CGPoint(x: 0.5, y: 1)
-        layer.addSublayer(fade)
+        backgroundColor = .clear
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -4806,17 +4803,12 @@ private final class ChatProgressiveFrostView: UIView {
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         lastBottom = barBottom
-        let tint = traitCollection.userInterfaceStyle == .dark ? UIColor.black : UIColor.white
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fade.frame = bounds
-        // Long, slow dissolve in the Muse style: stay near-solid through the
-        // controls, keep dissolving across the name-pill band, and let the
-        // tail reach zero well below the pill instead of snapping back to
-        // full-strength text right under the header.
-        fade.colors = [1.0, 0.98, 0.88, 0.62, 0.10, 0.0].map { tint.withAlphaComponent($0).cgColor }
-        fade.locations = [0, 0.28, 0.48, 0.66, 0.84, 1]
-        CATransaction.commit()
+        // The dissolve itself is NOT painted here anymore: the controller
+        // applies a gradient mask to the conversation content (see
+        // layoutFrostedOverlay), so text and photos alike fade to
+        // transparent. A theme-tint overlay whitens whatever scrolls under
+        // it — over a photo it reads as a milky plate, not a dissolve.
+        // This view remains only as the positioned, non-interactive marker.
     }
 }
 
@@ -4876,6 +4868,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var reportedHeaderOverflow: CGFloat = -1
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
+        private let fadeMask = CAGradientLayer()
+        private weak var fadeMaskedView: UIView?
 
         func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil) {
             self.headerSize = headerSize
@@ -4960,8 +4954,39 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 lastFrostFrame = nextFrame
                 frostedOverlay.frame = nextFrame
             }
+            let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
             frostedOverlay.layout(barBottom: barBottom,
-                                  reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
+                                  reduceTransparency: reduceTransparency)
+            // Dissolve the conversation itself under the header: mask the
+            // visible controller's view with a gradient that is transparent
+            // at the top and fully opaque at the band's bottom (badge + 44).
+            // Visibility profile mirrors the old overlay's dissolve, inverted.
+            if let contentView = navigation.visibleViewController?.view,
+               contentView !== host, contentView.superview === host {
+                if fadeMaskedView !== contentView {
+                    fadeMaskedView?.layer.mask = nil
+                    fadeMaskedView = contentView
+                }
+                if reduceTransparency {
+                    contentView.layer.mask = nil
+                } else {
+                    let contentHeight = max(1, contentView.bounds.height)
+                    let band = min(1, height / contentHeight)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    fadeMask.frame = contentView.bounds
+                    fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
+                    fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
+                    fadeMask.colors = [0.0, 0.02, 0.12, 0.38, 0.90, 1.0, 1.0].map {
+                        UIColor.black.withAlphaComponent($0).cgColor
+                    }
+                    fadeMask.locations = [0, 0.28, 0.48, 0.66, 0.84, 1].map {
+                        NSNumber(value: Double($0) * Double(band))
+                    } + [NSNumber(value: 1.0)]
+                    CATransaction.commit()
+                    if contentView.layer.mask !== fadeMask { contentView.layer.mask = fadeMask }
+                }
+            }
             if let badgeView {
                 if badgeView.superview !== host {
                     badgeView.removeFromSuperview()
@@ -5012,6 +5037,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         func restore() {
             badgeView?.removeFromSuperview()
             frostedOverlay.removeFromSuperview()
+            fadeMaskedView?.layer.mask = nil
+            fadeMaskedView = nil
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
             if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
