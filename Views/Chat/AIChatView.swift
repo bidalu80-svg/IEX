@@ -4977,20 +4977,21 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                     contentView.layer.mask = nil
                 } else {
                     let contentHeight = max(1, contentView.bounds.height)
-                    // The dissolve tail runs well past the badge (badge + 110)
-                    // with a slower profile: at the name-pill row the content
-                    // is still mostly dissolved, and full strength returns
-                    // only about two lines below the pill, matching Muse.
-                    let band = min(1, (badgeFrame.maxY + 110) / contentHeight)
+                    // Muse's dissolve is a SHORT band: measured from the
+                    // annotated reference, content is back at full strength
+                    // ~65pt from the screen top — right at the controls'
+                    // top edge (badge frame top + 8). Longer tails that run
+                    // under the pill do not match the reference.
+                    let band = min(1, (badgeFrame.minY + 8) / contentHeight)
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
                     fadeMask.frame = contentView.bounds
                     fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
                     fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
-                    fadeMask.colors = [0.0, 0.03, 0.12, 0.35, 0.80, 1.0, 1.0].map {
+                    fadeMask.colors = [0.05, 0.30, 0.55, 1.0, 1.0].map {
                         UIColor.black.withAlphaComponent($0).cgColor
                     }
-                    fadeMask.locations = [0, 0.28, 0.48, 0.66, 0.84, 1].map {
+                    fadeMask.locations = [0, 0.45, 0.75, 1].map {
                         NSNumber(value: Double($0) * Double(band))
                     } + [NSNumber(value: 1.0)]
                     CATransaction.commit()
