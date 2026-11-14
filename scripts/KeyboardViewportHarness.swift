@@ -141,7 +141,7 @@ struct KeyboardFixture: View {
             }
         ), avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fade ? 200 : 0,
            usesWindowHeaderFade: navigationFade)
-        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.container, edges: (fade || navigationFade) ? .top : [])
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(Color.white)
     }
