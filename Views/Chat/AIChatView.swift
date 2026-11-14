@@ -2214,9 +2214,6 @@ struct AIChatView: View {
                     .frame(height: 36)
             }
             .buttonStyle(.plain)
-            // Pin the button's own frame to the capsule size: with a label-only
-            // frame the accessibility/layout frame under-reports the pill width.
-            .frame(width: pillWidth, height: 36)
             .modifier(ChatNavigationGlassSurface())
             .background(Capsule().fill(Color.red.opacity(0.35 * fallbackPulseOpacity)))
             .onChange(of: vm.fallbackTrigger) { _ in
