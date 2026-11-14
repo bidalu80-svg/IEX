@@ -4814,8 +4814,8 @@ private final class ChatProgressiveFrostView: UIView {
         // controls, keep dissolving across the name-pill band, and let the
         // tail reach zero well below the pill instead of snapping back to
         // full-strength text right under the header.
-        fade.colors = [1.0, 0.99, 0.92, 0.72, 0.38, 0.0].map { tint.withAlphaComponent($0).cgColor }
-        fade.locations = [0, 0.30, 0.52, 0.72, 0.88, 1]
+        fade.colors = [1.0, 0.98, 0.88, 0.62, 0.10, 0.0].map { tint.withAlphaComponent($0).cgColor }
+        fade.locations = [0, 0.28, 0.48, 0.66, 0.84, 1]
         CATransaction.commit()
     }
 }
