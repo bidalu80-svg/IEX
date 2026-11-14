@@ -4810,8 +4810,12 @@ private final class ChatProgressiveFrostView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fade.frame = bounds
-        fade.colors = [0.98, 0.94, 0.68, 0.20, 0.0].map { tint.withAlphaComponent($0).cgColor }
-        fade.locations = [0, 0.22, 0.48, 0.76, 1]
+        // Long, slow dissolve in the Muse style: stay near-solid through the
+        // controls, keep dissolving across the name-pill band, and let the
+        // tail reach zero well below the pill instead of snapping back to
+        // full-strength text right under the header.
+        fade.colors = [1.0, 0.99, 0.92, 0.72, 0.38, 0.0].map { tint.withAlphaComponent($0).cgColor }
+        fade.locations = [0, 0.30, 0.52, 0.72, 0.88, 1]
         CATransaction.commit()
     }
 }
@@ -4950,7 +4954,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 reportedTopInset = barBottom
                 DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
             }
-            let height = max(1, max(barBottom + 32, badgeView == nil ? 0 : badgeFrame.maxY + 12))
+            let height = max(1, max(barBottom + 32, badgeView == nil ? 0 : badgeFrame.maxY + 44))
             let nextFrame = CGRect(x: barFrame.minX, y: 0, width: barFrame.width, height: height)
             if lastFrostFrame != nextFrame {
                 lastFrostFrame = nextFrame
