@@ -60,6 +60,14 @@ final class ChatKeyboardViewportController: UIViewController {
         host.didMove(toParent: self)
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Resolve SwiftUI's bottom alignment inside the keyboard's UIKit
+        // layout transaction. Deferring the hosting view layout to the next
+        // run-loop turn makes its children jump to the final bounds.
+        host.view.layoutIfNeeded()
+    }
+
     func update(content: AnyView, avoidsKeyboard: Bool) {
         host.rootView = Self.root(content)
         guard self.avoidsKeyboard != avoidsKeyboard else { return }

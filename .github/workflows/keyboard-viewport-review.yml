@@ -1,0 +1,18 @@
+name: Keyboard viewport review
+on:
+  workflow_dispatch:
+jobs:
+  keyboard:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production keyboard viewport
+        run: bash scripts/test-keyboard-viewport.sh
+      - name: Upload recording and checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyboard-viewport-review
+          path: keyboard-viewport-evidence/
+          retention-days: 7
