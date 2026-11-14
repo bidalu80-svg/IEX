@@ -293,37 +293,17 @@ struct FloatingToolBar: View {
     }
 
     var body: some View {
-        Group {
-            if toolStatusBarEnabled {
-                // The status bar establishes the bottom-stack height. The
-                // preview is an overlay so its taller thumbnail cannot push
-                // pending attachments above the status bar's actual top edge.
-                ToolStatusBar(
-                    block: displayedBlock,
-                    toolBlocks: toolBlocks,
-                    displayedIdx: displayedIdx,
-                    expanded: $expanded,
-                    selectedIdx: $selectedIdx,
-                    trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
-                )
-                .overlay(alignment: .bottomTrailing) {
-                    if toolPreviewEnabled {
-                        previewThumbnail
-                            .offset(x: -10)
-                    }
-                }
-            } else if toolPreviewEnabled {
-                // A preview-only card remains tappable, but it is not a
-                // vertical spacer. With the status bar off, attachments must
-                // sit directly above the composer rather than above this card.
-                Color.clear
-                    .frame(height: 0)
-                    .frame(maxWidth: .infinity)
-                    .overlay(alignment: .bottomTrailing) {
-                        previewThumbnail
-                            .offset(x: -10)
-                    }
-            }
+        ChatToolPreviewLayout(showsStatus: toolStatusBarEnabled, showsPreview: toolPreviewEnabled) {
+            ToolStatusBar(
+                block: displayedBlock,
+                toolBlocks: toolBlocks,
+                displayedIdx: displayedIdx,
+                expanded: $expanded,
+                selectedIdx: $selectedIdx,
+                trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
+            )
+        } preview: {
+            previewThumbnail
         }
         // .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: -4)
         .animation(.easeInOut(duration: 0.15), value: displayedIdx)
@@ -2588,13 +2568,9 @@ private struct ToolStatusBar: View {
             Spacer(minLength: 1)
 
             if trailingInset > 0 {
-                // The preview thumbnail is an overlay on this bar. Since
-                // the keyboard-viewport rework moved the composer into its
-                // own small hosting controller, taps on that overlay never
-                // land (1.1.4, with the composer in the full-screen host,
-                // was fine; the thumbnail's code never changed). This clear
-                // in-flow zone sits directly under the thumbnail and
-                // carries the same open action.
+                // Reserve title space under the bottom-aligned preview.
+                // ChatToolPreviewLayout now includes its FULL height in
+                // the composer; this is no longer the only tappable strip.
                 Color.clear
                     .frame(width: max(0, trailingInset - 12))
                     .contentShape(Rectangle())
