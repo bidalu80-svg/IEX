@@ -83,6 +83,59 @@ final class KeyboardViewportUITests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor
+    func testPreviewAfterKeyboardDismissal() {
+        let app = XCUIApplication(bundleIdentifier: "com.ze.keyboard-harness")
+        for mode in [["--preview"], ["--preview", "--preview-only"]] {
+            app.launchArguments = mode
+            app.launch()
+            let field = app.textFields["composer"].exists ? app.textFields["composer"] : app.textViews["composer"]
+            XCTAssertTrue(field.waitForExistence(timeout: 15))
+            for _ in 0..<2 {
+                field.tap()
+                XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+                app.buttons["send"].tap()
+                let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    !app.keyboards.firstMatch.exists
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                let preview = app.buttons["preview-card"]
+                XCTAssertTrue(preview.isHittable)
+                // The upper half was outside the old 34pt/zero-height host.
+                preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+                XCTAssertTrue(app.buttons["close-preview"].waitForExistence(timeout: 3))
+                app.buttons["close-preview"].tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            }
+            save(app, "preview-after-dismiss-\(mode.count)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testFadeInsideNavigationStack() {
+        let app = XCUIApplication(bundleIdentifier: "com.ze.keyboard-harness")
+        app.launchArguments = ["--navigation-fade"]
+        app.launch()
+        XCTAssertTrue(app.buttons["next"].waitForExistence(timeout: 15))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        let image = app.screenshot().image
+        // Away from the island, time glyph and navbar buttons.
+        let top = Self.pixel(image, xFraction: 0.08, yPoints: 36)
+        let below = Self.pixel(image, xFraction: 0.08, yPoints: 150)
+        XCTAssertGreaterThan(top.r, below.r + 20, "production safe-area band must fade toward white")
+        XCTAssertGreaterThan(below.b, 200)
+        XCTAssertLessThan(below.r, 50)
+        save(app, "navigation-production-fade")
+        app.buttons["next"].tap()
+        XCTAssertTrue(app.otherElements["next-page"].waitForExistence(timeout: 5))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let next = Self.pixel(app.screenshot().image, xFraction: 0.08, yPoints: 36)
+        XCTAssertLessThan(next.r, 80, "pushed page must not inherit conversation mask")
+        app.terminate()
+    }
+
     private static func pixel(_ image: UIImage, xFraction: CGFloat, yPoints: CGFloat) -> (r: Int, g: Int, b: Int) {
         let cg = image.cgImage!
         let px = min(cg.width - 1, max(0, Int(xFraction * CGFloat(cg.width))))
