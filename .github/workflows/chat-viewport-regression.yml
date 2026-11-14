@@ -1,0 +1,23 @@
+name: Chat viewport regression
+on:
+  push:
+    branches: [codex/keyboard-viewport]
+  workflow_dispatch:
+concurrency:
+  group: chat-viewport-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify keyboard, preview hit area and navigation fade
+        run: bash scripts/test-keyboard-viewport.sh
+      - name: Upload regression evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-viewport-regression
+          path: keyboard-viewport-evidence/
+          retention-days: 7
