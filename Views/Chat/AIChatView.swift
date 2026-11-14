@@ -2430,7 +2430,14 @@ struct AIChatView: View {
                 // [T-foldable-scroll] Same key the draft VM uses, so a rebuilt
                 // list (fold/unfold) resumes at the message the reader was on.
                 scrollMemoryKey: sessionId ?? draftId,
-                topOverlayInset: headerOverflowInset
+                // Dalu's spec (2026-11-14): the first message rests
+                // directly under the provider capsule, not under the
+                // whole header stack. The reported overflow measures to
+                // the badge frame's bottom (status row included); the
+                // capsule's bottom sits ~40pt above that at the default
+                // avatar size, so the list trims it here. The voice panel
+                // keeps the untrimmed value (it must clear the status row).
+                topOverlayInset: max(0, headerOverflowInset - 40)
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
