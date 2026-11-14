@@ -94,14 +94,6 @@ struct KeyboardFixture: View {
         ChatKeyboardViewport(content: AnyView(
             ZStack(alignment: .bottom) {
                 FixtureMessages(count: long ? 200 : 3, followsBottom: !browse)
-                HStack {
-                    TextField("Message", text: $text, axis: .vertical)
-                        .lineLimit(1...4).focused($focused).accessibilityIdentifier("composer")
-                    Button("Send") { focused = false; text = "" }.accessibilityIdentifier("send")
-                }
-                .padding(12).background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 18))
-                .background(KeyboardProbe())
-                .padding(.horizontal, 12).padding(.bottom, 8)
             }
             .overlay(alignment: .top) {
                 HStack {
@@ -109,6 +101,15 @@ struct KeyboardFixture: View {
                     Button("Voice mode") { focused = false; avoidsKeyboard.toggle() }.accessibilityIdentifier("voice")
                 }.padding(10).background(.regularMaterial)
             }
+        ), composer: AnyView(
+            HStack {
+                TextField("Message", text: $text, axis: .vertical)
+                    .lineLimit(1...4).focused($focused).accessibilityIdentifier("composer")
+                Button("Send") { focused = false; text = "" }.accessibilityIdentifier("send")
+            }
+            .padding(12).background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 18))
+            .background(KeyboardProbe())
+            .padding(.horizontal, 12).padding(.bottom, 8)
         ), avoidsKeyboard: avoidsKeyboard)
         .ignoresSafeArea(.keyboard, edges: .bottom)
     }

@@ -521,11 +521,69 @@ struct AIChatView: View {
         AnyView(
             ChatKeyboardViewport(
                 content: chatViewportContent,
+                composer: chatComposerContent,
                 avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
             .ignoresSafeArea(.keyboard, edges: .bottom)
+            .overlay { SessionLockGateOverlay(sessionId: vm.sessionId) }
+            .overlay { kernelBootOverlay }
+        )
+    }
+
+    private var chatComposerContent: AnyView {
+        AnyView(
+        ZStack(alignment: .bottom) {
+            // Tap-outside catcher placed UNDER the popup (declared
+            // first → lower z-order). When the popup is visible,
+            // the catcher fills the ZStack and absorbs taps that
+            // land outside the popup card. Taps on the popup
+            // itself naturally fall through to the popup view
+            // because it sits on top in z-order.
+            if vm.showSlashMenu || vm.showMentionMenu {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if vm.showSlashMenu { vm.dismissSlashMenu() }
+                        else { vm.dismissMentionMenu() }
+                    }
+            }
+            VStack(spacing: 0) {
+                // Attachments expand away from the composer without
+                // changing the tool-status bar's anchor.
+                attachmentPreviewTray
+                    // Preview thumbnails draw as an overlay on the
+                    // status bar. Keep attachment tiles above that
+                    // overlay if their horizontal regions meet.
+                    .zIndex(1)
+                floatingToolPreview
+                    .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
+                #if DEBUG
+                if isReadOnly {
+                    forkBanner
+                } else {
+                    inputBar
+                }
+                #else
+                inputBar
+                #endif
+            }
+            // Register the composer (tool preview + input bar) as a
+            // region the global speech capsule must not cover.
+            .capsuleProtectedFrame("inputBar")
+            .disabled(voiceCallPresentation.isActive)
+            .opacity(showChatSearch ? 0 : 1)
+            .allowsHitTesting(!showChatSearch)
+            .accessibilityHidden(showChatSearch)
+            inputPopupOverlay
+                .padding(.bottom, inputBarHeight)
+                .opacity(showChatSearch ? 0 : 1)
+                .allowsHitTesting(!showChatSearch)
+        }
+        .environmentObject(vm)
+        .environmentObject(shareCoordinator)
+        .environment(\.chatSessionId, vm.sessionId)
         )
     }
 
@@ -570,104 +628,6 @@ struct AIChatView: View {
                                     }
                                 }
                             }
-                    }
-                }
-                .overlay(alignment: .bottom) {
-                    // Tool preview + input bar stacked at the bottom.
-                    // Both overlay on top of the message list for immersive scrolling.
-                    //
-                    // The slash / mention popup is attached to THIS stack as
-                    // a `.overlay(alignment: .bottom)` on a placeholder
-                    // sitting just above the input bar — that way SwiftUI's
-                    // own layout pins the popup's bottom edge to the input
-                    // bar's top edge directly, with no `inputBarHeight`
-                    // @State round-trip and no screen-bottom math. The
-                    // popup follows the input bar automatically when
-                    // attachments / waveform expand it, when the keyboard
-                    // animates, or when safe-area insets change.
-                    //
-                    // Popup uses the EXACT same constraint toolbar uses
-                    // with inputBar: bottom edge of popup = top edge of
-                    // inputBar, with the SAME gap (i.e. whatever VStack
-                    // spacing produces between toolbar and inputBar —
-                    // which is 0 here, the visual gap toolbar exhibits
-                    // comes from its own internal padding).
-                    //
-                    // To achieve this without re-implementing layout
-                    // math: popup is an `.overlay(alignment: .top)` on
-                    // the inputBar with `alignmentGuide(.top){$0[.bottom]}`
-                    // — this anchors popup's BOTTOM to inputBar's TOP.
-                    // The popup card carries its OWN bottom padding
-                    // equal to what the toolbar's own internal bottom
-                    // spacing produces, so the visual gap is identical
-                    // whether toolbar is visible or not. Popup ALWAYS
-                    // sits flush with inputBar top, covering the toolbar
-                    // when it's also there.
-                    // Wrap input stack in a ZStack so the popup can have a
-                    // sibling-level frame (full ZStack size) with proper hit
-                    // testing — `.overlay(alignment: .top)` on inputBar was
-                    // failing to receive touches for the popup card because
-                    // SwiftUI doesn't hit-test overlay content drawn outside
-                    // the host's own frame.
-                    //
-                    // Layout structure (z-order bottom→top inside ZStack):
-                    //   1. VStack { toolbar; inputBar } — anchored .bottom
-                    //   2. Popup with alignmentGuide pinning its BOTTOM
-                    //      edge to inputBar's TOP edge — also anchored
-                    //      .bottom, but `alignmentGuide(.bottom) { d in
-                    //      d[.bottom] + inputBarHeight }` would require
-                    //      reading inputBar height again. Instead we use
-                    //      `.padding(.bottom, inputBarHeight)` so the
-                    //      popup's bottom edge sits exactly at inputBar's
-                    //      top edge. inputBarHeight here is just the input
-                    //      bar (NOT including toolbar) so popup covers
-                    //      toolbar when both visible.
-                    ZStack(alignment: .bottom) {
-                        // Tap-outside catcher placed UNDER the popup (declared
-                        // first → lower z-order). When the popup is visible,
-                        // the catcher fills the ZStack and absorbs taps that
-                        // land outside the popup card. Taps on the popup
-                        // itself naturally fall through to the popup view
-                        // because it sits on top in z-order.
-                        if vm.showSlashMenu || vm.showMentionMenu {
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    if vm.showSlashMenu { vm.dismissSlashMenu() }
-                                    else { vm.dismissMentionMenu() }
-                                }
-                        }
-                        VStack(spacing: 0) {
-                            // Attachments expand away from the composer without
-                            // changing the tool-status bar's anchor.
-                            attachmentPreviewTray
-                                // Preview thumbnails draw as an overlay on the
-                                // status bar. Keep attachment tiles above that
-                                // overlay if their horizontal regions meet.
-                                .zIndex(1)
-                            floatingToolPreview
-                                .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
-                            #if DEBUG
-                            if isReadOnly {
-                                forkBanner
-                            } else {
-                                inputBar
-                            }
-                            #else
-                            inputBar
-                            #endif
-                        }
-                        // Register the composer (tool preview + input bar) as a
-                        // region the global speech capsule must not cover.
-                        .capsuleProtectedFrame("inputBar")
-                        .disabled(voiceCallPresentation.isActive)
-                        .opacity(showChatSearch ? 0 : 1)
-                        .allowsHitTesting(!showChatSearch)
-                        .accessibilityHidden(showChatSearch)
-                        inputPopupOverlay
-                            .padding(.bottom, inputBarHeight)
-                            .opacity(showChatSearch ? 0 : 1)
-                            .allowsHitTesting(!showChatSearch)
                     }
                 }
                 // Collapse the expanded speech player on a tap anywhere in the chat
@@ -724,7 +684,12 @@ struct AIChatView: View {
                     .allowsHitTesting(false)
                 }
                 .overlay {
-                    SessionLockGateOverlay(sessionId: vm.sessionId)
+                    if vm.showSlashMenu || vm.showMentionMenu {
+                        Color.clear.contentShape(Rectangle()).onTapGesture {
+                            if vm.showSlashMenu { vm.dismissSlashMenu() }
+                            else { vm.dismissMentionMenu() }
+                        }
+                    }
                 }
                 .onChange(of: vm.isLoadingSession) { newValue in
                     // [SpinnerTrace] Every transition of the
@@ -735,8 +700,6 @@ struct AIChatView: View {
                     zeLogger.warning("[SpinnerTrace] isLoadingSession → \(newValue) sid=\(vm.sessionId?.prefix(8) ?? "nil") msgs=\(vm.messages.count)")
                 }
 
-            // Full-screen kernel boot overlay
-            kernelBootOverlay
         }
         .environmentObject(vm)
         .environmentObject(shareCoordinator)
