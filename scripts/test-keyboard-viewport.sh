@@ -29,9 +29,15 @@ for t in targets:
     t['UITargetAppBundleIdentifier']='com.ze.keyboard-harness'
 (products/'Keyboard.xctestrun').write_bytes(plistlib.dumps(d))
 PY
+xcrun simctl io "$keyboard_device" recordVideo --codec=h264 --force "$PWD/keyboard-viewport-evidence/keyboard.mp4" > keyboard-viewport-evidence/recording.log 2>&1 &
+keyboard_recorder=$!
+trap 'kill -INT "$keyboard_recorder" 2>/dev/null || true' EXIT
 set +e
 xcodebuild test-without-building -xctestrun "$keyboard_work/DerivedData/Build/Products/Keyboard.xctestrun" -destination "platform=iOS Simulator,id=$keyboard_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -disable-concurrent-destination-testing -resultBundlePath keyboard-viewport-evidence/Keyboard.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 > keyboard-viewport-evidence/test.log 2>&1
 keyboard_result=$?
+kill -INT "$keyboard_recorder" 2>/dev/null || true
+wait "$keyboard_recorder" || true
+trap - EXIT
 set -e
 cat keyboard-viewport-evidence/test.log
 xcrun xcresulttool export attachments --path keyboard-viewport-evidence/Keyboard.xcresult --output-path keyboard-viewport-evidence/screenshots || true

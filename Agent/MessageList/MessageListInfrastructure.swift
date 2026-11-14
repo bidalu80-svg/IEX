@@ -558,13 +558,25 @@ final class NoAnimationCollectionView: UICollectionView {
 
     override var bounds: CGRect {
         willSet {
-            guard !applyingViewportAnchor, bounds.height > 0,
-                  abs(newValue.width - bounds.width) < 0.5,
-                  abs(newValue.height - bounds.height) > 0.5,
-                  !isTracking, !isDecelerating else { return }
-            if viewportAnchor == nil {
-                viewportAnchor = (contentOffset.y, shouldFollowViewportBottom?() == true)
-            }
+            rememberViewportAnchor(for: newValue.size)
+        }
+    }
+
+    override var frame: CGRect {
+        willSet {
+            // Autoresizing updates frame without necessarily calling the
+            // overridable bounds setter. Capture before either entry point.
+            rememberViewportAnchor(for: newValue.size)
+        }
+    }
+
+    private func rememberViewportAnchor(for size: CGSize) {
+        guard !applyingViewportAnchor, bounds.height > 0,
+              abs(size.width - bounds.width) < 0.5,
+              abs(size.height - bounds.height) > 0.5,
+              !isTracking, !isDecelerating else { return }
+        if viewportAnchor == nil {
+            viewportAnchor = (contentOffset.y, shouldFollowViewportBottom?() == true)
         }
     }
 

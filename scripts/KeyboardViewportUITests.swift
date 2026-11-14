@@ -25,6 +25,10 @@ final class KeyboardViewportUITests: XCTestCase {
             XCTAssertLessThan(field.frame.maxY, app.keyboards.firstMatch.frame.minY)
             // Reject double keyboard avoidance (composer floating far above it).
             XCTAssertLessThan(app.keyboards.firstMatch.frame.minY - field.frame.maxY, 90)
+            if arguments == ["--long"] {
+                XCTAssertTrue(app.cells["message.199"].isHittable, "last message must stay above composer")
+                XCTAssertLessThan(app.cells["message.199"].frame.maxY, field.frame.minY)
+            }
             if arguments.contains("--browse"), let anchorID, let anchorY {
                 XCTAssertEqual(app.cells[anchorID].frame.minY, anchorY, accuracy: 3)
             }
@@ -37,6 +41,10 @@ final class KeyboardViewportUITests: XCTestCase {
             let landed = field.frame.midY
             RunLoop.current.run(until: Date().addingTimeInterval(0.8))
             XCTAssertEqual(field.frame.midY, landed, accuracy: 1)
+            if arguments == ["--long"] {
+                XCTAssertTrue(app.cells["message.199"].isHittable)
+                XCTAssertLessThan(app.cells["message.199"].frame.maxY, field.frame.minY)
+            }
             if arguments.contains("--browse"), let anchorID, let anchorY {
                 XCTAssertEqual(app.cells[anchorID].frame.minY, anchorY, accuracy: 3)
             }
