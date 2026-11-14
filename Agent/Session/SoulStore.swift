@@ -2,10 +2,20 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// Persistent personality/identity file living alongside GLOBAL.md and the
-/// daily memory logs. Two-part format: YAML frontmatter (delimited by `---`)
-/// followed by a Markdown body. The body is injected as Layer 1 of the
-/// system prompt; the `name` / `emoji` fields drive the chat bubble header.
+/// Local presentation preferences; personality metadata and message avatars
+/// keep their existing format and sizes.
+enum SoulAppearancePreferences {
+    static let headerAvatarSizeKey = "soul.chatHeaderAvatarSize"
+    static let defaultHeaderAvatarSize: Double = 56
+    static let headerAvatarSizeRange: ClosedRange<Double> = 40...80
+
+    static func headerAvatarSize(_ value: Double) -> CGFloat {
+        guard value.isFinite else { return CGFloat(defaultHeaderAvatarSize) }
+        return CGFloat(min(headerAvatarSizeRange.upperBound, max(headerAvatarSizeRange.lowerBound, value)))
+    }
+}
+
+/// SOUL.md frontmatter; its name and emoji drive assistant identity.
 struct SoulMetadata: Equatable {
     var name: String
     /// User-selected emoji value parsed from SOUL.md. Empty means the built-in
@@ -589,6 +599,10 @@ struct SoulAvatarView: View {
             }
         }
         .frame(width: size, height: size)
+        .onAppear {
+            emoji = SoulStore.cachedMetadata.emoji
+            image = SoulAvatarStore.load()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
             emoji = SoulStore.cachedMetadata.emoji
             image = SoulAvatarStore.load()

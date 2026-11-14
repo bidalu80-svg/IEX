@@ -40,6 +40,8 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     /// Which conversation this list is showing, used to key the saved scroll
     /// anchor. [T-foldable-scroll]
     var scrollMemoryKey: String? = nil
+    /// Height of the floating chat header below the native navigation bar.
+    var topOverlayInset: CGFloat = 0
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
@@ -124,6 +126,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         // room. iOS 26 returns 0 here (liquid-glass + .automatic adjustment
         // already position content), so this is a no-op there.
         let cvTop = vc.collectionView!
+        coord.topOverlayInset = max(0, topOverlayInset)
         if abs(cvTop.contentInset.top - coord.baseContentInsetTop) > 0.5 {
             cvTop.contentInset.top = coord.baseContentInsetTop
         }
@@ -205,6 +208,10 @@ fileprivate struct BridgedAssistantHeaderV3: View {
         }
         .transaction { $0.disablesAnimations = false }
         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.86), value: message.firstTokenLatency)
+        .onAppear {
+            // Reused/offscreen headers may have missed a Soul Settings change.
+            soulMeta = SoulStore.cachedMetadata
+        }
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
             soulMeta = SoulStore.cachedMetadata
         }
@@ -4290,8 +4297,9 @@ extension CollectionViewMessageListV3 {
 
         /// Base contentInset.top (without sub-viewport overflow compensation).
         /// iOS 26+ relies on system; older iOS uses an 8pt manual padding.
+        var topOverlayInset: CGFloat = 0
         var baseContentInsetTop: CGFloat {
-            if #available(iOS 26, *) { return 0 } else { return 8 }
+            if #available(iOS 26, *) { return topOverlayInset } else { return 8 + topOverlayInset }
         }
 
         /// Base contentInset.bottom = inputBarHeight + floatingBarHeight + 8.

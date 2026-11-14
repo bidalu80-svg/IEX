@@ -5,6 +5,8 @@ import UIKit
 /// Settings page for SOUL.md — Ze's persistent personality file.
 /// Lives between Skills and Memory in the Agent Runtime section.
 struct SoulSettingsView: View {
+    @AppStorage(SoulAppearancePreferences.headerAvatarSizeKey)
+    private var headerAvatarSize = SoulAppearancePreferences.defaultHeaderAvatarSize
     @State private var name: String = SoulMetadata.default.name
     /// Emoji value loaded from SOUL.md and edited in the Identity section.
     @State private var rawEmoji: String = SoulMetadata.default.emoji
@@ -70,6 +72,21 @@ struct SoulSettingsView: View {
                         }
                         .font(.footnote)
                     }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("聊天页顶部头像大小")
+                        Spacer()
+                        Text("\(Int(SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)))")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $headerAvatarSize,
+                           in: SoulAppearancePreferences.headerAvatarSizeRange, step: 1)
+                        .accessibilityLabel("聊天页顶部头像大小")
+                    Text("拖动可预览，大小自动保存，仅调整聊天页顶部头像。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 LabeledContent(String(localized: "Style")) {
                     TextField(String(localized: "e.g. Warm, direct, opinionated"), text: $style)
@@ -179,24 +196,25 @@ struct SoulSettingsView: View {
     // card chrome automatically, so we only render content here. Matches
     // the visual width of every other section on the page.
     private var previewCard: some View {
-        HStack(alignment: .center, spacing: 12) {
+        let avatarSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
+        return HStack(alignment: .center, spacing: 12) {
             // Keep the soul preview consistent with the assistant header and
             // welcome state instead of rendering the old sparkles glyph.
             if let data = avatarImageData, let uiImage = UIImage(data: data) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 40, height: 40)
+                    .frame(width: avatarSize, height: avatarSize)
                     .clipShape(Circle())
             } else if !rawEmoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(rawEmoji.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.system(size: 32))
-                    .frame(width: 40, height: 40)
+                    .font(.system(size: avatarSize * 0.82))
+                    .frame(width: avatarSize, height: avatarSize)
             } else {
                 Image("ZeAssistantAvatar")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 40, height: 40)
+                    .frame(width: avatarSize, height: avatarSize)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(name.isEmpty ? "Ze" : name)
@@ -284,6 +302,7 @@ struct SoulSettingsView: View {
     }
 
     private func reload() {
+        headerAvatarSize = Double(SoulAppearancePreferences.headerAvatarSize(headerAvatarSize))
         let file = SoulStore.load() ?? SoulFile(metadata: .default, body: "")
         name = file.metadata.name
         rawEmoji = file.metadata.emoji
@@ -337,6 +356,7 @@ struct SoulSettingsView: View {
     }
 
     private func restoreDefault() {
+        headerAvatarSize = SoulAppearancePreferences.defaultHeaderAvatarSize
         let parsed = SoulMDParser.parse(SoulStore.defaultContent)
         name = parsed.metadata.name
         rawEmoji = parsed.metadata.emoji
