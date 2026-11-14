@@ -525,9 +525,15 @@ struct AIChatView: View {
                 content: chatViewportContent,
                 composer: chatComposerContent,
                 avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript,
-                // Dissolve completes at the controls' top edge (~65pt from
-                // the screen top): the badge starts at barBottom - 44.
-                fadeCompleteY: max(0, topSafeAreaInset - 36)
+                // Dissolve completes ~65pt from the screen top (Muse's
+                // measured extent, approved 2026-11-14): topSafeAreaInset
+                // reports the BARE safe-area inset (~59pt, see the
+                // T-slash-picker note) — the badge's top edge — so the
+                // completion point is that value + 8, NOT barBottom - 36.
+                // The first cut used - 36 on a wrong 103pt assumption and
+                // produced a 23pt band hidden inside the status bar
+                // (device-verified still-solid, 2026-11-15).
+                fadeCompleteY: max(0, topSafeAreaInset + 8)
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
