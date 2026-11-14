@@ -603,7 +603,10 @@ struct AIChatView: View {
                             .background(ChatCallLayoutMarker(identifier: "chat.verify.voicePanel"))
                             // This page deliberately extends beneath the navigation bar.
                             // The call controls must start after its measured bottom and badge.
-                            .padding(.top, topSafeAreaInset + headerOverflowInset)
+                            // The safeAreaInset region already starts below the bar, so
+                            // adding topSafeAreaInset again double-counts the bar height
+                            // and pushes the panel ~100pt too low (device-verified).
+                            .padding(.top, headerOverflowInset)
                             .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                     }
                     if subAgentsEnabled, subAgentDockEnabled, !isReadOnly, let rootSessionId = vm.sessionId {
