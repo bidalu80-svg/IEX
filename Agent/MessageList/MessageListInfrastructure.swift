@@ -550,6 +550,24 @@ final class NoAnimationCollectionView: UICollectionView {
     /// NSInternalInconsistencyException inside UIKit.
     var isApplyingSnapshot = false
 
+    /// The coordinator supplies intent; viewport geometry owns the timing.
+    var shouldFollowViewportBottom: (() -> Bool)?
+    var viewportBottomInset: (() -> CGFloat)?
+    private var viewportAnchor: (offset: CGFloat, followBottom: Bool)?
+    private var applyingViewportAnchor = false
+
+    override var bounds: CGRect {
+        willSet {
+            guard !applyingViewportAnchor, bounds.height > 0,
+                  abs(newValue.width - bounds.width) < 0.5,
+                  abs(newValue.height - bounds.height) > 0.5,
+                  !isTracking, !isDecelerating else { return }
+            if viewportAnchor == nil {
+                viewportAnchor = (contentOffset.y, shouldFollowViewportBottom?() == true)
+            }
+        }
+    }
+
     /// [T-ios-stream-grow-anim] When true, non-snapshot programmatic layout
     /// passes (a streaming cell growing taller) animate ONLY the contentOffset
     /// over a fixed 0.2s window so the viewport glides to the new bottom instead
@@ -616,6 +634,27 @@ final class NoAnimationCollectionView: UICollectionView {
         // above. The SelfSizingCell off-collection guard is the inner backstop.
         guard window != nil else { return }
 
+        let resizingViewport = viewportAnchor != nil
+        let anchor = viewportAnchor
+        viewportAnchor = nil
+        defer {
+            if let anchor, !isTracking, !isDecelerating, !applyingViewportAnchor {
+                applyingViewportAnchor = true
+                let minimum = -adjustedContentInset.top
+                let maximum = max(minimum, contentSize.height - bounds.height + adjustedContentInset.bottom)
+                let followsBottom = anchor.followBottom && shouldFollowViewportBottom?() == true
+                let pinned = contentSize.height - bounds.height
+                    + (viewportBottomInset?() ?? adjustedContentInset.bottom)
+                let target = min(maximum, max(minimum, followsBottom ? pinned : anchor.offset))
+                if abs(contentOffset.y - target) > 0.5 {
+                    // This is inside UIKit's keyboard layout transaction. Do
+                    // not start a second UIScrollView animation or delayed pin.
+                    setContentOffset(CGPoint(x: contentOffset.x, y: target), animated: false)
+                }
+                applyingViewportAnchor = false
+            }
+        }
+
         #if DEBUG
         let newSize = bounds.size
         let widthChanged = abs(newSize.width - lastBoundsSize.width) > 0.5
@@ -653,7 +692,9 @@ final class NoAnimationCollectionView: UICollectionView {
         // During user scroll (tracking/decelerating), let UIKit handle layout
         // naturally — stripping animations mid-scroll kills the deceleration
         // curve and causes a visible jitter at the end.
-        if isTracking || isDecelerating {
+        if resizingViewport || applyingViewportAnchor || isTracking || isDecelerating {
+            // Inherit the system keyboard transaction for a viewport resize.
+            // Streaming's separate 0.2s animation must not retime this pass.
             super.layoutSubviews()
         } else if disclosureAnimationInFlight, !isApplyingSnapshot, !inStreamingGrowLayout {
             // [T-ios-user-collapse-smooth] Scoped disclosure pass: the

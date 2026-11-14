@@ -519,6 +519,18 @@ struct AIChatView: View {
 
     private var chatLayout: AnyView {
         AnyView(
+            ChatKeyboardViewport(
+                content: chatViewportContent,
+                avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript
+            )
+            // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
+            // would animate the entire host before its constraints can follow.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+        )
+    }
+
+    private var chatViewportContent: AnyView {
+        AnyView(
         ZStack {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
@@ -726,6 +738,9 @@ struct AIChatView: View {
             // Full-screen kernel boot overlay
             kernelBootOverlay
         }
+        .environmentObject(vm)
+        .environmentObject(shareCoordinator)
+        .environment(\.chatSessionId, vm.sessionId)
         )
     }
 
@@ -3482,9 +3497,9 @@ struct AIChatView: View {
         usesExpandedComposerChrome ? 12 : 34
     }
 
-    /// Keyboard notifications provide the same duration as UIKit's keyboard
-    /// transition. Animating this small layout change in that transaction keeps
-    /// the composer from snapping between its compact and typing states.
+    /// Notifications update only the composer's chrome. UIKit's keyboard
+    /// layout guide owns vertical motion; do not start a root SwiftUI animation
+    /// that competes with that system transaction.
     private func updateSoftwareKeyboardVisibility(from notification: Notification) {
         let endFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
         let visible: Bool
@@ -3502,10 +3517,7 @@ struct AIChatView: View {
         }
 
         guard softwareKeyboardVisible != visible else { return }
-        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        withAnimation(.easeInOut(duration: max(0.01, duration))) {
-            softwareKeyboardVisible = visible
-        }
+        softwareKeyboardVisible = visible
     }
 
     private var inputComposerChrome: AnyView {
@@ -3590,6 +3602,8 @@ struct AIChatView: View {
             inputComposerChrome
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, composerHorizontalPadding)
+            // The cosmetic capsule morph stays local; UIKit owns its position.
+            .animation(.easeOut(duration: 0.2), value: usesExpandedComposerChrome)
             // The attachment tray is the preceding sibling in the bottom
             // stack. Do not leave the composer's normal top gutter between a
             // pending attachment and this capsule; with no floating bar that
@@ -3602,7 +3616,10 @@ struct AIChatView: View {
             // old onAppear seeding AND its diagnostic log are preserved as
             // a single unified line.
             .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .global)
+                let frame = proxy.frame(in: .global)
+                // Retain X for the outgoing-session guard, but ignore Y:
+                // keyboard translation is not a composer height change.
+                return CGRect(x: frame.minX, y: 0, width: frame.width, height: frame.height)
             } action: { frame in
                 let newH = frame.size.height
                 // [voice-inputbar-padding-zero] Guard against transient 0.
@@ -3659,6 +3676,17 @@ struct AIChatView: View {
                 // the current callback (writing it after the seed's `return`
                 // would leave the confirm reading a stale/zero value).
                 if onscreen { latestInputBarFrameH = newH }
+
+                // Text layout is already driven by the keyboard host. Publish
+                // its real height immediately; the voice panel retains its
+                // independent expand/collapse settling safeguards below.
+                if !voiceInputActive, onscreen {
+                    inputBarHeightDebounce?.cancel()
+                    inputBarHeightDebounce = nil
+                    didSeedInputBarHeight = true
+                    if abs(inputBarHeight - newH) > 0.5 { inputBarHeight = newH }
+                    return
+                }
 
                 if !didSeedInputBarHeight, onscreen {
                     didSeedInputBarHeight = true
@@ -4698,6 +4726,7 @@ struct AIChatView: View {
 
 
     private func performEnqueue() {
+        vm.composerWillSend.send()
         // Dismiss the software keyboard on enqueue. With a hardware keyboard,
         // keep focus so the user can continue typing the next candidate.
         if GCKeyboard.coalesced == nil {
@@ -4705,7 +4734,6 @@ struct AIChatView: View {
             UIApplication.shared.sendAction(
                 #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
-        vm.forceScrollToBottom.send()
         if speechManager.state == .recording {
             speechManager.stopRecording()
         }
@@ -4732,13 +4760,12 @@ struct AIChatView: View {
         // next message. With only the software keyboard, clear focus and
         // dismiss it so the @FocusState binding stays in sync.
         let hasHardwareKeyboard = GCKeyboard.coalesced != nil
+        vm.composerWillSend.send()
         if !hasHardwareKeyboard {
             inputFocused = false
             UIApplication.shared.sendAction(
                 #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
-        // User actively sending — force scroll-to-bottom so the response scrolls into view
-        vm.forceScrollToBottom.send()
         // Stop recording and clear recognized text so it doesn't linger after send
         if speechManager.state == .recording {
             speechManager.stopRecording()

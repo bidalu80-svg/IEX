@@ -151,15 +151,10 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.updateScrollMemoryKey(scrollMemoryKey)
         coord.scheduleScrollRestoreIfNeeded()
 
-        if inputFocused != coord.lastInputFocused {
-            let wasNearBottom = coord.scrollMode == .autoScrolling && coord.isNearBottom()
-            coord.lastInputFocused = inputFocused
-            if wasNearBottom {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak coord] in
-                    coord?.scrollToBottomNow(animated: true)
-                }
-            }
-        }
+        // Viewport changes preserve the bottom or reading position in the
+        // collection view's own layout pass. Focus is not a geometry clock;
+        // a delayed scroll here used to fight dismissal and user gestures.
+
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -886,7 +881,6 @@ extension CollectionViewMessageListV3 {
         var onScreenshotImage: ((UIImage) -> Void)?
         var onShareMessage: ((UUID) -> Void)?
         var maxContentWidth: CGFloat = 0
-        var lastInputFocused: Bool = false
         private var collapseConsecutiveToolCalls = (UserDefaults.standard.object(forKey: ConsecutiveToolCallsPolicy.preferenceKey) as? Bool) ?? ConsecutiveToolCallsPolicy.defaultEnabled
         private var forceUncollapsedToolsForScreenshot = false
 
@@ -1193,6 +1187,14 @@ extension CollectionViewMessageListV3 {
             guard let collectionView = vc.collectionView else { return }
             collectionView.delegate = self
             collectionView.prefetchDataSource = self
+            (collectionView as? NoAnimationCollectionView)?.shouldFollowViewportBottom = { [weak self] in
+                self?.scrollMode == .autoScrolling
+            }
+            (collectionView as? NoAnimationCollectionView)?.viewportBottomInset = { [weak self, weak collectionView] in
+                // Compensation can inflate contentInset for short content. It
+                // is scrollable space, not the desired visual bottom anchor.
+                (self?.baseBottomInset ?? 0) + (collectionView?.safeAreaInsets.bottom ?? 0)
+            }
             // Disable UIKit's main-thread cell prefetch. Profile (Time Profiler)
             // showed -[UICollectionView _prefetchItemsForPrefetchingContext:]
             // chains through _createPreparedCellForItemAtIndexPath → +UIView
@@ -1958,6 +1960,21 @@ extension CollectionViewMessageListV3 {
                         let totalBlocks = msgs.reduce(0) { $0 + $1.blocks.count }
                         AppLogger(category: "BlocksLost").info("[BlocksLost] SNAPSHOT REBUILT snapshotItems \(oldCount)→\(newCount) memoryBlocks=\(totalBlocks)")
                     }
+                }
+                .store(in: &subscriptions)
+
+            // A send changes follow intent immediately, but does not animate
+            // towards the old bottom. The inserted message and viewport resize
+            // perform the actual geometry update in their layout transactions.
+            vm.composerWillSend
+                .sink { [weak self] in
+                    guard let self else { return }
+                    self.pendingScrollWork?.cancel()
+                    self.pendingScrollWork = nil
+                    self.isAnimatingScrollToBottom = false
+                    self.vm?.setStreamingUIUpdatesSuspended(false)
+                    self.scrollMode = .autoScrolling
+                    self.lastJumpedUserId = nil
                 }
                 .store(in: &subscriptions)
 
@@ -5082,6 +5099,8 @@ extension CollectionViewMessageListV3 {
         // MARK: - UIScrollViewDelegate
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            pendingScrollWork?.cancel()
+            pendingScrollWork = nil
             AppLogger(category: "ScrollDiag").info("[ScrollDiag][willBeginDragging] offset=\(String(format: "%.0f", scrollView.contentOffset.y)) contentSize=\(String(format: "%.0f", scrollView.contentSize.height)) visibleCells=\(viewController?.collectionView?.visibleCells.count ?? -1)")
             #if DEBUG
             // [DecelDisplayLink] Safety: if the user grabs again mid-decel, stop

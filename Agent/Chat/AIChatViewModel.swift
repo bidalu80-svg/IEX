@@ -764,6 +764,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Force scroll-to-bottom AND re-enable auto-scroll. Used only for explicit user actions
     /// (send, enqueue, session reuse) — NOT during streaming, so user scroll position is respected.
     let forceScrollToBottom = PassthroughSubject<Void, Never>()
+    /// Establish follow intent before inserting a composer message, without
+    /// starting a scroll animation towards the pre-send content size.
+    let composerWillSend = PassthroughSubject<Void, Never>()
     /// Force scroll-to-top (first message). Used by the floating "scroll to
     /// first message" button — a counterpart to forceScrollToBottom that does
     /// NOT change auto-scroll mode (jumping to the top is always a browse action).
@@ -1977,7 +1980,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     var isTitleGenerating = false
 
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
-    var agentHistory: [AgentMessage] = []
+    var agentHistory: [AgentMessage] = [] {
+        didSet { cachedContextTokenEstimate = nil }
+    }
+    /// Invalidated by history value mutations (including nested parts) and by
+    /// compact marker changes, the two inputs to effectiveAgentHistory().
+    var cachedContextTokenEstimate: Int?
 
     /// Dynamic, credential-free inventory of the server tools that were
     /// registered for this turn. This is rebuilt per request because the user
@@ -2015,7 +2023,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// (via effectiveAgentHistory) to inject the summary at inference time instead
     /// of mutating agentHistory. Updated by loadSession, compactBefore, and any
     /// path that writes a new marker.
-    var cachedLatestMarker: CompactMarker?
+    var cachedLatestMarker: CompactMarker? {
+        didSet { cachedContextTokenEstimate = nil }
+    }
     /// The session's persisted model id (from ChatStore.getSession). Cached at
     /// loadSession time so resolveCurrentEntry can fall back to it without an
     /// async hop to the actor. Empty string means "not yet loaded" — treat as

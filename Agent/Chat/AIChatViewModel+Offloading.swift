@@ -307,62 +307,34 @@ extension AIChatViewModel {
     /// what's sent; estimating against the raw log made post-compact usage
     /// look unchanged and fired the "near capacity" prompt before every send.
     func estimateContextTokens(_ caller: String = #function) -> Int {
+        if let cached = cachedContextTokenEstimate { return cached }
         var totalChars = 0
         var imageTokens = 0
         let slice = effectiveAgentHistory()
-        // DIAG: per-message breakdown so we can see EXACTLY what occupies the
-        // post-compact context. Logs every message's role + part summary +
-        // token estimate; lets us tell whether bloat comes from the injected
-        // summary, pre-anchor warm-up turns, or post-anchor tool results.
-        var perMsg: [String] = []
-        var biggest: [(kind: String, chars: Int, msgIdx: Int)] = []
-        for (idx, msg) in slice.enumerated() {
-            var msgChars = 0
-            var msgImgTok = 0
-            var partTags: [String] = []
+        for msg in slice {
             for part in msg.parts {
-                var partChars = 0
-                var partKind = ""
                 switch part {
-                case .text(let t):
-                    partChars = t.count
-                    let isSummary = t.contains("<context-summary>")
-                    partKind = isSummary ? "SUMMARY" : "text"
-                case .toolUse(_, let name, let input):
+                case .text(let text):
+                    totalChars += text.count
+                case .toolUse(_, _, let input):
                     if let data = try? JSONSerialization.data(withJSONObject: input) {
-                        partChars = data.count
+                        totalChars += data.count
                     }
-                    partKind = "tu:\(name)"
-                case .toolResult(_, _, let content, _, let imgData, _, _, _):
-                    partChars = content.count
-                    if let imgData = imgData {
-                        let it = BPETokenizer.shared.countImageTokens(imgData)
-                        imageTokens += it
-                        msgImgTok += it
+                case .toolResult(_, _, let content, _, let imageData, _, _, _):
+                    totalChars += content.count
+                    if let imageData {
+                        imageTokens += BPETokenizer.shared.countImageTokens(imageData)
                     }
-                    partKind = "tr"
                 case .imageData(let data, _, _):
-                    let it = BPETokenizer.shared.countImageTokens(data)
-                    imageTokens += it
-                    msgImgTok += it
-                    partKind = "img"
-                }
-                msgChars += partChars
-                totalChars += partChars
-                partTags.append("\(partKind)=\(partChars)c")
-                if partChars >= 2000 {
-                    biggest.append((partKind, partChars, idx))
+                    imageTokens += BPETokenizer.shared.countImageTokens(data)
                 }
             }
-            let msgTok = Int(Double(msgChars) / 3.5) + msgImgTok
-            let dbId = msg.dbMessageId?.prefix(8) ?? "----"
-            perMsg.append("[\(idx) \(msg.role.rawValue) db=\(dbId) ~\(msgTok)tok | \(partTags.joined(separator: ","))]")
         }
+        // Preserve the existing formula and rounding across ALL parts. The
+        // cache depends on effective history, not the selected model's window.
         let totalTokens = Int(Double(totalChars) / 3.5) + imageTokens
-        biggest.sort { $0.chars > $1.chars }
-        let top = biggest.prefix(5).map { "[\($0.msgIdx)\($0.kind)=\($0.chars)c]" }.joined(separator: " ")
-        logger.info("[CompactDiag] estimate caller=\(caller) slice=\(slice.count) total=\(totalTokens)tok (\(totalChars)chars+\(imageTokens)imgTok) bigParts(≥2kc): \(top)")
-        logger.info("[CompactDiag] estimate perMsg: \(perMsg.joined(separator: " "))")
+        cachedContextTokenEstimate = totalTokens
+        logger.info("[CompactDiag] estimate caller=\(caller) slice=\(slice.count) total=\(totalTokens)tok (\(totalChars)chars+\(imageTokens)imgTok)")
         return totalTokens
     }
 
