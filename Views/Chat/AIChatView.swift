@@ -2243,7 +2243,10 @@ struct AIChatView: View {
             }
             .accessibilityLabel("当前服务商：\(providerName)，选择模型")
             .accessibilityIdentifier("chat.providerName")
-            .padding(.top, -9)
+            // Seat the pill into the avatar Muse-style: the pill's top tucks
+            // ~13pt under the avatar disc (about a fifth of its diameter)
+            // instead of merely touching its bottom edge.
+            .padding(.top, -17)
 
             navigationStatusCapsule
                 .padding(.top, 4)
