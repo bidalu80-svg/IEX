@@ -2443,11 +2443,14 @@ struct AIChatView: View {
                 // Dalu's spec (2026-11-14): the first message rests
                 // directly under the provider capsule, not under the
                 // whole header stack. The reported overflow measures to
-                // the badge frame's bottom (status row included); the
-                // capsule's bottom sits ~40pt above that at the default
-                // avatar size, so the list trims it here. The voice panel
+                // the badge frame's bottom (status row included). A -40
+                // trim overshot on device (avatar size 50, tuck -10): the
+                // first bubble slid UNDER the capsule and the status icon
+                // landed on its first line (Dalu, 2026-11-15). His drawn
+                // line sits just below the status row, ~30pt lower than
+                // the -40 landing, so the trim is -10. The voice panel
                 // keeps the untrimmed value (it must clear the status row).
-                topOverlayInset: max(0, headerOverflowInset - 40)
+                topOverlayInset: max(0, headerOverflowInset - 10)
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
