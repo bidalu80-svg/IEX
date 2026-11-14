@@ -60,9 +60,7 @@ final class ChatKeyboardViewportController: UIViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     private static func root(_ content: AnyView) -> AnyView {
-        AnyView(content
-            .ignoresSafeArea(.container, edges: .top)
-            .ignoresSafeArea(.keyboard, edges: .bottom))
+        AnyView(content.ignoresSafeArea(.keyboard, edges: .bottom))
     }
 
     private static func composerRoot(_ content: AnyView) -> AnyView {
