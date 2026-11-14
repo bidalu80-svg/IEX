@@ -14,13 +14,17 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
     /// top instead of the conversation (and the flat CI harness, where the
     /// two coincide, stayed green). Device-verified 2026-11-15.
     var fadeCompleteY: CGFloat = 0
+    /// Production uses the attached window's status-bar safe area, not a
+    /// navigation-bar frame reported through a different coordinate space.
+    var usesWindowHeaderFade: Bool = true
 
     func makeUIViewController(context: Context) -> ChatKeyboardViewportController {
         ChatKeyboardViewportController(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
             avoidsKeyboard: avoidsKeyboard,
-            fadeCompleteY: fadeCompleteY)
+            fadeCompleteY: fadeCompleteY,
+            usesWindowHeaderFade: usesWindowHeaderFade)
     }
 
     func updateUIViewController(_ controller: ChatKeyboardViewportController, context: Context) {
@@ -28,7 +32,8 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
             avoidsKeyboard: avoidsKeyboard,
-            fadeCompleteY: fadeCompleteY)
+            fadeCompleteY: fadeCompleteY,
+            usesWindowHeaderFade: usesWindowHeaderFade)
     }
 }
 
@@ -40,22 +45,24 @@ final class ChatKeyboardViewportController: UIViewController {
     private var restingBottom: NSLayoutConstraint!
     private var composerKeyboardBottom: NSLayoutConstraint!
     private var composerRestingBottom: NSLayoutConstraint!
-    private let fadeMask = CAGradientLayer()
-    private var fadeCompleteY: CGFloat
+    private let conversationContainer = ChatConversationFadeView()
 
-    init(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0) {
+    init(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
+         usesWindowHeaderFade: Bool = false) {
         self.host = UIHostingController(rootView: Self.root(content))
         self.composerHost = UIHostingController(rootView: Self.composerRoot(composer))
         self.avoidsKeyboard = avoidsKeyboard
-        self.fadeCompleteY = fadeCompleteY
         super.init(nibName: nil, bundle: nil)
+        conversationContainer.configure(completeY: fadeCompleteY, usesWindowSafeArea: usesWindowHeaderFade)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     private static func root(_ content: AnyView) -> AnyView {
-        AnyView(content.ignoresSafeArea(.keyboard, edges: .bottom))
+        AnyView(content
+            .ignoresSafeArea(.container, edges: .top)
+            .ignoresSafeArea(.keyboard, edges: .bottom))
     }
 
     private static func composerRoot(_ content: AnyView) -> AnyView {
@@ -70,16 +77,25 @@ final class ChatKeyboardViewportController: UIViewController {
         addChild(host)
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(host.view)
+        conversationContainer.translatesAutoresizingMaskIntoConstraints = false
+        conversationContainer.backgroundColor = .clear
+        view.addSubview(conversationContainer)
+        conversationContainer.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: conversationContainer.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: conversationContainer.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: conversationContainer.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: conversationContainer.bottomAnchor)
+        ])
         // Undocked iPad keyboards should not collapse the whole conversation.
         // UIKit still tracks docked/split keyboards and their interactive motion.
         view.keyboardLayoutGuide.followsUndockedKeyboard = false
-        keyboardBottom = host.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
-        restingBottom = host.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        keyboardBottom = conversationContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        restingBottom = conversationContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            conversationContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            conversationContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            conversationContainer.topAnchor.constraint(equalTo: view.topAnchor),
             avoidsKeyboard ? keyboardBottom : restingBottom
         ])
         host.didMove(toParent: self)
@@ -103,39 +119,14 @@ final class ChatKeyboardViewportController: UIViewController {
         super.viewDidLayoutSubviews()
         host.view.layoutIfNeeded()
         composerHost.view.layoutIfNeeded()
-        applyFadeMask()
+        conversationContainer.updateMask()
     }
 
-    /// Dissolve the conversation under the header: a gradient mask on the
-    /// content host, transparent at the top and fully opaque at
-    /// fadeCompleteY. Applied here — in the one layout pass that is
-    /// guaranteed to run for the conversation's own container — so it
-    /// cannot land on another screen or silently never run.
-    private func applyFadeMask() {
-        let bounds = host.view.bounds
-        guard fadeCompleteY > 0, bounds.height > 0,
-              !UIAccessibility.isReduceTransparencyEnabled else {
-            if host.view.layer.mask === fadeMask { host.view.layer.mask = nil }
-            return
-        }
-        let band = min(1, fadeCompleteY / bounds.height)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fadeMask.frame = bounds
-        fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
-        fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
-        fadeMask.colors = [0.05, 0.30, 0.55, 1.0, 1.0].map {
-            UIColor.black.withAlphaComponent($0).cgColor
-        }
-        fadeMask.locations = [0, 0.45, 0.75, 1].map {
-            NSNumber(value: Double($0) * Double(band))
-        } + [NSNumber(value: 1.0)]
-        CATransaction.commit()
-        if host.view.layer.mask !== fadeMask { host.view.layer.mask = fadeMask }
-    }
-
-    func update(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0) {
-        self.fadeCompleteY = fadeCompleteY
+    func update(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
+                usesWindowHeaderFade: Bool = false) {
+        // Refresh even when keyboard avoidance did not change (e.g. rotation,
+        // navigation transition or a SwiftUI parameter update).
+        conversationContainer.configure(completeY: fadeCompleteY, usesWindowSafeArea: usesWindowHeaderFade)
         host.rootView = Self.root(content)
         composerHost.rootView = Self.composerRoot(composer)
         guard self.avoidsKeyboard != avoidsKeyboard else { return }
@@ -150,5 +141,81 @@ final class ChatKeyboardViewportController: UIViewController {
         (avoidsKeyboard ? keyboardBottom : restingBottom).isActive = true
         (avoidsKeyboard ? composerKeyboardBottom : composerRestingBottom).isActive = true
         view.setNeedsLayout()
+    }
+}
+
+/// Own the mask on a plain UIKit view. SwiftUI owns the hosting view's layer
+/// and may change its rendering state; it must not own this effect as well.
+final class ChatConversationFadeView: UIView {
+    private let fadeMask = CAGradientLayer()
+    private var completeY: CGFloat = 0
+    private var usesWindowSafeArea = false
+
+    func configure(completeY: CGFloat, usesWindowSafeArea: Bool) {
+        self.completeY = completeY
+        self.usesWindowSafeArea = usesWindowSafeArea
+        setNeedsLayout()
+        updateMask()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateMask()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateMask()
+    }
+
+    func updateMask() {
+        guard let window, bounds.height > 0,
+              !UIAccessibility.isReduceTransparencyEnabled else {
+            layer.mask = nil
+            return
+        }
+        let endInWindow = usesWindowSafeArea ? window.safeAreaInsets.top + 8 : completeY
+        // Window -> container conversion matters in navigation/split-view
+        // layouts. Never interpret a navbar's maxY as the status-bar inset.
+        let start = convert(CGPoint(x: 0, y: window.bounds.minY), from: window).y - bounds.minY
+        let end = convert(CGPoint(x: 0, y: endInWindow), from: window).y - bounds.minY
+        guard endInWindow > 0, end > 0, end > start else {
+            layer.mask = nil
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeMask.frame = bounds
+        fadeMask.startPoint = CGPoint(x: 0.5, y: start / bounds.height)
+        fadeMask.endPoint = CGPoint(x: 0.5, y: end / bounds.height)
+        fadeMask.colors = [0.0, 0.30, 0.55, 1.0].map {
+            UIColor.black.withAlphaComponent(CGFloat($0)).cgColor
+        }
+        fadeMask.locations = [0, 0.45, 0.75, 1]
+        layer.mask = fadeMask
+        CATransaction.commit()
+    }
+}
+
+/// Both children contribute their true bounds to the composer. An overlay on
+/// a 34pt (or zero-height) bar can draw a 65pt thumbnail outside the UIKit hit
+/// region. Keep the same bottom/trailing alignment without that overflow.
+struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
+    let showsStatus: Bool
+    let showsPreview: Bool
+    @ViewBuilder let status: () -> Status
+    @ViewBuilder let preview: () -> Preview
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            if showsStatus { status() }
+            if showsPreview { preview().padding(.trailing, 10) }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
