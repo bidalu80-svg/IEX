@@ -54,6 +54,47 @@ final class KeyboardViewportUITests: XCTestCase {
             app.terminate()
         }
     }
+    /// The header dissolve, exercised through the PRODUCTION
+    /// ChatKeyboardViewport with fadeCompleteY = 200 (production uses
+    /// 67; the taller band clears the simulator's status bar so the
+    /// gradient is sampleable — the mechanism under test is identical)
+    /// over a solid blue
+    /// content surface: below the band the blue must be fully opaque;
+    /// inside the band it must be dissolved toward the window
+    /// background (white in light mode, black in dark mode). This is
+    /// the check that was missing while the device stayed solid
+    /// through five "green" runs.
+    @MainActor
+    func testHeaderFade() {
+        let app = XCUIApplication(bundleIdentifier: "com.ze.keyboard-harness")
+        app.launchArguments = ["--fade"]
+        app.launch()
+        let field = app.textFields["composer"].exists ? app.textFields["composer"] : app.textViews["composer"]
+        XCTAssertTrue(field.waitForExistence(timeout: 15))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        save(app, "fade-band")
+        let image = app.screenshot().image
+        let below = Self.pixel(image, xFraction: 0.5, yPoints: 320)
+        XCTAssertGreaterThan(below.b, 200, "below the band the content must be opaque blue: \(below)")
+        XCTAssertLessThan(below.r, 80, "below the band the content must be opaque blue: \(below)")
+        let inside = Self.pixel(image, xFraction: 0.5, yPoints: 60)
+        XCTAssertTrue(inside.r > 120 || inside.b < 120,
+                      "inside the band the blue must be dissolved toward the background: \(inside)")
+        app.terminate()
+    }
+
+    private static func pixel(_ image: UIImage, xFraction: CGFloat, yPoints: CGFloat) -> (r: Int, g: Int, b: Int) {
+        let cg = image.cgImage!
+        let px = min(cg.width - 1, max(0, Int(xFraction * CGFloat(cg.width))))
+        let py = min(cg.height - 1, max(0, Int(yPoints * image.scale)))
+        var raw: [UInt8] = [0, 0, 0, 0]
+        let context = CGContext(data: &raw, width: 1, height: 1, bitsPerComponent: 8,
+                                bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(cg, in: CGRect(x: -px, y: -(cg.height - 1 - py), width: cg.width, height: cg.height))
+        return (Int(raw[0]), Int(raw[1]), Int(raw[2]))
+    }
+
     @MainActor private func save(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

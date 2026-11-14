@@ -2587,9 +2587,23 @@ private struct ToolStatusBar: View {
 
             Spacer(minLength: 1)
 
+            if trailingInset > 0 {
+                // The preview thumbnail is an overlay on this bar. Since
+                // the keyboard-viewport rework moved the composer into its
+                // own small hosting controller, taps on that overlay never
+                // land (1.1.4, with the composer in the full-screen host,
+                // was fine; the thumbnail's code never changed). This clear
+                // in-flow zone sits directly under the thumbnail and
+                // carries the same open action.
+                Color.clear
+                    .frame(width: max(0, trailingInset - 12))
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation { expanded = true } }
+            }
+
         }
         .padding(.leading, 12)
-        .padding(.trailing, trailingInset > 0 ? trailingInset : 12)
+        .padding(.trailing, 12)
         .padding(.vertical, 4)
         .frame(minHeight: 34)
         .frame(maxWidth: .infinity)

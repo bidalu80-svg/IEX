@@ -90,8 +90,10 @@ struct KeyboardFixture: View {
     @State private var avoidsKeyboard = true
     private var long: Bool { ProcessInfo.processInfo.arguments.contains("--long") }
     private var browse: Bool { ProcessInfo.processInfo.arguments.contains("--browse") }
+    private var fade: Bool { ProcessInfo.processInfo.arguments.contains("--fade") }
     var body: some View {
         ChatKeyboardViewport(content: AnyView(
+            fade ? AnyView(Color.blue) : AnyView(
             ZStack(alignment: .bottom) {
                 FixtureMessages(count: long ? 200 : 3, followsBottom: !browse)
             }
@@ -110,7 +112,7 @@ struct KeyboardFixture: View {
             .padding(12).background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 18))
             .background(KeyboardProbe())
             .padding(.horizontal, 12).padding(.bottom, 8)
-        ), avoidsKeyboard: avoidsKeyboard)
+        ), avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fade ? 200 : 0)
         .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 }

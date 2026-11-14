@@ -6,15 +6,15 @@ mkdir -p "$header_app" soul-header-evidence
 python3 scripts/prepare-soul-header.py "$header_work"
 cp "$header_work/sources.json" soul-header-evidence/
 xcodebuild -version > soul-header-evidence/toolchain.txt
-xcrun actool "$header_work/Assets.xcassets" --compile "$header_app" --platform iphonesimulator --minimum-deployment-target 26.0 --target-device iphone --output-partial-info-plist "$header_work/assets.plist" > soul-header-evidence/assets.log 2>&1
-xcrun --sdk iphonesimulator swiftc -parse-as-library -target "$(uname -m)-apple-ios26.0-simulator" -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$header_work/Header.swift" -o "$header_app/SoulHeaderHarness"
+xcrun actool "$header_work/Assets.xcassets" --compile "$header_app" --platform iphonesimulator --minimum-deployment-target 18.0 --target-device iphone --output-partial-info-plist "$header_work/assets.plist" > soul-header-evidence/assets.log 2>&1
+xcrun --sdk iphonesimulator swiftc -parse-as-library -target "$(uname -m)-apple-ios18.0-simulator" -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" "$header_work/Header.swift" -o "$header_app/SoulHeaderHarness"
 python3 - "$header_app/Info.plist" <<'PY'
 import plistlib,sys
 with open(sys.argv[1], 'wb') as f:
-    plistlib.dump(dict(CFBundleIdentifier='com.ze.soul-header-harness',CFBundleExecutable='SoulHeaderHarness',CFBundleName='SoulHeaderHarness',CFBundlePackageType='APPL',CFBundleVersion='1',CFBundleShortVersionString='1.0',MinimumOSVersion='26.0',UIDeviceFamily=[1],UILaunchScreen={},CFBundleDevelopmentRegion='zh-Hans'),f)
+    plistlib.dump(dict(CFBundleIdentifier='com.ze.soul-header-harness',CFBundleExecutable='SoulHeaderHarness',CFBundleName='SoulHeaderHarness',CFBundlePackageType='APPL',CFBundleVersion='1',CFBundleShortVersionString='1.0',MinimumOSVersion='18.0',UIDeviceFamily=[1],UILaunchScreen={},CFBundleDevelopmentRegion='zh-Hans'),f)
 PY
 codesign --force --sign - "$header_app"
-header_device=$(xcrun simctl list devices available --json | python3 -c 'import sys,json; d=json.load(sys.stdin); xs=[x for runtime,devices in d["devices"].items() if "iOS-26" in runtime for x in devices if x["name"].startswith("iPhone")]; print(next((x["udid"] for x in xs if x["state"]=="Booted"),xs[0]["udid"]))')
+header_device=$(xcrun simctl list devices available --json | python3 -c 'import sys,json; d=json.load(sys.stdin); xs=[x for runtime,devices in d["devices"].items() if "iOS-18" in runtime for x in devices if x["name"].startswith("iPhone")]; print(next((x["udid"] for x in xs if x["state"]=="Booted"),xs[0]["udid"]))')
 xcrun simctl boot "$header_device" || true
 xcrun simctl bootstatus "$header_device" -b
 xcrun simctl install "$header_device" "$header_app"

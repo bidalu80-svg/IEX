@@ -2186,12 +2186,17 @@ struct AIChatView: View {
             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
         ]).width) + 28
         let pillWidth = min(chatHeaderSize.width, max(128, measuredNameWidth))
+        let avatarDiscSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
         return VStack(spacing: 0) {
             Button {
                 inputFocused = false
                 showSoulSettings = true
             } label: {
-                SoulAvatarView(size: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize), fitsImage: true)
+                // The glyph at full size touches the glass disc's edge;
+                // render it at 76% inside the same disc frame so the disc
+                // (and its tap area) keep their size.
+                SoulAvatarView(size: avatarDiscSize * 0.76, fitsImage: true)
+                    .frame(width: avatarDiscSize, height: avatarDiscSize)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
