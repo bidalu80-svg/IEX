@@ -4965,10 +4965,15 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                                   reduceTransparency: reduceTransparency)
             // Dissolve the conversation itself under the header: mask the
             // visible controller's view with a gradient that is transparent
-            // at the top and fully opaque at the band's bottom (badge + 44).
+            // at the top and fully opaque at the band's bottom.
             // Visibility profile mirrors the old overlay's dissolve, inverted.
+            // Do NOT gate this on the view's direct superview: in
+            // production the chat controller sits deeper in the hierarchy
+            // than in the flat harness, and a superview === host test
+            // silently disabled the mask on device (no dissolve at all,
+            // device-verified 2026-11-14) while CI stayed green.
             if let contentView = navigation.visibleViewController?.view,
-               contentView !== host, contentView.superview === host {
+               contentView !== host {
                 if fadeMaskedView !== contentView {
                     fadeMaskedView?.layer.mask = nil
                     fadeMaskedView = contentView
