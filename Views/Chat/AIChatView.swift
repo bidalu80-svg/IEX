@@ -4945,7 +4945,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             } else {
                 badgeFrame = CGRect(x: barFrame.midX - 12, y: barBottom + 2, width: 24, height: 24)
             }
-            let overflow = badgeView == nil ? 0 : max(0, badgeFrame.maxY - barBottom) + 8
+            let overflow = badgeView == nil ? 0 : max(0, badgeFrame.maxY - barBottom) + 2
             if abs(reportedHeaderOverflow - overflow) > 0.5 {
                 reportedHeaderOverflow = overflow
                 DispatchQueue.main.async { [weak self] in self?.onHeaderOverflow?(overflow) }
