@@ -4945,7 +4945,12 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             } else {
                 badgeFrame = CGRect(x: barFrame.midX - 12, y: barBottom + 2, width: 24, height: 24)
             }
-            let overflow = badgeView == nil ? 0 : max(0, badgeFrame.maxY - barBottom) + 2
+            // Resting anchor: the first message should hug the badge's
+        // visible bottom (Dalu's annotated line, 2026-11-14). The frame
+        // carries ~13pt of dead space below the status row and the list's
+        // own first-cell spacing adds more, so report 8pt less than the
+        // frame overflow to land the first line on that line.
+        let overflow = badgeView == nil ? 0 : max(0, badgeFrame.maxY - barBottom - 8)
             if abs(reportedHeaderOverflow - overflow) > 0.5 {
                 reportedHeaderOverflow = overflow
                 DispatchQueue.main.async { [weak self] in self?.onHeaderOverflow?(overflow) }
