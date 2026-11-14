@@ -27,6 +27,9 @@ add = read("Views/Providers/AddProviderView.swift")
 copilot = add[add.index("struct GitHubCopilotIcon: View {"):]
 brand = read("Views/Providers/ProviderBrandIcon.swift")
 harness = read("scripts/ProviderChatChromeHarness.swift")
+# Header fade now belongs to the conversation, not the navbar marker.
+viewport = read("Views/Chat/ChatKeyboardViewport.swift")
+harness = viewport + "\n" + harness
 instances = read("Views/Providers/ProviderInstancesView.swift")
 instance_row = instances.split("private struct InstanceRow: View {", 1)[1].split("// MARK: - Shadow Voice Row", 1)[0]
 instance_row = "private struct InstanceRow: View {" + instance_row
