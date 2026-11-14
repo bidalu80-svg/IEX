@@ -7,6 +7,10 @@ on:
     branches: [ "**" ]
   workflow_dispatch:
     inputs:
+      keyboard_review_only:
+        description: 'Record production keyboard viewport without rebuilding the application'
+        type: boolean
+        default: false
       keyboard_only:
         description: 'Focused keyboard/cache checks, then full application compile and unsigned IPA'
         type: boolean
@@ -39,8 +43,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  keyboard-review:
+    if: ${{ inputs.keyboard_review_only == true }}
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production keyboard viewport
+        run: bash scripts/test-keyboard-viewport.sh
+      - name: Upload recording and checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyboard-viewport-review
+          path: keyboard-viewport-evidence/
+          retention-days: 7
+
   build:
-    if: ${{ inputs.animated_preview_only != true && inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
+    if: ${{ inputs.keyboard_review_only != true && inputs.animated_preview_only != true && inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
     name: Build Ze.app
     runs-on: macos-15
 
