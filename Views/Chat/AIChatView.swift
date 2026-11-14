@@ -524,7 +524,10 @@ struct AIChatView: View {
             ChatKeyboardViewport(
                 content: chatViewportContent,
                 composer: chatComposerContent,
-                avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript
+                avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript,
+                // Dissolve completes at the controls' top edge (~65pt from
+                // the screen top): the badge starts at barBottom - 44.
+                fadeCompleteY: max(0, topSafeAreaInset - 36)
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
@@ -4882,8 +4885,6 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var reportedHeaderOverflow: CGFloat = -1
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
-        private let fadeMask = CAGradientLayer()
-        private weak var fadeMaskedView: UIView?
 
         func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil) {
             self.headerSize = headerSize
@@ -4976,46 +4977,11 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
             frostedOverlay.layout(barBottom: barBottom,
                                   reduceTransparency: reduceTransparency)
-            // Dissolve the conversation itself under the header: mask the
-            // visible controller's view with a gradient that is transparent
-            // at the top and fully opaque at the band's bottom.
-            // Visibility profile mirrors the old overlay's dissolve, inverted.
-            // Do NOT gate this on the view's direct superview: in
-            // production the chat controller sits deeper in the hierarchy
-            // than in the flat harness, and a superview === host test
-            // silently disabled the mask on device (no dissolve at all,
-            // device-verified 2026-11-14) while CI stayed green.
-            if let contentView = navigation.visibleViewController?.view,
-               contentView !== host {
-                if fadeMaskedView !== contentView {
-                    fadeMaskedView?.layer.mask = nil
-                    fadeMaskedView = contentView
-                }
-                if reduceTransparency {
-                    contentView.layer.mask = nil
-                } else {
-                    let contentHeight = max(1, contentView.bounds.height)
-                    // Muse's dissolve is a SHORT band: measured from the
-                    // annotated reference, content is back at full strength
-                    // ~65pt from the screen top — right at the controls'
-                    // top edge (badge frame top + 8). Longer tails that run
-                    // under the pill do not match the reference.
-                    let band = min(1, (badgeFrame.minY + 8) / contentHeight)
-                    CATransaction.begin()
-                    CATransaction.setDisableActions(true)
-                    fadeMask.frame = contentView.bounds
-                    fadeMask.startPoint = CGPoint(x: 0.5, y: 0)
-                    fadeMask.endPoint = CGPoint(x: 0.5, y: 1)
-                    fadeMask.colors = [0.05, 0.30, 0.55, 1.0, 1.0].map {
-                        UIColor.black.withAlphaComponent($0).cgColor
-                    }
-                    fadeMask.locations = [0, 0.45, 0.75, 1].map {
-                        NSNumber(value: Double($0) * Double(band))
-                    } + [NSNumber(value: 1.0)]
-                    CATransaction.commit()
-                    if contentView.layer.mask !== fadeMask { contentView.layer.mask = fadeMask }
-                }
-            }
+            // The header dissolve is NOT applied here anymore: it lives on
+            // the conversation's own container (ChatKeyboardViewport's
+            // content host). Masking the nav stack's visible view
+            // controller from here dissolved whichever screen was on top —
+            // on device that was the model picker, not the conversation.
             if let badgeView {
                 if badgeView.superview !== host {
                     badgeView.removeFromSuperview()
@@ -5066,8 +5032,6 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         func restore() {
             badgeView?.removeFromSuperview()
             frostedOverlay.removeFromSuperview()
-            fadeMaskedView?.layer.mask = nil
-            fadeMaskedView = nil
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
             if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
