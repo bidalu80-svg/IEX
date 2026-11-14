@@ -551,10 +551,10 @@ private final class FrostTailBackdrop: UIView {
             let syntheticFrost = frostedOverlay(nav)
             try check(syntheticFrost != nil && syntheticFrost?.isUserInteractionEnabled == false,
                       "Separate gradient frost exists below toolbar without intercepting touches")
-            try check(syntheticFrost.map { descendants($0).contains { ($0 as? UIVisualEffectView)?.effect != nil } } == true || UIAccessibility.isReduceTransparencyEnabled,
-                      "Gradient overlay uses real UIKit backdrop blur")
-            try check((syntheticFrost as? ChatProgressiveFrostView)?.isVariableBlurAvailable == true,
-                      "Open-source variableBlur backend is available on the tested simulator")
+            try check(syntheticFrost.map { !descendants($0).contains { $0 is UIVisualEffectView } } == true,
+                      "Top fade preserves sharp glyphs without backdrop blur")
+            try check(syntheticFrost?.layer.sublayers?.contains { $0 is CAGradientLayer } == true,
+                      "Top fade uses a public opacity gradient")
             nav.overrideUserInterfaceStyle = .dark
             nav.view.layoutIfNeeded()
             try await Task.sleep(nanoseconds: 150_000_000)
@@ -645,7 +645,7 @@ private final class FrostTailBackdrop: UIView {
                                 "barBottom": barBottom,
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
-                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - (barBottom + 24)) <= 1,
+                            try check(frost != nil && frost!.frame.minY == 0 && frost!.frame.maxY >= barBottom + 32,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([

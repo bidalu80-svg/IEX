@@ -12,11 +12,15 @@ final class SoulHeaderUITests: XCTestCase {
             XCTAssertTrue(name.exists)
             XCTAssertEqual(avatar.frame.midX, app.frame.midX, accuracy: 3)
             XCTAssertEqual(name.frame.midX, app.frame.midX, accuracy: 3)
-            XCTAssertGreaterThan(name.frame.minY, avatar.frame.maxY)
-            XCTAssertLessThanOrEqual(name.frame.width, 180)
+            XCTAssertLessThanOrEqual(name.frame.minY, avatar.frame.maxY + 1)
+            XCTAssertGreaterThanOrEqual(name.frame.minY, avatar.frame.maxY - 10)
+            XCTAssertLessThanOrEqual(name.frame.width, 200)
+            if arguments != ["--long-name"] { XCTAssertGreaterThan(name.frame.width, 100) }
             XCTAssertLessThan(avatar.frame.maxX, app.buttons["fixture.phone"].frame.minX)
             save(app, "header-\(arguments.joined())")
-            app.scrollViews.firstMatch.swipeUp()
+            let scroll = app.scrollViews.firstMatch
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.1, thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)), withVelocity: .slow, thenHoldForDuration: 0.2)
             save(app, "scrolled-\(arguments.joined())")
             avatar.tap()
             let slider = app.sliders.firstMatch
@@ -33,7 +37,7 @@ final class SoulHeaderUITests: XCTestCase {
         }
     }
     @MainActor private func save(_ app: XCUIApplication, _ name: String) {
-        let a = XCTAttachment(screenshot: app.screenshot()); a.name = name
+        let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); a.name = name
         a.lifetime = .keepAlways; add(a)
     }
 }

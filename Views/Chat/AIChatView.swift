@@ -415,7 +415,7 @@ struct AIChatView: View {
     @State private var headerOverflowInset: CGFloat = {
         let stored = UserDefaults.standard.object(forKey: SoulAppearancePreferences.headerAvatarSizeKey) as? Double
             ?? SoulAppearancePreferences.defaultHeaderAvatarSize
-        return SoulAppearancePreferences.headerAvatarSize(stored) + 28
+        return SoulAppearancePreferences.headerAvatarSize(stored) + 20
     }()
     @State private var showSessionSkills = false
     @State private var showSessionMCPs = false
@@ -2079,9 +2079,10 @@ struct AIChatView: View {
 
     private var chatHeaderSize: CGSize {
         let width = chatViewportWidth > 0 ? chatViewportWidth : UIScreen.main.bounds.width
-        // Reserve the wider right capsule on BOTH sides of the centerline.
-        return CGSize(width: max(88, min(176, width - 216)),
-                      height: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize) + 64)
+        // The name sits BELOW the side controls, so it can use its own width.
+        // Only the circular avatar occupies the same vertical band as buttons.
+        return CGSize(width: max(140, min(200, width - 120)),
+                      height: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize) + 56)
     }
 
     private var chatNavPrincipalContent: some View {
@@ -2169,12 +2170,18 @@ struct AIChatView: View {
 
     private var titleView: some View {
         let providerName = navigationProvider?.label ?? "选择服务商"
+        let measuredNameWidth = ceil((providerName as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
+        ]).width) + 28
+        let pillWidth = min(chatHeaderSize.width, max(64, measuredNameWidth))
         return VStack(spacing: 0) {
             Button {
                 inputFocused = false
                 showSoulSettings = true
             } label: {
-                SoulAvatarView(size: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize))
+                SoulAvatarView(size: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize), fitsImage: true)
+                    .background(Color(uiColor: .systemBackground), in: Circle())
+                    .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("编辑灵魂：\(soulName)")
@@ -2189,12 +2196,14 @@ struct AIChatView: View {
 
             Button { showModelPicker = true } label: {
                 Text(providerName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(ChatColors.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .multilineTextAlignment(.center)
+                    .frame(width: pillWidth - 24)
                     .padding(.horizontal, 12)
-                    .frame(height: 30)
+                    .frame(height: 36)
             }
             .buttonStyle(.plain)
             .modifier(ChatNavigationGlassSurface())
@@ -2223,7 +2232,7 @@ struct AIChatView: View {
             }
             .accessibilityLabel("当前服务商：\(providerName)，选择模型")
             .accessibilityIdentifier("chat.providerName")
-            .padding(.top, 6)
+            .padding(.top, -8)
 
             navigationStatusCapsule
                 .padding(.top, 4)
@@ -4743,139 +4752,38 @@ private struct ChatNavigationGlassSurface: ViewModifier {
     }
 }
 
-// Adapted from nikstar/VariableBlur @ 5073a0d (MIT; see
-// docs/variable-blur-LICENSE.md). The gradient controls blur radius, not
-// transparency of a colored material. Keep dynamic private API use localized.
-private final class ChatProgressiveFrostView: UIVisualEffectView {
-    private var variableFilter: NSObject?
-    private weak var backdrop: CALayer?
-    private let fallbackMask = CAGradientLayer()
-    private let titleTint = CAGradientLayer()
-    private var lastStyle: UIUserInterfaceStyle = .unspecified
-    private var lastSize = CGSize.zero
-    private var lastBottom: CGFloat = -1
-    private var lastScale: CGFloat = 0
-    private var lastReduced: Bool?
-    var isVariableBlurAvailable: Bool { variableFilter != nil }
+/// A theme-colored opacity gradient fades the conversation without blurring
+/// its glyphs. Native glass is applied only to the individual controls.
+private final class ChatProgressiveFrostView: UIView {
+    private let fade = CAGradientLayer()
+    private var lastBottom: CGFloat = 0
 
-    init(frame: CGRect) {
-        super.init(effect: UIBlurEffect(style: .regular))
-        self.frame = frame
-        titleTint.startPoint = CGPoint(x: 0.5, y: 0)
-        titleTint.endPoint = CGPoint(x: 0.5, y: 1)
-        layer.addSublayer(titleTint)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         accessibilityIdentifier = "chat-progressive-frost"
-        let selector = NSSelectorFromString("filterWithType:")
-        if let factory = NSClassFromString("CAFilter") as? NSObject.Type,
-           factory.responds(to: selector),
-           let result = factory.perform(selector, with: "variableBlur"),
-           let filter = result.takeUnretainedValue() as? NSObject,
-           let backdrop = subviews.first?.layer {
-            filter.setValue(12.0, forKey: "inputRadius")
-            filter.setValue(true, forKey: "inputNormalizeEdges")
-            variableFilter = filter
-            self.backdrop = backdrop
-        }
+        fade.startPoint = CGPoint(x: 0.5, y: 0)
+        fade.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.addSublayer(fade)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if lastBottom >= 0 {
-            layout(barBottom: lastBottom, reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
-        }
-    }
-
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        // Upstream documents a crash when UIKit reapplies its material filters
-        // to a backdrop configured with variableBlur. This effect has no tint
-        // or theme-specific colors; only the fallback needs UIKit's callback.
-        if variableFilter == nil { super.traitCollectionDidChange(previousTraitCollection) }
-        if lastBottom >= 0 {
-            layout(barBottom: lastBottom, reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
-        }
+        super.traitCollectionDidChange(previousTraitCollection)
+        layout(barBottom: lastBottom, reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
     }
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
-        let scale = window?.screen.scale ?? traitCollection.displayScale
-        let style = traitCollection.userInterfaceStyle
-        guard bounds.size != lastSize || barBottom != lastBottom || scale != lastScale || lastReduced != reduceTransparency || lastStyle != style else { return }
-        lastStyle = style
-        lastSize = bounds.size
         lastBottom = barBottom
-        lastScale = scale
-        lastReduced = reduceTransparency
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        // Keep navigation labels legible over images. This tint ends inside
-        // the bar; the blur-only tail below it has no white/gray plate.
-        let tint = style == .dark ? UIColor.black : UIColor.white
+        let tint = traitCollection.userInterfaceStyle == .dark ? UIColor.black : UIColor.white
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        titleTint.frame = bounds
-        // Fade starts in the status-bar region. No near-opaque plateau over
-        // the controls and no heavy final strip below the provider badge.
-        titleTint.colors = [tint.withAlphaComponent(0.90).cgColor,
-                            tint.withAlphaComponent(0.56).cgColor,
-                            tint.withAlphaComponent(0.12).cgColor,
-                            tint.withAlphaComponent(0).cgColor]
-        titleTint.locations = [0,
-                               NSNumber(value: Double(max(0, barBottom - 44) / bounds.height)),
-                               NSNumber(value: Double(barBottom / bounds.height)),
-                               NSNumber(value: Double(min(bounds.height, barBottom + 32) / bounds.height))]
-        titleTint.isHidden = reduceTransparency
+        fade.frame = bounds
+        fade.colors = [0.98, 0.94, 0.68, 0.20, 0.0].map { tint.withAlphaComponent($0).cgColor }
+        fade.locations = [0, 0.22, 0.48, 0.76, 1]
         CATransaction.commit()
-        let fadeStart = max(0, barBottom - 68)
-        let fadeEnd = min(bounds.height, barBottom + 24)
-        if reduceTransparency {
-            backdrop?.filters = []
-            for view in subviews { view.alpha = 0 }
-            layer.mask = nil
-            backgroundColor = UIColor(ChatColors.background)
-            return
-        }
-        backgroundColor = .clear
-        if let variableFilter, let backdrop {
-            // Draw at display resolution so the clear edge stays smooth.
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = max(1, scale)
-            format.opaque = false
-            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: bounds.height), format: format)
-            let image = renderer.image { context in
-                let pixel = 1 / format.scale
-                var y: CGFloat = 0
-                while y < bounds.height {
-                    let t = min(1, max(0, (y - fadeStart) / max(1, fadeEnd - fadeStart)))
-                    let radius = (1 - t) * (1 - t) * (1 + 2 * t)
-                    context.cgContext.setFillColor(UIColor.black.withAlphaComponent(radius).cgColor)
-                    context.cgContext.fill(CGRect(x: 0, y: y, width: 2, height: pixel))
-                    y += pixel
-                }
-            }
-            if let mask = image.cgImage {
-                variableFilter.setValue(mask, forKey: "inputMaskImage")
-                backdrop.filters = [variableFilter]
-                backdrop.setValue(max(1, scale), forKey: "scale")
-                subviews.first?.alpha = 1
-                for view in subviews.dropFirst() { view.alpha = 0 }
-                layer.mask = nil
-                return
-            }
-        }
-        // An OS without variableBlur keeps a public UIKit material fallback.
-        for view in subviews { view.alpha = 1 }
-        fallbackMask.frame = bounds
-        fallbackMask.colors = [UIColor.black.cgColor, UIColor.black.cgColor,
-                               UIColor.black.withAlphaComponent(0.5).cgColor, UIColor.clear.cgColor,
-                               UIColor.clear.cgColor]
-        fallbackMask.locations = [0, NSNumber(value: Double(fadeStart / bounds.height)),
-                                  NSNumber(value: Double((fadeStart + fadeEnd) / 2 / bounds.height)),
-                                  NSNumber(value: Double(fadeEnd / bounds.height)), 1]
-        fallbackMask.startPoint = CGPoint(x: 0.5, y: 0)
-        fallbackMask.endPoint = CGPoint(x: 0.5, y: 1)
-        layer.mask = fallbackMask
     }
 }
 
@@ -4998,7 +4906,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             let barBottom = barFrame.maxY
             let badgeFrame: CGRect
             if let headerSize {
-                let width = min(headerSize.width, max(88, barFrame.width - 216))
+                let width = min(headerSize.width, max(140, barFrame.width - 120))
                 badgeFrame = CGRect(x: barFrame.midX - width / 2, y: barFrame.minY,
                                     width: width, height: headerSize.height)
             } else {

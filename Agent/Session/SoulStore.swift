@@ -571,6 +571,7 @@ enum SoulAvatarStore {
 @MainActor
 struct SoulAvatarView: View {
     var size: CGFloat = 24
+    var fitsImage: Bool = false
     @State private var emoji: String = SoulStore.cachedMetadata.emoji
     @State private var image: UIImage? = SoulAvatarStore.load()
 
@@ -579,7 +580,7 @@ struct SoulAvatarView: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: fitsImage ? .fit : .fill)
                     .clipShape(Circle())
                     .accessibilityLabel(String(localized: "Custom assistant image"))
             } else {

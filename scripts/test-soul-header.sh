@@ -31,15 +31,9 @@ for t in targets:
     t['UITargetAppBundleIdentifier']='com.ze.soul-header-harness'
 (products/'SoulHeader.xctestrun').write_bytes(plistlib.dumps(d))
 PY
-xcrun simctl io "$header_device" recordVideo --codec=h264 --force "$PWD/soul-header-evidence/header.mp4" > soul-header-evidence/recording.log 2>&1 &
-header_recorder=$!
-trap 'kill -INT "$header_recorder" 2>/dev/null || true' EXIT
 set +e
 xcodebuild test-without-building -xctestrun "$header_work/DerivedData/Build/Products/SoulHeader.xctestrun" -destination "platform=iOS Simulator,id=$header_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -disable-concurrent-destination-testing -resultBundlePath soul-header-evidence/SoulHeader.xcresult -test-timeouts-enabled YES -default-test-execution-time-allowance 180 > soul-header-evidence/test.log 2>&1
 header_result=$?
-kill -INT "$header_recorder" 2>/dev/null || true
-wait "$header_recorder" || true
-trap - EXIT
 set -e
 cat soul-header-evidence/test.log
 xcrun xcresulttool export attachments --path soul-header-evidence/SoulHeader.xcresult --output-path soul-header-evidence/screenshots || true
