@@ -92,18 +92,24 @@ struct KeyboardFixture: View {
     private var browse: Bool { ProcessInfo.processInfo.arguments.contains("--browse") }
     private var fade: Bool { ProcessInfo.processInfo.arguments.contains("--fade") }
     var body: some View {
-        ChatKeyboardViewport(content: AnyView(
-            fade ? AnyView(Color.blue) : AnyView(
-            ZStack(alignment: .bottom) {
-                FixtureMessages(count: long ? 200 : 3, followsBottom: !browse)
-            }
-            .overlay(alignment: .top) {
-                HStack {
-                    Button("Dismiss") { focused = false }.accessibilityIdentifier("dismiss")
-                    Button("Voice mode") { focused = false; avoidsKeyboard.toggle() }.accessibilityIdentifier("voice")
-                }.padding(10).background(.regularMaterial)
-            }
-        ), composer: AnyView(
+        // Precompute the content view: nesting the ternary inside the
+        // representable's AnyView(...) once produced an unbalanced call
+        // that failed the harness compile in 14s and — via the step's
+        // continue-on-error — still showed green. Keep it flat.
+        let content: AnyView = fade
+            ? AnyView(Color.blue)
+            : AnyView(
+                ZStack(alignment: .bottom) {
+                    FixtureMessages(count: long ? 200 : 3, followsBottom: !browse)
+                }
+                .overlay(alignment: .top) {
+                    HStack {
+                        Button("Dismiss") { focused = false }.accessibilityIdentifier("dismiss")
+                        Button("Voice mode") { focused = false; avoidsKeyboard.toggle() }.accessibilityIdentifier("voice")
+                    }.padding(10).background(.regularMaterial)
+                }
+            )
+        return ChatKeyboardViewport(content: content, composer: AnyView(
             HStack {
                 TextField("Message", text: $text, axis: .vertical)
                     .lineLimit(1...4).focused($focused).accessibilityIdentifier("composer")
