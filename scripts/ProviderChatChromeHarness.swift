@@ -553,8 +553,15 @@ private final class FrostTailBackdrop: UIView {
                       "Separate gradient frost exists below toolbar without intercepting touches")
             try check(syntheticFrost.map { !descendants($0).contains { $0 is UIVisualEffectView } } == true,
                       "Top fade preserves sharp glyphs without backdrop blur")
-            try check(syntheticFrost?.layer.sublayers?.contains { $0 is CAGradientLayer } == true,
-                      "Top fade uses a public opacity gradient")
+            let conversationFade = ChatConversationFadeView(frame: owner.view.bounds)
+            owner.view.addSubview(conversationFade)
+            conversationFade.configure(completeY: 0, usesWindowSafeArea: true)
+            conversationFade.layoutIfNeeded()
+            try check(conversationFade.layer.mask is CAGradientLayer,
+                      "Conversation container owns a public opacity gradient")
+            try check(syntheticFrost?.layer.mask == nil,
+                      "Navigation marker does not mask unrelated pushed pages")
+            conversationFade.removeFromSuperview()
             nav.overrideUserInterfaceStyle = .dark
             nav.view.layoutIfNeeded()
             try await Task.sleep(nanoseconds: 150_000_000)
