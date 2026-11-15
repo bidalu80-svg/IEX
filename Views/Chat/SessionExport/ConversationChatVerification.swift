@@ -71,12 +71,29 @@ import Darwin
             }
             return result
         }
+        // A hosting view's immediate next responder can be SwiftUI's event
+        // bridge rather than its controller. Resolve ownership through UIKit
+        // containment and exact view identity, never through that cast. A host
+        // with no parent (or the wrong parent) still fails the assertion below.
+        let root = window.rootViewController
+        let badgeController = root?.children.first { $0.viewIfLoaded === badge }
+        var badgeResponderPath: [String] = []
+        var responder: UIResponder? = badge.next
+        while let current = responder {
+            badgeResponderPath.append(String(describing: type(of: current)))
+            responder = current.next
+        }
         func probe(_ name: String, at point: CGPoint, within expected: UIView) throws {
             let hit = window.hitTest(point, with: nil)
             headerHitDiagnostics.append([
                 "phase": phase, "control": name, "point": [point.x, point.y],
                 "hitPath": path(hit), "badgePath": path(badge), "barPath": path(bar),
-                "badgeControllerParent": (badge.next as? UIViewController)?.parent
+                "badgeSuperviewIsRootView": badge.superview === root?.view,
+                "badgeResponderPath": badgeResponderPath,
+                "badgeImmediateResponderControllerParent": (badge.next as? UIViewController)?.parent
+                    .map { String(describing: type(of: $0)) } ?? "nil",
+                "badgeController": badgeController.map { String(describing: type(of: $0)) } ?? "nil",
+                "badgeControllerParent": badgeController?.parent
                     .map { String(describing: type(of: $0)) } ?? "nil"
             ])
             // Write before asserting so an intercepted touch identifies its exact
@@ -110,7 +127,7 @@ import Darwin
                         "\(phase): header preserves \(name)'s native hit target")
         }
         try require(badge.superview === window.rootViewController?.view
-                    && (badge.next as? UIViewController)?.parent === window.rootViewController,
+                    && badgeController?.parent === window.rootViewController,
                     "\(phase): header view and controller stay under the window root")
         try require(ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar),
                     "\(phase): chat bar passthrough is active for the root-hosted header")
