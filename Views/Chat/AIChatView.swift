@@ -412,6 +412,7 @@ struct AIChatView: View {
     @State private var hasInjectedShareContent = false
     @State private var showModelPicker = false
     @State private var showSoulSettings = false
+    @State private var headerActivityText: String? = nil
     @State private var avatarCelebration: Date? = nil
     @AppStorage(SoulAppearancePreferences.headerAvatarSizeKey)
     private var headerAvatarSize = SoulAppearancePreferences.defaultHeaderAvatarSize
@@ -2094,7 +2095,7 @@ struct AIChatView: View {
         // The name sits BELOW the side controls, so it can use its own width.
         // Only the circular avatar occupies the same vertical band as buttons.
         return CGSize(width: max(140, min(200, width - 120)),
-                      height: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize) + 56)
+                      height: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize) + 56 + (headerActivityText == nil ? 0 : 18))
     }
 
     private var chatNavPrincipalContent: some View {
@@ -2182,9 +2183,14 @@ struct AIChatView: View {
 
     private var titleView: some View {
         let providerName = navigationProvider?.label ?? "选择服务商"
-        let measuredNameWidth = ceil((providerName as NSString).size(withAttributes: [
+        let heading = headerActivityText == nil ? providerName : soulName
+        let headingWidth = ceil((heading as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
-        ]).width) + 28
+        ]).width)
+        let statusWidth = headerActivityText.map { ceil(($0 as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: 12)
+        ]).width) } ?? 0
+        let measuredNameWidth = max(headingWidth, statusWidth) + 28
         let pillWidth = min(chatHeaderSize.width, measuredNameWidth)
         let avatarDiscSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
         return VStack(spacing: 0) {
@@ -2210,15 +2216,12 @@ struct AIChatView: View {
             }
 
             Button { showModelPicker = true } label: {
-                Text(providerName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ChatColors.primaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .multilineTextAlignment(.center)
+                SoulHeaderActivityText(vm: vm, assistantName: soulName, providerName: providerName) { text in
+                    headerActivityText = text
+                }
                     .frame(width: pillWidth - 24)
                     .padding(.horizontal, 12)
-                    .frame(height: 36)
+                    .frame(height: headerActivityText == nil ? 36 : 54)
             }
             .buttonStyle(ChatHeaderButtonStyle())
             .modifier(ChatNavigationGlassSurface())

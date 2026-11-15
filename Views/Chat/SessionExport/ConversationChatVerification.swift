@@ -813,6 +813,14 @@ import Darwin
                 try require(window.bounds.contains(frame), "Avatar stays inside viewport: \(state) \(theme)")
                 observations.append(["state": state, "theme": theme, "asset": view.selectedAsset,
                                      "time": view.playbackTime, "frame": rectData(frame)])
+                let expectedStatus = ["idle": "idle", "thinking": "思考中", "speaking": "正在回复",
+                                      "awaiting": "思考中", "working": "子任务执行中"][state]!
+                try await waitFor("header activity \(state) \(theme)") {
+                    descendants(window).contains {
+                        $0.accessibilityIdentifier == "chat.soulStatus" && $0.accessibilityValue == expectedStatus
+                    }
+                }
+                try require(true, "Actual header text follows \(state): \(theme)")
                 try capture("avatar-\(theme)-\(state).png", window: window)
                 await settle(0.4)
             }
@@ -861,7 +869,45 @@ import Darwin
             try require(zip(lenses, counts).allSatisfy { $0.0.renderedFrameCount > $0.1 },
                         "Every legacy lens actually submits new Metal frames")
         }
+        try await verifyHeaderToolActivity(window: window, vm: vm, reply: reply)
         try await verifyAvatarMemory(window: window, vm: vm, reply: reply)
+    }
+
+    private static func verifyHeaderToolActivity(window: UIWindow, vm: AIChatViewModel, reply: ChatMessage) async throws {
+        func status() -> String? {
+            descendants(window).first { $0.accessibilityIdentifier == "chat.soulStatus" }?.accessibilityValue
+        }
+        vm.isProcessing = true
+        reply.isAwaitingModelResponse = false
+        for theme: UIUserInterfaceStyle in [.light, .dark] {
+            window.overrideUserInterfaceStyle = theme
+            let tool = AssistantBlock(kind: .shellTool(command: "scheduled_task_set_enabled"), content: "", toolStatus: .running)
+            reply.blocks = [tool]
+            try await waitFor("live scheduled task label") { status() == "更新定时任务" }
+            // Hold a real running block across content updates; text must not
+            // show raw tool output or alternate with thinking between tokens.
+            for _ in 0..<4 {
+                tool.content += "private execution output"
+                await settle(0.1)
+                try require(status() == "更新定时任务", "Running tool output leaves the header label unchanged")
+            }
+            try capture("status-\(theme == .dark ? "dark" : "light")-tool.png", window: window)
+            tool.toolStatus = .success
+            let question = AssistantBlock(kind: .memoryTool(action: "ask_user"), content: "", toolStatus: .running)
+            question.questionCard = QuestionCardState(requestId: "status-verification", title: "确认下一步",
+                                                       questions: [], timeoutAt: Date().addingTimeInterval(60))
+            reply.blocks = [question]
+            try await waitFor("actual pending user input label") { status() == "等待你的回复" }
+            question.toolStatus = .success
+            reply.isAwaitingModelResponse = true
+            try await waitFor("model followup is not a user confirmation") { status() == "思考中" }
+            vm.isProcessing = false
+            try await waitFor("completed work restores provider title") { status() == "idle" }
+            try require(true, "Completed tool and user-input states restore the provider name")
+            vm.isProcessing = true
+        }
+        reply.blocks = []
+        reply.isAwaitingModelResponse = false
     }
 
     /// Compare the actual header over the scrolled conversation with only lens

@@ -635,6 +635,43 @@ enum SoulAvatarMotion: String, CaseIterable {
     }
 }
 
+// Read-only presentation policy. Model-followup waiting is not user approval.
+enum SoulHeaderActivity {
+    static func resolve(processing: Bool, streamingText: Bool, awaitingResponse: Bool,
+                        childCount: Int, toolName: String?, waitingForUser: Bool,
+                        failed: Bool = false) -> String? {
+        guard processing || childCount > 0 else { return nil }
+        if waitingForUser { return "等待你的回复" }
+        if childCount > 0 { return childCount == 1 ? "子任务执行中" : "子任务执行中（\(childCount) 个）" }
+        if let toolName { return toolLabel(toolName) }
+        if failed { return "处理遇到问题" }
+        return streamingText && !awaitingResponse ? "正在回复" : "思考中"
+    }
+
+    static func toolLabel(_ name: String) -> String {
+        switch name {
+        case "scheduled_task_create", "scheduled_task_set_enabled", "scheduled_task_delete": return "更新定时任务"
+        case "scheduled_task_list": return "查看定时任务"
+        case "shell_execute": return "执行命令"
+        case "file_read", "remote_sftp_read": return "读取文件"
+        case "file_write", "remote_sftp_write": return "写入文件"
+        case "file_edit": return "修改文件"
+        case "browser_use": return "浏览网页"
+        case "web_search", "search": return "搜索资料"
+        case "read_image": return "查看图片"
+        case "memory_get": return "读取记忆"
+        case "memory_write": return "更新记忆"
+        case "ask_user": return "等待你的回复"
+        case "spawn_agent", "send_input", "wait_agent", "resume_agent", "close_agent": return "协调子任务"
+        case "session_list": return "查看会话"
+        case "session_delete": return "整理会话"
+        case "remote_server_command": return "执行远程任务"
+        case "remote_server_list", "remote_sftp_list": return "查看远程资源"
+        default: return "处理中"
+        }
+    }
+}
+
 @MainActor
 struct SoulHeaderAvatar: View {
     @ObservedObject var vm: AIChatViewModel
@@ -889,5 +926,158 @@ struct SoulHeaderAvatar: View {
         outgoing = nil
         current?.dispose()
         current = nil
+    }
+}
+
+// MARK: - Event-driven header activity text
+
+@MainActor final class SoulHeaderActivityModel: ObservableObject {
+    @Published private(set) var text: String?
+    private weak var vm: AIChatViewModel?
+    private var subscriptions: [AnyCancellable] = []
+    private var messageSubscriptions: [AnyCancellable] = []
+    private var blockSubscriptions: [AnyCancellable] = []
+    private var messageID: UUID?
+    private var blockIDs: [UUID] = []
+    private var scheduled = false
+
+    func connect(_ vm: AIChatViewModel) {
+        guard self.vm !== vm else { return }
+        disconnect()
+        self.vm = vm
+        subscriptions = [
+            vm.objectWillChange.sink { [weak self] _ in self?.schedule() },
+            ZeSubAgentCoordinator.shared.objectWillChange.sink { [weak self] _ in self?.schedule() }
+        ]
+        schedule()
+    }
+
+    func disconnect() {
+        subscriptions.removeAll()
+        messageSubscriptions.removeAll()
+        blockSubscriptions.removeAll()
+        vm = nil
+        messageID = nil
+        blockIDs = []
+    }
+
+    private func schedule() {
+        guard !scheduled else { return }
+        scheduled = true
+        // Coalesce mutations from the same tool event. This is one queued
+        // update, not a polling timer; no intermediate thinking flash per event.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scheduled = false
+            self.refresh()
+        }
+    }
+
+    private func refresh() {
+        guard let vm else { return }
+        let last = vm.messages.last(where: { !$0.isQueued && !$0.isCompactedHistory })
+        let reply = last?.role == .assistant ? last : nil
+        if messageID != reply?.id {
+            messageID = reply?.id
+            messageSubscriptions = reply.map { message in
+                [message.objectWillChange.sink { [weak self] _ in self?.schedule() }]
+            } ?? []
+        }
+        let blocks = reply?.blocks ?? []
+        if blockIDs != blocks.map(\.id) {
+            blockIDs = blocks.map(\.id)
+            blockSubscriptions = blocks.map { block in
+                block.objectWillChange.sink { [weak self] _ in self?.schedule() }
+            }
+        }
+        let running = blocks.last { block in
+            switch block.toolStatus {
+            case .running?, .streaming?: return true
+            default: return false
+            }
+        }
+        let waiting = blocks.contains {
+            $0.kind.isQuestionCardTool && $0.questionCard?.status == .pending && $0.toolStatus == .running
+        }
+        let root = vm.workspaceSessionId ?? vm.sessionId
+        let count = root.map { ZeSubAgentCoordinator.shared.activeCount(for: $0) } ?? 0
+        let tail = blocks.last
+        let failed: Bool
+        if case .failed? = tail?.toolStatus { failed = true } else { failed = reply?.error != nil }
+        let next = SoulHeaderActivity.resolve(processing: vm.isProcessing,
+            streamingText: tail?.kind == .text && !(tail?.content.isEmpty ?? true),
+            awaitingResponse: reply?.isAwaitingModelResponse ?? false,
+            childCount: count, toolName: running.map(Self.toolName),
+            waitingForUser: waiting, failed: failed)
+        // Token/output updates never publish an unchanged label to SwiftUI.
+        if next != text { text = next }
+    }
+
+    private static func toolName(_ block: AssistantBlock) -> String {
+        switch block.kind {
+        case .shellTool(let command):
+            // Non-shell tools use their canonical name in this legacy enum.
+            return SoulHeaderActivity.toolLabel(command) != "处理中" ? command : "shell_execute"
+        case .fileReadTool: return "file_read"
+        case .fileWriteTool: return "file_write"
+        case .fileEditTool: return "file_edit"
+        case .browserTool: return "browser_use"
+        case .readImageTool: return "read_image"
+        case .memoryTool(let action): return action
+        default: return ""
+        }
+    }
+}
+
+/// Ordinary SwiftUI text inside the existing identity block; no extra hosting
+/// controller, rendering loop, timer, or third glass surface is created.
+@MainActor struct SoulHeaderActivityText: View {
+    let vm: AIChatViewModel
+    let assistantName: String
+    let providerName: String
+    let onActivityChange: (String?) -> Void
+    @StateObject private var activity = SoulHeaderActivityModel()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(activity.text == nil ? providerName : assistantName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            if let text = activity.text {
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityIdentifier("chat.soulStatus.text")
+                    .transition(.opacity)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: activity.text)
+        .background(SoulHeaderActivityProbe(text: activity.text))
+        .onAppear { activity.connect(vm) }
+        .onDisappear { activity.disconnect() }
+        .onChange(of: activity.text) { onActivityChange($0) }
+    }
+}
+
+private struct SoulHeaderActivityProbe: UIViewRepresentable {
+    let text: String?
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+            view.accessibilityIdentifier = "chat.soulStatus"
+            view.accessibilityValue = text ?? "idle"
+        }
+        #endif
     }
 }
