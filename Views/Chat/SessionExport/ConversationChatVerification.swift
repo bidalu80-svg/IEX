@@ -172,7 +172,10 @@ import UIKit
     }
 
     private static func marker(_ identifier: String, in window: UIWindow) -> UIView? {
-        descendants(window).first { $0.accessibilityIdentifier == identifier && isVisible($0, in: window) }
+        descendants(window).first {
+            ($0.accessibilityIdentifier == identifier || ($0 as? ChatLayoutGeometryUIView)?.layoutRole == identifier)
+                && isVisible($0, in: window)
+        }
     }
 
     private static func rectData(_ rect: CGRect) -> [String: CGFloat] {
@@ -556,7 +559,14 @@ import UIKit
             try checkpoint("complete")
             try writeResult(success: true, error: nil)
         } catch {
-            if let window = appWindow { try? capture("failure.png", window: window) }
+            if let window = appWindow {
+                try? capture("failure.png", window: window)
+                let failed = UILabel(frame: CGRect(x: 0, y: window.bounds.height - 2, width: 2, height: 2))
+                failed.text = "."
+                failed.accessibilityIdentifier = "chat.layout.failed"
+                failed.isAccessibilityElement = true
+                window.addSubview(failed)
+            }
             try? writeResult(success: false, error: error.localizedDescription)
         }
     }
@@ -597,6 +607,13 @@ import UIKit
                     if keyboard { vm.requestComposerFocusSignal.send() }
                     else { window.endEditing(true) }
                     await settle(0.9)
+                    let probes = descendants(window).compactMap { $0 as? ChatLayoutGeometryUIView }
+                    let probeData = probes.map { ["role": $0.layoutRole, "accessibility": $0.accessibilityIdentifier ?? "", "frame": NSCoder.string(for: $0.convert($0.bounds, to: window))] }
+                    try JSONSerialization.data(withJSONObject: probeData, options: [.prettyPrinted, .sortedKeys])
+                        .write(to: directory.appendingPathComponent("layout-probes.json"), options: .atomic)
+                    try await waitFor("attachment, preview and input layout probes", timeout: 5) {
+                        ["chat.verify.attachments", "chat.verify.preview", "chat.verify.input"].allSatisfy { marker($0, in: window) != nil }
+                    }
                     let name = "layout-status\(showStatus)-attachments\(count)-keyboard\(keyboard)"
                     try capture(name + ".png", window: window)
                     guard let tray = marker("chat.verify.attachments", in: window),
@@ -611,7 +628,13 @@ import UIKit
                     records.append(["name": name, "attachment": rectData(a), "preview": rectData(b), "input": rectData(c)])
                     try JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
                         .write(to: directory.appendingPathComponent("accessory-geometry.json"), options: .atomic)
-                    try require(abs(a.maxY - b.maxY) < 2, "Attachment and preview share bottom edge: \(name)")
+                    let statusRect = marker("chat.verify.status", in: window).map { $0.convert($0.bounds, to: window) }
+                    if showStatus, let statusRect {
+                        try require(abs(b.maxY - statusRect.maxY) < 2, "Preview bottom aligns with status bottom: \(name)")
+                        try require(abs(a.maxY - statusRect.minY) < 2, "Attachments sit immediately above status: \(name)")
+                    } else {
+                        try require(abs(a.maxY - b.maxY) < 2, "Without status, attachment and preview share bottom edge: \(name)")
+                    }
                     try require(a.maxX <= b.minX + 1, "Attachment grid reserves preview width: \(name)")
                     try require(c.minY >= a.maxY - 1 && c.minY - a.maxY < (showStatus ? 60 : 12), "No empty preview-height row above composer: \(name)")
                     if showStatus, let status = marker("chat.verify.status", in: window) {
@@ -669,7 +692,7 @@ import UIKit
             let label = dark ? "dark" : "light"
             try capture("actual-header-\(label)-scrolled.png", window: window)
             let x = window.bounds.width * 0.72
-            let y = barRect.maxY + 8
+            let y = barRect.midY - 8
             let before = pixel(unfaded, point: CGPoint(x: x, y: y))
             let after = pixel(faded, point: CGPoint(x: x, y: y))
             let distance: ([CGFloat]) -> CGFloat = { $0.reduce(0) { $0 + abs($1 - (dark ? 0 : 1)) } }
@@ -680,7 +703,12 @@ import UIKit
                 .write(to: directory.appendingPathComponent("actual-header-pixels.json"), options: .atomic)
             try require(base > 0.06, "Real message bubble reaches the header sampling point: \(label)")
             try require(actual < base * 0.85 && actual > base * 0.015,
-                        "Real bubble is partially faded, neither unchanged nor solid-covered: \(label)")
+                        "Real bubble partially fades above the control centerline: \(label)")
+            let belowPoint = CGPoint(x: x, y: barRect.midY + 10)
+            let beforeBelow = pixel(unfaded, point: belowPoint)
+            let afterBelow = pixel(faded, point: belowPoint)
+            try require(zip(beforeBelow, afterBelow).allSatisfy { abs($0 - $1) < 0.025 },
+                        "Below the red line the actual message is unchanged: \(label)")
         }
         // Leave the actual attachment+preview combination for external XCTest
         // taps, rather than exercising copied label/rectangle substitutes.

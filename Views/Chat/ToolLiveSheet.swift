@@ -302,7 +302,7 @@ struct FloatingToolBar: View {
                 displayedIdx: displayedIdx,
                 expanded: $expanded,
                 selectedIdx: $selectedIdx,
-                trailingInset: toolPreviewEnabled && attachmentTray == nil ? Self.thumbnailWidth + 18 : 0
+                trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
             )
             .background(ChatAccessoryGeometryMarker(identifier: "chat.verify.status"))
         } preview: {

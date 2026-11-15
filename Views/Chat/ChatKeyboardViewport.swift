@@ -212,12 +212,15 @@ struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
 
     var body: some View {
         if let attachments {
-            VStack(spacing: 0) {
-                HStack(alignment: .bottom, spacing: 8) {
-                    attachments.frame(maxWidth: .infinity)
-                    if showsPreview { preview().padding(.trailing, 10) }
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 0) {
+                    // Reserve the card's horizontal lane, not an extra row.
+                    attachments.padding(.trailing, showsPreview ? 118 : 0)
+                    if showsStatus { status().fixedSize(horizontal: false, vertical: true) }
                 }
-                if showsStatus { status().fixedSize(horizontal: false, vertical: true) }
+                // Match the original toolbar: the card and status share their
+                // BOTTOM edge. Its upper part rises beside the attachments.
+                if showsPreview { preview().padding(.trailing, 10) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
@@ -237,14 +240,20 @@ struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
     }
 }
 
+/// Keep probe identity independent of SwiftUI's accessibility propagation.
+final class ChatLayoutGeometryUIView: UIView {
+    var layoutRole = ""
+}
+
 /// Geometry-only marker for full-application regression capture.
 struct ChatAccessoryGeometryMarker: UIViewRepresentable {
     let identifier: String
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = ChatLayoutGeometryUIView()
         view.isUserInteractionEnabled = false
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only") {
+            view.layoutRole = identifier
             view.accessibilityIdentifier = identifier
         }
         #endif

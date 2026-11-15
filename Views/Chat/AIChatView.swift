@@ -4840,10 +4840,9 @@ private final class ChatProgressiveFrostView: UIView {
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         lastBottom = barBottom
         guard window != nil, superview != nil else { return }
-        // The navigation controls and avatar are separate siblings ABOVE us.
-        // Fade the transcript through their band without fading the controls.
-        // Ending at safeArea.top + 8 only paints the status bar, leaving the
-        // actual message clipping edge completely uncovered.
+        // The frame ends at the native navigation controls' centerline.
+        // Only scrolling content ABOVE that line fades. The controls and
+        // avatar are separate siblings, so their own opacity is unchanged.
         let height = max(1, bounds.height)
         let color = UIColor.systemBackground.resolvedColor(with: traitCollection)
         CATransaction.begin()
@@ -4997,7 +4996,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 reportedTopInset = barBottom
                 DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
             }
-            let height = max(1, max(barBottom + 32, badgeView == nil ? 0 : badgeFrame.maxY + 12))
+            // The reference red line crosses the toolbar icons' centers;
+            // neither avatar size nor the provider capsule moves this boundary.
+            let height = max(1, barFrame.midY)
             let nextFrame = CGRect(x: barFrame.minX, y: 0, width: barFrame.width, height: height)
             if lastFrostFrame != nextFrame {
                 lastFrostFrame = nextFrame
@@ -5241,11 +5242,13 @@ private struct NavTitleKey: Equatable {
 private struct ChatCallLayoutMarker: UIViewRepresentable {
     let identifier: String
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = ChatLayoutGeometryUIView()
         view.isUserInteractionEnabled = false
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+            view.layoutRole = identifier
             view.accessibilityIdentifier = identifier
+            view.isAccessibilityElement = identifier == "chat.verify.attachments"
         }
         #endif
         return view

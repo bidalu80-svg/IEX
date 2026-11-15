@@ -557,9 +557,9 @@ private final class FrostTailBackdrop: UIView {
             try check(headerGradient != nil, "Real navigation overlay owns the header gradient")
             if let frost = syntheticFrost, let gradient = headerGradient, let window = frost.window {
                 let bottom = frost.convert(CGPoint(x: 0, y: gradient.frame.maxY), to: window).y
-                let navigationBottom = nav.navigationBar.convert(nav.navigationBar.bounds, to: window).maxY
-                try check(bottom > navigationBottom + 20,
-                          "Fade extends through the navigation band into scrolling content")
+                let navigationCenter = nav.navigationBar.convert(nav.navigationBar.bounds, to: window).midY
+                try check(abs(bottom - navigationCenter) < 1,
+                          "Fade ends at the toolbar control centerline, above the provider capsule")
                 let colors = (gradient.colors as? [CGColor]) ?? []
                 try check(colors.first?.alpha == 1 && colors.last?.alpha == 0,
                           "Top is covered and component boundary is fully clear")
@@ -656,7 +656,7 @@ private final class FrostTailBackdrop: UIView {
                                 "barBottom": barBottom,
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
-                            try check(frost != nil && frost!.frame.minY == 0 && frost!.frame.maxY >= barBottom + 32,
+                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - navigation.navigationBar.convert(navigation.navigationBar.bounds, to: frost!.superview).midY) < 1,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([

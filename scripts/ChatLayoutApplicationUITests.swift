@@ -13,7 +13,11 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         }
         app.launch()
         let ready = app.staticTexts["chat.layout.ready"]
-        let complete = ready.waitForExistence(timeout: 210)
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            ready.exists || app.staticTexts["chat.layout.failed"].exists
+        }, object: nil)
+        let completedWait = XCTWaiter.wait(for: [finished], timeout: 210) == .completed
+        let complete = completedWait && ready.exists
         let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screen.name = "complete-app-layout-result"
         screen.lifetime = .keepAlways
