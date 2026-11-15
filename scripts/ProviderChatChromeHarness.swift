@@ -553,15 +553,18 @@ private final class FrostTailBackdrop: UIView {
                       "Separate gradient frost exists below toolbar without intercepting touches")
             try check(syntheticFrost.map { !descendants($0).contains { $0 is UIVisualEffectView } } == true,
                       "Top fade preserves sharp glyphs without backdrop blur")
-            let conversationFade = ChatConversationFadeView(frame: owner.view.bounds)
-            owner.view.addSubview(conversationFade)
-            conversationFade.configure(completeY: 0, usesWindowSafeArea: true)
-            conversationFade.layoutIfNeeded()
-            try check(conversationFade.layer.mask is CAGradientLayer,
-                      "Conversation container owns a public opacity gradient")
+            let headerGradient = syntheticFrost?.layer.sublayers?.compactMap { $0 as? CAGradientLayer }.first
+            try check(headerGradient != nil, "Real navigation overlay owns the header gradient")
+            if let frost = syntheticFrost, let gradient = headerGradient, let window = frost.window {
+                let bottom = frost.convert(CGPoint(x: 0, y: gradient.frame.maxY), to: window).y
+                try check(abs(bottom - (window.safeAreaInsets.top + 8)) < 1,
+                          "Fade ends above header controls at window safe area plus 8")
+                let colors = (gradient.colors as? [CGColor]) ?? []
+                try check(colors.first?.alpha == 1 && colors.last?.alpha == 0,
+                          "Top is covered and component boundary is fully clear")
+            }
             try check(syntheticFrost?.layer.mask == nil,
-                      "Navigation marker does not mask unrelated pushed pages")
-            conversationFade.removeFromSuperview()
+                      "Navigation overlay never masks unrelated page controllers")
             nav.overrideUserInterfaceStyle = .dark
             nav.view.layoutIfNeeded()
             try await Task.sleep(nanoseconds: 150_000_000)
