@@ -160,7 +160,12 @@ struct QueuedPrompt { let id = UUID(); let text: String }
         check(accepted != nil && child.promptQueue.count == 1, "running correction is queued without cancellation")
         check(child.isProcessing && !child.userDidCancel, "running tool is not interrupted")
         child.messages[0].blocks[0].content = "progress after correction"
-        await tick()
+        // A 350ms polling interval is not a scheduling deadline on a busy
+        // runner. Wait for the observable update (bounded at 5s), then retain
+        // the exact assertion: a cancelled/broken poller still fails.
+        await waitFor {
+            coordinator.record(id: first.id)?.steps?.first?.content == "progress after correction"
+        }
         check(coordinator.record(id: first.id)?.steps?.first?.content == "progress after correction", "polling survives a queued correction")
 
         // The old task deliberately ignores cancellation until released. A
