@@ -38,8 +38,10 @@ final class ChatLayoutApplicationUITests: XCTestCase {
             beforeTap.name = "header-before-avatar-tap"
             beforeTap.lifetime = .keepAlways
             add(beforeTap)
-            XCTAssertTrue(avatar.isHittable)
-            avatar.tap()
+            // A custom overlay can have a valid on-screen frame while XCTest
+            // reports isHittable=false. Send an actual screen touch and require
+            // the actual settings sheet; never invoke the action directly.
+            avatar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             let done = app.buttons["完成"].firstMatch
             let openedSoul = done.waitForExistence(timeout: 5)
             if !openedSoul {

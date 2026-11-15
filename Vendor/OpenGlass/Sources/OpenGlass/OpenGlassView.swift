@@ -2,6 +2,10 @@ import UIKit
 import OGCapture
 
 public final class OpenGlassView: UIView {
+    public static func verifyUnregisterDuringFrame() -> Bool {
+        OGGlassEngine.shared?.verifyUnregisterDuringFrame() ?? false
+    }
+
     /// Number of actual Metal lens draws submitted for this attached surface.
     public var renderedFrameCount: UInt {
         OGGlassEngine.shared?.renderedFrameCount(for: self) ?? 0

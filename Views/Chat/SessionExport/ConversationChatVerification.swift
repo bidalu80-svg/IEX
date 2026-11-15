@@ -864,6 +864,8 @@ import Darwin
         if !nativeGlass {
             let lenses = descendants(window).compactMap { $0 as? OpenGlassView }
             try require(lenses.count == 4, "Four real Metal lens views are attached")
+            try require(OpenGlassView.verifyUnregisterDuringFrame(),
+                        "Removing and reattaching every glass view during a frame preserves renderer storage")
             let counts = lenses.map(\.renderedFrameCount)
             await settle(0.5)
             try require(zip(lenses, counts).allSatisfy { $0.0.renderedFrameCount > $0.1 },

@@ -29,6 +29,7 @@ NS_SWIFT_UI_ACTOR
 @property (class, readonly, nullable) OGGlassEngine *shared;
 @property (nonatomic, readonly) id<MTLDevice> device;
 
+- (BOOL)verifyUnregisterDuringFrame;
 - (NSUInteger)renderedFrameCountForView:(UIView *)view;
 - (void)registerView:(UIView *)view;
 - (void)unregisterView:(UIView *)view;

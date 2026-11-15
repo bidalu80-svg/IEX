@@ -242,6 +242,8 @@ struct LumUniforms {
     CADisplayLink *_displayLink;
     CGFloat _screenScale;
     CFTimeInterval _previousTimestamp;
+    BOOL _isRendering;
+    void (^_verificationBeforeLayout)(void);
 
     NSHashTable<UIView *> *_viewSet;
     std::unordered_map<const void *, GlassElement> _elements;
@@ -288,6 +290,26 @@ struct LumUniforms {
     return self;
 }
 
+- (BOOL)verifyUnregisterDuringFrame {
+    if (_isRendering || _viewSet.count == 0) return NO;
+    NSArray<UIView *> *views = _viewSet.allObjects;
+    __block BOOL exercised = NO;
+    __weak OGGlassEngine *weakSelf = self;
+    _verificationBeforeLayout = ^{
+        OGGlassEngine *engine = weakSelf;
+        // Reproduce layout synchronously removing every lens after count and
+        // group references were captured by the active frame.
+        for (UIView *view in views) [engine unregisterView:view];
+        exercised = YES;
+        // Also cover detach/reattach in the SAME frame: registration must not
+        // silently disappear when the element awaits deferred deletion.
+        for (UIView *view in views) [engine registerView:view];
+    };
+    [self _tick:nil];
+    _verificationBeforeLayout = nil;
+    return exercised && _viewSet.count == views.count && _elements.size() == views.count;
+}
+
 - (NSUInteger)renderedFrameCountForView:(UIView *)view {
     auto it = _elements.find((__bridge const void *)view);
     return it == _elements.end() ? 0 : it->second.renderedFrames;
@@ -299,7 +321,7 @@ struct LumUniforms {
     auto prIt = std::find(_pendingRemovals.begin(), _pendingRemovals.end(), key);
     if (prIt != _pendingRemovals.end()) _pendingRemovals.erase(prIt);
 
-    if (_elements.count(key)) return;
+    if (!_elements.count(key)) {
     GlassElement elem{};
     elem.config = OGGlassConfigDefault();
     for (int i = 0; i < kAvgLumBufferCount; i++) {
@@ -309,6 +331,9 @@ struct LumUniforms {
         memcpy(elem.avgLumBuffers[i].contents, &init, sizeof(float));
     }
     _elements[key] = elem;
+    }
+    // Detach/reattach can happen inside one layout pass before removals flush.
+    // Restore registration even when this element's storage is still present.
     [_viewSet addObject:view];
     if (!_displayLink) {
         _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(_tick:)];
@@ -327,10 +352,14 @@ struct LumUniforms {
         [_displayLink invalidate];
         _displayLink = nil;
         _previousTimestamp = 0;
-        [self _flushPendingRemovals];
-        [_captureEngine flush];
-        _groupVec.clear();
-        [_scratchGlassLayers removeAllObjects];
+        // layoutIfNeeded during a frame can remove the last lens. Never
+        // invalidate the active SourceGroup or GlassElement references here.
+        if (!_isRendering) {
+            [self _flushPendingRemovals];
+            [_captureEngine flush];
+            _groupVec.clear();
+            [_scratchGlassLayers removeAllObjects];
+        }
     }
 }
 
@@ -389,17 +418,34 @@ struct LumUniforms {
 #undef ELEM_FOR_VIEW
 
 - (void)_tick:(CADisplayLink *)link {
-    if (_elements.empty()) return;
+    if (_isRendering || _elements.empty()) return;
     if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
         _previousTimestamp = 0;
         return;
     }
-    @autoreleasepool {
+    _isRendering = YES;
+    @try {
+      @autoreleasepool {
         CFTimeInterval now = CACurrentMediaTime();
         float dt = _previousTimestamp > 0 ? (float)(now - _previousTimestamp) : 0.016f;
         dt = fmaxf(0.001f, fminf(0.05f, dt));
         _previousTimestamp = now;
         [self _renderFrame:dt];
+      }
+    } @finally {
+        _isRendering = NO;
+        // The command buffer now owns its GPU resources. Release snapshots
+        // only after all loops finished; disposal cannot mutate an active loop.
+        for (auto &group : _groupVec) {
+            group.views.clear(); group.configs.clear();
+            group.cachedRects.clear(); group.cutoffs.clear(); group.source = nil;
+        }
+        [_scratchGlassLayers removeAllObjects];
+        [self _flushPendingRemovals];
+        if (_viewSet.count == 0) {
+            [_captureEngine flush];
+            _groupVec.clear();
+        }
     }
 }
 
@@ -424,7 +470,7 @@ struct LumUniforms {
     }
     size_t groupCount = 0;
 
-    for (UIView *view in _viewSet) {
+    for (UIView *view in _viewSet.allObjects) {
         if (![self _isEffectivelyVisible:view]) continue;
         if (view.bounds.size.width <= 0 || view.bounds.size.height <= 0) continue;
 
@@ -472,6 +518,11 @@ struct LumUniforms {
         SourceGroup &group = _groupVec[gi];
         UIView *source = group.source;
         size_t count = group.views.size();
+        if (_verificationBeforeLayout) {
+            void (^callback)(void) = _verificationBeforeLayout;
+            _verificationBeforeLayout = nil;
+            callback();
+        }
         [source layoutIfNeeded];
 
         group.cachedRects.resize(count);
@@ -521,6 +572,7 @@ struct LumUniforms {
                 if (group.cutoffs[j] != cutoff) continue;
 
                 UIView *view = group.views[j];
+                if (!view.window || ![_viewSet containsObject:view]) continue;
                 GlassElement &elem = *group.configs[j];
                 OGGlassConfig c = elem.config;
                 OGPhysicsState &phys = elem.physics;
