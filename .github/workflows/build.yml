@@ -78,6 +78,36 @@ jobs:
             share-search-simulator-resolve.log
           retention-days: 7
 
+  soul-header-legacy-review:
+    if: ${{ inputs.soul_header_review == true }}
+    runs-on: macos-15
+    timeout-minutes: 65
+    env:
+      ZE_SIMULATOR_IOS_MAJOR: '18'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+      - name: Verify final avatar resources
+        run: python3 scripts/prepare-soul-header.py soul-header-evidence
+      - name: Build complete legacy simulator application
+        run: bash scripts/build-share-search-simulator.sh
+      - name: Verify actual iOS 18 glass and avatar interactions
+        timeout-minutes: 15
+        run: bash scripts/test-soul-header.sh
+      - name: Upload legacy application evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soul-header-legacy-review
+          path: |
+            soul-header-evidence/
+            chat-layout-evidence/
+            share-search-simulator-build.log
+            share-search-simulator-resolve.log
+          retention-days: 7
+
   keyboard-review:
     if: ${{ inputs.keyboard_review_only == true }}
     runs-on: macos-15

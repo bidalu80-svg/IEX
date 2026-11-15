@@ -77,5 +77,5 @@ assert 'production-transcript-fade' in d['stages'],d
 assert d['lastStage']=='complete',d
 if os.environ.get('ZE_VERIFY_SOUL_HEADER') == '1':
     assert 'production-soul-avatar' in d['stages'],d
-    assert int(d['systemVersion'].split('.')[0]) >= 26,d
+    assert int(d['systemVersion'].split('.')[0]) == int(os.environ.get('ZE_SIMULATOR_IOS_MAJOR','26')),d
 PY

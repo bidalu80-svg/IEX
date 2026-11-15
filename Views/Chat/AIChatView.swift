@@ -6,6 +6,8 @@ import PhotosUI
 import QuickLook
 import QuickLook
 import SwiftUI
+import OpenGlass
+import Metal
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
@@ -795,7 +797,7 @@ struct AIChatView: View {
                     .frame(width: 24, height: 24, alignment: .leading)
                     .foregroundStyle(ChatColors.primaryText)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ChatHeaderButtonStyle())
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
                 .modifier(ChatNavigationGlassSurface(isCircle: true))
@@ -1904,7 +1906,7 @@ struct AIChatView: View {
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ChatHeaderButtonStyle())
         .disabled(!voiceCallPresentation.isActive && !canStartVoiceCall)
         .accessibilityLabel(voiceCallPresentation.isActive ? "结束语音通话" : "开始语音通话")
         .accessibilityIdentifier("chat.voiceCall")
@@ -2193,7 +2195,7 @@ struct AIChatView: View {
             } label: {
                 SoulHeaderAvatar(vm: vm, size: avatarDiscSize, celebration: avatarCelebration)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ChatHeaderButtonStyle())
             .contentShape(Circle())
             .modifier(ChatNavigationGlassSurface(isCircle: true))
             .zIndex(1)
@@ -2218,7 +2220,7 @@ struct AIChatView: View {
                     .padding(.horizontal, 12)
                     .frame(height: 36)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ChatHeaderButtonStyle())
             .modifier(ChatNavigationGlassSurface())
             .background(Capsule().fill(Color.red.opacity(0.35 * fallbackPulseOpacity)))
             .onChange(of: vm.fallbackTrigger) { _ in
@@ -4781,21 +4783,94 @@ private struct ChatNavigationGlassSurface: ViewModifier {
     @ViewBuilder
     private func materialFallback(_ content: Content) -> some View {
         if isCircle {
-            content.background(.ultraThinMaterial, in: Circle())
+            content.background(ChatLegacyGlassSurface(shape: Circle()))
+                .background(ChatNativeGlassMarker(shape: "circle", native: false))
         } else {
-            content.background(.ultraThinMaterial, in: Capsule())
+            content.background(ChatLegacyGlassSurface(shape: Capsule()))
+                .background(ChatNativeGlassMarker(shape: "capsule", native: false))
+        }
+    }
+}
+
+/// Metal refraction on older systems; retain a static accessibility fallback.
+private struct ChatLegacyGlassSurface<S: InsettableShape>: View {
+    let shape: S
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        ZStack {
+            if reduceTransparency {
+                shape.fill(Color(uiColor: .secondarySystemBackground))
+            } else if scenePhase == .active, MTLCreateSystemDefaultDevice() != nil {
+                ChatLegacyRefractiveGlass().clipShape(shape)
+            } else {
+                shape.fill(.ultraThinMaterial)
+                shape.fill(Color.white.opacity(dark ? 0.06 : 0.10))
+                shape.fill(LinearGradient(stops: [
+                    .init(color: .white.opacity(dark ? 0.14 : 0.18), location: 0),
+                    .init(color: .clear, location: 0.45),
+                    .init(color: .clear, location: 1)
+                ], startPoint: .top, endPoint: .bottom))
+            }
+            shape.strokeBorder(LinearGradient(colors: [
+                .white.opacity(dark ? 0.35 : 0.55),
+                .white.opacity(dark ? 0.08 : 0.12)
+            ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(dark ? 0.18 : 0.10), radius: 10, x: 0, y: 3)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Only the background is bridged: foreground controls retain native hit testing.
+private struct ChatLegacyRefractiveGlass: UIViewRepresentable {
+    func makeUIView(context: Context) -> OpenGlassView {
+        let view = OpenGlassView(configuration: .clear)
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        return view
+    }
+    func updateUIView(_ view: OpenGlassView, context: Context) {
+        var configuration = GlassConfiguration.clear
+        configuration.cornerRadius = 10_000 // engine clamps to half the short side
+        configuration.refractionStrength = 0.8
+        configuration.blurRadius = 3
+        configuration.chromeStrength = 0.08
+        configuration.glassTintStrength = context.environment.colorScheme == .dark ? 0.22 : 0.16
+        configuration.physicsMode = .none
+        view.configuration = configuration
+    }
+}
+
+private struct ChatHeaderButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if #available(iOS 26.0, *) {
+            configuration.label
+        } else {
+            configuration.label
+                .overlay(Capsule().fill(.white.opacity(configuration.isPressed ? 0.12 : 0))
+                    .allowsHitTesting(false))
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+                .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8),
+                           value: configuration.isPressed)
         }
     }
 }
 
 private struct ChatNativeGlassMarker: UIViewRepresentable {
     let shape: String
+    var native = true
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.isUserInteractionEnabled = false
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
-            view.accessibilityIdentifier = "chat.nativeGlass." + shape
+            view.accessibilityIdentifier = (native ? "chat.nativeGlass." : "chat.fallbackGlass.") + shape
         }
         #endif
         return view
@@ -4893,7 +4968,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedCompact: UINavigationBarAppearance?
         private var installedCompactScroll: UINavigationBarAppearance?
         private let frostedOverlay = ChatProgressiveFrostView(frame: .zero)
-        private var badgeView: (UIView & UIContentView)?
+        private var badgeHost: UIHostingController<AnyView>?
+        private var badgeView: UIView? { badgeHost?.view }
         private var headerSize: CGSize?
         var onTopInset: ((CGFloat) -> Void)?
         var onHeaderOverflow: ((CGFloat) -> Void)?
@@ -4904,26 +4980,28 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil) {
             self.headerSize = headerSize
             guard let badge else {
-                badgeView?.removeFromSuperview()
-                badgeView = nil
+                badgeHost?.willMove(toParent: nil)
+                badgeHost?.view.removeFromSuperview()
+                badgeHost?.removeFromParent()
+                badgeHost = nil
                 return
             }
-            // A hosting configuration embeds SwiftUI without adding a page
-            // controller to UINavigationController's navigation stack.
-            let configuration = UIHostingConfiguration { badge }
-                .margins(.all, 0)
-                .minSize(width: 0, height: 0)
-            if let badgeView {
-                badgeView.configuration = configuration
+            if let badgeHost {
+                badgeHost.rootView = badge
             } else {
-                let contentView = configuration.makeContentView()
-                contentView.backgroundColor = .clear
+                // A real child controller owns SwiftUI's gesture/presentation bridge.
+                // UIHostingConfiguration outside a cell had visible accessibility
+                // buttons but discarded their touch actions on iOS 26.
+                let hosting = UIHostingController(rootView: badge)
+                hosting.view.backgroundColor = .clear
+                addChild(hosting)
+                hosting.didMove(toParent: self)
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
-                    contentView.accessibilityIdentifier = "chat.verify.providerBadge"
+                    hosting.view.accessibilityIdentifier = "chat.verify.providerBadge"
                 }
                 #endif
-                badgeView = contentView
+                badgeHost = hosting
             }
         }
 
@@ -5762,6 +5840,23 @@ private struct ChatTrailingMenu: View, Equatable {
 /// round glass chrome — mitigated here by sizeThatFits reporting the
 /// button's intrinsic size so the system container wraps it like a plain
 /// toolbar icon).
+/// Preserve the persistent UIKit menu anchor and use its native highlight state.
+private final class ChatLegacyMenuButton: UIButton {
+    override var isHighlighted: Bool {
+        didSet {
+            if #available(iOS 26.0, *) { return }
+            let scale: CGFloat = isHighlighted && !UIAccessibility.isReduceMotionEnabled ? 0.96 : 1
+            let changes = {
+                self.transform = CGAffineTransform(scaleX: scale, y: scale)
+                self.backgroundColor = self.isHighlighted ? UIColor.white.withAlphaComponent(0.12) : .clear
+                self.layer.cornerRadius = 22
+            }
+            if UIAccessibility.isReduceMotionEnabled { changes() }
+            else { UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: changes) }
+        }
+    }
+}
+
 private struct ChatTrailingMenuButton: UIViewRepresentable {
     let messagesEmpty: Bool
     let hasSession: Bool
@@ -5827,7 +5922,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     func makeUIView(context: Context) -> UIButton {
-        let button = UIButton(type: .system)
+        let button = ChatLegacyMenuButton(type: .system)
         let cfg = UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         button.setImage(UIImage(systemName: "gearshape", withConfiguration: cfg), for: .normal)
         button.tintColor = UIColor(ChatColors.primaryText)

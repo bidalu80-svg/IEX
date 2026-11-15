@@ -1,5 +1,6 @@
 #if DEBUG
 import UIKit
+import OpenGlass
 import Darwin
 
 /// Exercises the shipping ContentView navigation and complete AIChatView. In
@@ -725,7 +726,8 @@ import Darwin
             // The old x=289.44 sample measures its refracted/shadow edge,
             // not the transcript. Sample the gap between actual controls.
             let surfaces = descendants(window).filter {
-                $0.accessibilityIdentifier?.hasPrefix("chat.nativeGlass.") ?? false
+                ($0.accessibilityIdentifier?.hasPrefix("chat.nativeGlass.") ?? false)
+                    || ($0.accessibilityIdentifier?.hasPrefix("chat.fallbackGlass.") ?? false)
             }.map { $0.convert($0.bounds, to: window).insetBy(dx: -12, dy: -12) }
             let x = [0.64, 0.36, 0.72].map { window.bounds.width * $0 }.first { candidate in
                 !surfaces.contains { $0.contains(CGPoint(x: candidate, y: y)) }
@@ -762,8 +764,7 @@ import Darwin
 
     private static func verifySoulAvatar(window: UIWindow, vm: AIChatViewModel) async throws {
         try checkpoint("production-soul-avatar")
-        try require(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
-                    "Native glass verification runs on iOS 26 or newer")
+        let nativeGlass = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
         let savedMessages = vm.messages
         let savedProcessing = vm.isProcessing
         let savedSize = UserDefaults.standard.object(forKey: SoulAppearancePreferences.headerAvatarSizeKey)
@@ -836,14 +837,26 @@ import Darwin
         }
         // SwiftUI glass may render directly into its layer tree without a
         // UIVisualEffectView. Markers exist only inside the native API branch.
+        let prefix = nativeGlass ? "chat.nativeGlass." : "chat.fallbackGlass."
+        let opposite = nativeGlass ? "chat.fallbackGlass." : "chat.nativeGlass."
         let glass = descendants(window).filter {
-            ($0.accessibilityIdentifier?.hasPrefix("chat.nativeGlass.") ?? false) && isVisible($0, in: window)
+            ($0.accessibilityIdentifier?.hasPrefix(prefix) ?? false) && isVisible($0, in: window)
         }
         let surfaces = glass.map { ["id": $0.accessibilityIdentifier ?? "", "frame": rectData($0.convert($0.bounds, to: window))] as [String: Any] }
         try JSONSerialization.data(withJSONObject: ["states": observations, "nativeGlassSurfaces": surfaces],
                                    options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("avatar-evidence.json"))
-        try require(glass.count >= 4, "All four actual header surfaces execute native glassEffect on iOS 26")
+        try require(glass.count >= 4, "All four actual header surfaces execute \(nativeGlass ? "native" : "fallback") glass")
+        try require(!descendants(window).contains { ($0.accessibilityIdentifier?.hasPrefix(opposite) ?? false) && isVisible($0, in: window) },
+                    "Native and legacy glass branches are mutually exclusive")
+        if !nativeGlass {
+            let lenses = descendants(window).compactMap { $0 as? OpenGlassView }
+            try require(lenses.count == 4, "Four real Metal lens views are attached")
+            let counts = lenses.map(\.renderedFrameCount)
+            await settle(0.5)
+            try require(zip(lenses, counts).allSatisfy { $0.0.renderedFrameCount > $0.1 },
+                        "Every legacy lens actually submits new Metal frames")
+        }
         try await verifyAvatarMemory(window: window, vm: vm, reply: reply)
     }
 

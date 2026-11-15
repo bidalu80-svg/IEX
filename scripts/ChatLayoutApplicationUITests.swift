@@ -34,9 +34,21 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         if verifyAvatar {
             let avatar = app.buttons["chat.soulAvatar"].firstMatch
             XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+            let beforeTap = XCTAttachment(string: app.debugDescription)
+            beforeTap.name = "header-before-avatar-tap"
+            beforeTap.lifetime = .keepAlways
+            add(beforeTap)
+            XCTAssertTrue(avatar.isHittable)
             avatar.tap()
             let done = app.buttons["完成"].firstMatch
-            XCTAssertTrue(done.waitForExistence(timeout: 5), "Avatar tap opens actual Soul settings")
+            let openedSoul = done.waitForExistence(timeout: 5)
+            if !openedSoul {
+                let hierarchy = XCTAttachment(string: app.debugDescription)
+                hierarchy.name = "header-after-avatar-tap"
+                hierarchy.lifetime = .keepAlways
+                add(hierarchy)
+            }
+            XCTAssertTrue(openedSoul, "Avatar tap opens actual Soul settings")
             done.tap()
             // The action establishes one deadline shared across view remounts.
             // Wait for its expiry, then background/foreground the actual app.

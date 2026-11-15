@@ -842,6 +842,7 @@ struct SoulHeaderAvatar: View {
         current = clip
         incoming = nil
         let previous = outgoing
+        let previousOpacity = previous?.layer.presentation()?.opacity ?? 1
         let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -857,7 +858,7 @@ struct SoulHeaderAvatar: View {
             clip.layer.add(fade, forKey: "stateCrossfade")
             if let previous {
                 let fadeOut = CABasicAnimation(keyPath: "opacity")
-                fadeOut.fromValue = previous.layer.presentation()?.opacity ?? 1
+                fadeOut.fromValue = previousOpacity
                 fadeOut.toValue = 0
                 fadeOut.duration = duration
                 fadeOut.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
