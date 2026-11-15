@@ -525,15 +525,11 @@ struct AIChatView: View {
                 content: chatViewportContent,
                 composer: chatComposerContent,
                 avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript,
-                // Dissolve completes ~65pt from the screen top (Muse's
-                // measured extent, approved 2026-11-14): topSafeAreaInset
-                // reports the BARE safe-area inset (~59pt, see the
-                // T-slash-picker note) — the badge's top edge — so the
-                // completion point is that value + 8, NOT barBottom - 36.
-                // The first cut used - 36 on a wrong 103pt assumption and
-                // produced a 23pt band hidden inside the status bar
-                // (device-verified still-solid, 2026-11-15).
-                fadeCompleteY: max(0, topSafeAreaInset + 8)
+                // Header fading is rendered by the scoped navigation overlay,
+                // above scrolling content and below the header controls.
+                // Do not also mask the nested content host.
+                fadeCompleteY: 0,
+                usesWindowHeaderFade: false
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
@@ -2185,7 +2181,7 @@ struct AIChatView: View {
         let measuredNameWidth = ceil((providerName as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
         ]).width) + 28
-        let pillWidth = min(chatHeaderSize.width, max(128, measuredNameWidth))
+        let pillWidth = min(chatHeaderSize.width, measuredNameWidth)
         let avatarDiscSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
         return VStack(spacing: 0) {
             Button {
@@ -4815,6 +4811,7 @@ private struct SoulAvatarGlowRing: View {
 /// A theme-colored opacity gradient fades the conversation without blurring
 /// its glyphs. Native glass is applied only to the individual controls.
 private final class ChatProgressiveFrostView: UIView {
+    private let fade = CAGradientLayer()
     private var lastBottom: CGFloat = 0
 
     override init(frame: CGRect) {
@@ -4834,12 +4831,23 @@ private final class ChatProgressiveFrostView: UIView {
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         lastBottom = barBottom
-        // The dissolve itself is NOT painted here anymore: the controller
-        // applies a gradient mask to the conversation content (see
-        // layoutFrostedOverlay), so text and photos alike fade to
-        // transparent. A theme-tint overlay whitens whatever scrolls under
-        // it — over a photo it reads as a milky plate, not a dissolve.
-        // This view remains only as the positioned, non-interactive marker.
+        guard let window, let parent = superview else { return }
+        // Reference: fade only ABOVE the header controls, never through the
+        // avatar/name. Convert the status-bar boundary into this view's space.
+        // A foreground theme gradient covers actual scrolling content even
+        // when nested hosting/safe-area layers do not share the list's origin.
+        let boundary = parent.convert(CGPoint(x: 0, y: window.safeAreaInsets.top + 8), from: window).y
+        let height = max(1, boundary - frame.minY)
+        let color = UIColor.systemBackground.resolvedColor(with: traitCollection)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fade.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
+        fade.startPoint = CGPoint(x: 0.5, y: 0)
+        fade.endPoint = CGPoint(x: 0.5, y: 1)
+        fade.colors = [1.0, 0.98, 0.75, 0.0].map { color.withAlphaComponent(CGFloat($0)).cgColor }
+        fade.locations = [0, 0.4, 0.72, 1]
+        if fade.superlayer == nil { layer.addSublayer(fade) }
+        CATransaction.commit()
     }
 }
 
@@ -4991,11 +4999,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
             frostedOverlay.layout(barBottom: barBottom,
                                   reduceTransparency: reduceTransparency)
-            // The header dissolve is NOT applied here anymore: it lives on
-            // the conversation's own container (ChatKeyboardViewport's
-            // content host). Masking the nav stack's visible view
-            // controller from here dissolved whichever screen was on top —
-            // on device that was the model picker, not the conversation.
+            // The scoped overlay paints only above the header controls.
+            // Never install a mask on navigation.topViewController: it may
+            // be the model picker rather than the conversation.
             if let badgeView {
                 if badgeView.superview !== host {
                     badgeView.removeFromSuperview()
