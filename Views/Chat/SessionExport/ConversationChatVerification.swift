@@ -717,6 +717,10 @@ import Darwin
             let dark = theme == .dark
             let label = dark ? "dark" : "light"
             try capture("actual-header-\(label)-scrolled.png", window: window)
+            if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar"),
+               ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 26 {
+                try await verifyLegacyRefraction(window: window, theme: label)
+            }
             // Sample the same normalized location in the gradient on each
             // runtime. Its last 28% ramps to zero; a fixed 8pt offset samples
             // a weaker tail when iOS 26 increases navigation height.
@@ -858,6 +862,43 @@ import Darwin
                         "Every legacy lens actually submits new Metal frames")
         }
         try await verifyAvatarMemory(window: window, vm: vm, reply: reply)
+    }
+
+    /// Compare the actual header over the scrolled conversation with only lens
+    /// displacement disabled. Blur, tint, rim, foreground and layout stay equal.
+    private static func verifyLegacyRefraction(window: UIWindow, theme: String) async throws {
+        let lenses = descendants(window).compactMap { $0 as? OpenGlassView }.filter {
+            isVisible($0, in: window) && $0.bounds.width > $0.bounds.height * 1.4
+        }
+        try require(!lenses.isEmpty, "Legacy refraction audit finds actual capsule surfaces")
+        let configurations = lenses.map(\.configuration)
+        let refracted = snapshot(window)
+        defer {
+            for (lens, configuration) in zip(lenses, configurations) { lens.configuration = configuration }
+        }
+        for lens in lenses { lens.configuration.refractionStrength = 0 }
+        await settle(0.3)
+        let flat = snapshot(window)
+        try flat.pngData()?.write(to: directory.appendingPathComponent("legacy-\(theme)-refraction-disabled.png"))
+        try refracted.pngData()?.write(to: directory.appendingPathComponent("legacy-\(theme)-refraction-enabled.png"))
+        var differences: [CGFloat] = []
+        for lens in lenses {
+            let rect = lens.convert(lens.bounds, to: window)
+            for row in 1..<12 {
+                for column in 1..<30 {
+                    let point = CGPoint(x: rect.minX + rect.width * CGFloat(column) / 30,
+                                        y: rect.minY + rect.height * CGFloat(row) / 12)
+                    let before = pixel(flat, point: point), after = pixel(refracted, point: point)
+                    differences.append(zip(before, after).map { abs($0 - $1) }.max() ?? 0)
+                }
+            }
+        }
+        let changed = differences.filter { $0 > 2.0 / 255 }.count
+        try JSONSerialization.data(withJSONObject: ["theme": theme, "samples": differences.count,
+            "changedSamples": changed, "maxChannelDifference": differences.max() ?? 0],
+            options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("legacy-refraction-\(theme).json"))
+        try require(changed >= 3, "Metal refraction changes real conversation pixels inside capsules: \(theme)")
     }
 
     private static func physicalFootprint() -> UInt64 {

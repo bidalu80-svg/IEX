@@ -21,6 +21,11 @@ chat = read("Views/Chat/AIChatView.swift")
 palette = chat[chat.index("enum ChatColors {"):]
 palette = palette[:palette.index("\n}") + 2]
 chrome = chat.split("// BEGIN ProviderChatChrome", 1)[1].split("// END ProviderChatChrome", 1)[0]
+# This brand/navigation fixture does not instantiate ChatNavigationGlassSurface.
+# Keep its extraction limited to the production types it actually exercises;
+# Metal/native header rendering is tested in the complete app on iOS 18 and 26.
+chrome = chrome[chrome.index("private final class ChatProgressiveFrostView:"):]
+
 picker = read("Views/Providers/SessionModelPicker.swift")
 resolution = picker[picker.index("struct SessionModelDisplay {"):]
 add = read("Views/Providers/AddProviderView.swift")

@@ -4989,13 +4989,12 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             if let badgeHost {
                 badgeHost.rootView = badge
             } else {
-                // A real child controller owns SwiftUI's gesture/presentation bridge.
-                // UIHostingConfiguration outside a cell had visible accessibility
-                // buttons but discarded their touch actions on iOS 26.
+                // A controller owns the gesture bridge. Its parent is assigned
+                // alongside the overlay view in layoutFrostedOverlay, never to
+                // this representable whose own view lives in the chat subtree.
                 let hosting = UIHostingController(rootView: badge)
                 hosting.view.backgroundColor = .clear
-                addChild(hosting)
-                hosting.didMove(toParent: self)
+                if #available(iOS 16.4, *) { hosting.safeAreaRegions = [] }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
                     hosting.view.accessibilityIdentifier = "chat.verify.providerBadge"
@@ -5075,12 +5074,25 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             // The scoped overlay paints only above the header controls.
             // Never install a mask on navigation.topViewController: it may
             // be the model picker rather than the conversation.
-            if let badgeView {
-                if badgeView.superview !== host {
-                    badgeView.removeFromSuperview()
-                    host.insertSubview(badgeView, aboveSubview: bar)
+            if let badgeHost, let overlayOwner = navigation.view.window?.rootViewController,
+               overlayOwner !== navigation {
+                // Keep controller and view containment identical: the header is
+                // a sibling of the navigation hierarchy in the window root.
+                // Parenting it to the chat but putting its view in navigation.view
+                // raises UIViewControllerHierarchyInconsistency on iOS 18.
+                let overlayView = overlayOwner.view!
+                let overlayFrame = host.convert(badgeFrame, to: overlayView)
+                if badgeHost.parent !== overlayOwner {
+                    badgeHost.willMove(toParent: nil)
+                    badgeHost.view.removeFromSuperview()
+                    badgeHost.removeFromParent()
+                    overlayOwner.addChild(badgeHost)
+                    overlayView.addSubview(badgeHost.view)
+                    badgeHost.didMove(toParent: overlayOwner)
+                } else if badgeHost.view.superview !== overlayView {
+                    overlayView.addSubview(badgeHost.view)
                 }
-                if badgeView.frame != badgeFrame { badgeView.frame = badgeFrame }
+                if badgeHost.view.frame != overlayFrame { badgeHost.view.frame = overlayFrame }
             }
         }
 
@@ -5123,7 +5135,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             layoutFrostedOverlay(in: navigation)
         }
         func restore() {
-            badgeView?.removeFromSuperview()
+            badgeHost?.willMove(toParent: nil)
+            badgeHost?.view.removeFromSuperview()
+            badgeHost?.removeFromParent()
             frostedOverlay.removeFromSuperview()
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }

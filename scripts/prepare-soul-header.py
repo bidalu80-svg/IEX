@@ -25,7 +25,7 @@ source_files = ['Agent/Session/SoulStore.swift', 'Views/Chat/AIChatView.swift',
                 'Views/Chat/SessionExport/ConversationChatVerification.swift',
                 'scripts/ChatLayoutApplicationUITests.swift']
 report = {'assets': assets, 'sources': {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in source_files},
-          'scope': 'Resource integrity only. Runtime verification uses the complete Ze application on iOS 26.'}
+          'scope': 'Resource integrity only. Runtime verification uses the complete Ze application on iOS 18 and iOS 26.'}
 (out / 'sources.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
 source = (root / source_files[0]).read_text(encoding='utf-8')
 policy = source.split('enum SoulAvatarMotion:', 1)[1].split('\n@MainActor', 1)[0]
