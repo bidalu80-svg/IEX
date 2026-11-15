@@ -117,7 +117,10 @@ struct KeyboardFixture: View {
             VStack(spacing: 0) {
                 if previews {
                     ChatToolPreviewLayout(showsStatus: !previewOnly, showsPreview: true) {
-                        Text("Tool status").frame(maxWidth: .infinity).frame(height: 34)
+                        Text("Tool status").padding(.vertical, 4)
+                            .frame(minHeight: 34).frame(maxWidth: .infinity)
+                            .background(Capsule().fill(Color.gray))
+                            .accessibilityIdentifier("compact-status")
                     } preview: {
                         Button { showPreview = true } label: {
                             Color.orange.frame(width: 100, height: 65)
