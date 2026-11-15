@@ -142,7 +142,7 @@ jobs:
         run: python3 scripts/test-context-estimate-cache.py
 
       - name: Verify keyboard viewport on simulator
-        if: ${{ inputs.keyboard_only == true }}
+        if: ${{ inputs.keyboard_only == true && inputs.soul_header_review != true }}
         timeout-minutes: 12
         continue-on-error: true
         run: bash scripts/test-keyboard-viewport.sh

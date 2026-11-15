@@ -4765,8 +4765,10 @@ private struct ChatNavigationGlassSurface: ViewModifier {
         if #available(iOS 26.0, *) {
             if isCircle {
                 content.glassEffect(.regular.interactive(), in: Circle())
+                    .background(ChatNativeGlassMarker(shape: "circle"))
             } else {
                 content.glassEffect(.regular.interactive(), in: Capsule())
+                    .background(ChatNativeGlassMarker(shape: "capsule"))
             }
         } else {
             materialFallback(content)
@@ -4784,6 +4786,21 @@ private struct ChatNavigationGlassSurface: ViewModifier {
             content.background(.ultraThinMaterial, in: Capsule())
         }
     }
+}
+
+private struct ChatNativeGlassMarker: UIViewRepresentable {
+    let shape: String
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+            view.accessibilityIdentifier = "chat.nativeGlass." + shape
+        }
+        #endif
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
 }
 
 /// A theme-colored opacity gradient fades the conversation without blurring

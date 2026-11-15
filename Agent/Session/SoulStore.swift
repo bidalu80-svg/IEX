@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import AVFoundation
 import CryptoKit
+import Combine
 
 /// Local presentation preferences; personality metadata and message avatars
 /// keep their existing format and sizes.
@@ -640,50 +641,29 @@ struct SoulHeaderAvatar: View {
     let size: CGFloat
     let celebration: Date?
     @ObservedObject private var children = ZeSubAgentCoordinator.shared
+    @State private var contentRevision = 0
+
     var body: some View {
+        let _ = contentRevision
         let root = vm.workspaceSessionId ?? vm.sessionId
         let active = root.map { children.activeCount(for: $0) > 0 } ?? false
-        Group {
-            if let message = vm.messages.last, message.role == .assistant {
-                SoulHeaderMessageAvatar(message: message, processing: vm.isProcessing,
-                                        childrenActive: active, size: size, celebration: celebration)
-            } else {
-                SoulHeaderAvatarSurface(motion: .resolve(processing: vm.isProcessing, streamingText: false,
-                                                        childrenActive: active), size: size, celebration: celebration)
+        let last = vm.messages.last(where: { !$0.isQueued })
+        let message = last?.role == .assistant ? last : nil
+        let block = message?.blocks.last
+        let motion = SoulAvatarMotion.resolve(processing: vm.isProcessing,
+            streamingText: block?.kind == .text && !(block?.content.isEmpty ?? true),
+            childrenActive: active, awaitingResponse: message?.isAwaitingModelResponse ?? false)
+        // One stable surface across user/assistant and empty/nonempty block
+        // transitions: replacing branches would discard the outgoing video.
+        SoulHeaderAvatarSurface(motion: motion, size: size, celebration: celebration)
+            .onReceive(message?.objectWillChange.eraseToAnyPublisher()
+                       ?? Empty<Void, Never>().eraseToAnyPublisher()) { _ in
+                DispatchQueue.main.async { contentRevision &+= 1 }
             }
-        }
-    }
-}
-
-@MainActor private struct SoulHeaderMessageAvatar: View {
-    @ObservedObject var message: ChatMessage
-    let processing: Bool
-    let childrenActive: Bool
-    let size: CGFloat
-    let celebration: Date?
-    var body: some View {
-        if let block = message.blocks.last {
-            SoulHeaderBlockAvatar(block: block, processing: processing,
-                                  awaitingResponse: message.isAwaitingModelResponse,
-                                  childrenActive: childrenActive, size: size, celebration: celebration)
-        } else {
-            SoulHeaderAvatarSurface(motion: .resolve(processing: processing, streamingText: false,
-                                                    childrenActive: childrenActive), size: size, celebration: celebration)
-        }
-    }
-}
-
-@MainActor private struct SoulHeaderBlockAvatar: View {
-    @ObservedObject var block: AssistantBlock
-    let processing: Bool
-    let awaitingResponse: Bool
-    let childrenActive: Bool
-    let size: CGFloat
-    let celebration: Date?
-    var body: some View {
-        SoulHeaderAvatarSurface(motion: .resolve(processing: processing,
-            streamingText: block.kind == .text && !block.content.isEmpty,
-            childrenActive: childrenActive, awaitingResponse: awaitingResponse), size: size, celebration: celebration)
+            .onReceive(block?.objectWillChange.eraseToAnyPublisher()
+                       ?? Empty<Void, Never>().eraseToAnyPublisher()) { _ in
+                DispatchQueue.main.async { contentRevision &+= 1 }
+            }
     }
 }
 
@@ -736,22 +716,50 @@ struct SoulHeaderAvatar: View {
 }
 
 
-/// A single muted player; theme/state changes replace its looper once, while
-/// streaming text updates leave playback time untouched. Pauses off screen.
+/// Keep the displayed clip alive until the incoming clip has a decoded frame.
+/// Only then crossfade the two layers. Token updates never restart playback.
 @MainActor final class SoulAvatarAnimationView: UIView {
+    private final class Clip {
+        let player: AVQueuePlayer
+        let looper: AVPlayerLooper
+        let layer: AVPlayerLayer
+        let asset: String
+        var ready: NSKeyValueObservation?
+        init(url: URL, asset: String) {
+            self.asset = asset
+            player = AVQueuePlayer()
+            player.isMuted = true
+            player.preventsDisplaySleepDuringVideoPlayback = false
+            looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+            layer = AVPlayerLayer(player: player)
+            layer.videoGravity = .resizeAspect
+            layer.opacity = 0
+        }
+        func dispose() {
+            ready = nil
+            player.pause()
+            looper.disableLooping()
+            player.removeAllItems()
+            layer.player = nil
+            layer.removeAllAnimations()
+            layer.removeFromSuperlayer()
+        }
+    }
     private let fallback = UIImageView(image: UIImage(named: "SoulAvatar-main"))
-    private let playerLayer = AVPlayerLayer()
-    private var player: AVQueuePlayer?
-    private var looper: AVPlayerLooper?
-    private var readyObservation: NSKeyValueObservation?
+    private var current: Clip?
+    private var incoming: Clip?
+    private var outgoing: Clip?
     private var motion: SoulAvatarMotion = .idle
     private var wantsPlayback = false
     private var asset = ""
     private var generation = 0
     private(set) var motionName = "idle"
-    var playbackTime: Double { player?.currentTime().seconds ?? 0 }
-    var readyForDisplay: Bool { playerLayer.isReadyForDisplay }
+    private(set) var completedTransitions = 0
+    var playbackTime: Double { current?.player.currentTime().seconds ?? 0 }
+    var readyForDisplay: Bool { current?.asset == asset && current?.layer.isReadyForDisplay == true }
     var selectedAsset: String { asset }
+    var retainedPlayerCount: Int { [current, incoming, outgoing].compactMap { $0 }.count }
+    var isPlaying: Bool { current?.player.rate ?? 0 > 0 }
 
     init() {
         super.init(frame: .zero)
@@ -760,24 +768,17 @@ struct SoulHeaderAvatar: View {
         clipsToBounds = true
         fallback.contentMode = .scaleAspectFit
         addSubview(fallback)
-        playerLayer.videoGravity = .resizeAspect
-        layer.addSublayer(playerLayer)
         accessibilityIdentifier = "chat.soulAnimation"
         isAccessibilityElement = true
         accessibilityTraits = .image
-        readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.fallback.isHidden = self.playerLayer.isReadyForDisplay
-            }
-        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func layoutSubviews() {
         super.layoutSubviews()
-        CATransaction.begin(); CATransaction.setDisableActions(true)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         fallback.frame = bounds
-        playerLayer.frame = bounds
+        for clip in [current, incoming, outgoing] { clip?.layer.frame = bounds }
         layer.cornerRadius = min(bounds.width, bounds.height) / 2
         CATransaction.commit()
     }
@@ -798,11 +799,14 @@ struct SoulHeaderAvatar: View {
         let theme = traitCollection.userInterfaceStyle == .dark ? "dark" : "light"
         let next = motion.asset + "-" + theme
         guard next != asset else { return }
-        asset = next; generation += 1
+        asset = next
+        generation += 1
         let token = generation
-        guard let bytes = NSDataAsset(name: next)?.data else { stop(); return }
-        // AVPlayer needs a URL. Key the staged copy by content, so a same-size
-        // asset replacement cannot silently play an older installed build.
+        incoming?.dispose()
+        incoming = nil
+        outgoing?.dispose()
+        outgoing = nil
+        guard let bytes = NSDataAsset(name: next)?.data else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
@@ -813,29 +817,76 @@ struct SoulHeaderAvatar: View {
                 }
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.generation == token else { return }
-                    self.player?.pause()
-                    self.looper?.disableLooping()
-                    let player = AVQueuePlayer()
-                    player.isMuted = true
-                    player.preventsDisplaySleepDuringVideoPlayback = false
-                    let item = AVPlayerItem(url: destination)
-                    self.looper = AVPlayerLooper(player: player, templateItem: item)
-                    self.player = player
-                    self.playerLayer.player = player
-                    self.fallback.isHidden = false
+                    let clip = Clip(url: destination, asset: next)
+                    clip.layer.frame = self.bounds
+                    self.layer.addSublayer(clip.layer)
+                    self.incoming = clip
+                    clip.ready = clip.layer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self, weak clip] _, _ in
+                        DispatchQueue.main.async { [weak self, weak clip] in
+                            guard let self, let clip, self.generation == token,
+                                  self.incoming === clip, clip.layer.isReadyForDisplay else { return }
+                            self.reveal(clip)
+                        }
+                    }
                     self.syncPlayback()
                 }
             } catch {
-                DispatchQueue.main.async { [weak self] in self?.fallback.isHidden = false }
+                // Keep the currently decoded image when replacement staging fails.
             }
         }
     }
+    private func reveal(_ clip: Clip) {
+        clip.ready = nil
+        outgoing?.dispose()
+        outgoing = current
+        current = clip
+        incoming = nil
+        let previous = outgoing
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        clip.layer.opacity = 1
+        previous?.layer.opacity = 0
+        CATransaction.commit()
+        if duration > 0 {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = duration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            clip.layer.add(fade, forKey: "stateCrossfade")
+            if let previous {
+                let fadeOut = CABasicAnimation(keyPath: "opacity")
+                fadeOut.fromValue = previous.layer.presentation()?.opacity ?? 1
+                fadeOut.toValue = 0
+                fadeOut.duration = duration
+                fadeOut.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                previous.layer.add(fadeOut, forKey: "stateCrossfade")
+            }
+        }
+        completedTransitions += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, weak previous, weak clip] in
+            previous?.dispose()
+            guard let self else { return }
+            if self.outgoing === previous { self.outgoing = nil }
+            if self.current === clip { self.fallback.isHidden = true }
+        }
+        syncPlayback()
+    }
     private func syncPlayback() {
-        if window != nil && wantsPlayback { player?.play() }
-        else { player?.pause() }
+        for clip in [current, incoming, outgoing] {
+            if window != nil && wantsPlayback { clip?.player.play() }
+            else { clip?.player.pause() }
+        }
     }
     func stop() {
         wantsPlayback = false
-        player?.pause()
+        generation += 1
+        incoming?.dispose()
+        incoming = nil
+        outgoing?.dispose()
+        outgoing = nil
+        current?.dispose()
+        current = nil
     }
 }

@@ -50,6 +50,24 @@ for t in targets:
     t.setdefault('EnvironmentVariables',{}).update(ZE_LAYOUT_BUNDLE=sys.argv[3],ZE_LAYOUT_DYLD=sys.argv[4],ZE_VERIFY_SOUL_HEADER=os.environ.get('ZE_VERIFY_SOUL_HEADER','0'))
 (products/'Layout.xctestrun').write_bytes(plistlib.dumps(d))
 PY
+if [ "${ZE_VERIFY_SOUL_HEADER:-0}" = 1 ]; then
+    SIMCTL_CHILD_DYLD_FALLBACK_LIBRARY_PATH="$layout_fallback" xcrun simctl launch "$layout_device" "$layout_bundle" \
+        -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN --verify-conversation-chat --verify-chat-layout-only --verify-soul-avatar
+    python3 - "$layout_container/Documents/chat-verification/result.json" <<'PY'
+import json,pathlib,sys,time
+path=pathlib.Path(sys.argv[1])
+deadline=time.monotonic()+300
+while time.monotonic()<deadline:
+    if path.exists():
+        result=json.loads(path.read_text())
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        assert result['success'],result
+        break
+    time.sleep(1)
+else:
+    raise TimeoutError('Complete avatar application did not finish in 300 seconds')
+PY
+fi
 xcodebuild test-without-building -xctestrun "$layout_work/DerivedData/Build/Products/Layout.xctestrun" -destination "platform=iOS Simulator,id=$layout_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -resultBundlePath "$layout_evidence/Layout.xcresult" -test-timeouts-enabled YES -default-test-execution-time-allowance 420 > "$layout_evidence/test.log" 2>&1
 python3 - "$layout_container/Documents/chat-verification/result.json" <<'PY'
 import os,pathlib,json,sys

@@ -13,7 +13,13 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         if let fallback = ProcessInfo.processInfo.environment["ZE_LAYOUT_DYLD"], !fallback.isEmpty {
             app.launchEnvironment["DYLD_FALLBACK_LIBRARY_PATH"] = fallback
         }
-        app.launch()
+        if verifyAvatar {
+            // Already launched via simctl and completed the in-app checks.
+            // Avoid XCTest's launch-idle handshake while state stress runs.
+            app.activate()
+        } else {
+            app.launch()
+        }
         let ready = app.staticTexts["chat.layout.ready"]
         let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             ready.exists || app.staticTexts["chat.layout.failed"].exists

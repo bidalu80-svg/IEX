@@ -1,5 +1,6 @@
 #if DEBUG
 import UIKit
+import Darwin
 
 /// Exercises the shipping ContentView navigation and complete AIChatView. In
 /// particular, materializes the real inputBar/inputBottomRow generic metadata
@@ -821,14 +822,64 @@ import UIKit
                         "Avatar remains anchored through keyboard cycle at size \(size)")
             try capture("avatar-size-\(Int(size)).png", window: window)
         }
-        let effects = descendants(window).compactMap { $0 as? UIVisualEffectView }
-            .filter { isVisible($0, in: window) }
-            .map { String(describing: $0.effect) }
-        try JSONSerialization.data(withJSONObject: ["states": observations, "visibleEffects": effects],
+        // SwiftUI glass may render directly into its layer tree without a
+        // UIVisualEffectView. Markers exist only inside the native API branch.
+        let glass = descendants(window).filter {
+            ($0.accessibilityIdentifier?.hasPrefix("chat.nativeGlass.") ?? false) && isVisible($0, in: window)
+        }
+        let surfaces = glass.map { ["id": $0.accessibilityIdentifier ?? "", "frame": rectData($0.convert($0.bounds, to: window))] as [String: Any] }
+        try JSONSerialization.data(withJSONObject: ["states": observations, "nativeGlassSurfaces": surfaces],
                                    options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("avatar-evidence.json"))
-        try require(effects.contains { $0.localizedCaseInsensitiveContains("glass") },
-                    "Actual full application contains a visible native glass effect")
+        try require(glass.count >= 4, "All four actual header surfaces execute native glassEffect on iOS 26")
+        try await verifyAvatarMemory(window: window, vm: vm, reply: reply)
+    }
+
+    private static func physicalFootprint() -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? info.phys_footprint : 0
+    }
+
+    private static func verifyAvatarMemory(window: UIWindow, vm: AIChatViewModel, reply: ChatMessage) async throws {
+        try checkpoint("production-avatar-memory")
+        var samples: [[String: Any]] = []
+        var warmed: [UInt64] = []
+        // Warm all decoder paths, then measure repeated actual message updates.
+        for iteration in 0..<36 {
+            let speaking = iteration % 2 == 0
+            vm.isProcessing = true
+            reply.blocks = speaking ? [AssistantBlock(kind: .text, content: "连续状态切换 \(iteration)")] : []
+            let expected = speaking ? "speaking" : "thinking"
+            try await waitFor("crossfade cycle \(iteration)") {
+                descendants(window).compactMap { $0 as? SoulAvatarAnimationView }.contains {
+                    isVisible($0, in: window) && $0.motionName == expected && $0.readyForDisplay
+                }
+            }
+            await settle(0.45)
+            let views = descendants(window).compactMap { $0 as? SoulAvatarAnimationView }.filter { isVisible($0, in: window) }
+            try require(views.count == 1 && views[0].retainedPlayerCount == 1,
+                        "Crossfade releases outgoing decoder, cycle \(iteration)")
+            let bytes = physicalFootprint()
+            try require(bytes > 0, "Physical footprint is measurable, cycle \(iteration)")
+            samples.append(["iteration": iteration, "physicalFootprint": bytes,
+                            "players": views[0].retainedPlayerCount, "transitions": views[0].completedTransitions])
+            if iteration >= 12 { warmed.append(bytes) }
+        }
+        let early = warmed.prefix(6).sorted()[3]
+        let late = warmed.suffix(6).sorted()[3]
+        let growth = Int64(late) - Int64(early)
+        try JSONSerialization.data(withJSONObject: ["samples": samples, "warmMedianBytes": early,
+            "lateMedianBytes": late, "growthBytes": growth,
+            "scope": "Full simulator app footprint; includes system and chat allocations, not a device leak instrument."],
+            options: [.prettyPrinted, .sortedKeys]).write(to: directory.appendingPathComponent("avatar-memory.json"))
+        try require(growth < 32 * 1024 * 1024, "Post-warmup avatar switching footprint grows by less than 32 MiB")
+        vm.isProcessing = false
     }
 
     private static func renderedRect(_ view: UIView, window: UIWindow) -> CGRect {
