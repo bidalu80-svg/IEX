@@ -611,8 +611,29 @@ import UIKit
                     let probeData = probes.map { ["role": $0.layoutRole, "accessibility": $0.accessibilityIdentifier ?? "", "frame": NSCoder.string(for: $0.convert($0.bounds, to: window))] }
                     try JSONSerialization.data(withJSONObject: probeData, options: [.prettyPrinted, .sortedKeys])
                         .write(to: directory.appendingPathComponent("layout-probes.json"), options: .atomic)
-                    try await waitFor("attachment, preview and input layout probes", timeout: 5) {
-                        ["chat.verify.attachments", "chat.verify.preview", "chat.verify.input"].allSatisfy { marker($0, in: window) != nil }
+                    // Observe final presentation, not stale compact-host bounds.
+                    var settledSamples = 0
+                    var geometrySamples: [[String: Any]] = []
+                    do {
+                        try await waitFor("expanded composer and accessory presentation settled", timeout: 10) {
+                            window.layoutIfNeeded()
+                            guard let tray = marker("chat.verify.attachments", in: window),
+                                  let preview = marker("chat.verify.preview", in: window),
+                                  let input = marker("chat.verify.input", in: window) else { return false }
+                            let a = renderedRect(tray, window: window)
+                            let b = renderedRect(preview, window: window)
+                            let c = renderedRect(input, window: window)
+                            geometrySamples.append(["attachment": rectData(a), "preview": rectData(b), "input": rectData(c),
+                                                    "inputModel": rectData(input.convert(input.bounds, to: window))])
+                            let landed = c.width > window.bounds.width - 40 && c.minY >= max(a.maxY, b.maxY) - 1
+                                && c.minY - max(a.maxY, b.maxY) < 12
+                            settledSamples = landed ? settledSamples + 1 : 0
+                            return settledSamples >= 3
+                        }
+                    } catch {
+                        try JSONSerialization.data(withJSONObject: geometrySamples, options: [.prettyPrinted, .sortedKeys])
+                            .write(to: directory.appendingPathComponent("layout-settling.json"), options: .atomic)
+                        throw error
                     }
                     let name = "layout-status\(showStatus)-attachments\(count)-keyboard\(keyboard)"
                     try capture(name + ".png", window: window)
@@ -622,13 +643,13 @@ import UIKit
                         try require(false, "Production attachment, preview and input markers exist: \(name)")
                         return
                     }
-                    let a = tray.convert(tray.bounds, to: window)
-                    let b = preview.convert(preview.bounds, to: window)
-                    let c = input.convert(input.bounds, to: window)
+                    let a = renderedRect(tray, window: window)
+                    let b = renderedRect(preview, window: window)
+                    let c = renderedRect(input, window: window)
                     records.append(["name": name, "attachment": rectData(a), "preview": rectData(b), "input": rectData(c)])
                     try JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
                         .write(to: directory.appendingPathComponent("accessory-geometry.json"), options: .atomic)
-                    let statusRect = marker("chat.verify.status", in: window).map { $0.convert($0.bounds, to: window) }
+                    let statusRect = marker("chat.verify.status", in: window).map { renderedRect($0, window: window) }
                     if showStatus, let statusRect {
                         try require(abs(b.maxY - statusRect.maxY) < 2, "Preview bottom aligns with status bottom: \(name)")
                         try require(abs(a.maxY - statusRect.minY) < 2, "Attachments sit immediately above status: \(name)")
@@ -721,6 +742,11 @@ import UIKit
         ready.accessibilityIdentifier = "chat.layout.ready"
         ready.isAccessibilityElement = true
         window.addSubview(ready)
+    }
+
+    private static func renderedRect(_ view: UIView, window: UIWindow) -> CGRect {
+        let layer = view.layer.presentation() ?? view.layer
+        return layer.convert(layer.bounds, to: window.layer.presentation() ?? window.layer)
     }
 
     private static func snapshot(_ window: UIWindow) -> UIImage {
