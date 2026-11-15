@@ -211,7 +211,10 @@ struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            if showsStatus { status() }
+            // ZStack proposes the thumbnail's 65pt height to flexible children.
+            // Resolve the status at its intrinsic height BEFORE that proposal;
+            // its capsule must stay compact while the parent owns all hit bounds.
+            if showsStatus { status().fixedSize(horizontal: false, vertical: true) }
             if showsPreview { preview().padding(.trailing, 10) }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
