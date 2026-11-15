@@ -716,7 +716,11 @@ import Darwin
             let dark = theme == .dark
             let label = dark ? "dark" : "light"
             try capture("actual-header-\(label)-scrolled.png", window: window)
-            let y = barRect.midY - 8
+            // Sample the same normalized location in the gradient on each
+            // runtime. Its last 28% ramps to zero; a fixed 8pt offset samples
+            // a weaker tail when iOS 26 increases navigation height.
+            let frostRect = frost.convert(frost.bounds, to: window)
+            let y = frostRect.minY + frostRect.height * 0.80
             // iOS 26's trailing glass starts at x=290 on a 402pt screen.
             // The old x=289.44 sample measures its refracted/shadow edge,
             // not the transcript. Sample the gap between actual controls.
