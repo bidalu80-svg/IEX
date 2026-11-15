@@ -507,6 +507,9 @@ import UIKit
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
             if ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only") {
+                if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+                    try await verifySoulAvatar(window: window, vm: historyVM)
+                }
                 try await verifyChatLayout(window: window, vm: historyVM)
                 try checkpoint("complete")
                 try writeResult(success: true, error: nil)
@@ -742,6 +745,90 @@ import UIKit
         ready.accessibilityIdentifier = "chat.layout.ready"
         ready.isAccessibilityElement = true
         window.addSubview(ready)
+    }
+
+    private static func verifySoulAvatar(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("production-soul-avatar")
+        try require(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26,
+                    "Native glass verification runs on iOS 26 or newer")
+        let savedMessages = vm.messages
+        let savedProcessing = vm.isProcessing
+        let savedSize = UserDefaults.standard.object(forKey: SoulAppearancePreferences.headerAvatarSizeKey)
+        let root = vm.workspaceSessionId ?? vm.sessionId!
+        defer {
+            ZeSubAgentCoordinator.shared.setAvatarVerificationChild(active: false, root: root)
+            vm.isProcessing = savedProcessing
+            vm.messages = savedMessages
+            UserDefaults.standard.set(savedSize, forKey: SoulAppearancePreferences.headerAvatarSizeKey)
+            window.overrideUserInterfaceStyle = .unspecified
+        }
+        window.endEditing(true)
+        let reply = ChatMessage(role: .assistant, content: "头像状态验证")
+        vm.messages = [ChatMessage(role: .user, content: "检查头像"), reply]
+        func avatar() -> SoulAvatarAnimationView? {
+            descendants(window).compactMap { $0 as? SoulAvatarAnimationView }
+                .first { isVisible($0, in: window) }
+        }
+        var observations: [[String: Any]] = []
+        for (style, theme) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
+            window.overrideUserInterfaceStyle = style
+            for state in ["idle", "thinking", "speaking", "awaiting", "working"] {
+                ZeSubAgentCoordinator.shared.setAvatarVerificationChild(active: state == "working", root: root)
+                vm.isProcessing = state != "idle"
+                reply.blocks = state == "thinking" ? [] : [AssistantBlock(kind: .text, content: "正在输出")]
+                reply.isAwaitingModelResponse = state == "awaiting"
+                let expected = state == "awaiting" ? "thinking" : state
+                let clip = ["idle": "idle", "thinking": "working", "speaking": "making", "working": "working"][expected]!
+                try await waitFor("actual avatar \(state) \(theme)") {
+                    guard let view = avatar() else { return false }
+                    return view.motionName == expected && view.selectedAsset == "SoulAvatar-\(clip)-\(theme)"
+                        && view.readyForDisplay && view.playbackTime > 0.05
+                }
+                guard let view = avatar() else { throw NSError(domain: "SoulAvatar", code: 1) }
+                let time = view.playbackTime
+                // Streaming updates must keep this player's current position.
+                if state == "speaking" { reply.blocks.last?.content += "，继续输出" }
+                await settle(0.35)
+                try require(avatar() === view && view.playbackTime != time,
+                            "Real avatar plays without recreation: \(state) \(theme)")
+                let frame = view.convert(view.bounds, to: window)
+                try require(window.bounds.contains(frame), "Avatar stays inside viewport: \(state) \(theme)")
+                observations.append(["state": state, "theme": theme, "asset": view.selectedAsset,
+                                     "time": view.playbackTime, "frame": rectData(frame)])
+                try capture("avatar-\(theme)-\(state).png", window: window)
+                await settle(0.4)
+            }
+        }
+        ZeSubAgentCoordinator.shared.setAvatarVerificationChild(active: false, root: root)
+        vm.isProcessing = false
+        reply.isAwaitingModelResponse = false
+        for size in [40.0, 80.0] {
+            UserDefaults.standard.set(size, forKey: SoulAppearancePreferences.headerAvatarSizeKey)
+            try await waitFor("avatar size setting \(size)") {
+                guard let view = avatar() else { return false }
+                return abs(view.bounds.width - (size - 4)) < 1
+            }
+            guard let view = avatar() else { throw NSError(domain: "SoulAvatar", code: 2) }
+            let before = view.convert(view.bounds, to: window)
+            vm.requestComposerFocusSignal.send()
+            try await waitFor("keyboard focus with avatar") { composer(in: window)?.isFirstResponder == true }
+            await settle(0.6)
+            let during = view.convert(view.bounds, to: window)
+            window.endEditing(true)
+            await settle(0.6)
+            let after = view.convert(view.bounds, to: window)
+            try require(abs(before.midY - during.midY) < 1 && abs(before.midY - after.midY) < 1,
+                        "Avatar remains anchored through keyboard cycle at size \(size)")
+            try capture("avatar-size-\(Int(size)).png", window: window)
+        }
+        let effects = descendants(window).compactMap { $0 as? UIVisualEffectView }
+            .filter { isVisible($0, in: window) }
+            .map { String(describing: $0.effect) }
+        try JSONSerialization.data(withJSONObject: ["states": observations, "visibleEffects": effects],
+                                   options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("avatar-evidence.json"))
+        try require(effects.contains { $0.localizedCaseInsensitiveContains("glass") },
+                    "Actual full application contains a visible native glass effect")
     }
 
     private static func renderedRect(_ view: UIView, window: UIWindow) -> CGRect {

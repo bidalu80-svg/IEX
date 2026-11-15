@@ -183,6 +183,27 @@ final class ZeSubAgentCoordinator: ObservableObject {
         records(for: rootSessionId).filter { $0.status.isActive }.count
     }
 
+    #if DEBUG
+    /// Full-app UI verification drives the real coordinator observation without
+    /// sending provider requests. Never persisted or enabled in normal launches.
+    func setAvatarVerificationChild(active: Bool, root: String) {
+        guard ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") else { return }
+        loadRootIfNeeded(root)
+        let id = "avatar-verification-child"
+        if active {
+            recordsByRoot[root, default: [:]][id] = ZeSubAgentRecord(
+                id: id, parentId: root, rootSessionId: root, nickname: "头像验证",
+                depth: 1, status: .running, revision: 1, createdAt: Date(), updatedAt: Date(),
+                prompt: "Presentation verification", output: "", error: nil,
+                childSessionId: nil, inputTokens: 0, outputTokens: 0,
+                modelEntryReference: nil, steps: [])
+        } else {
+            recordsByRoot[root]?[id] = nil
+        }
+        updateToken += 1
+    }
+    #endif
+
     func record(id: String, rootSessionId: String) -> ZeSubAgentRecord? {
         loadRootIfNeeded(rootSessionId)
         return recordsByRoot[rootSessionId]?[id]

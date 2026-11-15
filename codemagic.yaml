@@ -21,12 +21,19 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
-      xcode: latest
+      # Must stay >= 26: glassEffect / sharedBackgroundVisibility live behind
+      # `#if compiler(>=6.2)`. An older Xcode silently links the material
+      # fallback and the shipped IPA loses native Liquid Glass.
+      xcode: '26.0'
     scripts:
       - name: "Show Xcode version"
         script: |
           xcode-select -p
           xcodebuild -version
+          xcodebuild -version | head -n1 | grep -qE 'Xcode 26\.' || {
+            echo "BUILD FAILURE: Xcode 26 required — glassEffect is behind #if compiler(>=6.2)"
+            exit 1
+          }
       - name: "Test scheduled-task calendar and persistence"
         script: |
           set -euo pipefail
@@ -951,7 +958,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 30
     environment:
-      xcode: latest
+      xcode: '26.0'
     scripts:
       - name: Verify production GIF and WebP preview and real playback controls
         script: bash scripts/test-animated-image-preview.sh

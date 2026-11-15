@@ -8,6 +8,8 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: bundle)
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN",
                                "--verify-conversation-chat", "--verify-chat-layout-only"]
+        let verifyAvatar = ProcessInfo.processInfo.environment["ZE_VERIFY_SOUL_HEADER"] == "1"
+        if verifyAvatar { app.launchArguments.append("--verify-soul-avatar") }
         if let fallback = ProcessInfo.processInfo.environment["ZE_LAYOUT_DYLD"], !fallback.isEmpty {
             app.launchEnvironment["DYLD_FALLBACK_LIBRARY_PATH"] = fallback
         }
@@ -16,13 +18,36 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         let finished = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             ready.exists || app.staticTexts["chat.layout.failed"].exists
         }, object: nil)
-        let completedWait = XCTWaiter.wait(for: [finished], timeout: 210) == .completed
+        let completedWait = XCTWaiter.wait(for: [finished], timeout: 330) == .completed
         let complete = completedWait && ready.exists
         let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screen.name = "complete-app-layout-result"
         screen.lifetime = .keepAlways
         add(screen)
         XCTAssertTrue(complete, "Full application checks must finish; inspect chat-verification/result.json and hierarchy on failure")
+        if verifyAvatar {
+            let avatar = app.buttons["chat.soulAvatar"].firstMatch
+            XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+            avatar.tap()
+            let done = app.buttons["完成"].firstMatch
+            XCTAssertTrue(done.waitForExistence(timeout: 5), "Avatar tap opens actual Soul settings")
+            done.tap()
+            // The action establishes one deadline shared across view remounts.
+            // Wait for its expiry, then background/foreground the actual app.
+            let animation = app.descendants(matching: .any)["chat.soulAnimation"].firstMatch
+            let idle = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                (animation.value as? String) == "idle"
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 8), .completed)
+            XCUIDevice.shared.press(.home)
+            app.activate()
+            XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+            XCTAssertEqual(animation.value as? String, "idle", "Expired celebration is not replayed on return")
+            let returned = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            returned.name = "actual-avatar-after-settings-and-foreground"
+            returned.lifetime = .keepAlways
+            add(returned)
+        }
         let preview = app.descendants(matching: .any)["chat.tool.preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue(preview.isHittable)

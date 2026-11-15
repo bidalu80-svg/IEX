@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import UIKit
+import AVFoundation
+import CryptoKit
 
 /// Local presentation preferences; personality metadata and message avatars
 /// keep their existing format and sizes.
@@ -608,5 +610,232 @@ struct SoulAvatarView: View {
             emoji = SoulStore.cachedMetadata.emoji
             image = SoulAvatarStore.load()
         }
+    }
+}
+
+
+// MARK: - Header virtual avatar
+// Header-only: message avatars and user-selected Soul images keep their current behavior.
+enum SoulAvatarMotion: String, CaseIterable {
+    case idle, thinking, speaking, working, celebrate
+    var asset: String {
+        switch self {
+        case .idle: return "SoulAvatar-idle"
+        case .thinking, .working: return "SoulAvatar-working"
+        case .speaking: return "SoulAvatar-making"
+        case .celebrate: return "SoulAvatar-celebrate"
+        }
+    }
+    static func resolve(processing: Bool, streamingText: Bool, childrenActive: Bool,
+                        awaitingResponse: Bool = false) -> Self {
+        if childrenActive { return .working }
+        if processing { return streamingText && !awaitingResponse ? .speaking : .thinking }
+        return .idle
+    }
+}
+
+@MainActor
+struct SoulHeaderAvatar: View {
+    @ObservedObject var vm: AIChatViewModel
+    let size: CGFloat
+    let celebration: Date?
+    @ObservedObject private var children = ZeSubAgentCoordinator.shared
+    var body: some View {
+        let root = vm.workspaceSessionId ?? vm.sessionId
+        let active = root.map { children.activeCount(for: $0) > 0 } ?? false
+        Group {
+            if let message = vm.messages.last, message.role == .assistant {
+                SoulHeaderMessageAvatar(message: message, processing: vm.isProcessing,
+                                        childrenActive: active, size: size, celebration: celebration)
+            } else {
+                SoulHeaderAvatarSurface(motion: .resolve(processing: vm.isProcessing, streamingText: false,
+                                                        childrenActive: active), size: size, celebration: celebration)
+            }
+        }
+    }
+}
+
+@MainActor private struct SoulHeaderMessageAvatar: View {
+    @ObservedObject var message: ChatMessage
+    let processing: Bool
+    let childrenActive: Bool
+    let size: CGFloat
+    let celebration: Date?
+    var body: some View {
+        if let block = message.blocks.last {
+            SoulHeaderBlockAvatar(block: block, processing: processing,
+                                  awaitingResponse: message.isAwaitingModelResponse,
+                                  childrenActive: childrenActive, size: size, celebration: celebration)
+        } else {
+            SoulHeaderAvatarSurface(motion: .resolve(processing: processing, streamingText: false,
+                                                    childrenActive: childrenActive), size: size, celebration: celebration)
+        }
+    }
+}
+
+@MainActor private struct SoulHeaderBlockAvatar: View {
+    @ObservedObject var block: AssistantBlock
+    let processing: Bool
+    let awaitingResponse: Bool
+    let childrenActive: Bool
+    let size: CGFloat
+    let celebration: Date?
+    var body: some View {
+        SoulHeaderAvatarSurface(motion: .resolve(processing: processing,
+            streamingText: block.kind == .text && !block.content.isEmpty,
+            childrenActive: childrenActive, awaitingResponse: awaitingResponse), size: size, celebration: celebration)
+    }
+}
+
+@MainActor struct SoulHeaderAvatarSurface: View {
+    let motion: SoulAvatarMotion
+    let size: CGFloat
+    var celebration: Date? = nil
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var celebrating = false
+    @State private var customImage = SoulAvatarStore.load()
+    @State private var emoji = SoulStore.cachedMetadata.emoji
+
+    var body: some View {
+        Group {
+            if customImage != nil || !emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                SoulAvatarView(size: size * 0.76, fitsImage: true)
+            } else {
+                SoulAvatarAnimation(motion: celebrating ? .celebrate : motion,
+                                    playing: scenePhase == .active && !reduceMotion)
+                    .padding(2)
+            }
+        }
+        .frame(width: size, height: size)
+        .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
+            customImage = SoulAvatarStore.load()
+            emoji = SoulStore.cachedMetadata.emoji
+        }
+        .task(id: celebration) {
+            let remaining = celebration?.timeIntervalSinceNow ?? 0
+            guard remaining > 0 else { celebrating = false; return }
+            celebrating = true
+            // A remounted message/block branch resumes the same deadline;
+            // it must not replay an old tap or restart its five-second window.
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+            catch { return }
+            celebrating = false
+        }
+    }
+}
+
+@MainActor private struct SoulAvatarAnimation: UIViewRepresentable {
+    let motion: SoulAvatarMotion
+    let playing: Bool
+    func makeUIView(context: Context) -> SoulAvatarAnimationView { SoulAvatarAnimationView() }
+    func updateUIView(_ view: SoulAvatarAnimationView, context: Context) {
+        view.configure(motion: motion, playing: playing)
+    }
+    static func dismantleUIView(_ view: SoulAvatarAnimationView, coordinator: ()) { view.stop() }
+}
+
+
+/// A single muted player; theme/state changes replace its looper once, while
+/// streaming text updates leave playback time untouched. Pauses off screen.
+@MainActor final class SoulAvatarAnimationView: UIView {
+    private let fallback = UIImageView(image: UIImage(named: "SoulAvatar-main"))
+    private let playerLayer = AVPlayerLayer()
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+    private var readyObservation: NSKeyValueObservation?
+    private var motion: SoulAvatarMotion = .idle
+    private var wantsPlayback = false
+    private var asset = ""
+    private var generation = 0
+    private(set) var motionName = "idle"
+    var playbackTime: Double { player?.currentTime().seconds ?? 0 }
+    var readyForDisplay: Bool { playerLayer.isReadyForDisplay }
+    var selectedAsset: String { asset }
+
+    init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        clipsToBounds = true
+        fallback.contentMode = .scaleAspectFit
+        addSubview(fallback)
+        playerLayer.videoGravity = .resizeAspect
+        layer.addSublayer(playerLayer)
+        accessibilityIdentifier = "chat.soulAnimation"
+        isAccessibilityElement = true
+        accessibilityTraits = .image
+        readyObservation = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.fallback.isHidden = self.playerLayer.isReadyForDisplay
+            }
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        fallback.frame = bounds
+        playerLayer.frame = bounds
+        layer.cornerRadius = min(bounds.width, bounds.height) / 2
+        CATransaction.commit()
+    }
+    override func didMoveToWindow() { super.didMoveToWindow(); syncPlayback() }
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle { loadIfNeeded() }
+    }
+    func configure(motion: SoulAvatarMotion, playing: Bool) {
+        self.motion = motion
+        motionName = motion.rawValue
+        accessibilityValue = motion.rawValue
+        wantsPlayback = playing
+        loadIfNeeded()
+        syncPlayback()
+    }
+    private func loadIfNeeded() {
+        let theme = traitCollection.userInterfaceStyle == .dark ? "dark" : "light"
+        let next = motion.asset + "-" + theme
+        guard next != asset else { return }
+        asset = next; generation += 1
+        let token = generation
+        guard let bytes = NSDataAsset(name: next)?.data else { stop(); return }
+        // AVPlayer needs a URL. Key the staged copy by content, so a same-size
+        // asset replacement cannot silently play an older installed build.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+                let destination = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("ze-avatar-" + next + "-" + digest + ".mp4")
+                if !FileManager.default.fileExists(atPath: destination.path) {
+                    try bytes.write(to: destination, options: .atomic)
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.generation == token else { return }
+                    self.player?.pause()
+                    self.looper?.disableLooping()
+                    let player = AVQueuePlayer()
+                    player.isMuted = true
+                    player.preventsDisplaySleepDuringVideoPlayback = false
+                    let item = AVPlayerItem(url: destination)
+                    self.looper = AVPlayerLooper(player: player, templateItem: item)
+                    self.player = player
+                    self.playerLayer.player = player
+                    self.fallback.isHidden = false
+                    self.syncPlayback()
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in self?.fallback.isHidden = false }
+            }
+        }
+    }
+    private func syncPlayback() {
+        if window != nil && wantsPlayback { player?.play() }
+        else { player?.pause() }
+    }
+    func stop() {
+        wantsPlayback = false
+        player?.pause()
     }
 }

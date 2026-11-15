@@ -410,6 +410,7 @@ struct AIChatView: View {
     @State private var hasInjectedShareContent = false
     @State private var showModelPicker = false
     @State private var showSoulSettings = false
+    @State private var avatarCelebration: Date? = nil
     @AppStorage(SoulAppearancePreferences.headerAvatarSizeKey)
     private var headerAvatarSize = SoulAppearancePreferences.defaultHeaderAvatarSize
     @State private var headerOverflowInset: CGFloat = {
@@ -2187,24 +2188,14 @@ struct AIChatView: View {
         return VStack(spacing: 0) {
             Button {
                 inputFocused = false
+                avatarCelebration = Date().addingTimeInterval(5)
                 showSoulSettings = true
             } label: {
-                // The glyph at full size touches the glass disc's edge;
-                // render it at 76% inside the same disc frame so the disc
-                // (and its tap area) keep their size.
-                SoulAvatarView(size: avatarDiscSize * 0.76, fitsImage: true)
-                    .frame(width: avatarDiscSize, height: avatarDiscSize)
-                    .clipShape(Circle())
+                SoulHeaderAvatar(vm: vm, size: avatarDiscSize, celebration: avatarCelebration)
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
             .modifier(ChatNavigationGlassSurface(isCircle: true))
-            .background {
-                if vm.isProcessing {
-                    SoulAvatarGlowRing()
-                        .padding(-5)
-                }
-            }
             .zIndex(1)
             .accessibilityLabel("编辑灵魂：\(soulName)")
             .accessibilityIdentifier("chat.soulAvatar")
@@ -4792,27 +4783,6 @@ private struct ChatNavigationGlassSurface: ViewModifier {
         } else {
             content.background(.ultraThinMaterial, in: Capsule())
         }
-    }
-}
-
-/// Breathing halo around the Soul avatar, shown only while the agent is
-/// processing; hidden entirely when idle.
-private struct SoulAvatarGlowRing: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
-
-    var body: some View {
-        Circle()
-            .fill(LinearGradient(colors: [.indigo, .blue, .cyan],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))
-            .blur(radius: 7)
-            .opacity(reduceMotion ? 0.55 : (pulsing ? 0.9 : 0.35))
-            .scaleEffect(reduceMotion ? 1 : (pulsing ? 1.07 : 1.0))
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-            .onAppear { pulsing = true }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 1.3).repeatForever(autoreverses: true),
-                       value: pulsing)
     }
 }
 

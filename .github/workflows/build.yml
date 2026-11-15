@@ -50,20 +50,32 @@ jobs:
   soul-header-review:
     if: ${{ inputs.soul_header_review == true }}
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26'
+      - name: Verify supplied avatar assets and state policy
+        run: |
+          python3 scripts/prepare-soul-header.py soul-header-evidence
+          xcrun swiftc "$RUNNER_TEMP/SoulAvatarMotion.swift" scripts/SoulAvatarStateTests.swift -o "$RUNNER_TEMP/avatar-state-tests"
+          "$RUNNER_TEMP/avatar-state-tests" | tee soul-header-evidence/state-tests.log
+      - name: Build complete iOS 26 simulator application
+        run: bash scripts/build-share-search-simulator.sh
       - name: Render and exercise production Soul header
+        timeout-minutes: 12
         run: bash scripts/test-soul-header.sh
       - name: Upload actual header screenshots and recording
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: soul-header-review
-          path: soul-header-evidence/
+          path: |
+            soul-header-evidence/
+            chat-layout-evidence/
+            share-search-simulator-build.log
+            share-search-simulator-resolve.log
           retention-days: 7
 
   keyboard-review:
@@ -85,14 +97,18 @@ jobs:
   build:
     if: ${{ inputs.keyboard_review_only != true && inputs.animated_preview_only != true && inputs.multi_image_only != true && inputs.provider_review_only != true && (inputs.application_only != true || inputs.animation_only == true) }}
     name: Build Ze.app
-    runs-on: ${{ inputs.soul_header_review == true && 'macos-26' || 'macos-15' }}
+    runs-on: macos-26
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Liquid Glass is gated by `#if compiler(>=6.2)` in
+      # ChatNavigationGlassSurface / ChatToolbarHost. A default macos-15
+      # runner ships Xcode 16 (Swift 6.1), which preprocesses that branch
+      # away and links the .ultraThinMaterial fallback instead — the IPA
+      # then has no native glass on iOS 26 devices. Pin the toolchain.
       - uses: maxim-lobanov/setup-xcode@v1
-        if: ${{ inputs.soul_header_review == true }}
         with:
           xcode-version: '26'
 
@@ -100,6 +116,26 @@ jobs:
         run: |
           xcode-select -p
           xcodebuild -version
+          xcodebuild -version | head -n1 | grep -qE 'Xcode 26\.' || {
+            echo "::error::Xcode 26 required: glassEffect sits behind #if compiler(>=6.2)"
+            exit 1
+          }
+
+      # Proves the toolchain really exposes the Liquid Glass API instead of
+      # trusting a version string. If this fails, the build stops here rather
+      # than shipping another IPA that silently links the material fallback.
+      - name: Assert glassEffect resolves against the iOS SDK
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'import SwiftUI' \
+            '@available(iOS 26.0, *)' \
+            'func _zeGlassProbe<V: View>(_ v: V) -> some View {' \
+            '    v.glassEffect(.regular.interactive(), in: Capsule())' \
+            '}' > "$RUNNER_TEMP/glass_probe.swift"
+          xcrun --sdk iphoneos swiftc -typecheck \
+            -target arm64-apple-ios16.0 "$RUNNER_TEMP/glass_probe.swift"
+          echo "── glassEffect OK against iOS $(xcrun --sdk iphoneos --show-sdk-version) SDK"
 
       - name: Test context estimate cache mutations
         if: ${{ inputs.keyboard_only == true }}

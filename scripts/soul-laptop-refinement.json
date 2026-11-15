@@ -1,0 +1,9 @@
+{
+  "source_sha256": "42a9e18f06cb9b941d57600cf9d3f80e100b4ff4752b6dd80339eda5cc0b0fd2",
+  "frames": 120,
+  "fps": 24,
+  "outputs": {
+    "light": "7dba4a38aa9f0302891328f007bf4f7070cdfeb1d3bb0f14eca568c9a00587ed",
+    "dark": "c6ed543486796b41e31e2ac52a0029bf7308e38d6a10ffc35c05e0e9187bd56d"
+  }
+}

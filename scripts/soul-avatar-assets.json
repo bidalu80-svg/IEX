@@ -1,0 +1,41 @@
+{
+  "archive_sha256": "ecd77b5c3dad48738ee2207a64a9fa6deaadfb68b1ef4ab0c2d995778e7c7fd8",
+  "assets": {
+    "idle-light": {
+      "source_sha256": "448afbcb89e785b6c0afefd588dde4abdf773b4dd4385a40d2ae5744524a7019",
+      "bytes": 539957
+    },
+    "working-light": {
+      "source_sha256": "42a9e18f06cb9b941d57600cf9d3f80e100b4ff4752b6dd80339eda5cc0b0fd2",
+      "bytes": 320360
+    },
+    "making-light": {
+      "source_sha256": "0155db68be67c7003da98250d95ef46b5f4f46d11b4785be8b0882df52906d37",
+      "bytes": 611888
+    },
+    "celebrate-light": {
+      "source_sha256": "feb05390c159bf07eb0b52d06ad18531b4c5af337ed9eefe681bef6c8d58698f",
+      "bytes": 466158
+    },
+    "idle-dark": {
+      "source_sha256": "527b62edc63a672f93aaa51f50ed6fcff8c0c71082f1568a9f0b3e292eb0b3fc",
+      "bytes": 830941
+    },
+    "working-dark": {
+      "source_sha256": "0f776b34833757257acd91497e6f5d08f6cefcb837a179a2c6887d742d380cb1",
+      "bytes": 436519
+    },
+    "making-dark": {
+      "source_sha256": "65956d14b48f3b26b3ee227d0588ed6a9ad55fd273452ba48e0bbfd6e854844f",
+      "bytes": 891737
+    },
+    "celebrate-dark": {
+      "source_sha256": "4e403ae2f0feb6722815276dfb385505dfcd39d9e6af0dcc5fea8f25adfb7b26",
+      "bytes": 654949
+    },
+    "main": {
+      "source_sha256": "30d6f9560a6e7abb12bfbca41b0ebc932b86c6437eef4326b502dbf1f0b64363",
+      "bytes": 1234223
+    }
+  }
+}
