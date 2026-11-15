@@ -5077,29 +5077,26 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             // The scoped overlay paints only above the header controls.
             // Never install a mask on navigation.topViewController: it may
             // be the model picker rather than the conversation.
-            if let badgeHost, let overlayOwner = navigation.view.window?.rootViewController,
-               overlayOwner !== navigation {
-                // Keep controller and view containment identical: the header is
-                // a sibling of the navigation hierarchy in the window root.
-                // Parenting it to the chat but putting its view in navigation.view
-                // raises UIViewControllerHierarchyInconsistency on iOS 18.
-                let overlayView = overlayOwner.view!
-                let overlayFrame = host.convert(badgeFrame, to: overlayView)
-                if badgeHost.parent !== overlayOwner {
+            if let badgeHost {
+                // Use the same UIKit container as the bar. A manually inserted
+                // sibling in the window's SwiftUI root can draw above NavigationStack
+                // while its hit testing still enters the stack's transparent bar.
+                // Match controller containment to view containment as well; owning
+                // this host from the chat subtree caused an iOS 18 hierarchy crash.
+                if badgeHost.parent !== navigation {
                     badgeHost.willMove(toParent: nil)
                     badgeHost.view.removeFromSuperview()
                     badgeHost.removeFromParent()
-                    overlayOwner.addChild(badgeHost)
-                    overlayView.addSubview(badgeHost.view)
-                    badgeHost.didMove(toParent: overlayOwner)
-                } else if badgeHost.view.superview !== overlayView {
-                    overlayView.addSubview(badgeHost.view)
+                    navigation.addChild(badgeHost)
+                    host.insertSubview(badgeHost.view, aboveSubview: bar)
+                    badgeHost.didMove(toParent: navigation)
+                } else {
+                    host.insertSubview(badgeHost.view, aboveSubview: bar)
                 }
-                // SwiftUI may reorder the navigation container after adding our
-                // overlay. Reassert sibling order so its transparent navbar does
-                // not intercept touches intended for the visible avatar.
-                overlayView.bringSubviewToFront(badgeHost.view)
-                if badgeHost.view.frame != overlayFrame { badgeHost.view.frame = overlayFrame }
+                // Only the measured center header sits above the bar: native
+                // leading/trailing items keep their hit regions, and presentations
+                // above the navigation controller remain above the header too.
+                if badgeHost.view.frame != badgeFrame { badgeHost.view.frame = badgeFrame }
             }
         }
 

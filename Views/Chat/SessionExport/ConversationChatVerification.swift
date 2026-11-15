@@ -13,6 +13,7 @@ import Darwin
     private static var currentStage = "startup"
     private static var inputDiagnostics: [[String: Any]] = []
     private static var voiceLayoutDiagnostics: [[String: Any]] = []
+    private static var headerHitDiagnostics: [[String: Any]] = []
     private static let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("chat-verification")
 
@@ -48,6 +49,70 @@ import Darwin
 
     private static func descendants(_ view: UIView) -> [UIView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    /// Probe the window, not just the badge: a visible SwiftUI accessibility
+    /// element does not prove that NavigationStack routes a real touch to it.
+    private static func verifyHeaderHitRegions(in window: UIWindow, phase: String) throws {
+        guard let badge = marker("chat.verify.providerBadge", in: window),
+              let avatar = descendants(badge).compactMap({ $0 as? SoulAvatarAnimationView }).first,
+              let bar = descendants(window).compactMap({ $0 as? UINavigationBar })
+                .first(where: { isVisible($0, in: window) }) else {
+            try require(false, "\(phase): actual header and navigation bar exist")
+            return
+        }
+        func path(_ view: UIView?) -> [String] {
+            var result: [String] = []
+            var current = view
+            while let view = current {
+                let index = view.superview?.subviews.firstIndex(of: view) ?? 0
+                result.append("\(type(of: view))[\(index)] \(view.accessibilityIdentifier ?? "")")
+                current = view.superview
+            }
+            return result
+        }
+        func probe(_ name: String, at point: CGPoint, within expected: UIView) throws {
+            let hit = window.hitTest(point, with: nil)
+            headerHitDiagnostics.append([
+                "phase": phase, "control": name, "point": [point.x, point.y],
+                "hitPath": path(hit), "badgePath": path(badge), "barPath": path(bar),
+                "badgeControllerParent": (badge.next as? UIViewController)?.parent
+                    .map { String(describing: type(of: $0)) } ?? "nil"
+            ])
+            // Write before asserting so an intercepted touch identifies its exact
+            // receiver and ancestry even when verification stops here.
+            try JSONSerialization.data(withJSONObject: headerHitDiagnostics, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("header-hit-testing.json"), options: .atomic)
+            try require(hit.map { $0.isDescendant(of: expected) } == true,
+                        "\(phase): \(name) receives a window-level hit (\(path(hit)))")
+        }
+        let avatarFrame = avatar.convert(avatar.bounds, to: window)
+        try probe("avatar", at: CGPoint(x: avatarFrame.midX, y: avatarFrame.midY), within: badge)
+        let prefix = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+            ? "chat.nativeGlass." : "chat.fallbackGlass."
+        guard let capsule = descendants(badge).first(where: { $0.accessibilityIdentifier == prefix + "capsule" }),
+              let leading = descendants(bar).first(where: { $0.accessibilityIdentifier == prefix + "circle" }),
+              let trailing = descendants(bar).first(where: { $0.accessibilityIdentifier == prefix + "capsule" }) else {
+            try require(false, "\(phase): actual provider and navigation control markers exist")
+            return
+        }
+        let capsuleFrame = capsule.convert(capsule.bounds, to: window)
+        try probe("provider capsule", at: CGPoint(x: capsuleFrame.midX, y: capsuleFrame.midY), within: badge)
+        for (name, surface, fraction) in [("leading navigation", leading, CGFloat(0.5)),
+                                          ("trailing navigation", trailing, CGFloat(0.75))] {
+            let frame = surface.convert(surface.bounds, to: window)
+            // Compare to the bar's own target too, so the header cannot replace
+            // a native navigation control's target with its own hosting view.
+            let point = CGPoint(x: frame.minX + frame.width * fraction, y: frame.midY)
+            let expected = bar.hitTest(bar.convert(point, from: window), with: nil)
+            try probe(name, at: point, within: bar)
+            try require(expected != nil && expected !== bar && window.hitTest(point, with: nil) === expected,
+                        "\(phase): header preserves \(name)'s native hit target")
+        }
+        try require(badge.superview === bar.superview,
+                    "\(phase): header and bar share the UIKit navigation container")
+        try require((badge.next as? UIViewController)?.parent is UINavigationController,
+                    "\(phase): header controller containment matches its navigation container")
     }
 
     private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
@@ -759,6 +824,9 @@ import Darwin
         UserDefaults.standard.set(false, forKey: "toolStatusBarEnabled")
         vm.attachments = [InputAttachment(fileName: "附件.png", cacheURL: url, kind: .image)]
         await settle(0.5)
+        if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+            try verifyHeaderHitRegions(in: window, phase: "before-external-coordinate-tap")
+        }
         let ready = UILabel(frame: CGRect(x: 0, y: window.bounds.height - 2, width: 2, height: 2))
         ready.text = "."
         ready.accessibilityIdentifier = "chat.layout.ready"
@@ -836,10 +904,12 @@ import Darwin
             }
             guard let view = avatar() else { throw NSError(domain: "SoulAvatar", code: 2) }
             let before = view.convert(view.bounds, to: window)
+            try verifyHeaderHitRegions(in: window, phase: "avatar-size-\(size)")
             vm.requestComposerFocusSignal.send()
             try await waitFor("keyboard focus with avatar") { composer(in: window)?.isFirstResponder == true }
             await settle(0.6)
             let during = view.convert(view.bounds, to: window)
+            try verifyHeaderHitRegions(in: window, phase: "avatar-size-\(size)-keyboard")
             window.endEditing(true)
             await settle(0.6)
             let after = view.convert(view.bounds, to: window)
