@@ -102,6 +102,11 @@ final class KeyboardViewportUITests: XCTestCase {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.5))
                 let preview = app.buttons["preview-card"]
                 XCTAssertTrue(preview.isHittable)
+                if !mode.contains("--preview-only") {
+                    let status = app.staticTexts["compact-status"]
+                    XCTAssertTrue(status.exists)
+                    XCTAssertLessThan(status.frame.height, 45, "65pt preview must not stretch status capsule")
+                }
                 // The upper half was outside the old 34pt/zero-height host.
                 preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
                 XCTAssertTrue(app.buttons["close-preview"].waitForExistence(timeout: 3))
