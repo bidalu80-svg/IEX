@@ -503,6 +503,12 @@ import UIKit
             try require(historyVM.sessionId == session.id, "Visible history uses persisted session VM")
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
+            if ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only") {
+                try await verifyChatLayout(window: window, vm: historyVM)
+                try checkpoint("complete")
+                try writeResult(success: true, error: nil)
+                return
+            }
             try checkpoint("type-in-history")
             // Use the shipping focus-intent signal. PastableUITextView deliberately
             // rejects unsolicited UIKit first-responder promotion until an actual
@@ -553,6 +559,156 @@ import UIKit
             if let window = appWindow { try? capture("failure.png", window: window) }
             try? writeResult(success: false, error: error.localizedDescription)
         }
+    }
+
+
+    /// Uses the complete production page, including the nested keyboard host,
+    /// actual collection cells, attachment grid and FloatingToolBar.
+    private static func verifyChatLayout(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("production-layout-combinations")
+        window.endEditing(true)
+        vm.inputText = ""
+        let user = ChatMessage(role: .user, content: Array(repeating: "渐隐区域检查：这是真实消息气泡，向上滚动时应该连续淡出。", count: 45).joined(separator: "\n"))
+        user.isUserTextExpanded = true
+        let reply = ChatMessage(role: .assistant, content: "附件与预览应同排，输入框保持跟随键盘。")
+        reply.blocks = [AssistantBlock(kind: .shellTool(command: "printf layout-check"), content: "layout-check\nPreview remains tappable", toolStatus: .success),
+                        AssistantBlock(kind: .text, content: reply.content)]
+        vm.messages = [user, reply]
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 160, height: 160)).image { context in
+            UIColor.systemOrange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 160, height: 160))
+            ("附件" as NSString).draw(at: CGPoint(x: 30, y: 65), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 30), .foregroundColor: UIColor.white])
+        }
+        let url = directory.appendingPathComponent("fixture-attachment.png")
+        try image.pngData()!.write(to: url)
+        let savedStatus = UserDefaults.standard.object(forKey: "toolStatusBarEnabled")
+        let savedPreview = UserDefaults.standard.object(forKey: "toolPreviewEnabled")
+        defer {
+            UserDefaults.standard.set(savedStatus, forKey: "toolStatusBarEnabled")
+            UserDefaults.standard.set(savedPreview, forKey: "toolPreviewEnabled")
+            window.overrideUserInterfaceStyle = .unspecified
+        }
+        var records: [[String: Any]] = []
+        for showStatus in [false, true] {
+            UserDefaults.standard.set(showStatus, forKey: "toolStatusBarEnabled")
+            UserDefaults.standard.set(true, forKey: "toolPreviewEnabled")
+            for count in [1, 6] {
+                vm.attachments = (0..<count).map { InputAttachment(fileName: "附件\($0).png", cacheURL: url, kind: .image) }
+                for keyboard in [false, true, false] {
+                    if keyboard { vm.requestComposerFocusSignal.send() }
+                    else { window.endEditing(true) }
+                    await settle(0.9)
+                    let name = "layout-status\(showStatus)-attachments\(count)-keyboard\(keyboard)"
+                    try capture(name + ".png", window: window)
+                    guard let tray = marker("chat.verify.attachments", in: window),
+                          let preview = marker("chat.verify.preview", in: window),
+                          let input = marker("chat.verify.input", in: window) else {
+                        try require(false, "Production attachment, preview and input markers exist: \(name)")
+                        return
+                    }
+                    let a = tray.convert(tray.bounds, to: window)
+                    let b = preview.convert(preview.bounds, to: window)
+                    let c = input.convert(input.bounds, to: window)
+                    records.append(["name": name, "attachment": rectData(a), "preview": rectData(b), "input": rectData(c)])
+                    try JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
+                        .write(to: directory.appendingPathComponent("accessory-geometry.json"), options: .atomic)
+                    try require(abs(a.maxY - b.maxY) < 2, "Attachment and preview share bottom edge: \(name)")
+                    try require(a.maxX <= b.minX + 1, "Attachment grid reserves preview width: \(name)")
+                    try require(c.minY >= a.maxY - 1 && c.minY - a.maxY < (showStatus ? 60 : 12), "No empty preview-height row above composer: \(name)")
+                    if showStatus, let status = marker("chat.verify.status", in: window) {
+                        try require(status.bounds.height < 45, "Status remains intrinsic height: \(name)")
+                    }
+                    // Detect the earlier regression where the upper preview was
+                    // drawn outside its owning UIHostingController's hit region.
+                    let point = CGPoint(x: b.midX, y: b.minY + 8)
+                    let hit = window.hitTest(point, with: nil)
+                    var ancestor = preview.superview
+                    while let current = ancestor, !String(describing: type(of: current)).contains("Hosting") {
+                        ancestor = current.superview
+                    }
+                    let hostingAncestor = ancestor
+                    try require(hit != nil && hostingAncestor.map { hit!.isDescendant(of: $0) } == true,
+                                "Upper preview has a real hosting hit region: \(name)")
+                }
+            }
+        }
+        vm.attachments = []
+        window.endEditing(true)
+        await settle(0.8)
+        try checkpoint("production-transcript-fade")
+        guard let list = descendants(window).compactMap({ $0 as? UICollectionView }).first(where: { isVisible($0, in: window) }),
+              let frost = marker("chat-progressive-frost", in: window),
+              let bar = descendants(window).compactMap({ $0 as? UINavigationBar }).first(where: { isVisible($0, in: window) }) else {
+            try require(false, "Full application has actual transcript, overlay and navigation bar")
+            return
+        }
+        list.setContentOffset(CGPoint(x: 0, y: 80), animated: false)
+        await settle(0.7)
+        let listRect = list.convert(list.bounds, to: window)
+        let barRect = bar.convert(bar.bounds, to: window)
+        let hierarchy = descendants(window).map { view -> [String: Any] in
+            ["type": String(describing: type(of: view)), "frame": rectData(view.convert(view.bounds, to: window)),
+             "clips": view.clipsToBounds, "hidden": view.isHidden, "alpha": view.alpha,
+             "background": view.backgroundColor?.description ?? "nil", "identifier": view.accessibilityIdentifier ?? ""]
+        }
+        try JSONSerialization.data(withJSONObject: hierarchy, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("actual-view-hierarchy.json"))
+        try capture("actual-header-before-pixel-check.png", window: window)
+        try require(listRect.minY <= window.safeAreaInsets.top + 1,
+                    "Transcript viewport extends above navigation bottom; no safe-area clipping strip (top=\(listRect.minY), bar=\(barRect.maxY))")
+        var pixelRecords: [[String: Any]] = []
+        for theme: UIUserInterfaceStyle in [.light, .dark] {
+            window.overrideUserInterfaceStyle = theme
+            await settle(0.5)
+            frost.isHidden = true
+            await settle(0.15)
+            let unfaded = snapshot(window)
+            frost.isHidden = false
+            await settle(0.15)
+            let faded = snapshot(window)
+            let dark = theme == .dark
+            let label = dark ? "dark" : "light"
+            try capture("actual-header-\(label)-scrolled.png", window: window)
+            let x = window.bounds.width * 0.72
+            let y = barRect.maxY + 8
+            let before = pixel(unfaded, point: CGPoint(x: x, y: y))
+            let after = pixel(faded, point: CGPoint(x: x, y: y))
+            let distance: ([CGFloat]) -> CGFloat = { $0.reduce(0) { $0 + abs($1 - (dark ? 0 : 1)) } }
+            let base = distance(before), actual = distance(after)
+            pixelRecords.append(["theme": label, "point": [x, y], "before": before, "after": after,
+                                 "unfadedContrast": base, "fadedContrast": actual])
+            try JSONSerialization.data(withJSONObject: pixelRecords, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("actual-header-pixels.json"), options: .atomic)
+            try require(base > 0.06, "Real message bubble reaches the header sampling point: \(label)")
+            try require(actual < base * 0.85 && actual > base * 0.015,
+                        "Real bubble is partially faded, neither unchanged nor solid-covered: \(label)")
+        }
+        // Leave the actual attachment+preview combination for external XCTest
+        // taps, rather than exercising copied label/rectangle substitutes.
+        window.overrideUserInterfaceStyle = .light
+        UserDefaults.standard.set(false, forKey: "toolStatusBarEnabled")
+        vm.attachments = [InputAttachment(fileName: "附件.png", cacheURL: url, kind: .image)]
+        await settle(0.5)
+        let ready = UILabel(frame: CGRect(x: 0, y: window.bounds.height - 2, width: 2, height: 2))
+        ready.text = "."
+        ready.accessibilityIdentifier = "chat.layout.ready"
+        ready.isAccessibilityElement = true
+        window.addSubview(ready)
+    }
+
+    private static func snapshot(_ window: UIWindow) -> UIImage {
+        UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    private static func pixel(_ image: UIImage, point: CGPoint) -> [CGFloat] {
+        guard let cg = image.cgImage else { return [] }
+        let x = Int(point.x * image.scale), y = Int(point.y * image.scale)
+        var bytes: [UInt8] = [0, 0, 0, 0]
+        let context = CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(cg, in: CGRect(x: -x, y: -(cg.height - 1 - y), width: cg.width, height: cg.height))
+        return bytes.prefix(3).map { CGFloat($0) / 255 }
     }
 
     private static func writeResult(success: Bool, error: String?) throws {

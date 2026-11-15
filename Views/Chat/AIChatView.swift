@@ -557,13 +557,9 @@ struct AIChatView: View {
                     }
             }
             VStack(spacing: 0) {
-                // Attachments expand away from the composer without
-                // changing the tool-status bar's anchor.
-                attachmentPreviewTray
-                    // Preview thumbnails draw as an overlay on the
-                    // status bar. Keep attachment tiles above that
-                    // overlay if their horizontal regions meet.
-                    .zIndex(1)
+                // With tools visible, the tray shares their accessory layout.
+                // Counting it as a preceding row lifts it by the preview height.
+                if !hasFloatingPreview { attachmentPreviewTray }
                 floatingToolPreview
                     .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
                 #if DEBUG
@@ -599,6 +595,11 @@ struct AIChatView: View {
         ZStack {
             // Messages — floating tool preview overlaid at bottom
             messagesArea
+                // This is a NEW hosting root inside ChatKeyboardViewport.
+                // The outer page's ignoresSafeArea does not cross that boundary.
+                // Extend only the transcript behind the navigation controls;
+                // the input/voice overlays retain their existing safe areas.
+                .ignoresSafeArea(.container, edges: .top)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if voiceCallPresentation.isActive, let provider = activeCallProvider {
                         ChatVoiceCallPanelHost(
@@ -2437,7 +2438,7 @@ struct AIChatView: View {
                 // safety band for message content without using it to place
                 // attachment previews.
                 floatingBarHeight: hasFloatingPreview ? max(floatingBarHeight, 80) : 0,
-                inputBarHeight: inputBarHeight + attachmentTrayHeight,
+                inputBarHeight: inputBarHeight + standaloneAttachmentTrayHeight,
                 // [T-foldable-scroll] Same key the draft VM uses, so a rebuilt
                 // list (fold/unfold) resumes at the message the reader was on.
                 scrollMemoryKey: sessionId ?? draftId,
@@ -2512,7 +2513,7 @@ struct AIChatView: View {
                 .padding(.trailing, 4)
                 .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .trailing)
                 .padding(.horizontal, 12)
-                .padding(.bottom, inputBarHeight + attachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12))
+                .padding(.bottom, inputBarHeight + standaloneAttachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12))
                 .animation(.easeInOut(duration: 0.2), value: vm.isNearBottom)
                 .animation(.easeInOut(duration: 0.2), value: vm.isAtFirstTurn)
                 .animation(.easeInOut(duration: 0.2), value: hasFloatingPreview)
@@ -2532,7 +2533,7 @@ struct AIChatView: View {
             .padding(.trailing, 4)
             .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .trailing)
             .padding(.horizontal, 12)
-            .padding(.bottom, inputBarHeight + attachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12) + 92)
+            .padding(.bottom, inputBarHeight + standaloneAttachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12) + 92)
             .animation(.easeInOut(duration: 0.2), value: hasFloatingPreview)
             .capsuleProtectedFrame("downloadButton")
         }
@@ -2576,7 +2577,9 @@ struct AIChatView: View {
             .filter { $0.role == .assistant && !$0.isCompactedHistory }
             .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
         if !allToolBlocks.isEmpty && (toolStatusBarEnabled || toolPreviewEnabled) {
-            FloatingToolBar(toolBlocks: allToolBlocks, toolSnapshots: vm.toolSnapshots, browserPool: vm.browserTabPool, onBrowserTakeover: {
+            FloatingToolBar(toolBlocks: allToolBlocks, toolSnapshots: vm.toolSnapshots, browserPool: vm.browserTabPool,
+                            attachmentTray: hasPendingAttachmentPreviews ? AnyView(attachmentPreviewTray) : nil,
+                            onBrowserTakeover: {
                 vm.browserTakeoverActive = true
             }, onTakeoverDone: {
                 vm.resumeFromBrowserTakeover()
@@ -3414,6 +3417,7 @@ struct AIChatView: View {
             }
 
             inputComposerChrome
+            .background(ChatCallLayoutMarker(identifier: "chat.verify.input"))
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, composerHorizontalPadding)
             // The cosmetic capsule morph stays local; UIKit owns its position.
@@ -4109,12 +4113,16 @@ struct AIChatView: View {
             // rows so a single photo or file stays flush with the bar below.
             .frame(height: attachmentTrayHeight)
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, hasFloatingPreview ? 0 : 12)
+            .background(ChatCallLayoutMarker(identifier: "chat.verify.attachments"))
         }
     }
 
-    /// The attachment tray is outside `inputBar` so it does not push the tool
-    /// status UI upward. Its height must still be reserved by the message list.
+    /// When tools own the tray, floatingBarHeight already includes its height.
+    private var standaloneAttachmentTrayHeight: CGFloat {
+        hasFloatingPreview ? 0 : attachmentTrayHeight
+    }
+
     private var attachmentTrayHeight: CGFloat {
         guard hasPendingAttachmentPreviews else { return 0 }
         let measuredHeight = attachmentGridHeight > 0
@@ -4831,13 +4839,12 @@ private final class ChatProgressiveFrostView: UIView {
 
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         lastBottom = barBottom
-        guard let window, let parent = superview else { return }
-        // Reference: fade only ABOVE the header controls, never through the
-        // avatar/name. Convert the status-bar boundary into this view's space.
-        // A foreground theme gradient covers actual scrolling content even
-        // when nested hosting/safe-area layers do not share the list's origin.
-        let boundary = parent.convert(CGPoint(x: 0, y: window.safeAreaInsets.top + 8), from: window).y
-        let height = max(1, boundary - frame.minY)
+        guard window != nil, superview != nil else { return }
+        // The navigation controls and avatar are separate siblings ABOVE us.
+        // Fade the transcript through their band without fading the controls.
+        // Ending at safeArea.top + 8 only paints the status bar, leaving the
+        // actual message clipping edge completely uncovered.
+        let height = max(1, bounds.height)
         let color = UIColor.systemBackground.resolvedColor(with: traitCollection)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -4990,7 +4997,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 reportedTopInset = barBottom
                 DispatchQueue.main.async { [weak self] in self?.onTopInset?(barBottom) }
             }
-            let height = max(1, max(barBottom + 32, badgeView == nil ? 0 : badgeFrame.maxY + 44))
+            let height = max(1, max(barBottom + 32, badgeView == nil ? 0 : badgeFrame.maxY + 12))
             let nextFrame = CGRect(x: barFrame.minX, y: 0, width: barFrame.width, height: height)
             if lastFrostFrame != nextFrame {
                 lastFrostFrame = nextFrame

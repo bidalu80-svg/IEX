@@ -206,10 +206,26 @@ final class ChatConversationFadeView: UIView {
 struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
     let showsStatus: Bool
     let showsPreview: Bool
+    var attachments: AnyView? = nil
     @ViewBuilder let status: () -> Status
     @ViewBuilder let preview: () -> Preview
 
     var body: some View {
+        if let attachments {
+            VStack(spacing: 0) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    attachments.frame(maxWidth: .infinity)
+                    if showsPreview { preview().padding(.trailing, 10) }
+                }
+                if showsStatus { status().fixedSize(horizontal: false, vertical: true) }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        } else {
+            originalToolLayout
+        }
+    }
+
+    private var originalToolLayout: some View {
         ZStack(alignment: .bottomTrailing) {
             // ZStack proposes the thumbnail's 65pt height to flexible children.
             // Resolve the status at its intrinsic height BEFORE that proposal;
@@ -219,4 +235,20 @@ struct ChatToolPreviewLayout<Status: View, Preview: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
+}
+
+/// Geometry-only marker for full-application regression capture.
+struct ChatAccessoryGeometryMarker: UIViewRepresentable {
+    let identifier: String
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only") {
+            view.accessibilityIdentifier = identifier
+        }
+        #endif
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
 }

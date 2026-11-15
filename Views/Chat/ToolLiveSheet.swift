@@ -263,6 +263,7 @@ struct FloatingToolBar: View {
     let toolBlocks: [AssistantBlock]
     var toolSnapshots: [ToolSnapshotItem] = []
     var browserPool: BrowserTabPool?
+    var attachmentTray: AnyView? = nil
     var onBrowserTakeover: (() -> Void)?
     var onTakeoverDone: (() -> Void)?
     @State private var selectedIdx: Int? = nil
@@ -293,17 +294,21 @@ struct FloatingToolBar: View {
     }
 
     var body: some View {
-        ChatToolPreviewLayout(showsStatus: toolStatusBarEnabled, showsPreview: toolPreviewEnabled) {
+        ChatToolPreviewLayout(showsStatus: toolStatusBarEnabled, showsPreview: toolPreviewEnabled,
+                              attachments: attachmentTray) {
             ToolStatusBar(
                 block: displayedBlock,
                 toolBlocks: toolBlocks,
                 displayedIdx: displayedIdx,
                 expanded: $expanded,
                 selectedIdx: $selectedIdx,
-                trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
+                trailingInset: toolPreviewEnabled && attachmentTray == nil ? Self.thumbnailWidth + 18 : 0
             )
+            .background(ChatAccessoryGeometryMarker(identifier: "chat.verify.status"))
         } preview: {
             previewThumbnail
+                .background(ChatAccessoryGeometryMarker(identifier: "chat.verify.preview"))
+                .accessibilityIdentifier("chat.tool.preview")
         }
         // .shadow(color: .black.opacity(0.2), radius: 12, x: 0, y: -4)
         .animation(.easeInOut(duration: 0.15), value: displayedIdx)
@@ -600,6 +605,7 @@ struct ToolLiveSheet: View {
                         .background(ChatColors.secondaryBg)
                         .clipShape(Circle())
                 }
+                .accessibilityIdentifier("chat.tool.close")
 
                 Spacer()
 

@@ -557,8 +557,9 @@ private final class FrostTailBackdrop: UIView {
             try check(headerGradient != nil, "Real navigation overlay owns the header gradient")
             if let frost = syntheticFrost, let gradient = headerGradient, let window = frost.window {
                 let bottom = frost.convert(CGPoint(x: 0, y: gradient.frame.maxY), to: window).y
-                try check(abs(bottom - (window.safeAreaInsets.top + 8)) < 1,
-                          "Fade ends above header controls at window safe area plus 8")
+                let navigationBottom = nav.navigationBar.convert(nav.navigationBar.bounds, to: window).maxY
+                try check(bottom > navigationBottom + 20,
+                          "Fade extends through the navigation band into scrolling content")
                 let colors = (gradient.colors as? [CGColor]) ?? []
                 try check(colors.first?.alpha == 1 && colors.last?.alpha == 0,
                           "Top is covered and component boundary is fully clear")

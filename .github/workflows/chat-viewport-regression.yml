@@ -3,11 +3,17 @@ on:
   push:
     branches: [codex/keyboard-viewport]
   workflow_dispatch:
+    inputs:
+      full_application:
+        description: 'Build and exercise the complete Ze chat page instead of the isolated fixture'
+        type: boolean
+        default: false
 concurrency:
   group: chat-viewport-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   regression:
+    if: ${{ inputs.full_application != true }}
     runs-on: macos-15
     timeout-minutes: 15
     steps:
@@ -20,4 +26,25 @@ jobs:
         with:
           name: chat-viewport-regression
           path: keyboard-viewport-evidence/
+          retention-days: 7
+  application:
+    if: ${{ inputs.full_application == true }}
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build complete Ze simulator application
+        run: bash scripts/build-share-search-simulator.sh
+      - name: Verify actual transcript fade and composer combinations
+        timeout-minutes: 12
+        run: bash scripts/test-chat-layout-application.sh
+      - name: Upload actual application screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-chat-layout-review
+          path: |
+            chat-layout-evidence/
+            share-search-simulator-build.log
+            share-search-simulator-resolve.log
           retention-days: 7
