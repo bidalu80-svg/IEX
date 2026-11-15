@@ -716,8 +716,16 @@ import Darwin
             let dark = theme == .dark
             let label = dark ? "dark" : "light"
             try capture("actual-header-\(label)-scrolled.png", window: window)
-            let x = window.bounds.width * 0.72
             let y = barRect.midY - 8
+            // iOS 26's trailing glass starts at x=290 on a 402pt screen.
+            // The old x=289.44 sample measures its refracted/shadow edge,
+            // not the transcript. Sample the gap between actual controls.
+            let surfaces = descendants(window).filter {
+                $0.accessibilityIdentifier?.hasPrefix("chat.nativeGlass.") ?? false
+            }.map { $0.convert($0.bounds, to: window).insetBy(dx: -12, dy: -12) }
+            let x = [0.64, 0.36, 0.72].map { window.bounds.width * $0 }.first { candidate in
+                !surfaces.contains { $0.contains(CGPoint(x: candidate, y: y)) }
+            } ?? window.bounds.width * 0.64
             let before = pixel(unfaded, point: CGPoint(x: x, y: y))
             let after = pixel(faded, point: CGPoint(x: x, y: y))
             let distance: ([CGFloat]) -> CGFloat = { $0.reduce(0) { $0 + abs($1 - (dark ? 0 : 1)) } }

@@ -13,14 +13,14 @@ for key, entry in original['assets'].items():
     filename = contents.get('images', contents.get('data'))[0]['filename']
     data = (catalog / filename).read_bytes()
     digest = hashlib.sha256(data).hexdigest()
-    expected = refined['outputs'][key.split('-')[1]] if key.startswith('working-') else entry['source_sha256']
+    expected = refined['outputs'][key.split('-')[1]] if key == 'working-dark' else entry['source_sha256']
     assert digest == expected, f'Unexpected avatar asset: {key}'
     if key == 'main':
         width, height, depth, color = struct.unpack('>IIBB', data[16:26])
         assert min(width, height) >= 1024 and color == 6, 'Expected large RGBA PNG'
     else:
         assert data[4:8] == b'ftyp', f'Expected MP4: {key}'
-    assets[key] = {'sha256': digest, 'bytes': len(data), 'source': 'laptop refinement' if key.startswith('working-') else 'user archive'}
+    assets[key] = {'sha256': digest, 'bytes': len(data), 'source': 'laptop refinement' if key == 'working-dark' else 'user archive'}
 source_files = ['Agent/Session/SoulStore.swift', 'Views/Chat/AIChatView.swift',
                 'Views/Chat/SessionExport/ConversationChatVerification.swift',
                 'scripts/ChatLayoutApplicationUITests.swift']

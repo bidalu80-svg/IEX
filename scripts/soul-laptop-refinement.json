@@ -2,13 +2,13 @@
   "source_sha256": "42a9e18f06cb9b941d57600cf9d3f80e100b4ff4752b6dd80339eda5cc0b0fd2",
   "frames": 120,
   "fps": 24,
-  "edge_cleanup": "inward 3px matte, contour cleanup, temporal median, inward feather",
   "resolution": [
     720,
     720
   ],
+  "scope": "dark laptop only; light theme unchanged",
+  "edge_cleanup": "local GrabCut band, table strip removal, temporal median and soft inward contour",
   "outputs": {
-    "light": "779d8c44ab387cc4243779e1431af5f7a6c3a15d301508336ed4d74e0d3f2324",
-    "dark": "70e2656f5239d5be0f1405a6e0855606094476caf00e1a3389520880ace43bb1"
+    "dark": "92a9e25bb57a5cbf7ac10e300771566fba52a50cf03e6d419e7d1627aca22ccf"
   }
 }
