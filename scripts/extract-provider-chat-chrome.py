@@ -50,7 +50,7 @@ for name in ["providerPickerLabel", "providerIcon", "providerColor"]:
     add_row += member(add, "    private func " + name + "(") + "\n"
 add_row += "}\n"
 output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text("import SwiftUI\nimport UIKit\n" + palette + "\n" + copilot + "\n" + brand + "\n" + resolution + "\n" + chrome + "\n" + type_extensions + instance_row + add_row + harness, encoding="utf-8")
+output.write_text("import SwiftUI\nimport UIKit\nimport ObjectiveC\n" + palette + "\n" + copilot + "\n" + brand + "\n" + resolution + "\n" + chrome + "\n" + type_extensions + instance_row + add_row + harness, encoding="utf-8")
 catalog.mkdir(parents=True, exist_ok=True)
 (catalog / "Contents.json").write_text('{"info":{"version":1,"author":"xcode"}}')
 assets = list((root / "Assets.xcassets").glob("ProviderBrand*.imageset"))

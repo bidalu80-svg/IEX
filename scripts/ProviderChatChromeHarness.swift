@@ -226,7 +226,9 @@ private final class FrostTailBackdrop: UIView {
     }
 
     private func providerBadgeView(_ navigation: UINavigationController) -> UIView? {
-        navigation.navigationBar.superview?.subviews.first { $0 is UIContentView && $0.bounds.width == 24 && $0.bounds.height == 24 }
+        navigation.view.window?.rootViewController?.view.subviews.first {
+            $0.next is UIHostingController<AnyView> && $0.bounds.width == 24 && $0.bounds.height == 24
+        }
     }
 
     private func imageContrast(_ image: UIImage) -> Int {
@@ -528,7 +530,16 @@ private final class FrostTailBackdrop: UIView {
             owner.view.addSubview(controller.view)
             controller.didMove(toParent: owner)
             guard let window else { throw NSError(domain: "ProviderChrome", code: -1) }
-            window.rootViewController = nav
+            // Production keeps navigation below a window root and parents the
+            // badge to that root. A bare UINavigationController root cannot
+            // exercise that containment contract.
+            let root = UIViewController()
+            root.addChild(nav)
+            root.view.addSubview(nav.view)
+            nav.didMove(toParent: root)
+            window.rootViewController = root
+            nav.view.frame = root.view.bounds
+            nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             window.makeKeyAndVisible()
             nav.loadViewIfNeeded()
             nav.view.layoutIfNeeded()
@@ -587,8 +598,8 @@ private final class FrostTailBackdrop: UIView {
             try check(mountedBadge != nil && nav.topViewController === owner,
                       "Mounted provider content view leaves navigation's top controller unchanged")
             if let badgeView = mountedBadge {
-                let hitPoint = badgeView.convert(CGPoint(x: badgeView.bounds.midX, y: badgeView.bounds.midY), to: nav.view)
-                let hit = nav.view.hitTest(hitPoint, with: nil)
+                let hitPoint = badgeView.convert(CGPoint(x: badgeView.bounds.midX, y: badgeView.bounds.midY), to: window)
+                let hit = window.hitTest(hitPoint, with: nil)
                 try check(hit === badgeView || hit?.isDescendant(of: badgeView) == true,
                           "Visible provider badge receives hit testing above the noninteractive frost")
             }
@@ -611,6 +622,96 @@ private final class FrostTailBackdrop: UIView {
             try check(owner.navigationItem.standardAppearance?.shadowColor == UIColor.red, "Leaving chat restores prior navigation item appearance")
             try check(frostedOverlay(nav) == nil, "Leaving chat removes its gradient frost overlay")
             try check(providerBadgeView(nav) == nil && nav.topViewController === owner, "Leaving chat removes the provider badge view without changing navigation ownership")
+
+            // Exercise the actual window hook with the badge still parented to
+            // the root. Put navigation first in hit-test order to reproduce the
+            // intercepted bar target regardless of UIKit's sibling traversal.
+            let leading = UIButton(type: .system)
+            leading.setTitle("Back", for: .normal)
+            leading.frame.size = CGSize(width: 44, height: 44)
+            let trailing = UIButton(type: .system)
+            trailing.setTitle("More", for: .normal)
+            trailing.frame.size = CGSize(width: 44, height: 44)
+            owner.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: leading)
+            owner.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: trailing)
+            owner.navigationItem.titleView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            controller.updateBadge(AnyView(Button("Header") {}.frame(width: 160, height: 56)),
+                                   headerSize: CGSize(width: 160, height: 56))
+            controller.applyIfNeeded()
+            nav.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            controller.applyIfNeeded()
+            guard let badgeHost = root.children.compactMap({ $0 as? UIHostingController<AnyView> }).first else {
+                throw NSError(domain: "ProviderChrome.HeaderHitRouting", code: -1)
+            }
+            let badge = badgeHost.view!
+            let point = badge.convert(CGPoint(x: badge.bounds.midX, y: badge.bounds.midY), to: window)
+            let bar = nav.navigationBar
+            root.view.bringSubviewToFront(nav.view)
+            let native = bar.hitTest(bar.convert(point, from: window), with: nil)
+            try check(native?.isDescendant(of: bar) == true,
+                      "Interception fixture starts with a native bar target at the root-hosted header center")
+            try check(badgeHost.parent === root && badge.superview === root.view && nav.topViewController === owner,
+                      "Header routing keeps controller and view under the window root without changing navigation ownership")
+            try check(ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar),
+                      "Root-hosted header installs scoped bar passthrough")
+            try check(window.hitTest(point, with: nil)?.isDescendant(of: badge) == true,
+                      "Window forwards an intercepted transparent bar hit to the root-hosted header")
+            for control in [leading, trailing] {
+                let p = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: window)
+                let expected = bar.hitTest(bar.convert(p, from: window), with: nil)
+                try check(expected != nil && expected !== bar && window.hitTest(p, with: nil) === expected,
+                          "Root header routing preserves the native target of \(control === leading ? "leading" : "trailing") navigation")
+            }
+            let outside = CGPoint(x: point.x, y: bar.convert(bar.bounds, to: window).maxY + 160)
+            let outsideTarget = window.hitTest(outside, with: nil)
+            let outsideNative = nav.view.hitTest(nav.view.convert(outside, from: window), with: nil)
+            try check(outsideTarget != nil && outsideTarget === outsideNative,
+                      "Window routing leaves content outside the header untouched")
+            let unrelatedWindow = UIWindow(frame: window.frame)
+            unrelatedWindow.rootViewController = UIViewController()
+            let unrelatedButton = UIButton(frame: unrelatedWindow.bounds)
+            unrelatedWindow.rootViewController!.view.addSubview(unrelatedButton)
+            unrelatedWindow.isHidden = false
+            try check(unrelatedWindow.hitTest(point, with: nil) === unrelatedButton,
+                      "Window hook preserves native hits in an unregistered window")
+            unrelatedWindow.isHidden = true
+            let sheet = UIViewController()
+            sheet.view.backgroundColor = .systemBackground
+            sheet.modalPresentationStyle = .fullScreen
+            owner.present(sheet, animated: false)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try check(!ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar)
+                      && window.hitTest(point, with: nil)?.isDescendant(of: sheet.view) == true,
+                      "Presented sheet keeps the window hit above the chat header")
+            sheet.dismiss(animated: false)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            controller.applyIfNeeded()
+            let picker = UIViewController()
+            picker.view.backgroundColor = .systemBackground
+            nav.pushViewController(picker, animated: false)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try check(nav.topViewController === picker
+                      && !ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar)
+                      && window.hitTest(point, with: nil)?.isDescendant(of: badge) == false,
+                      "Model picker navigation keeps ownership and disables chat header routing")
+            nav.popViewController(animated: false)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            controller.applyIfNeeded()
+            try check(ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar),
+                      "Returning from picker restores scoped header routing")
+            controller.updateBadge(nil)
+            try check(!ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar),
+                      "Removing the badge immediately disables window routing")
+            controller.updateBadge(AnyView(Button("Header") {}.frame(width: 160, height: 56)),
+                                   headerSize: CGSize(width: 160, height: 56))
+            controller.applyIfNeeded()
+            controller.restore()
+            root.view.bringSubviewToFront(nav.view)
+            let restored = bar.hitTest(bar.convert(point, from: window), with: nil)
+            try check(!ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar)
+                      && window.hitTest(point, with: nil) === restored && nav.topViewController === owner,
+                      "Restoration removes window routing and restores native bar hits without changing ownership")
 
             for dark in [false, true] {
                 let theme = dark ? "dark" : "light"

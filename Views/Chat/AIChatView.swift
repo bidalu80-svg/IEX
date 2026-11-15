@@ -8,6 +8,7 @@ import QuickLook
 import SwiftUI
 import OpenGlass
 import Metal
+import ObjectiveC
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
@@ -4922,6 +4923,118 @@ private final class ChatProgressiveFrostView: UIView {
     }
 }
 
+/// Root-hosted headers can draw above NavigationStack while SwiftUI's hit test
+/// still selects its transparent bar. Redirect only that bar's otherwise empty
+/// header region, after UIKit has chosen a target, without moving either host.
+@MainActor
+final class ChatHeaderHitRouting {
+    private static var windowKey: UInt8 = 0
+    private weak var window: UIWindow?
+    private weak var badge: UIView?
+    private weak var navigation: UINavigationController?
+    private weak var item: UINavigationItem?
+
+    private static let installWindowHook: Void = {
+        let originalSelector = #selector(UIWindow.hitTest(_:with:))
+        let routedSelector = #selector(UIWindow.chatHeaderHitTest(_:with:))
+        guard let original = class_getInstanceMethod(UIWindow.self, originalSelector),
+              let routed = class_getInstanceMethod(UIWindow.self, routedSelector) else { return }
+        // Do not exchange an inherited UIView implementation: only UIWindow
+        // should be hooked, and every unregistered window keeps UIKit's result.
+        if class_addMethod(UIWindow.self, originalSelector, method_getImplementation(routed),
+                           method_getTypeEncoding(routed)) {
+            class_replaceMethod(UIWindow.self, routedSelector, method_getImplementation(original),
+                                method_getTypeEncoding(original))
+        } else {
+            method_exchangeImplementations(original, routed)
+        }
+    }()
+
+    func install(badge: UIView, navigation: UINavigationController, item: UINavigationItem?) {
+        guard let window = badge.window, window === navigation.view.window else {
+            remove()
+            return
+        }
+        if self.window !== window { remove() }
+        _ = Self.installWindowHook
+        self.window = window
+        self.badge = badge
+        self.navigation = navigation
+        self.item = item
+        objc_setAssociatedObject(window, &Self.windowKey, self, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    func remove() {
+        if let window, Self.route(in: window) === self {
+            objc_setAssociatedObject(window, &Self.windowKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+        window = nil
+        badge = nil
+        navigation = nil
+        item = nil
+    }
+
+    fileprivate static func route(in window: UIWindow) -> ChatHeaderHitRouting? {
+        objc_getAssociatedObject(window, &windowKey) as? ChatHeaderHitRouting
+    }
+
+    static func isActive(in window: UIWindow, badge: UIView, bar: UINavigationBar) -> Bool {
+        guard let route = route(in: window) else { return false }
+        return route.badge === badge && route.navigation?.navigationBar === bar && route.isCurrent
+    }
+
+    private var isCurrent: Bool {
+        guard let window, let badge, let navigation, let item else { return false }
+        guard badge.window === window, navigation.view.window === window,
+              badge.superview === window.rootViewController?.view,
+              navigation.topViewController?.navigationItem === item,
+              navigation.navigationBar.topItem === item else { return false }
+        // Presentations may leave part of the chat bar exposed. Do not give
+        // that exposed area a new action while a sheet or menu owns the UI.
+        var owner: UIViewController? = navigation
+        while let controller = owner {
+            if controller.presentedViewController != nil { return false }
+            owner = controller.parent
+        }
+        return true
+    }
+
+    fileprivate func target(at point: CGPoint, event: UIEvent?, original: UIView?) -> UIView? {
+        guard isCurrent, let window, let badge, let bar = navigation?.navigationBar,
+              let original, original.isDescendant(of: bar) else { return original }
+        // A sheet, menu or another navigation stack already wins above: its
+        // target never enters this bar subtree. Within this bar, preserve native
+        // controls (including their expanded hit targets) before trying the badge.
+        var ancestor: UIView? = original
+        while let view = ancestor, view !== bar {
+            // The empty principal title also has a UIKit control wrapper. It
+            // belongs to the replaced title, not to a leading/trailing action.
+            let wrapsTitle = bar.topItem?.titleView?.isDescendant(of: view) == true
+            if view is UIControl && !wrapsTitle { return original }
+            ancestor = view.superview
+        }
+        let controls = (bar.topItem?.leftBarButtonItems ?? []) + (bar.topItem?.rightBarButtonItems ?? [])
+        for control in controls {
+            guard let view = control.customView else { continue }
+            if original.isDescendant(of: view) || view.convert(view.bounds, to: window).contains(point) {
+                return original
+            }
+        }
+        let local = badge.convert(point, from: window)
+        guard badge.point(inside: local, with: event) else { return original }
+        return badge.hitTest(local, with: event) ?? original
+    }
+}
+
+extension UIWindow {
+    @objc fileprivate func chatHeaderHitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // Calls the original implementation after the one-time exchange.
+        let original = chatHeaderHitTest(point, with: event)
+        guard let route = ChatHeaderHitRouting.route(in: self) else { return original }
+        return route.target(at: point, event: event, original: original)
+    }
+}
+
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
     var providerBadge: AnyView? = nil
@@ -4971,6 +5084,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var installedCompact: UINavigationBarAppearance?
         private var installedCompactScroll: UINavigationBarAppearance?
         private let frostedOverlay = ChatProgressiveFrostView(frame: .zero)
+        private let headerHitRouting = ChatHeaderHitRouting()
         private var badgeHost: UIHostingController<AnyView>?
         private var badgeView: UIView? { badgeHost?.view }
         private var headerSize: CGSize?
@@ -4983,6 +5097,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil) {
             self.headerSize = headerSize
             guard let badge else {
+                headerHitRouting.remove()
                 badgeHost?.willMove(toParent: nil)
                 badgeHost?.view.removeFromSuperview()
                 badgeHost?.removeFromParent()
@@ -5023,11 +5138,18 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
             guard let navigation = navigationController, item != nil else { return }
-            layoutFrostedOverlay(in: navigation)
+            layoutHeader(in: navigation)
         }
         override func viewWillDisappear(_ animated: Bool) {
             super.viewWillDisappear(animated)
             restore()
+        }
+
+        private func layoutHeader(in navigation: UINavigationController) {
+            layoutFrostedOverlay(in: navigation)
+            if let badgeView {
+                headerHitRouting.install(badge: badgeView, navigation: navigation, item: item)
+            }
         }
 
         private func layoutFrostedOverlay(in navigation: UINavigationController) {
@@ -5077,26 +5199,29 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             // The scoped overlay paints only above the header controls.
             // Never install a mask on navigation.topViewController: it may
             // be the model picker rather than the conversation.
-            if let badgeHost {
-                // Use the same UIKit container as the bar. A manually inserted
-                // sibling in the window's SwiftUI root can draw above NavigationStack
-                // while its hit testing still enters the stack's transparent bar.
-                // Match controller containment to view containment as well; owning
-                // this host from the chat subtree caused an iOS 18 hierarchy crash.
-                if badgeHost.parent !== navigation {
+            if let badgeHost, let overlayOwner = navigation.view.window?.rootViewController,
+               overlayOwner !== navigation {
+                // Keep controller and view containment identical: the header is
+                // a sibling of the navigation hierarchy in the window root.
+                // Parenting it to the chat but putting its view in navigation.view
+                // raises UIViewControllerHierarchyInconsistency on iOS 18.
+                let overlayView = overlayOwner.view!
+                let overlayFrame = host.convert(badgeFrame, to: overlayView)
+                if badgeHost.parent !== overlayOwner {
                     badgeHost.willMove(toParent: nil)
                     badgeHost.view.removeFromSuperview()
                     badgeHost.removeFromParent()
-                    navigation.addChild(badgeHost)
-                    host.insertSubview(badgeHost.view, aboveSubview: bar)
-                    badgeHost.didMove(toParent: navigation)
-                } else {
-                    host.insertSubview(badgeHost.view, aboveSubview: bar)
+                    overlayOwner.addChild(badgeHost)
+                    overlayView.addSubview(badgeHost.view)
+                    badgeHost.didMove(toParent: overlayOwner)
+                } else if badgeHost.view.superview !== overlayView {
+                    overlayView.addSubview(badgeHost.view)
                 }
-                // Only the measured center header sits above the bar: native
-                // leading/trailing items keep their hit regions, and presentations
-                // above the navigation controller remain above the header too.
-                if badgeHost.view.frame != badgeFrame { badgeHost.view.frame = badgeFrame }
+                // SwiftUI may reorder the navigation container after adding our
+                // overlay. Reassert sibling order so its transparent navbar does
+                // not intercept touches intended for the visible avatar.
+                overlayView.bringSubviewToFront(badgeHost.view)
+                if badgeHost.view.frame != overlayFrame { badgeHost.view.frame = overlayFrame }
             }
         }
 
@@ -5109,7 +5234,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             guard navigation.topViewController === owner else { return }
             let target = owner.navigationItem
             if item === target, target.standardAppearance === installed {
-                layoutFrostedOverlay(in: navigation)
+                layoutHeader(in: navigation)
                 return
             }
             if item !== target {
@@ -5136,9 +5261,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             installedScroll = target.scrollEdgeAppearance
             installedCompact = target.compactAppearance
             installedCompactScroll = target.compactScrollEdgeAppearance
-            layoutFrostedOverlay(in: navigation)
+            layoutHeader(in: navigation)
         }
         func restore() {
+            headerHitRouting.remove()
             badgeHost?.willMove(toParent: nil)
             badgeHost?.view.removeFromSuperview()
             badgeHost?.removeFromParent()

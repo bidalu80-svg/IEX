@@ -109,10 +109,11 @@ import Darwin
             try require(expected != nil && expected !== bar && window.hitTest(point, with: nil) === expected,
                         "\(phase): header preserves \(name)'s native hit target")
         }
-        try require(badge.superview === bar.superview,
-                    "\(phase): header and bar share the UIKit navigation container")
-        try require((badge.next as? UIViewController)?.parent is UINavigationController,
-                    "\(phase): header controller containment matches its navigation container")
+        try require(badge.superview === window.rootViewController?.view
+                    && (badge.next as? UIViewController)?.parent === window.rootViewController,
+                    "\(phase): header view and controller stay under the window root")
+        try require(ChatHeaderHitRouting.isActive(in: window, badge: badge, bar: bar),
+                    "\(phase): chat bar passthrough is active for the root-hosted header")
     }
 
     private static func isVisible(_ view: UIView, in window: UIWindow) -> Bool {
