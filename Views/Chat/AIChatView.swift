@@ -5092,6 +5092,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 } else if badgeHost.view.superview !== overlayView {
                     overlayView.addSubview(badgeHost.view)
                 }
+                // SwiftUI may reorder the navigation container after adding our
+                // overlay. Reassert sibling order so its transparent navbar does
+                // not intercept touches intended for the visible avatar.
+                overlayView.bringSubviewToFront(badgeHost.view)
                 if badgeHost.view.frame != overlayFrame { badgeHost.view.frame = overlayFrame }
             }
         }
