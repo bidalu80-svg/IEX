@@ -896,10 +896,23 @@ import Darwin
             try capture("status-\(theme == .dark ? "dark" : "light")-tool.png", window: window)
             tool.toolStatus = .success
             let question = AssistantBlock(kind: .memoryTool(action: "ask_user"), content: "", toolStatus: .running)
-            question.questionCard = QuestionCardState(requestId: "status-verification", title: "确认下一步",
-                                                       questions: [], timeoutAt: Date().addingTimeInterval(60))
+            // This block also renders in the transcript. Use the production
+            // parser's non-empty question invariant, not a header-only stub:
+            // an empty pending card makes QuestionPendingCard.q index -1.
+            guard let card = QuestionCardParser.state(requestId: "status-verification", arguments: [
+                "tool_title": "确认下一步",
+                "questions": [["id": "next-step", "type": "confirm", "question": "是否继续下一步？"]]
+            ], timeout: 60) else {
+                try require(false, "Header verification parses a real pending question")
+                return
+            }
+            try require(card.status == .pending && card.questions.indices.contains(card.currentIndex),
+                        "Pending header fixture has a renderable current question")
+            question.questionCard = card
             reply.blocks = [question]
             try await waitFor("actual pending user input label") { status() == "等待你的回复" }
+            await settle()
+            try capture("status-\(theme == .dark ? "dark" : "light")-question.png", window: window)
             question.toolStatus = .success
             reply.isAwaitingModelResponse = true
             try await waitFor("model followup is not a user confirmation") { status() == "思考中" }
