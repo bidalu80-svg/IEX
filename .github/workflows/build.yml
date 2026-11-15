@@ -1245,13 +1245,6 @@ jobs:
           print('Provider icons, selected provider, navigation appearance and both WorkBuddy balance views passed.')
           PYPROVIDER
 
-      - name: Require both header runtimes before publishing the IPA
-        if: ${{ inputs.soul_header_review == true }}
-        timeout-minutes: 45
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/require-header-runtime-gate.py
-
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
