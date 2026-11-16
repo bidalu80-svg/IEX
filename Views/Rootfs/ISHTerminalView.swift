@@ -147,7 +147,7 @@ struct ISHTerminalView: View {
                 keyboardActive = true
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: ISHKernelDidRestartNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.ISHKernelDidRestart)) { _ in
             // [T-ish-oom-selfheal] The kernel killed every guest task; this
             // view's interactive shell must be re-created against PID 1.
             viewModel.handleKernelRestart(sessionId: sessionId)
