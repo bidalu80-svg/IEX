@@ -268,7 +268,11 @@ struct BrowserSheetView: View {
         return Button {
             pool.selectedTabId = tab.id
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
+                FaviconView(domain: tabDomain(for: tab),
+                            url: tab.manager.currentURL,
+                            size: 16)
+
                 Text(tabLabel(for: tab))
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
@@ -299,9 +303,13 @@ struct BrowserSheetView: View {
     private func tabLabel(for tab: BrowserTabPool.Tab) -> String {
         let title = tab.manager.pageTitle
         if !title.isEmpty { return String(title.prefix(20)) }
-        let url = tab.manager.currentURL
-        if !url.isEmpty { return String(url.prefix(20)) }
+        let domain = tabDomain(for: tab)
+        if !domain.isEmpty { return domain }
         return "标签页 \(tab.id + 1)"
+    }
+
+    private func tabDomain(for tab: BrowserTabPool.Tab) -> String {
+        FaviconService.normalizedDomain(tab.manager.currentURL) ?? ""
     }
 }
 

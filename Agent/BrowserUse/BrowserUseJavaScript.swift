@@ -915,6 +915,34 @@ enum BrowserUseJS {
         """)
     }
 
+    // MARK: - Page Icons
+
+    /// Absolute URLs of the page's declared icons, best first:
+    /// `<link rel="icon">`, `<link rel="shortcut icon">`, and
+    /// `<link rel="apple-touch-icon">`. Read-only: the caller must never fetch
+    /// the HTML again just to find an icon. Body-less documents are tolerated.
+    static func pageIconURLs() -> String {
+        guardedRead("""
+        (function() {
+            var out = [];
+            var seen = {};
+            var links = document.querySelectorAll('link[rel]');
+            for (var i = 0; i < links.length && out.length < 8; i++) {
+                var link = links[i];
+                var rel = (link.getAttribute('rel') || '').toLowerCase();
+                var parts = rel.split(' ');
+                var isIcon = parts.indexOf('icon') !== -1 || rel.indexOf('apple-touch-icon') === 0;
+                if (!isIcon) continue;
+                var href = link.href || link.getAttribute('href');
+                if (!href || seen[href]) continue;
+                seen[href] = true;
+                out.push(href);
+            }
+            return JSON.stringify({icons: out});
+        })()
+        """, requiresBody: false)
+    }
+
     // MARK: - Get Page Info
 
     static func getPageInfo() -> String {

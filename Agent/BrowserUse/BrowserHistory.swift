@@ -192,10 +192,7 @@ struct BrowserHistoryView: View {
 
     private func historyRow(_ entry: BrowserHistoryEntry) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "globe")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .frame(width: 24)
+            FaviconView(domain: entry.domain, url: entry.url, size: 22)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title.isEmpty ? entry.domain : entry.title)
@@ -203,17 +200,13 @@ struct BrowserHistoryView: View {
                     .foregroundStyle(Color(UIColor.label))
                     .lineLimit(1)
 
-                Text(entry.url)
-                    .font(.system(size: 11, design: .monospaced))
+                Text("\(entry.domain) · \(timeLabel(entry.timestamp))")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
 
             Spacer()
-
-            Text(timeLabel(entry.timestamp))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
     }

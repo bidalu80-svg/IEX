@@ -134,6 +134,9 @@
 		E57000006 /* BrowserManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000016 /* BrowserManagementView.swift */; };
 		E57000007 /* BrowserTabPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000017 /* BrowserTabPool.swift */; };
 		E57000008 /* BrowserHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000018 /* BrowserHistory.swift */; };
+		E57000009 /* FaviconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000019 /* FaviconService.swift */; };
+		E5700000A /* FaviconDiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001A /* FaviconDiskCache.swift */; };
+		E5700000B /* FaviconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001B /* FaviconView.swift */; };
 		E5CAL0001 /* CookieAuditLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5CAL0002 /* CookieAuditLogger.swift */; };
 		E58000001 /* GeminiProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000011 /* GeminiProvider.swift */; };
 		E58000002 /* GeminiModelsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000012 /* GeminiModelsAPI.swift */; };
@@ -808,6 +811,9 @@
 		E57000016 /* BrowserManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserManagementView.swift; sourceTree = "<group>"; };
 		E57000017 /* BrowserTabPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabPool.swift; sourceTree = "<group>"; };
 		E57000018 /* BrowserHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserHistory.swift; sourceTree = "<group>"; };
+		E57000019 /* FaviconService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconService.swift; sourceTree = "<group>"; };
+		E5700001A /* FaviconDiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconDiskCache.swift; sourceTree = "<group>"; };
+		E5700001B /* FaviconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconView.swift; sourceTree = "<group>"; };
 		E58000011 /* GeminiProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiProvider.swift; sourceTree = "<group>"; };
 		E58000012 /* GeminiModelsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiModelsAPI.swift; sourceTree = "<group>"; };
 		E58000013 /* GeminiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiOAuthManager.swift; sourceTree = "<group>"; };
@@ -1664,6 +1670,9 @@
 				E57000016 /* BrowserManagementView.swift */,
 				E57000017 /* BrowserTabPool.swift */,
 				E57000018 /* BrowserHistory.swift */,
+				E57000019 /* FaviconService.swift */,
+				E5700001A /* FaviconDiskCache.swift */,
+				E5700001B /* FaviconView.swift */,
 				E5CKB0002 /* CookieBackupStore.swift */,
 				E5CAL0002 /* CookieAuditLogger.swift */,
 			);
@@ -2949,6 +2958,9 @@
 				E57000006 /* BrowserManagementView.swift in Sources */,
 				E57000007 /* BrowserTabPool.swift in Sources */,
 				E57000008 /* BrowserHistory.swift in Sources */,
+				E57000009 /* FaviconService.swift in Sources */,
+				E5700000A /* FaviconDiskCache.swift in Sources */,
+				E5700000B /* FaviconView.swift in Sources */,
 				E5CKB0001 /* CookieBackupStore.swift in Sources */,
 				E55000001 /* ISHShellExecutor.m in Sources */,
 				E5L000001 /* FFmpegOffload.m in Sources */,

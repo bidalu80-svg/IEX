@@ -2017,6 +2017,30 @@ final class BrowserUseManager: NSObject, ObservableObject {
         }
     }
 
+    /// [P1-favicon] Read the page's declared icon links from the loaded DOM
+    /// and hand them to `FaviconService`. Fire-and-forget: navigation state,
+    /// viewport, and agent actions are untouched. The bounded evaluator keeps
+    /// a wedged page's JS thread from pinning this task forever.
+    private func capturePageFavicon() {
+        guard let pageURL = URL(string: currentURL),
+              FaviconService.normalizedDomain(currentURL) != nil else { return }
+        let expectedURL = currentURL
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let raw: Any?
+            do {
+                raw = try await self.evaluateJavaScriptBounded(
+                    BrowserUseJS.pageIconURLs(), timeout: 5)
+            } catch {
+                return
+            }
+            // Never attribute an icon to a page the tab has already left.
+            guard self.currentURL == expectedURL,
+                  let json = raw as? String else { return }
+            await FaviconService.shared.registerPageIconJSON(json, pageURL: pageURL)
+        }
+    }
+
     // MARK: - JS Evaluation Helper
 
     private func evaluateAndReturn(_ js: String) async throws -> BrowserActionResult {
@@ -2362,6 +2386,13 @@ extension BrowserUseManager: WKNavigationDelegate {
                 self.navigationContinuation = nil
                 cont.resume()
             }
+
+            // Favicons are a side effect of a completed load: read the icon
+            // links from the DOM we already have (no second HTML request) and
+            // let FaviconService warm its cache in the background. This must
+            // not delay the navigation continuation above or touch the
+            // webView's frame/viewport.
+            self.capturePageFavicon()
         }
     }
 
