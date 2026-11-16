@@ -226,8 +226,13 @@ private final class FrostTailBackdrop: UIView {
     }
 
     private func providerBadgeView(_ navigation: UINavigationController) -> UIView? {
+        // The production controller tags its hosted badge in DEBUG once the
+        // verification argument is present, and ChatHeaderHitRouting's isCurrent
+        // requires badge.superview to be the window root view. Match that
+        // identifier rather than the responder chain and a fixed 24x24 size,
+        // neither of which the hosting view guarantees across iOS versions.
         navigation.view.window?.rootViewController?.view.subviews.first {
-            $0.next is UIHostingController<AnyView> && $0.bounds.width == 24 && $0.bounds.height == 24
+            $0.accessibilityIdentifier == "chat.verify.providerBadge"
         }
     }
 

@@ -14,6 +14,7 @@ if [ "$chrome_phase" != verify ]; then
   xcrun --sdk iphonesimulator swiftc -parse-as-library \
     -target "$(uname -m)-apple-ios16.0-simulator" \
     -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+    -D DEBUG \
     "$chrome_source" -o "$chrome_app/ZeProviderChromeHarness"
   cat > "$chrome_app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,14 +44,14 @@ PLIST
   rm -f "$chrome_container/Documents/provider-chrome-result.json"
   # A successful install can precede FrontBoard's app registration on busy CI
   # simulators. Retry only that documented launch result, never an app crash.
-  if ! xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN > provider-chrome-evidence/launch.log 2>&1; then
+  if ! xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN --verify-conversation-chat > provider-chrome-evidence/launch.log 2>&1; then
     cat provider-chrome-evidence/launch.log
     if ! python3 -c 'import pathlib,sys; s=pathlib.Path("provider-chrome-evidence/launch.log").read_text(); sys.exit(0 if "unknown to FrontBoard" in s else 1)'; then
       exit 1
     fi
     sleep 3
     xcrun simctl install "$chrome_device" "$chrome_app"
-    xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN | tee provider-chrome-evidence/launch-retry.log
+    xcrun simctl launch "$chrome_device" com.ze.provider-chrome-harness -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN --verify-conversation-chat | tee provider-chrome-evidence/launch-retry.log
   else
     cat provider-chrome-evidence/launch.log
   fi
