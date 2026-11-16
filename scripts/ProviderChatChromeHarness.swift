@@ -62,6 +62,14 @@ typealias KimiOAuthManager = FixtureOAuthManager
 typealias WorkBuddyOAuthManager = FixtureOAuthManager
 typealias GitHubCopilotOAuthManager = FixtureOAuthManager
 
+/// Fixture for the production keyboard viewport's transition hook. This chrome
+/// harness never mounts a message list, so the production MessageListLayout
+/// (Agent/MessageList/MessageListLayout.swift) is outside its compile set; the
+/// viewport only casts to it and toggles this one flag.
+final class MessageListLayout: UICollectionViewLayout {
+    var isKeyboardTransitioning = false
+}
+
 private let voiceIDs = ["elevenlabs", "deepgram", "azure-tts", "minimax", "alibaba", "doubao", "xunfei", "mimo"]
 
 private struct SettingsRowsGallery: View {

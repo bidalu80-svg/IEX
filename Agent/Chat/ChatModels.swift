@@ -5,36 +5,6 @@ import UIKit
 
 // MARK: - Models
 
-/// Snapshot of the message a user prompt replies to. Persisted alongside the
-/// user row so the quote header survives reload and the model can be told
-/// exactly which earlier message the new prompt references.
-struct MessageQuote: Codable, Hashable {
-    /// UI ChatMessage UUID (RawMessage id) of the quoted message.
-    var targetMessageId: String
-    /// Text snapshot taken when the user tapped Reply.
-    var text: String
-
-    private static let maxSnapshotCharacters = 1_000
-
-    init(targetMessageId: String, text: String) {
-        self.targetMessageId = targetMessageId
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.text = trimmed.count > Self.maxSnapshotCharacters
-            ? String(trimmed.prefix(Self.maxSnapshotCharacters)) + "…"
-            : trimmed
-    }
-
-    /// Structured block placed immediately before the user's own text in the
-    /// model-facing message, so the quote is real context rather than UI-only.
-    var modelFacingText: String {
-        let escaped = text
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        return "<quoted-message id=\"\(targetMessageId)\">\n\(escaped)\n</quoted-message>"
-    }
-}
-
 /// Structured metadata for a user-attached file (image, document, etc.).
 struct AttachmentMeta: Identifiable, Equatable {
     let id = UUID()

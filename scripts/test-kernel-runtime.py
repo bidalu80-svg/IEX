@@ -19,7 +19,7 @@ actor = 'actor ISHExecutionCoordinator {\n' + '''
     static var mountedSessionIdSnapshot: String? { nil }
     func ensureStaticMountsInitialized(for sid: String) {}
     func debugInflightCount() -> Int { perSessionInflight.values.reduce(0) { $0 + $1.count } }
-''' + between('    private struct InflightExec {','    /// Set of sessions') + between('    func execute(','    /// Called from loadSession') + between('    private func runCommand(','    // MARK: - Mount Logic') + between('    private static let inflightPidLock','    /// Read the current mount owner') + between('    /// The browser/offload caller','    static func setExternalMountSnapshot') + '\n}\n'
+''' + between('    private struct InflightExec {','    /// Set of sessions') + between('    private static func outputIndicatesOutOfMemory','    // MARK: - Public API') + between('    func execute(','    /// Called from loadSession') + between('    private func runCommand(','    // MARK: - Mount Logic') + between('    private static let inflightPidLock','    /// Read the current mount owner') + between('    /// The browser/offload caller','    static func setExternalMountSnapshot') + '\n}\n'
 header = '''import Foundation
 struct TestLogger {
  func info(_ s: String) {}
@@ -31,6 +31,8 @@ struct ISHCommandResult { let output: String; let exitCode: Int }
 enum ISHCoordinatorError: Error { case kernelNotBooted }
 final class ISHKernel: @unchecked Sendable {
  static let shared = ISHKernel(); var isBooted = true
+ var guestRestartGeneration: UInt64 = 0
+ func restartGuestContainer(withReason reason: String) { guestRestartGeneration &+= 1 }
  func installPathTranslateHandler(_ f: @escaping (String, UInt64) -> String?) {}
  func installPathReverseHandler(_ f: @escaping (String) -> String?) {}
 }
