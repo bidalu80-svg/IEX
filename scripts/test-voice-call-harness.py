@@ -71,7 +71,11 @@ if name=='xcrun':
         if os.environ.get('HARNESS_HAVE_18','1')=='1':
             entries['com.apple.CoreSimulator.SimRuntime.iOS-18-5']=[{'name':'iPhone Baseline','udid':'baseline18','state':os.environ.get('HARNESS_DEVICE_STATE','Booted')}]
         print(json.dumps({'devices':entries}))
-    elif '--show-sdk-path' in args: print('/mock/sdk')
+    elif '--show-sdk-path' in args:
+        if os.environ.get('HARNESS_SDK_WARNING')=='1':
+            print('xcrun: warning: SDK diagnostic\nadditional diagnostic line',file=sys.stderr)
+            print('  /mock/sdk  \n')
+        else: print('/mock/sdk')
     elif args[:2]==['xcresulttool','export']: sys.exit(7) # export must not mask XCTest's status
 elif name=='xcodebuild':
     if args[0]=='build-for-testing':
@@ -118,6 +122,17 @@ class VoiceShellTests(unittest.TestCase):
         result, _ = self.run_harness(HARNESS_TEST_RESULT='65')
         self.assertEqual(result.returncode, 65, result.stderr + result.stdout)
         self.assertIn('UI test result output', result.stdout)
+
+    def test_sdk_stderr_warning_cannot_corrupt_trimmed_stdout(self):
+        result, commands = self.run_harness(HARNESS_SDK_WARNING='1')
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn('xcrun: warning: SDK diagnostic\nadditional diagnostic line', result.stdout)
+        compile_command = next(c for c in commands if c[:4] == ['xcrun', '--sdk', 'iphonesimulator', 'swiftc'])
+        self.assertEqual(compile_command[compile_command.index('-sdk') + 1], '/mock/sdk')
+        sdk_runner = next(c for c in commands if c[:2] == ['python3', 'scripts/run-bounded-command.py']
+                          and 'voice-call-ui-evidence/sdk-path.log' in c)
+        self.assertGreater(float(sdk_runner[sdk_runner.index('--timeout') + 1]), 0)
+        self.assertLessEqual(float(sdk_runner[sdk_runner.index('--timeout') + 1]), 504)
 
     def test_shutdown_device_is_booted(self):
         result, commands = self.run_harness(HARNESS_DEVICE_STATE='Shutdown')

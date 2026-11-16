@@ -44,8 +44,11 @@ def run(command, timeout, log):
     finally:
         if output:
             output.close()
-            # Surface failures immediately; retain the entire file as evidence.
-            print(Path(log).read_text(errors="replace"), end="", flush=True)
+            # Cap untimed console output; retain the entire file as evidence.
+            with Path(log).open("rb") as logged:
+                logged.seek(0, os.SEEK_END)
+                logged.seek(max(0, logged.tell() - 64 * 1024))
+                print(logged.read(64 * 1024).decode(errors="replace"), end="", flush=True)
 
 
 def main():

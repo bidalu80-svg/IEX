@@ -2206,11 +2206,18 @@ struct AIChatView: View {
                 ChatSoulTapEvidence.record("settings.requested", details: ["isPresented": showSoulSettings])
                 #endif
             } label: {
-                SoulHeaderAvatar(vm: vm, size: avatarDiscSize, celebration: avatarCelebration)
+                ZStack {
+                    // The representable's SwiftUI host is interactive even when
+                    // its UIView is not. Only the Button owns this tap target.
+                    SoulHeaderAvatar(vm: vm, size: avatarDiscSize, celebration: avatarCelebration)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(Circle())
                     #if DEBUG
                     .background {
                         if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
                             ChatSoulTapTargetMarker()
+                                .allowsHitTesting(false)
                         }
                     }
                     #endif
@@ -4784,10 +4791,10 @@ private struct ChatNavigationGlassSurface: ViewModifier {
         if #available(iOS 26.0, *) {
             if isCircle {
                 content.glassEffect(.regular.interactive(), in: Circle())
-                    .background(ChatNativeGlassMarker(shape: "circle"))
+                    .background(ChatNativeGlassMarker(shape: "circle").allowsHitTesting(false))
             } else {
                 content.glassEffect(.regular.interactive(), in: Capsule())
-                    .background(ChatNativeGlassMarker(shape: "capsule"))
+                    .background(ChatNativeGlassMarker(shape: "capsule").allowsHitTesting(false))
             }
         } else {
             materialFallback(content)
@@ -4801,10 +4808,10 @@ private struct ChatNavigationGlassSurface: ViewModifier {
     private func materialFallback(_ content: Content) -> some View {
         if isCircle {
             content.background(ChatLegacyGlassSurface(shape: Circle()))
-                .background(ChatNativeGlassMarker(shape: "circle", native: false))
+                .background(ChatNativeGlassMarker(shape: "circle", native: false).allowsHitTesting(false))
         } else {
             content.background(ChatLegacyGlassSurface(shape: Capsule()))
-                .background(ChatNativeGlassMarker(shape: "capsule", native: false))
+                .background(ChatNativeGlassMarker(shape: "capsule", native: false).allowsHitTesting(false))
         }
     }
 }
