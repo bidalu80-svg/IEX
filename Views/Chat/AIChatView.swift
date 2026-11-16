@@ -5570,6 +5570,10 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var lastFrostFrame = CGRect.null
         private var lastHeaderKey: ChatNavigationHeaderKey?
         private var lastAppliedHeaderKey: ChatNavigationHeaderKey?
+        /// A created/removed badge host or a changed header size must reach
+        /// layoutHeader even when the display key is unchanged: the key gate
+        /// skips keyboard/composer re-evaluation, not required host mounting.
+        private var badgeLayoutNeedsUpdate = false
 
         func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil,
                          headerKey: ChatNavigationHeaderKey? = nil) {
@@ -5579,11 +5583,17 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             // those passes, re-laying a view that sits in the status-bar safe
             // area. Only the header's actual display inputs may do that.
             if let headerKey, headerKey == lastHeaderKey,
+               headerSize == self.headerSize,
                (badge != nil) == (badgeHost != nil) {
                 return
             }
+            let badgePresenceChanged = (badge != nil) != (badgeHost != nil)
+            let headerSizeChanged = self.headerSize != headerSize
             lastHeaderKey = headerKey
             self.headerSize = headerSize
+            if badgePresenceChanged || headerSizeChanged {
+                badgeLayoutNeedsUpdate = true
+            }
             #if DEBUG
             KeyboardHangProbe.recordBadgeUpdate()
             #endif
@@ -5738,7 +5748,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             guard navigation.topViewController === owner else { return }
             let target = owner.navigationItem
             if item === target, target.standardAppearance === installed,
-               lastHeaderKey == lastAppliedHeaderKey {
+               lastHeaderKey == lastAppliedHeaderKey,
+               !badgeLayoutNeedsUpdate {
                 return
             }
             if item !== target {
@@ -5767,6 +5778,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             installedCompactScroll = target.compactScrollEdgeAppearance
             lastAppliedHeaderKey = lastHeaderKey
             layoutHeader(in: navigation)
+            badgeLayoutNeedsUpdate = false
         }
         func restore() {
             headerHitRouting.remove()
@@ -5776,6 +5788,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             frostedOverlay.removeFromSuperview()
             lastHeaderKey = nil
             lastAppliedHeaderKey = nil
+            badgeLayoutNeedsUpdate = false
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
             if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
