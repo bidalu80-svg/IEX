@@ -7,6 +7,27 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A09A55000000000000000003 /* OpenGlass in Frameworks */ = {isa = PBXBuildFile; productRef = A09A55000000000000000002 /* OpenGlass */; };
+        A7B4E1000000000000000001 /* ChatKeyboardViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B4E1000000000000000002 /* ChatKeyboardViewport.swift */; };
+		FEE0A0010000000000000003 /* SoundHapticsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */; };
+		FEE0A0010000000000000002 /* AppFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000012 /* AppFeedback.swift */; };
+		FEE0A0010000000000000001 /* AppFeedbackPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */; };
+		CBA240139CE7A850A5FEAFBB /* VisualizationVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */; };
+		C9ED889B1715F4ADFDCF21AE /* VisualizationAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */; };
+		FCAC1E1A020E77B758DD8F32 /* VisualizationDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C4F64FA50D69B103B87366 /* VisualizationDocument.swift */; };
+		7CD272E08E5C0F210A3AB999 /* ChatGPTWebChallenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */; };
+		F1P00003 /* ChatPiPController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1P00001 /* ChatPiPController.swift */; };
+		F1L00005 /* AdaptivePaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00001 /* AdaptivePaneLayout.swift */; };
+		F1L00006 /* ChatScrollMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1L00002 /* ChatScrollMemory.swift */; };
+		F9GH00000000000000000001 /* GitHubModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000011 /* GitHubModels.swift */; };
+		F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000012 /* GitHubAccountStore.swift */; };
+		F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000013 /* GitHubAIToolGateway.swift */; };
+		F9GH00000000000000000004 /* GitHubConnectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000014 /* GitHubConnectorView.swift */; };
+		A1C0A0000000000000000001 /* GitHubCopilotOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */; };
+		A1C0A0000000000000000003 /* GitHubCopilotDeviceLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */; };
+
+		E5UMC0001 /* UserMessageCollapsePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5UMC0011 /* UserMessageCollapsePolicy.swift */; };
+		E5UMC0002 /* UserMessageCollapsePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5UMC0011 /* UserMessageCollapsePolicy.swift */; };
 		21FED4B7BB6F6D9476C9992E /* VoiceProvider+System.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88993FC8E3F0199C6638F664 /* VoiceProvider+System.swift */; };
 		241D530017827D7F0EB604DE /* VoiceProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2941B643B8A2F048A2B154E /* VoiceProviderFactory.swift */; };
 		2A4FD49F872431D703328384 /* VoiceOutputPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 424510790AF3FB2452D3CCE3 /* VoiceOutputPlayer.swift */; };
@@ -26,7 +47,12 @@
 		A1B2C3D4E5F60718293A4B5C /* SystemVoiceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* SystemVoiceCatalog.swift */; };
 		AA0838C02F3B941A00049557 /* RootfsResetButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */; };
 		AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */; };
+		AOJSB01 /* AOJITSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AOJS001 /* AOJITSection.swift */; };
+		CNSB001 /* ContainerNetworkSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CNS001 /* ContainerNetworkSection.swift */; };
+		CDNSB01 /* ContainerDNS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDNS001 /* ContainerDNS.swift */; };
 		AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838CD2F3B941A00049557 /* StorageManagementView.swift */; };
+		C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000002 /* MediaFavoritesStore.swift */; };
+		C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000004 /* MediaFavoritesView.swift */; };
 		AA0838D02F3B941A00049557 /* CurrentRoot.m in Sources */ = {isa = PBXBuildFile; fileRef = AA0838D12F3B941A00049557 /* CurrentRoot.m */; };
 		AA0838D22F3B941A00049557 /* RootfsPatch.bundle in Resources */ = {isa = PBXBuildFile; fileRef = AA0838D32F3B941A00049557 /* RootfsPatch.bundle */; };
 		AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838FE2F3B941A00049557 /* MirrorSpeedTestView.swift */; };
@@ -108,6 +134,9 @@
 		E57000006 /* BrowserManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000016 /* BrowserManagementView.swift */; };
 		E57000007 /* BrowserTabPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000017 /* BrowserTabPool.swift */; };
 		E57000008 /* BrowserHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000018 /* BrowserHistory.swift */; };
+		E57000009 /* FaviconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000019 /* FaviconService.swift */; };
+		E5700000A /* FaviconDiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001A /* FaviconDiskCache.swift */; };
+		E5700000B /* FaviconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001B /* FaviconView.swift */; };
 		E5CAL0001 /* CookieAuditLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5CAL0002 /* CookieAuditLogger.swift */; };
 		E58000001 /* GeminiProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000011 /* GeminiProvider.swift */; };
 		E58000002 /* GeminiModelsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000012 /* GeminiModelsAPI.swift */; };
@@ -156,6 +185,7 @@
 		E5CR00003 /* CrashSignalHandler.m in Sources */ = {isa = PBXBuildFile; fileRef = E5CR00013 /* CrashSignalHandler.m */; };
 		E5D00001 /* ProviderTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00011 /* ProviderTypes.swift */; };
 		E5D00002 /* ProviderInstance.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00012 /* ProviderInstance.swift */; };
+		E5DQ0001 /* ProviderAPIQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DQ0011 /* ProviderAPIQuota.swift */; };
 		E5D00003 /* ModelEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00013 /* ModelEntry.swift */; };
 		E5D00004 /* ModelGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00014 /* ModelGroup.swift */; };
 		E5D00005 /* ProviderConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00015 /* ProviderConfigStore.swift */; };
@@ -174,6 +204,10 @@
 		E5D00037 /* AgentLoopModelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00038 /* AgentLoopModelsView.swift */; };
 		E5D00050 /* models-dev-api.json in Resources */ = {isa = PBXBuildFile; fileRef = E5D00060 /* models-dev-api.json */; };
 		E5D00099 /* ProviderConfigDB.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00199 /* ProviderConfigDB.swift */; };
+		E5D0A101 /* ModelReleaseIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D0A102 /* ModelReleaseIndex.swift */; };
+		E5VGR001 /* VisionGroupResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VGR002 /* VisionGroupResolver.swift */; };
+		E5THR001 /* ThinkingRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5THR002 /* ThinkingRules.swift */; };
+		E5THR003 /* ThinkingRulesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5THR004 /* ThinkingRulesSection.swift */; };
 		E5DVO0001 /* DebugViewOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DVO0011 /* DebugViewOverlay.swift */; };
 		E5E000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E000011 /* ShareViewController.swift */; };
 		E5E000003 /* ShareViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E000013 /* ShareViewModel.swift */; };
@@ -186,6 +220,10 @@
 		E5E00000A /* MainInterface.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E5E00001A /* MainInterface.storyboard */; };
 		E5E0000A1 /* ExternalFileImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E0000A2 /* ExternalFileImporter.swift */; };
 		E5F000001 /* ISHExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000011 /* ISHExecutionCoordinator.swift */; };
+		AOJITB01 /* AOJITAcceleration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AOJIT001 /* AOJITAcceleration.swift */; };
+		MEMPB01 /* MemoryPressureMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = MEMP001 /* MemoryPressureMonitor.swift */; };
+		CHSRB01 /* ChatSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSR001 /* ChatSearch.swift */; };
+		CHSOB01 /* ChatSearchOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CHSO001 /* ChatSearchOverlay.swift */; };
 		E5F000002 /* ZeFsRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000012 /* ZeFsRouter.swift */; };
 		E5F00001 /* LLMProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F00002 /* LLMProviderFactory.swift */; };
 		E5F100001 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100011 /* NetworkMonitor.swift */; };
@@ -237,6 +275,13 @@
 		E5JB10004 /* hmm_model.utf8 in Resources */ = {isa = PBXBuildFile; fileRef = E5JB00015 /* hmm_model.utf8 */; };
 		E5K000001 /* SelectableMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5K000011 /* SelectableMarkdownView.swift */; };
 		E5K000002 /* ChatTurnScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5K000012 /* ChatTurnScreenshot.swift */; };
+		E5SEB001 /* SessionExportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER001 /* SessionExportModels.swift */; };
+		E5SEB002 /* SessionExportTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER002 /* SessionExportTypography.swift */; };
+		E5SEB003 /* SessionExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER003 /* SessionExportRenderer.swift */; };
+		E5SEB004 /* SessionShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER004 /* SessionShareSheet.swift */; };
+		E5SEB005 /* SessionExportNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SER005 /* SessionExportNativeRenderer.swift */; };
+		LCHB0001 /* LaunchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = LCHR0001 /* LaunchCoordinator.swift */; };
+		LCHB0002 /* LaunchAnimationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = LCHR0002 /* LaunchAnimationView.swift */; };
 		E5KIMI0A1 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0A2 /* KimiOAuthRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */; };
 		E5KIMI0B1 /* KimiDeviceFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5KIMIR02 /* KimiDeviceFlow.swift */; };
@@ -395,6 +440,8 @@
 		E5VMB0005 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0015 /* ChatModels.swift */; };
 		E5VMB0006 /* ChatLifecycleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0016 /* ChatLifecycleSupport.swift */; };
 		E5VMB0007 /* ChatURLBrokerage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0017 /* ChatURLBrokerage.swift */; };
+		ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0011 /* ZeSubAgentCoordinator.swift */; };
+		ZESA0002 /* ZeSubAgentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0012 /* ZeSubAgentViews.swift */; };
 		E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0011 /* AIChatViewModel+ISHCommand.swift */; };
 		E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0012 /* AIChatViewModel+FileTools.swift */; };
 		E5VMC0003 /* AIChatViewModel+Offloading.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0013 /* AIChatViewModel+Offloading.swift */; };
@@ -465,16 +512,51 @@
 		D7A90000000000000000000A /* RemoteSFTPBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */; };
 		D7A90000000000000000000B /* RemoteCommandConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000017 /* RemoteCommandConsoleView.swift */; };
 		D7A90000000000000000000C /* RemoteServerAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000018 /* RemoteServerAIToolGateway.swift */; };
+		D7A90000000000000000000F /* RemoteStorageClients.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000019 /* RemoteStorageClients.swift */; };
 		D7A900000000000000000004 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000040 /* Citadel */; };
 		D7A900000000000000000005 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000041 /* NIOSSH */; };
 		D7A900000000000000000006 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000042 /* NIOCore */; };
 		D7A900000000000000000007 /* Crypto in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000043 /* Crypto */; };
+		D7A90000000000000000000D /* SMBClient in Frameworks */ = {isa = PBXBuildFile; productRef = D7A900000000000000000044 /* SMBClient */; };
 		F1W00011 /* ZeShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00010 /* ZeShareSheet.swift */; };
 		F1W00013 /* WebPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00012 /* WebPreviewSheet.swift */; };
 		F1W00061 /* PaginatedMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00060 /* PaginatedMarkdownView.swift */; };
 		F1W00101 /* PrintHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W00100 /* PrintHelper.swift */; };
 		F1W0E101 /* WebLoadError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1W0E100 /* WebLoadError.swift */; };
 		FDD896F80E0A14A7B60B12EF /* VoiceLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28E23EA0E199D6D50EBC76F2 /* VoiceLog.swift */; };
+		B10900000000000000000001 /* ScheduledTaskModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000011 /* ScheduledTaskModels.swift */; };
+		B10900000000000000000002 /* ScheduledTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000012 /* ScheduledTaskStore.swift */; };
+		B10900000000000000000003 /* ScheduledTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10900000000000000000013 /* ScheduledTasksView.swift */; };
+		B10940000000000000000001 /* ConsecutiveToolCallsPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */; };
+		B10940000000000000000002 /* ConsecutiveToolCallsHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */; };
+		B10940000000000000000003 /* ScheduledTaskActivityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */; };
+		B10950000000000000000001 /* AIChatViewModel+ScheduledTaskTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10950000000000000000011 /* AIChatViewModel+ScheduledTaskTools.swift */; };
+		C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */; };
+		C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000006 /* MediaFavoriteControls.swift */; };
+		C0DEEB000000000000000010 /* ModelPickerProviderHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEEC000000000000000010 /* ModelPickerProviderHeader.swift */; };
+		E5SSB001 /* ChatShareModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR001 /* ChatShareModel.swift */; };
+		E5SSB002 /* ChatShareSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR002 /* ChatShareSelectionView.swift */; };
+		E5SSB003 /* ChatExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR003 /* ChatExportRenderer.swift */; };
+		E5SSB004 /* ConversationShareVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR004 /* ConversationShareVerification.swift */; };
+		E5SSB005 /* ConversationSearchVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR005 /* ConversationSearchVerification.swift */; };
+		E5SSB006 /* ConversationChatVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5SSR006 /* ConversationChatVerification.swift */; };
+		F9GH00000000000000000005 /* GitHubRepositoryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9GH00000000000000000015 /* GitHubRepositoryClient.swift */; };
+		21EAB6DEFC66132C63D75667 /* ChatGPTWebOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */; };
+		A5320A5E89F1FE62A60EF845 /* ChatGPTWebProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */; };
+		37435B2FDA467070F6EFFFB4 /* ChatGPTWebProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */; };
+		890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */; };
+		9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */; };
+		619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */; };
+		5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */; };
+		7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */; };
+		D8D9ED0313002A6DAC4DB95C /* ProviderBrandIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */; };
+		4C7D3989A0DDFBA8250DE17D /* WorkBuddyBalanceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */; };
+		45A8C998F8CA574AA4BEB068 /* VoiceCallState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */; };
+		47CC817A1E4FD187FC418B43 /* VoiceCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */; };
+		55245B0ADB9011F9D13A944A /* VoiceCallAudioDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */; };
+		0F1053B9DCB9B6161524CBF2 /* VoiceCallPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */; };
+		F7FD1BDF79751FD9D9179828 /* AIChatViewModel+VoiceCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */; };
+		4842985E9CA4FF04C81872D5 /* VoiceCallVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253B005328ED088E433D78C /* VoiceCallVerification.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -552,6 +634,21 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        A7B4E1000000000000000002 /* ChatKeyboardViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardViewport.swift; sourceTree = "<group>"; };
+		FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundHapticsSettingsView.swift; sourceTree = "<group>"; };
+		FEE0A0010000000000000012 /* AppFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeedback.swift; sourceTree = "<group>"; };
+		FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeedbackPreferences.swift; sourceTree = "<group>"; };
+		524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Visualization/VisualizationVerification.swift"; sourceTree = SOURCE_ROOT; };
+		CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Visualization/VisualizationAttachment.swift"; sourceTree = SOURCE_ROOT; };
+		E8C4F64FA50D69B103B87366 /* VisualizationDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Visualization/VisualizationDocument.swift"; sourceTree = SOURCE_ROOT; };
+		18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebChallenge.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebChallenge.swift; sourceTree = SOURCE_ROOT; };
+		F1P00001 /* ChatPiPController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPiPController.swift; sourceTree = "<group>"; };
+		F1L00001 /* AdaptivePaneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptivePaneLayout.swift; sourceTree = "<group>"; };
+		F1L00002 /* ChatScrollMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScrollMemory.swift; sourceTree = "<group>"; };
+		A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubCopilotOAuthManager.swift; sourceTree = "<group>"; };
+		A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubCopilotDeviceLoginSheet.swift; sourceTree = "<group>"; };
+
+		E5UMC0011 /* UserMessageCollapsePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageCollapsePolicy.swift; sourceTree = "<group>"; };
 		0ED149397BEA7E0408C92688 /* GroupVoiceModelsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupVoiceModelsView.swift; sourceTree = "<group>"; };
 		0F5379380323FA8C6477708C /* GroupSlotPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GroupSlotPicker.swift; sourceTree = "<group>"; };
 		16FF3462D09402F14B610CD6 /* VoiceWaveformView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceWaveformView.swift; sourceTree = "<group>"; };
@@ -567,8 +664,13 @@
 		88993FC8E3F0199C6638F664 /* VoiceProvider+System.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "VoiceProvider+System.swift"; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* SystemVoiceCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SystemVoiceCatalog.swift; sourceTree = "<group>"; };
 		AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsManagementView.swift; sourceTree = "<group>"; };
+		AOJS001 /* AOJITSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITSection.swift; sourceTree = "<group>"; };
+		CNS001 /* ContainerNetworkSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerNetworkSection.swift; sourceTree = "<group>"; };
+		CDNS001 /* ContainerDNS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerDNS.swift; sourceTree = "<group>"; };
 		AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsResetButton.swift; sourceTree = "<group>"; };
 		AA0838CD2F3B941A00049557 /* StorageManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManagementView.swift; sourceTree = "<group>"; };
+		C0DEFA000000000000000002 /* MediaFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/MediaFavoritesStore.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEFA000000000000000004 /* MediaFavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MediaFavoritesView.swift"; sourceTree = SOURCE_ROOT; };
 		AA0838D12F3B941A00049557 /* CurrentRoot.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CurrentRoot.m; sourceTree = "<group>"; };
 		AA0838D32F3B941A00049557 /* RootfsPatch.bundle */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.plug-in"; name = RootfsPatch.bundle; path = ../../deps/resources/RootfsPatch.bundle; sourceTree = SOURCE_ROOT; };
 		AA0838D42F3B941A00049557 /* CurrentRoot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CurrentRoot.h; sourceTree = "<group>"; };
@@ -709,6 +811,9 @@
 		E57000016 /* BrowserManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserManagementView.swift; sourceTree = "<group>"; };
 		E57000017 /* BrowserTabPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabPool.swift; sourceTree = "<group>"; };
 		E57000018 /* BrowserHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserHistory.swift; sourceTree = "<group>"; };
+		E57000019 /* FaviconService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconService.swift; sourceTree = "<group>"; };
+		E5700001A /* FaviconDiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconDiskCache.swift; sourceTree = "<group>"; };
+		E5700001B /* FaviconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconView.swift; sourceTree = "<group>"; };
 		E58000011 /* GeminiProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiProvider.swift; sourceTree = "<group>"; };
 		E58000012 /* GeminiModelsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiModelsAPI.swift; sourceTree = "<group>"; };
 		E58000013 /* GeminiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiOAuthManager.swift; sourceTree = "<group>"; };
@@ -755,6 +860,7 @@
 		E5CR00014 /* CrashSignalHandler.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CrashSignalHandler.h; sourceTree = "<group>"; };
 		E5D00011 /* ProviderTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderTypes.swift; sourceTree = "<group>"; };
 		E5D00012 /* ProviderInstance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderInstance.swift; sourceTree = "<group>"; };
+		E5DQ0011 /* ProviderAPIQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAPIQuota.swift; sourceTree = "<group>"; };
 		E5D00013 /* ModelEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelEntry.swift; sourceTree = "<group>"; };
 		E5D00014 /* ModelGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelGroup.swift; sourceTree = "<group>"; };
 		E5D00015 /* ProviderConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigStore.swift; sourceTree = "<group>"; };
@@ -773,6 +879,10 @@
 		E5D00038 /* AgentLoopModelsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLoopModelsView.swift; sourceTree = "<group>"; };
 		E5D00060 /* models-dev-api.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "models-dev-api.json"; path = "Resources/models-dev-api.json"; sourceTree = "<group>"; };
 		E5D00199 /* ProviderConfigDB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderConfigDB.swift; sourceTree = "<group>"; };
+		E5D0A102 /* ModelReleaseIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelReleaseIndex.swift; sourceTree = "<group>"; };
+		E5VGR002 /* VisionGroupResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionGroupResolver.swift; sourceTree = "<group>"; };
+		E5THR002 /* ThinkingRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingRules.swift; sourceTree = "<group>"; };
+		E5THR004 /* ThinkingRulesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingRulesSection.swift; sourceTree = "<group>"; };
 		E5DVO0011 /* DebugViewOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewOverlay.swift; sourceTree = "<group>"; };
 		E5E000010 /* ZeShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ZeShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5E000011 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -786,6 +896,10 @@
 		E5E00001A /* MainInterface.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = MainInterface.storyboard; sourceTree = "<group>"; };
 		E5E0000A2 /* ExternalFileImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalFileImporter.swift; sourceTree = "<group>"; };
 		E5F000011 /* ISHExecutionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISHExecutionCoordinator.swift; sourceTree = "<group>"; };
+		AOJIT001 /* AOJITAcceleration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITAcceleration.swift; sourceTree = "<group>"; };
+		MEMP001 /* MemoryPressureMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryPressureMonitor.swift; sourceTree = "<group>"; };
+		CHSR001 /* ChatSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearch.swift; sourceTree = "<group>"; };
+		CHSO001 /* ChatSearchOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSearchOverlay.swift; sourceTree = "<group>"; };
 		E5F000012 /* ZeFsRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeFsRouter.swift; sourceTree = "<group>"; };
 		E5F00002 /* LLMProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProviderFactory.swift; sourceTree = "<group>"; };
 		E5F100011 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
@@ -848,6 +962,13 @@
 		E5JB00015 /* hmm_model.utf8 */ = {isa = PBXFileReference; lastKnownFileType = text; name = hmm_model.utf8; path = Resources/hmm_model.utf8; sourceTree = "<group>"; };
 		E5K000011 /* SelectableMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableMarkdownView.swift; sourceTree = "<group>"; };
 		E5K000012 /* ChatTurnScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTurnScreenshot.swift; sourceTree = "<group>"; };
+		E5SER001 /* SessionExportModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportModels.swift; sourceTree = "<group>"; };
+		E5SER002 /* SessionExportTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportTypography.swift; sourceTree = "<group>"; };
+		E5SER003 /* SessionExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportRenderer.swift; sourceTree = "<group>"; };
+		E5SER004 /* SessionShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionShareSheet.swift; sourceTree = "<group>"; };
+		E5SER005 /* SessionExportNativeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionExportNativeRenderer.swift; sourceTree = "<group>"; };
+		LCHR0001 /* LaunchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoordinator.swift; sourceTree = "<group>"; };
+		LCHR0002 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
 		E5KIMIR01 /* KimiOAuthRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthRefreshCoordinator.swift; path = Providers/Kimi/OAuth/KimiOAuthRefreshCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR02 /* KimiDeviceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiDeviceFlow.swift; path = Providers/Kimi/OAuth/KimiDeviceFlow.swift; sourceTree = SOURCE_ROOT; };
 		E5KIMIR03 /* KimiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = KimiOAuthManager.swift; path = Providers/Kimi/OAuth/KimiOAuthManager.swift; sourceTree = SOURCE_ROOT; };
@@ -1016,6 +1137,8 @@
 		E5VMB0015 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		E5VMB0016 /* ChatLifecycleSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLifecycleSupport.swift; sourceTree = "<group>"; };
 		E5VMB0017 /* ChatURLBrokerage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatURLBrokerage.swift; sourceTree = "<group>"; };
+		ZESA0011 /* ZeSubAgentCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentCoordinator.swift; sourceTree = "<group>"; };
+		ZESA0012 /* ZeSubAgentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentViews.swift; sourceTree = "<group>"; };
 		E5VMC0011 /* AIChatViewModel+ISHCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ISHCommand.swift"; sourceTree = "<group>"; };
 		E5VMC0012 /* AIChatViewModel+FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+FileTools.swift"; sourceTree = "<group>"; };
 		E5VMC0013 /* AIChatViewModel+Offloading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Offloading.swift"; sourceTree = "<group>"; };
@@ -1086,12 +1209,50 @@
 		D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSFTPBrowserView.swift; sourceTree = "<group>"; };
 		D7A900000000000000000017 /* RemoteCommandConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandConsoleView.swift; sourceTree = "<group>"; };
 		D7A900000000000000000018 /* RemoteServerAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerAIToolGateway.swift; sourceTree = "<group>"; };
+		D7A900000000000000000019 /* RemoteStorageClients.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteStorageClients.swift; sourceTree = "<group>"; };
 		F1W00010 /* ZeShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeShareSheet.swift; sourceTree = "<group>"; };
 		F1W00012 /* WebPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPreviewSheet.swift; sourceTree = "<group>"; };
 		F1W00060 /* PaginatedMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaginatedMarkdownView.swift; sourceTree = "<group>"; };
 		F1W00100 /* PrintHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintHelper.swift; sourceTree = "<group>"; };
 		F1W0E100 /* WebLoadError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebLoadError.swift; sourceTree = "<group>"; };
 		F2941B643B8A2F048A2B154E /* VoiceProviderFactory.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceProviderFactory.swift; sourceTree = "<group>"; };
+		B10900000000000000000011 /* ScheduledTaskModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskModels.swift"; sourceTree = SOURCE_ROOT; };
+		B10900000000000000000012 /* ScheduledTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskStore.swift"; sourceTree = SOURCE_ROOT; };
+		B10900000000000000000013 /* ScheduledTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/ScheduledTasksView.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/ConsecutiveToolCallsPolicy.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/ConsecutiveToolCallsHeader.swift"; sourceTree = SOURCE_ROOT; };
+		B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Background/ScheduledTaskActivityPolicy.swift"; sourceTree = SOURCE_ROOT; };
+		B10950000000000000000011 /* AIChatViewModel+ScheduledTaskTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+ScheduledTaskTools.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000011 /* GitHubModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubModels.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000012 /* GitHubAccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubAccountStore.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000013 /* GitHubAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubAIToolGateway.swift"; sourceTree = SOURCE_ROOT; };
+		F9GH00000000000000000014 /* GitHubConnectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Connectors/GitHubConnectorView.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+MediaFavoriteTools.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000006 /* MediaFavoriteControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Media/MediaFavoriteControls.swift"; sourceTree = SOURCE_ROOT; };
+		C0DEEC000000000000000010 /* ModelPickerProviderHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Providers/ModelPickerProviderHeader.swift"; sourceTree = SOURCE_ROOT; };
+		E5SSR001 /* ChatShareModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShareModel.swift; sourceTree = "<group>"; };
+		E5SSR002 /* ChatShareSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatShareSelectionView.swift; sourceTree = "<group>"; };
+		E5SSR003 /* ChatExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExportRenderer.swift; sourceTree = "<group>"; };
+		E5SSR004 /* ConversationShareVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationShareVerification.swift; sourceTree = "<group>"; };
+		E5SSR005 /* ConversationSearchVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSearchVerification.swift; sourceTree = "<group>"; };
+		E5SSR006 /* ConversationChatVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChatVerification.swift; sourceTree = "<group>"; };
+		F9GH00000000000000000015 /* GitHubRepositoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/GitHub/GitHubRepositoryClient.swift"; sourceTree = SOURCE_ROOT; };
+		D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebOAuthManager.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebOAuthManager.swift; sourceTree = SOURCE_ROOT; };
+		1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebProvider.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebProvider.swift; sourceTree = SOURCE_ROOT; };
+		028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatGPTWebProtocol.swift; path = Providers/OpenAI/ChatGPTWeb/ChatGPTWebProtocol.swift; sourceTree = SOURCE_ROOT; };
+		8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyOAuthManager.swift; path = Providers/WorkBuddy/WorkBuddyOAuthManager.swift; sourceTree = SOURCE_ROOT; };
+		E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyModelsAPI.swift; path = Providers/WorkBuddy/WorkBuddyModelsAPI.swift; sourceTree = SOURCE_ROOT; };
+		44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyRequestAdapter.swift; path = Providers/WorkBuddy/WorkBuddyRequestAdapter.swift; sourceTree = SOURCE_ROOT; };
+		BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyProvider.swift; path = Providers/WorkBuddy/WorkBuddyProvider.swift; sourceTree = SOURCE_ROOT; };
+		73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyLoginSheet.swift; path = Views/Providers/WorkBuddyLoginSheet.swift; sourceTree = SOURCE_ROOT; };
+		175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProviderBrandIcon.swift; path = Views/Providers/ProviderBrandIcon.swift; sourceTree = SOURCE_ROOT; };
+		DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkBuddyBalanceAPI.swift; path = Providers/WorkBuddy/WorkBuddyBalanceAPI.swift; sourceTree = SOURCE_ROOT; };
+		7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallState.swift"; sourceTree = SOURCE_ROOT; };
+		1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallCoordinator.swift"; sourceTree = SOURCE_ROOT; };
+		AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Providers/Voice/VoiceCallAudioDriver.swift"; sourceTree = SOURCE_ROOT; };
+		02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Voice/VoiceCallPanel.swift"; sourceTree = SOURCE_ROOT; };
+		1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+VoiceCall.swift"; sourceTree = SOURCE_ROOT; };
+		6253B005328ED088E433D78C /* VoiceCallVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Debug/VoiceCallVerification.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1140,11 +1301,13 @@
 				AA26CCB92F31070A00AECF2D /* libsqlite3.tbd in Frameworks */,
 				AA26CCC32F31090100AECF2D /* libresolv.tbd in Frameworks */,
 				AA26CCC12F31090000AECF2D /* SystemConfiguration.framework in Frameworks */,
+				A09A55000000000000000003 /* OpenGlass in Frameworks */,
 				E52000005 /* SwiftAnthropic in Frameworks */,
 				D7A900000000000000000004 /* Citadel in Frameworks */,
 				D7A900000000000000000005 /* NIOSSH in Frameworks */,
 				D7A900000000000000000006 /* NIOCore in Frameworks */,
 				D7A900000000000000000007 /* Crypto in Frameworks */,
+				D7A90000000000000000000D /* SMBClient in Frameworks */,
 				E5M000001 /* cmark-gfm in Frameworks */,
 				E5M000002 /* cmark-gfm-extensions in Frameworks */,
 				E5S000005 /* CloudKit.framework in Frameworks */,
@@ -1169,6 +1332,9 @@
 				E5VC00015 /* CorrectionSignalSource.swift */,
 				E5VC00012 /* PhoneticNormalizer.swift */,
 				E5VC00011 /* VoiceCorrectionDB.swift */,
+				7F803A7C412F15EA73BE2A01 /* VoiceCallState.swift */,
+				1CA129D7093E6550BEAC242B /* VoiceCallCoordinator.swift */,
+				AF85D897D80CC2AA978A7E09 /* VoiceCallAudioDriver.swift */,
 				B7E2CB0D0D63E6D6FDB45568 /* VoiceActivityDetector.swift */,
 				424510790AF3FB2452D3CCE3 /* VoiceOutputPlayer.swift */,
 				5F3D1138DBE516F31D76ABF4 /* VoiceProviderTemplate.swift */,
@@ -1183,6 +1349,7 @@
 			isa = PBXGroup;
 			children = (
 				16FF3462D09402F14B610CD6 /* VoiceWaveformView.swift */,
+				02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */,
 				E8AB343B6D865C37CC5E9EDB /* VoiceInputPanel.swift */,
 				4D1A2B7331C508B0D3E77D28 /* InlineVoiceInputView.swift */,
 				7A302B074A0BE0AFED8EC7E9 /* SpeechPlayerControl.swift */,
@@ -1352,17 +1519,33 @@
 				E52000011 /* LLMTypes.swift */,
 				E52000012 /* LLMError.swift */,
 				E5OARC030 /* OAuthRefreshCoordinator.swift */,
+				73613E68D70AC8A510C62FAE /* WorkBuddyLoginSheet.swift */,
+				BBFD9D27A06FDF611DDA0838 /* WorkBuddyProvider.swift */,
+				44DEC485E45AF549B75BF83E /* WorkBuddyRequestAdapter.swift */,
+				175ECECBC10C78F0833142C6 /* ProviderBrandIcon.swift */,
+				DBA715C130024380121B6A78 /* WorkBuddyBalanceAPI.swift */,
+				E868800512F3964D1F1F7785 /* WorkBuddyModelsAPI.swift */,
+				8886C7E853F7B099038FA637 /* WorkBuddyOAuthManager.swift */,
+				18A412A6EB7857F98927CD26 /* ChatGPTWebChallenge.swift */,
+				028901333C112F76DE132920 /* ChatGPTWebProtocol.swift */,
+				1A129767E3EDFB6D7E0739E8 /* ChatGPTWebProvider.swift */,
+				D69A48B23364C174351A8A13 /* ChatGPTWebOAuthManager.swift */,
 				E5OARC031 /* OAuthRefreshSingleFlight.swift */,
 				E52000013 /* LLMProvider.swift */,
 				E5F00002 /* LLMProviderFactory.swift */,
+				A1C0A0000000000000000005 /* GitHubCopilot */,
 				E59000011 /* AgentProvider.swift */,
 				E5D00011 /* ProviderTypes.swift */,
 				E5D00012 /* ProviderInstance.swift */,
+				E5DQ0011 /* ProviderAPIQuota.swift */,
 				E5D00013 /* ModelEntry.swift */,
 				E5D00014 /* ModelGroup.swift */,
 				E5TLC0002 /* ThinkingLevelCatalog.swift */,
 				E5D00015 /* ProviderConfigStore.swift */,
 				E5D00199 /* ProviderConfigDB.swift */,
+				E5D0A102 /* ModelReleaseIndex.swift */,
+				E5VGR002 /* VisionGroupResolver.swift */,
+				E5THR002 /* ThinkingRules.swift */,
 				E5D00016 /* ModelGroupRouter.swift */,
 				E5D00017 /* ProviderMigration.swift */,
 				E5D00018 /* ModelsDevAPI.swift */,
@@ -1376,6 +1559,14 @@
 				42A3821DABA8773E8A5BA57E /* Voice */,
 			);
 			path = Providers;
+			sourceTree = "<group>";
+		};
+		A1C0A0000000000000000005 /* GitHubCopilot */ = {
+			isa = PBXGroup;
+			children = (
+				A1C0A0000000000000000002 /* GitHubCopilotOAuthManager.swift */,
+			);
+			path = GitHubCopilot;
 			sourceTree = "<group>";
 		};
 		E52000031 /* Anthropic */ = {
@@ -1426,6 +1617,7 @@
 		E54000030 /* Debug */ = {
 			isa = PBXGroup;
 			children = (
+				6253B005328ED088E433D78C /* VoiceCallVerification.swift */,
 				E54000011 /* DebugServer.swift */,
 				E54000AB2 /* DebugAuth.swift */,
 				E54000041 /* DebugLocalDispatch.swift */,
@@ -1478,6 +1670,9 @@
 				E57000016 /* BrowserManagementView.swift */,
 				E57000017 /* BrowserTabPool.swift */,
 				E57000018 /* BrowserHistory.swift */,
+				E57000019 /* FaviconService.swift */,
+				E5700001A /* FaviconDiskCache.swift */,
+				E5700001B /* FaviconView.swift */,
 				E5CKB0002 /* CookieBackupStore.swift */,
 				E5CAL0002 /* CookieAuditLogger.swift */,
 			);
@@ -1562,13 +1757,24 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
+		F1L00003 /* Layout */ = {
+			isa = PBXGroup;
+			children = (
+				F1L00001 /* AdaptivePaneLayout.swift */,
+				F1L00002 /* ChatScrollMemory.swift */,
+			);
+			path = Layout;
+			sourceTree = "<group>";
+		};
 		E5D000030 /* Views */ = {
 			isa = PBXGroup;
 			children = (
 				E51000012 /* ContentView.swift */,
+				F1L00003 /* Layout */,
 				F1V00014 /* Alarms */,
 				F1V00015 /* Backup */,
 				F1V00010 /* Chat */,
+				LCHG0001 /* Launch */,
 				F1V00012 /* Providers */,
 				F1V00013 /* Rootfs */,
 				F1V00011 /* Settings */,
@@ -1595,6 +1801,7 @@
 		E5E000031 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				E5UMC0011 /* UserMessageCollapsePolicy.swift */,
 				D7A900000000000000000020 /* RemoteServers */,
 				E5G000014 /* AgentActivityAttributes.swift */,
 				E5AT00011 /* AudioTogglePlaybackIntent.swift */,
@@ -1629,6 +1836,8 @@
 				E5PRIV11 /* EnvVarPrivacyStore.swift */,
 				E5PRIV12 /* EnvVarRedactor.swift */,
 				E5Q000014 /* FontSettings.swift */,
+				FEE0A0010000000000000012 /* AppFeedback.swift */,
+				FEE0A0010000000000000011 /* AppFeedbackPreferences.swift */,
 				E5J000022 /* FileHandleSafeWrite.h */,
 				E5J000021 /* FileHandleSafeWrite.m */,
 				E5J000052 /* ObjCExceptionCatcher.h */,
@@ -1663,6 +1872,7 @@
 				D7A900000000000000000013 /* RemoteServerSecretStore.swift */,
 				D7A900000000000000000014 /* RemoteSSHConnectionService.swift */,
 				D7A900000000000000000018 /* RemoteServerAIToolGateway.swift */,
+				D7A900000000000000000019 /* RemoteStorageClients.swift */,
 			);
 			path = RemoteServers;
 			sourceTree = "<group>";
@@ -1879,10 +2089,22 @@
 				E5VMB0015 /* ChatModels.swift */,
 				E5VMB0016 /* ChatLifecycleSupport.swift */,
 				E5VMB0017 /* ChatURLBrokerage.swift */,
+				E8C4F64FA50D69B103B87366 /* VisualizationDocument.swift */,
+				CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */,
+				524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */,
+				ZESA0011 /* ZeSubAgentCoordinator.swift */,
+				B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */,
+				B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */,
+				B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */,
+				B10950000000000000000011 /* AIChatViewModel+ScheduledTaskTools.swift */,
+				B10900000000000000000013 /* ScheduledTasksView.swift */,
+				B10900000000000000000012 /* ScheduledTaskStore.swift */,
+				B10900000000000000000011 /* ScheduledTaskModels.swift */,
 				E5VMC0011 /* AIChatViewModel+ISHCommand.swift */,
 				E5VMC0012 /* AIChatViewModel+FileTools.swift */,
 				E5VMD0011 /* ZeURLPathDecoding.swift */,
 				E5VMC0013 /* AIChatViewModel+Offloading.swift */,
+				1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */,
 				E5VMC0014 /* AIChatViewModel+SSEStream.swift */,
 				E5VMC0015 /* AIChatViewModel+Persistence.swift */,
 				E5VMC0016 /* AIChatViewModel+BackgroundTask.swift */,
@@ -1931,6 +2153,7 @@
 			children = (
 				E5G000012 /* AgentLiveActivityManager.swift */,
 				E5G000011 /* BackgroundKeepAliveManager.swift */,
+				F1P00001 /* ChatPiPController.swift */,
 				E53000016 /* CacheKeepAliveManager.swift */,
 			);
 			path = Background;
@@ -1953,6 +2176,9 @@
 			isa = PBXGroup;
 			children = (
 				E5F000011 /* ISHExecutionCoordinator.swift */,
+				CDNS001 /* ContainerDNS.swift */,
+				AOJIT001 /* AOJITAcceleration.swift */,
+				MEMP001 /* MemoryPressureMonitor.swift */,
 				E5F000012 /* ZeFsRouter.swift */,
 				E5CR00011 /* ShellCommandRingBuffer.swift */,
 			);
@@ -2026,10 +2252,41 @@
 			path = Environment;
 			sourceTree = "<group>";
 		};
+		LCHG0001 /* Launch */ = {
+			isa = PBXGroup;
+			children = (
+				LCHR0001 /* LaunchCoordinator.swift */,
+				LCHR0002 /* LaunchAnimationView.swift */,
+			);
+			path = Launch;
+			sourceTree = "<group>";
+		};
+		E5SEG001 /* SessionExport */ = {
+			isa = PBXGroup;
+			children = (
+				E5SER001 /* SessionExportModels.swift */,
+				E5SER002 /* SessionExportTypography.swift */,
+				E5SER003 /* SessionExportRenderer.swift */,
+				E5SER004 /* SessionShareSheet.swift */,
+				E5SSR005 /* ConversationSearchVerification.swift */,
+				E5SSR006 /* ConversationChatVerification.swift */,
+				E5SSR004 /* ConversationShareVerification.swift */,
+				E5SSR003 /* ChatExportRenderer.swift */,
+				E5SSR002 /* ChatShareSelectionView.swift */,
+				E5SSR001 /* ChatShareModel.swift */,
+				E5SER005 /* SessionExportNativeRenderer.swift */,
+			);
+			path = SessionExport;
+			sourceTree = "<group>";
+		};
 		F1V00010 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
 				E53000012 /* AIChatView.swift */,
+				A7B4E1000000000000000002 /* ChatKeyboardViewport.swift */,
+				CHSR001 /* ChatSearch.swift */,
+				CHSO001 /* ChatSearchOverlay.swift */,
+				ZESA0012 /* ZeSubAgentViews.swift */,
 				E5F200011 /* MarkdownPrepRegex.swift */,
 				E5F200012 /* ZeMediaViews.swift */,
 				E5F200013 /* AssistantBlockView.swift */,
@@ -2046,6 +2303,7 @@
 				E8A000012 /* OffloadPermissionDialog.swift */,
 				E5K000011 /* SelectableMarkdownView.swift */,
 				E5K000012 /* ChatTurnScreenshot.swift */,
+				E5SEG001 /* SessionExport */,
 				E5N0000152F3B941A00049557 /* SessionMemoryView.swift */,
 				E5N0000122F3B941A00049557 /* SessionSkillsView.swift */,
 				F1T00010 /* ToolLiveSheet.swift */,
@@ -2062,6 +2320,7 @@
 			children = (
 				E5S000014 /* CloudSyncSettingsView.swift */,
 				E5G000013 /* EnhancedBackgroundSettingsView.swift */,
+				FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */,
 				E5P000012 /* EnvironmentVariablesView.swift */,
 				E5J000012 /* LogManagementView.swift */,
 				E5J000013 /* ConfigAuditView.swift */,
@@ -2096,12 +2355,14 @@
 			children = (
 				E5D00032 /* AddProviderView.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
+				A1C0A0000000000000000004 /* GitHubCopilotDeviceLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
 				E5D00034 /* ModelGroupDetailView.swift */,
 				E5D00033 /* ModelGroupsView.swift */,
 				E5QT00011 /* ModelQuickTestSheet.swift */,
 				E5D00036 /* OnboardingModelSelectionView.swift */,
 				E5D00031 /* ProviderInstanceDetailView.swift */,
+				E5THR004 /* ThinkingRulesSection.swift */,
 				E5D00030 /* ProviderInstancesView.swift */,
 				E5SVP0031 /* ShadowVoiceProviderDetailView.swift */,
 				E5D00035 /* SessionModelPicker.swift */,
@@ -2120,6 +2381,8 @@
 				AA26CCBD2F31080100AECF2D /* ISHTerminalView.swift */,
 				AA0838FE2F3B941A00049557 /* MirrorSpeedTestView.swift */,
 				AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */,
+				AOJS001 /* AOJITSection.swift */,
+				CNS001 /* ContainerNetworkSection.swift */,
 				AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */,
 			);
 			path = Rootfs;
@@ -2229,11 +2492,13 @@
 			);
 			name = Ze;
 			packageProductDependencies = (
+				A09A55000000000000000002 /* OpenGlass */,
 				E52000021 /* SwiftAnthropic */,
 				D7A900000000000000000040 /* Citadel */,
 				D7A900000000000000000041 /* NIOSSH */,
 				D7A900000000000000000042 /* NIOCore */,
 				D7A900000000000000000043 /* Crypto */,
+				D7A900000000000000000044 /* SMBClient */,
 				E5M000021 /* cmark-gfm */,
 				E5M000022 /* cmark-gfm-extensions */,
 				E5X000021 /* SwiftMath */,
@@ -2336,11 +2601,13 @@
 			);
 			mainGroup = E51000030;
 			packageReferences = (
+				A09A55000000000000000001 /* XCLocalSwiftPackageReference "Vendor/OpenGlass" */,
 				E52000020 /* XCRemoteSwiftPackageReference "SwiftAnthropic" */,
 				D7A900000000000000000030 /* XCRemoteSwiftPackageReference "Citadel" */,
 				D7A900000000000000000031 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 				D7A900000000000000000032 /* XCRemoteSwiftPackageReference "swift-nio" */,
 				D7A900000000000000000033 /* XCRemoteSwiftPackageReference "swift-crypto" */,
+				D7A900000000000000000034 /* XCRemoteSwiftPackageReference "SMBClient" */,
 				E5M000020 /* XCRemoteSwiftPackageReference "swift-cmark" */,
 				E5X000020 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 				B318C2F47DB3F301A17E49BE /* XCRemoteSwiftPackageReference "RealTimeCutVADLibrary" */,
@@ -2475,6 +2742,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5UMC0002 /* UserMessageCollapsePolicy.swift in Sources */,
 				BB1000120F700000000000AA /* ContextPolicy.swift in Sources */,
 				E5LD00002 /* ToolLoopDetector.swift in Sources */,
 				E5GWF0004 /* GeminiWireFormat.swift in Sources */,
@@ -2504,6 +2772,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5UMC0001 /* UserMessageCollapsePolicy.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,
@@ -2540,8 +2809,16 @@
 				E5QA0002 /* AppDelegate.swift in Sources */,
 				AA0838C02F3B941A00049557 /* RootfsResetButton.swift in Sources */,
 				AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */,
+				AOJSB01 /* AOJITSection.swift in Sources */,
+				CNSB001 /* ContainerNetworkSection.swift in Sources */,
+				CDNSB01 /* ContainerDNS.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
+				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,
+				C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */,
+				C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */,
+				C0DEEB000000000000000010 /* ModelPickerProviderHeader.swift in Sources */,
+				C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */,
 				E5MNT0001 /* MountedFoldersManager.swift in Sources */,
 				E5MNT0002 /* MountedFolderCoordinator.swift in Sources */,
 				E5MNT0003 /* MountedFoldersSettingsView.swift in Sources */,
@@ -2552,6 +2829,8 @@
 				E52000002 /* LLMError.swift in Sources */,
 				E52000003 /* LLMProvider.swift in Sources */,
 				E5F00001 /* LLMProviderFactory.swift in Sources */,
+				A1C0A0000000000000000001 /* GitHubCopilotOAuthManager.swift in Sources */,
+				A1C0A0000000000000000003 /* GitHubCopilotDeviceLoginSheet.swift in Sources */,
 				E52000004 /* AnthropicProvider.swift in Sources */,
 				E52000006 /* OAuthHTTPClient.swift in Sources */,
 				E52000007 /* ClaudeOAuthManager.swift in Sources */,
@@ -2579,16 +2858,32 @@
 				E5VMB0005 /* ChatModels.swift in Sources */,
 				E5VMB0006 /* ChatLifecycleSupport.swift in Sources */,
 				E5VMB0007 /* ChatURLBrokerage.swift in Sources */,
+				FCAC1E1A020E77B758DD8F32 /* VisualizationDocument.swift in Sources */,
+				C9ED889B1715F4ADFDCF21AE /* VisualizationAttachment.swift in Sources */,
+				CBA240139CE7A850A5FEAFBB /* VisualizationVerification.swift in Sources */,
+				ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */,
+				B10940000000000000000001 /* ConsecutiveToolCallsPolicy.swift in Sources */,
+				B10940000000000000000002 /* ConsecutiveToolCallsHeader.swift in Sources */,
+				B10940000000000000000003 /* ScheduledTaskActivityPolicy.swift in Sources */,
+				B10950000000000000000001 /* AIChatViewModel+ScheduledTaskTools.swift in Sources */,
+				B10900000000000000000003 /* ScheduledTasksView.swift in Sources */,
+				B10900000000000000000002 /* ScheduledTaskStore.swift in Sources */,
+				B10900000000000000000001 /* ScheduledTaskModels.swift in Sources */,
 				E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */,
 				E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */,
 				E5VMD0001 /* ZeURLPathDecoding.swift in Sources */,
 				E5VMC0003 /* AIChatViewModel+Offloading.swift in Sources */,
+				F7FD1BDF79751FD9D9179828 /* AIChatViewModel+VoiceCall.swift in Sources */,
 				E5VMC0004 /* AIChatViewModel+SSEStream.swift in Sources */,
 				E5VMC0005 /* AIChatViewModel+Persistence.swift in Sources */,
 				E5VMC0006 /* AIChatViewModel+BackgroundTask.swift in Sources */,
 				E5VMC0007 /* AIChatViewModel+ConcurrentTools.swift in Sources */,
 				E5LD00001 /* ToolLoopDetector.swift in Sources */,
 				E53000002 /* AIChatView.swift in Sources */,
+				A7B4E1000000000000000001 /* ChatKeyboardViewport.swift in Sources */,
+				F1L00005 /* AdaptivePaneLayout.swift in Sources */,
+				F1L00006 /* ChatScrollMemory.swift in Sources */,
+				ZESA0002 /* ZeSubAgentViews.swift in Sources */,
 				E5CAL0001 /* CookieAuditLogger.swift in Sources */,
 				E5F200001 /* MarkdownPrepRegex.swift in Sources */,
 				E5F200002 /* ZeMediaViews.swift in Sources */,
@@ -2638,6 +2933,10 @@
 				E5T00000A /* RetryRunIntent.swift in Sources */,
 				E5T00000B /* UserMessageEntity.swift in Sources */,
 				E5F000001 /* ISHExecutionCoordinator.swift in Sources */,
+				AOJITB01 /* AOJITAcceleration.swift in Sources */,
+				MEMPB01 /* MemoryPressureMonitor.swift in Sources */,
+				CHSRB01 /* ChatSearch.swift in Sources */,
+				CHSOB01 /* ChatSearchOverlay.swift in Sources */,
 				E5F000002 /* ZeFsRouter.swift in Sources */,
 				E5CR00001 /* ShellCommandRingBuffer.swift in Sources */,
 				E5BRM0001 /* BrowserResourceMonitor.swift in Sources */,
@@ -2659,6 +2958,9 @@
 				E57000006 /* BrowserManagementView.swift in Sources */,
 				E57000007 /* BrowserTabPool.swift in Sources */,
 				E57000008 /* BrowserHistory.swift in Sources */,
+				E57000009 /* FaviconService.swift in Sources */,
+				E5700000A /* FaviconDiskCache.swift in Sources */,
+				E5700000B /* FaviconView.swift in Sources */,
 				E5CKB0001 /* CookieBackupStore.swift in Sources */,
 				E55000001 /* ISHShellExecutor.m in Sources */,
 				E5L000001 /* FFmpegOffload.m in Sources */,
@@ -2697,6 +2999,7 @@
 				E5L200102 /* RemindersOffload.m in Sources */,
 				E5L2000F4 /* ModelUseOffloadBridge.swift in Sources */,
 				E5D00037 /* AgentLoopModelsView.swift in Sources */,
+				4842985E9CA4FF04C81872D5 /* VoiceCallVerification.swift in Sources */,
 				E54000001 /* DebugServer.swift in Sources */,
 				E54000AB1 /* DebugAuth.swift in Sources */,
 				E54000031 /* DebugLocalDispatch.swift in Sources */,
@@ -2729,6 +3032,17 @@
 				E59000003 /* GeminiAgentProvider.swift in Sources */,
 				E5GWF0003 /* GeminiWireFormat.swift in Sources */,
 				E5C000001 /* OpenAIProvider.swift in Sources */,
+				7FD5FC60DD6638985596637B /* WorkBuddyLoginSheet.swift in Sources */,
+				5C5CCCD69B2E8D7996ED6F9A /* WorkBuddyProvider.swift in Sources */,
+				619E078013A55F127936E4FE /* WorkBuddyRequestAdapter.swift in Sources */,
+				D8D9ED0313002A6DAC4DB95C /* ProviderBrandIcon.swift in Sources */,
+				4C7D3989A0DDFBA8250DE17D /* WorkBuddyBalanceAPI.swift in Sources */,
+				9614512410B12858314CBBAA /* WorkBuddyModelsAPI.swift in Sources */,
+				890A9E4307A9258E8BABC7B2 /* WorkBuddyOAuthManager.swift in Sources */,
+				7CD272E08E5C0F210A3AB999 /* ChatGPTWebChallenge.swift in Sources */,
+				37435B2FDA467070F6EFFFB4 /* ChatGPTWebProtocol.swift in Sources */,
+				A5320A5E89F1FE62A60EF845 /* ChatGPTWebProvider.swift in Sources */,
+				21EAB6DEFC66132C63D75667 /* ChatGPTWebOAuthManager.swift in Sources */,
 				E5C000002 /* OpenAIAgentProvider.swift in Sources */,
 				E5C000003 /* OpenAIModelsAPI.swift in Sources */,
 				E5C000004 /* CodexOAuthManager.swift in Sources */,
@@ -2743,7 +3057,12 @@
 				E5D00004 /* ModelGroup.swift in Sources */,
 				E5TLC0001 /* ThinkingLevelCatalog.swift in Sources */,
 				E5D00005 /* ProviderConfigStore.swift in Sources */,
+				E5DQ0001 /* ProviderAPIQuota.swift in Sources */,
 				E5D00099 /* ProviderConfigDB.swift in Sources */,
+				E5D0A101 /* ModelReleaseIndex.swift in Sources */,
+				E5VGR001 /* VisionGroupResolver.swift in Sources */,
+				E5THR001 /* ThinkingRules.swift in Sources */,
+				E5THR003 /* ThinkingRulesSection.swift in Sources */,
 				E5D00006 /* ModelGroupRouter.swift in Sources */,
 				E5D00007 /* ProviderMigration.swift in Sources */,
 				E5D00008 /* ModelsDevAPI.swift in Sources */,
@@ -2766,6 +3085,7 @@
 				E5E0000A1 /* ExternalFileImporter.swift in Sources */,
 				E5G000001 /* BackgroundKeepAliveManager.swift in Sources */,
 				E5G000002 /* AgentLiveActivityManager.swift in Sources */,
+				F1P00003 /* ChatPiPController.swift in Sources */,
 				E5G000003 /* EnhancedBackgroundSettingsView.swift in Sources */,
 				E5G000004 /* AgentActivityAttributes.swift in Sources */,
 				E5AT00004 /* AudioTogglePlaybackIntent.swift in Sources */,
@@ -2781,6 +3101,19 @@
 				E5J000040 /* AttributeQueryRecorder.m in Sources */,
 				E5K000001 /* SelectableMarkdownView.swift in Sources */,
 				E5K000002 /* ChatTurnScreenshot.swift in Sources */,
+				E5SEB001 /* SessionExportModels.swift in Sources */,
+				E5SEB002 /* SessionExportTypography.swift in Sources */,
+				E5SEB003 /* SessionExportRenderer.swift in Sources */,
+				E5SEB004 /* SessionShareSheet.swift in Sources */,
+				E5SSB005 /* ConversationSearchVerification.swift in Sources */,
+				E5SSB006 /* ConversationChatVerification.swift in Sources */,
+				E5SSB004 /* ConversationShareVerification.swift in Sources */,
+				E5SSB003 /* ChatExportRenderer.swift in Sources */,
+				E5SSB002 /* ChatShareSelectionView.swift in Sources */,
+				E5SSB001 /* ChatShareModel.swift in Sources */,
+				E5SEB005 /* SessionExportNativeRenderer.swift in Sources */,
+				LCHB0001 /* LaunchCoordinator.swift in Sources */,
+				LCHB0002 /* LaunchAnimationView.swift in Sources */,
 				E5M000007 /* MarkdownRenderView.swift in Sources */,
 				E5M000003 /* ZeMarkdownParser.swift in Sources */,
 				E5U000001 /* KaTeXRenderer.swift in Sources */,
@@ -2803,6 +3136,12 @@
 				D7A90000000000000000000A /* RemoteSFTPBrowserView.swift in Sources */,
 				D7A90000000000000000000B /* RemoteCommandConsoleView.swift in Sources */,
 				D7A90000000000000000000C /* RemoteServerAIToolGateway.swift in Sources */,
+				D7A90000000000000000000F /* RemoteStorageClients.swift in Sources */,
+				F9GH00000000000000000001 /* GitHubModels.swift in Sources */,
+				F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */,
+				F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */,
+				F9GH00000000000000000005 /* GitHubRepositoryClient.swift in Sources */,
+				F9GH00000000000000000004 /* GitHubConnectorView.swift in Sources */,
 				E5LOCK001 /* SessionLockStore.swift in Sources */,
 				E5SOUL001 /* SoulStore.swift in Sources */,
 				E5SOUL002 /* SoulSettingsView.swift in Sources */,
@@ -2839,6 +3178,9 @@
 				E5Q000003 /* AppLogger.swift in Sources */,
 				F1S00012 /* ChatSessionIdEnvironment.swift in Sources */,
 				E5Q000004 /* FontSettings.swift in Sources */,
+				FEE0A0010000000000000003 /* SoundHapticsSettingsView.swift in Sources */,
+				FEE0A0010000000000000002 /* AppFeedback.swift in Sources */,
+				FEE0A0010000000000000001 /* AppFeedbackPreferences.swift in Sources */,
 				E5R000001 /* ICloudBackupManager.swift in Sources */,
 				E5R000002 /* ICloudBackupView.swift in Sources */,
 				E5S000001 /* DeviceIdentity.swift in Sources */,
@@ -2871,9 +3213,13 @@
 				A1B2C3D4E5F60718293A4B5C /* SystemVoiceCatalog.swift in Sources */,
 				241D530017827D7F0EB604DE /* VoiceProviderFactory.swift in Sources */,
 				489FD1413F4EE806C3F0C713 /* VoiceProviderResolver.swift in Sources */,
+				45A8C998F8CA574AA4BEB068 /* VoiceCallState.swift in Sources */,
+				47CC817A1E4FD187FC418B43 /* VoiceCallCoordinator.swift in Sources */,
+				55245B0ADB9011F9D13A944A /* VoiceCallAudioDriver.swift in Sources */,
 				57E63023C8A9A3C505DF411B /* VoiceActivityDetector.swift in Sources */,
 				2A4FD49F872431D703328384 /* VoiceOutputPlayer.swift in Sources */,
 				77BB9741AB0EFC449FDBDFED /* VoiceWaveformView.swift in Sources */,
+				0F1053B9DCB9B6161524CBF2 /* VoiceCallPanel.swift in Sources */,
 				38F28509AFBC2153A7C85E85 /* VoiceInputPanel.swift in Sources */,
 				30390D7AA90818BD4BDCE784 /* VoiceProviderTemplate.swift in Sources */,
 				5EF8347C1EAA0066EFF631F8 /* GroupVoiceModelsView.swift in Sources */,
@@ -2977,7 +3323,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -2986,7 +3332,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3001,12 +3347,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3022,7 +3368,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -3038,7 +3384,7 @@
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3055,7 +3401,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -3067,7 +3413,7 @@
 					"$(SRCROOT)/Vendor/cppjieba/include",
 				);
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.ZeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -3220,7 +3566,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ze.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_ASSET_PATHS = "\"Preview Content\"";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -3249,12 +3595,14 @@
 					"@executable_path/Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				OTHER_LDFLAGS = (
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"$(ZE_AOT_OBJECTS)",
 				);
+				ZE_AOT_OBJECTS = "$(SRCROOT)/aot/aot_busybox.o $(SRCROOT)/aot/aot_libcrypto.o $(SRCROOT)/aot/aot_libjpeg.o $(SRCROOT)/aot/aot_libssl.o $(SRCROOT)/aot/aot_libwebp.o $(SRCROOT)/aot/aot_musl.o $(SRCROOT)/aot/aot_numpy.o $(SRCROOT)/aot/aot_pcre2.o $(SRCROOT)/aot/aot_pillow.o $(SRCROOT)/aot/aot_pybinascii.o $(SRCROOT)/aot/aot_pyblake2.o $(SRCROOT)/aot/aot_pydatetime.o $(SRCROOT)/aot/aot_pyhashlib.o $(SRCROOT)/aot/aot_pyjson.o $(SRCROOT)/aot/aot_pymath.o $(SRCROOT)/aot/aot_pyselect.o $(SRCROOT)/aot/aot_pysocket.o $(SRCROOT)/aot/aot_pystruct.o $(SRCROOT)/aot/aot_python3.o $(SRCROOT)/aot/aot_pyzlib.o $(SRCROOT)/aot/aot_scp.o $(SRCROOT)/aot/aot_sqlite.o $(SRCROOT)/aot/aot_ssh.o $(SRCROOT)/aot/aot_zlib.o";
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3278,7 +3626,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Ze.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_ASSET_PATHS = "\"Preview Content\"";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -3307,12 +3655,14 @@
 					"@executable_path/Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				OTHER_LDFLAGS = (
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"$(ZE_AOT_OBJECTS)",
 				);
+				ZE_AOT_OBJECTS = "$(SRCROOT)/aot/aot_busybox.o $(SRCROOT)/aot/aot_libcrypto.o $(SRCROOT)/aot/aot_libjpeg.o $(SRCROOT)/aot/aot_libssl.o $(SRCROOT)/aot/aot_libwebp.o $(SRCROOT)/aot/aot_musl.o $(SRCROOT)/aot/aot_numpy.o $(SRCROOT)/aot/aot_pcre2.o $(SRCROOT)/aot/aot_pillow.o $(SRCROOT)/aot/aot_pybinascii.o $(SRCROOT)/aot/aot_pyblake2.o $(SRCROOT)/aot/aot_pydatetime.o $(SRCROOT)/aot/aot_pyhashlib.o $(SRCROOT)/aot/aot_pyjson.o $(SRCROOT)/aot/aot_pymath.o $(SRCROOT)/aot/aot_pyselect.o $(SRCROOT)/aot/aot_pysocket.o $(SRCROOT)/aot/aot_pystruct.o $(SRCROOT)/aot/aot_python3.o $(SRCROOT)/aot/aot_pyzlib.o $(SRCROOT)/aot/aot_scp.o $(SRCROOT)/aot/aot_sqlite.o $(SRCROOT)/aot/aot_ssh.o $(SRCROOT)/aot/aot_zlib.o";
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3328,7 +3678,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
@@ -3340,7 +3690,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3355,7 +3705,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ShareExtension/Info.plist;
@@ -3367,7 +3717,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.ShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3382,7 +3732,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProvider/Info.plist;
@@ -3394,7 +3744,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3409,7 +3759,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FileProvider/Info.plist;
@@ -3421,7 +3771,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3436,7 +3786,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AgentWidget/AgentWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentWidget/Info.plist;
@@ -3448,7 +3798,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.AgentWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3463,7 +3813,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AgentWidget/AgentWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentWidget/Info.plist;
@@ -3475,7 +3825,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.2;
+			MARKETING_VERSION = 1.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ze.app.AgentWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -3553,6 +3903,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+        A09A55000000000000000001 /* XCLocalSwiftPackageReference "Vendor/OpenGlass" */ = {
+            isa = XCLocalSwiftPackageReference;
+            relativePath = Vendor/OpenGlass;
+        };
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		B318C2F47DB3F301A17E49BE /* XCRemoteSwiftPackageReference "RealTimeCutVADLibrary" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -3618,9 +3975,21 @@
 				minimumVersion = 3.12.3;
 			};
 		};
+		D7A900000000000000000034 /* XCRemoteSwiftPackageReference "SMBClient" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kishikawakatsumi/SMBClient.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+        A09A55000000000000000002 /* OpenGlass */ = {
+            isa = XCSwiftPackageProductDependency;
+            productName = OpenGlass;
+        };
 		C42120806C66A2C804F89620 /* RealTimeCutVADLibrary */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B318C2F47DB3F301A17E49BE /* XCRemoteSwiftPackageReference "RealTimeCutVADLibrary" */;
@@ -3650,6 +4019,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D7A900000000000000000033 /* XCRemoteSwiftPackageReference "swift-crypto" */;
 			productName = Crypto;
+		};
+		D7A900000000000000000044 /* SMBClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D7A900000000000000000034 /* XCRemoteSwiftPackageReference "SMBClient" */;
+			productName = SMBClient;
 		};
 		E5M000021 /* cmark-gfm */ = {
 			isa = XCSwiftPackageProductDependency;
