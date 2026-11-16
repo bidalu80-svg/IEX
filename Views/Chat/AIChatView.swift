@@ -2224,7 +2224,7 @@ struct AIChatView: View {
             }
             .buttonStyle(ChatHeaderButtonStyle())
             .contentShape(Circle())
-            .modifier(ChatNavigationGlassSurface(isCircle: true))
+            .modifier(ChatNavigationGlassSurface(isCircle: true, isInteractive: false))
             .zIndex(1)
             .accessibilityLabel("编辑灵魂：\(soulName)")
             .accessibilityIdentifier("chat.soulAvatar")
@@ -4784,16 +4784,18 @@ private struct ProviderImportSheet: View {
 /// the leading surface circular; the two trailing controls share one capsule.
 private struct ChatNavigationGlassSurface: ViewModifier {
     var isCircle = false
+    // Avatar presses use the Button; native glass interaction is optional.
+    var isInteractive = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             if isCircle {
-                content.glassEffect(.regular.interactive(), in: Circle())
+                content.glassEffect(.regular.interactive(isInteractive), in: Circle())
                     .background(ChatNativeGlassMarker(shape: "circle").allowsHitTesting(false))
             } else {
-                content.glassEffect(.regular.interactive(), in: Capsule())
+                content.glassEffect(.regular.interactive(isInteractive), in: Capsule())
                     .background(ChatNativeGlassMarker(shape: "capsule").allowsHitTesting(false))
             }
         } else {
@@ -5411,7 +5413,12 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 // Parenting it to the chat but putting its view in navigation.view
                 // raises UIViewControllerHierarchyInconsistency on iOS 18.
                 let overlayView = overlayOwner.view!
-                let overlayFrame = host.convert(badgeFrame, to: overlayView)
+                var overlayFrame = host.convert(badgeFrame, to: overlayView)
+                if headerSize == nil {
+                    // Rect conversion can perturb a fixed size through edge subtraction.
+                    // Only the fallback mark's position needs conversion.
+                    overlayFrame.size = badgeFrame.size
+                }
                 if badgeHost.parent !== overlayOwner {
                     badgeHost.willMove(toParent: nil)
                     badgeHost.view.removeFromSuperview()
