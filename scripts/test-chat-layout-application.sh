@@ -17,12 +17,17 @@ if [ "${ZE_VERIFY_SOUL_HEADER:-0}" = 1 ]; then
     layout_recording_pid=$!
 fi
 collect_layout() {
+    # Preserve the real-tap trace before any simulator/video cleanup can stall.
+    if [ -d "$layout_container/Documents/chat-verification" ]; then
+        cp -R "$layout_container/Documents/chat-verification" "$layout_evidence/"
+        if [ "${ZE_VERIFY_SOUL_HEADER:-0}" = 1 ]; then
+            python3 scripts/check-soul-tap-evidence.py "$layout_container/Documents/chat-verification/avatar-tap-events.json" \
+                > "$layout_evidence/avatar-tap-summary.json" || true
+        fi
+    fi
     if [ -n "$layout_recording_pid" ]; then
         kill -INT "$layout_recording_pid" 2>/dev/null || true
         wait "$layout_recording_pid" || true
-    fi
-    if [ -d "$layout_container/Documents/chat-verification" ]; then
-        cp -R "$layout_container/Documents/chat-verification" "$layout_evidence/"
     fi
     xcrun simctl io "$layout_device" screenshot "$layout_evidence/final-screen.png" || true
     mkdir -p "$layout_evidence/crashes"
@@ -69,6 +74,9 @@ else:
 PY
 fi
 xcodebuild test-without-building -xctestrun "$layout_work/DerivedData/Build/Products/Layout.xctestrun" -destination "platform=iOS Simulator,id=$layout_device" -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -resultBundlePath "$layout_evidence/Layout.xcresult" -test-timeouts-enabled YES -default-test-execution-time-allowance 420 > "$layout_evidence/test.log" 2>&1
+if [ "${ZE_VERIFY_SOUL_HEADER:-0}" = 1 ]; then
+    python3 scripts/check-soul-tap-evidence.py "$layout_container/Documents/chat-verification/avatar-tap-events.json"
+fi
 python3 - "$layout_container/Documents/chat-verification/result.json" <<'PY'
 import os,pathlib,json,sys
 d=json.loads(pathlib.Path(sys.argv[1]).read_text());print(json.dumps(d,ensure_ascii=False,indent=2))

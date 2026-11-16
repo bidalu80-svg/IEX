@@ -2196,11 +2196,24 @@ struct AIChatView: View {
         let avatarDiscSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
         return VStack(spacing: 0) {
             Button {
+                #if DEBUG
+                ChatSoulTapEvidence.record("avatar.action", details: ["wasPresented": showSoulSettings])
+                #endif
                 inputFocused = false
                 avatarCelebration = Date().addingTimeInterval(5)
                 showSoulSettings = true
+                #if DEBUG
+                ChatSoulTapEvidence.record("settings.requested", details: ["isPresented": showSoulSettings])
+                #endif
             } label: {
                 SoulHeaderAvatar(vm: vm, size: avatarDiscSize, celebration: avatarCelebration)
+                    #if DEBUG
+                    .background {
+                        if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+                            ChatSoulTapTargetMarker()
+                        }
+                    }
+                    #endif
             }
             .buttonStyle(ChatHeaderButtonStyle())
             .contentShape(Circle())
@@ -4923,6 +4936,190 @@ private final class ChatProgressiveFrostView: UIView {
     }
 }
 
+#if DEBUG
+/// Observes the real touch sequence without recognizing, cancelling, delaying,
+/// invoking an action, changing hit testing, or repairing presentation.
+@MainActor
+private enum ChatSoulTapEvidence {
+    private static var enabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar")
+    }
+    private static weak var badge: UIView?
+    private static weak var observedWindow: UIWindow?
+    static weak var target: UIView?
+    private static var events: [[String: Any]] = []
+    private static var sequence = 0
+    private static let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("chat-verification/avatar-tap-events.json")
+
+    static func install(on view: UIView) {
+        guard enabled else { return }
+        badge = view
+        _ = installEventHook
+        let observer = ChatSoulTouchObserver(target: nil, action: nil)
+        observer.cancelsTouchesInView = false
+        observer.delaysTouchesBegan = false
+        observer.delaysTouchesEnded = false
+        view.addGestureRecognizer(observer)
+        record("observer.installed")
+    }
+
+    private static let installEventHook: Void = {
+        let originalSelector = #selector(UIWindow.sendEvent(_:))
+        let observedSelector = #selector(UIWindow.chatSoulObservedEvent(_:))
+        guard let original = class_getInstanceMethod(UIWindow.self, originalSelector),
+              let observed = class_getInstanceMethod(UIWindow.self, observedSelector) else { return }
+        if class_addMethod(UIWindow.self, originalSelector, method_getImplementation(observed),
+                           method_getTypeEncoding(observed)) {
+            class_replaceMethod(UIWindow.self, observedSelector, method_getImplementation(original),
+                                method_getTypeEncoding(original))
+        } else {
+            method_exchangeImplementations(original, observed)
+        }
+    }()
+
+    static func windowEvent(_ event: UIEvent, in window: UIWindow) {
+        guard enabled, badge?.window === window, event.type == .touches,
+              let touches = event.allTouches else { return }
+        observedWindow = window
+        for touch in touches where touch.phase == .began || touch.phase == .ended || touch.phase == .cancelled {
+            self.touch("window.\(touch.phase.rawValue)", touches: [touch], event: event)
+        }
+    }
+
+    static func path(_ start: UIView?) -> [String] {
+        var result: [String] = []
+        var current = start
+        while let view = current {
+            result.append("\(type(of: view)) \(view.accessibilityIdentifier ?? "")")
+            current = view.superview
+        }
+        return result
+    }
+
+    private static func rect(_ view: UIView, in window: UIWindow) -> [CGFloat] {
+        let r = view.convert(view.bounds, to: window)
+        return [r.minX, r.minY, r.width, r.height]
+    }
+
+    static func record(_ name: String, details: [String: Any] = [:]) {
+        guard enabled else { return }
+        sequence += 1
+        var row = details
+        row["event"] = name
+        row["sequence"] = sequence
+        row["uptime"] = ProcessInfo.processInfo.systemUptime
+        if let window = badge?.window ?? observedWindow {
+            if let badge { row["badgeFrame"] = rect(badge, in: window) }
+            if let target, target.window === window {
+                row["avatarLabelFrame"] = rect(target, in: window)
+            }
+            var controllers: [[String: Any]] = []
+            func walk(_ controller: UIViewController) {
+                controllers.append(["type": String(describing: type(of: controller)),
+                                    "presented": controller.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil",
+                                    "viewInWindow": controller.viewIfLoaded?.window === window])
+                for child in controller.children { walk(child) }
+                if let presented = controller.presentedViewController { walk(presented) }
+            }
+            if let root = window.rootViewController { walk(root) }
+            row["controllers"] = controllers
+        }
+        events.append(row)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: events, options: [.prettyPrinted, .sortedKeys])
+                .write(to: url, options: .atomic)
+        } catch {
+            print("[ChatSoulTapEvidence] write failed: \(error)")
+        }
+    }
+
+    static func touch(_ phase: String, touches: Set<UITouch>, event: UIEvent) {
+        guard enabled, let badge, let window = badge.window else { return }
+        for touch in touches {
+            let point = touch.location(in: window)
+            var details: [String: Any] = [
+                "touchID": String(describing: ObjectIdentifier(touch)),
+                "touchTimestamp": touch.timestamp, "point": [point.x, point.y],
+                "deliveredIntoBadge": touch.view?.isDescendant(of: badge) == true,
+                "deliveredHitPath": path(touch.view), "eventType": event.type.rawValue
+            ]
+            if let target, target.window === window {
+                let local = target.convert(point, from: window)
+                let center = CGPoint(x: target.bounds.midX, y: target.bounds.midY)
+                let radius = min(target.bounds.width, target.bounds.height) / 2
+                details["insideAvatarLabelCircle"] = hypot(local.x - center.x, local.y - center.y) <= radius
+            }
+            var gestures: [[String: Any]] = []
+            var current = touch.view
+            while let view = current {
+                for gesture in view.gestureRecognizers ?? [] {
+                    gestures.append(["type": String(describing: type(of: gesture)),
+                                     "state": gesture.state.rawValue, "enabled": gesture.isEnabled,
+                                     "view": String(describing: type(of: view))])
+                }
+                current = view.superview
+            }
+            details["gestures"] = gestures
+            // Include the actual target-area views, not just badge ancestry.
+            func targets(_ view: UIView) -> [[String: Any]] {
+                let local = view.convert(point, from: window)
+                var result: [[String: Any]] = []
+                if view.bounds.contains(local) {
+                    result.append(["type": String(describing: type(of: view)),
+                                   "frame": rect(view, in: window),
+                                   "interactive": view.isUserInteractionEnabled,
+                                   "hidden": view.isHidden, "alpha": view.alpha])
+                }
+                return result + view.subviews.flatMap(targets)
+            }
+            details["viewsAtTouchInBadge"] = targets(badge)
+            record("touch." + phase, details: details)
+        }
+    }
+}
+
+@MainActor
+private final class ChatSoulTouchObserver: UIGestureRecognizer {
+    override func canPrevent(_ other: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by other: UIGestureRecognizer) -> Bool { false }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        ChatSoulTapEvidence.touch("began", touches: touches, event: event)
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        ChatSoulTapEvidence.touch("ended", touches: touches, event: event)
+        state = .failed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            ChatSoulTapEvidence.record("touch.afterDispatch")
+        }
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        ChatSoulTapEvidence.touch("cancelled", touches: touches, event: event)
+        state = .failed
+    }
+}
+
+extension UIWindow {
+    @objc fileprivate func chatSoulObservedEvent(_ event: UIEvent) {
+        ChatSoulTapEvidence.windowEvent(event, in: self)
+        chatSoulObservedEvent(event)
+    }
+}
+
+private struct ChatSoulTapTargetMarker: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
+            ChatSoulTapEvidence.target = view
+        }
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {}
+}
+#endif
+
 /// Root-hosted headers can draw above NavigationStack while SwiftUI's hit test
 /// still selects its transparent bar. Redirect only that bar's otherwise empty
 /// header region, after UIKit has chosen a target, without moving either host.
@@ -5116,6 +5313,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
                     hosting.view.accessibilityIdentifier = "chat.verify.providerBadge"
+                    ChatSoulTapEvidence.install(on: hosting.view)
                 }
                 #endif
                 badgeHost = hosting
@@ -5324,11 +5522,23 @@ private struct ChatSoulSettingsPresentation: ViewModifier {
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
                             Button("完成") { isPresented = false }
+                                #if DEBUG
+                                .onAppear { ChatSoulTapEvidence.record("settings.doneAppeared") }
+                                #endif
                         }
                     }
             }
             .presentationDetents([.large])
+            #if DEBUG
+            .onAppear { ChatSoulTapEvidence.record("settings.appeared") }
+            .onDisappear { ChatSoulTapEvidence.record("settings.disappeared") }
+            #endif
         }
+        #if DEBUG
+        .onChange(of: isPresented) { value in
+            ChatSoulTapEvidence.record("settings.bindingChanged", details: ["isPresented": value])
+        }
+        #endif
     }
 }
 

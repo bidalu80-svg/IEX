@@ -41,9 +41,18 @@ final class ChatLayoutApplicationUITests: XCTestCase {
             // A custom overlay can have a valid on-screen frame while XCTest
             // reports isHittable=false. Send an actual screen touch and require
             // the actual settings sheet; never invoke the action directly.
+            let tapFrame = avatar.frame
+            let tapEvidence = XCTAttachment(string: "{\"event\":\"avatar.coordinateTap\",\"point\":[\(tapFrame.midX),\(tapFrame.midY)],\"frame\":[\(tapFrame.minX),\(tapFrame.minY),\(tapFrame.width),\(tapFrame.height)]}")
+            tapEvidence.name = "avatar-coordinate-tap.json"
+            tapEvidence.lifetime = .keepAlways
+            add(tapEvidence)
             avatar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             let done = app.buttons["完成"].firstMatch
             let openedSoul = done.waitForExistence(timeout: 5)
+            let queryEvidence = XCTAttachment(string: "{\"event\":\"settings.doneQuery\",\"exists\":\(openedSoul),\"label\":\"完成\"}")
+            queryEvidence.name = "avatar-settings-query.json"
+            queryEvidence.lifetime = .keepAlways
+            add(queryEvidence)
             if !openedSoul {
                 let hierarchy = XCTAttachment(string: app.debugDescription)
                 hierarchy.name = "header-after-avatar-tap"
