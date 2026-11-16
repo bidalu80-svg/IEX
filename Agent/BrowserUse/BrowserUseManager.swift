@@ -897,7 +897,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
         let configuration = WKSnapshotConfiguration()
         configuration.rect = CGRect(origin: .zero, size: size)
         configuration.snapshotWidth = NSNumber(value: Double(Self.thumbnailSnapshotWidth))
-        webView.takeSnapshot(configuration: configuration) { image, error in
+        webView.takeSnapshot(with: configuration) { image, error in
             if let error {
                 logger.warning("Tab thumbnail snapshot failed: \(error.localizedDescription)")
             }
