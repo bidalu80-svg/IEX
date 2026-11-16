@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat") {
+        if ProcessInfo.processInfo.arguments.contains("--verify-conversation-chat")
+            || ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang") {
             UserDefaults.standard.removeObject(forKey: "ZeChatLifecycleReady")
             Task { @MainActor in await ConversationChatVerification.run() }
         }

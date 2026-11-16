@@ -362,6 +362,9 @@ struct RawMessage: Identifiable, Codable, Hashable {
     /// turn. Mirrors ChatMessage.error; persisted to the messages.error_info
     /// column so the error indicator survives reload. nil = no error.
     var errorInfo: String? = nil
+    /// [T-chat-quote-reply] Optional reply-quote snapshot for a user row. The
+    /// default keeps every older Codable/DB payload decoding without a quote.
+    var quote: MessageQuote? = nil
 
     /// True if this message contains only tool results (no user text).
     /// These are internal agent loop messages that shouldn't render as user bubbles.
@@ -540,6 +543,8 @@ actor ChatStore {
         addColumnIfMissing(table: "messages", column: "first_token_latency", definition: "REAL")
         addColumnIfMissing(table: "messages", column: "task_duration", definition: "REAL")
         addColumnIfMissing(table: "messages", column: "stream_interrupt_count", definition: "INTEGER NOT NULL DEFAULT 0")
+        // [T-chat-quote-reply] Optional reply-quote JSON; NULL for every old row.
+        addColumnIfMissing(table: "messages", column: "quote_json", definition: "TEXT")
         addColumnIfMissing(table: "sessions", column: "memory_enabled", definition: "INTEGER NOT NULL DEFAULT 1")
         addColumnIfMissing(table: "sessions", column: "last_synced_at", definition: "REAL")
         addColumnIfMissing(table: "sessions", column: "remote_origin_device_id", definition: "TEXT")
@@ -1361,6 +1366,9 @@ actor ChatStore {
             let action = str("action") ?? "browse"
             if let url = str("url") { return cap("\(action) \(url)") }
             return cap("browser_use \(action)")
+        case "browser_request_takeover":
+            if let reason = str("reason") { return cap("等待用户：\(reason)") }
+            return "browser_request_takeover"
         case "memory_write":
             if let content = str("content") { return cap("memory_write: " + content) }
         case "memory_get":
@@ -2308,8 +2316,8 @@ actor ChatStore {
         logger.info("[Store] appendMessages enter count=\(messages.count) dbOpen=\(dbOK) sid=\(firstSid)")
 
         let sql = """
-            INSERT INTO messages (id, session_id, role, parts_json, created_at, token_usage, sort_order, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, updated_at, error_info, part_flags)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (id, session_id, role, parts_json, created_at, token_usage, sort_order, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, updated_at, error_info, part_flags, quote_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         exec("BEGIN TRANSACTION")
@@ -2335,6 +2343,12 @@ actor ChatStore {
             } else {
                 usageJSON = nil
             }
+            let quoteJSON: String?
+            if let quote = message.quote {
+                quoteJSON = (try? JSONEncoder().encode(quote)).flatMap { String(data: $0, encoding: .utf8) }
+            } else {
+                quoteJSON = nil
+            }
 
             var stmt: OpaquePointer?
             let prepRC = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
@@ -2357,6 +2371,7 @@ actor ChatStore {
                 sqlite3_bind_double(stmt, 13, message.createdAt.timeIntervalSince1970)
                 bindOptionalText(stmt, index: 14, value: message.errorInfo)  // [T-error-persist-ios]
                 sqlite3_bind_int64(stmt, 15, Int64(partFlags))  // [T-ios-listsessions-part-flags]
+                bindOptionalText(stmt, index: 16, value: quoteJSON)  // [T-chat-quote-reply]
                 let stepRC = sqlite3_step(stmt)
                 if stepRC != SQLITE_DONE {
                     let errMsg = String(cString: sqlite3_errmsg(db))
@@ -2418,7 +2433,7 @@ actor ChatStore {
     func loadMessages(sessionId: String) -> [RawMessage] {
         let totalStart = CFAbsoluteTimeGetCurrent()
         let sql = """
-            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, sort_order, error_info
+            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, sort_order, error_info, quote_json
             FROM messages WHERE session_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC
         """
         var stmt: OpaquePointer?
@@ -2463,6 +2478,7 @@ actor ChatStore {
                 let streamInterruptCount = Int(sqlite3_column_int64(stmt, 10))
                 let sortOrder = Int(sqlite3_column_int64(stmt, 11))
                 let errorInfo = sqlite3_column_text(stmt, 12).map { String(cString: $0) }  // [T-error-persist-ios]
+                let quoteJson = sqlite3_column_text(stmt, 13).map { String(cString: $0) }
                 var msg = RawMessage(
                     id: id, sessionId: sessId, role: role, parts: parts,
                     createdAt: createdAt, tokenUsage: tokenUsage,
@@ -2470,7 +2486,8 @@ actor ChatStore {
                     reasoningDuration: reasoningDuration,
                     firstTokenLatency: firstTokenLatency,
                     taskDuration: taskDuration,
-                    streamInterruptCount: streamInterruptCount
+                    streamInterruptCount: streamInterruptCount,
+                    quote: quoteJson.flatMap { try? JSONDecoder().decode(MessageQuote.self, from: Data($0.utf8)) }
                 )
                 msg.sortOrder = sortOrder
                 msg.errorInfo = errorInfo
@@ -4382,6 +4399,10 @@ extension RawMessage {
                     if !argURL.isEmpty {
                         lastBrowserURL = argURL
                     }
+                case "browser_request_takeover":
+                    let reason = extractStringParam("reason", from: tu.input)
+                    kind = .browserTool(action: "request_takeover")
+                    content = reason.isEmpty ? "Waiting for you in the browser..." : "等待用户完成：\(reason)"
                 case "read_image":
                     let path = extractStringParam("path", from: tu.input)
                     kind = .readImageTool(path: path)
@@ -4480,7 +4501,8 @@ extension RawMessage {
             role: uiRole,
             content: textContent,
             blocks: blocks,
-            timestamp: createdAt
+            timestamp: createdAt,
+            quote: quote
         )
         msg.firstTokenLatency = firstTokenLatency
         msg.taskDuration = taskDuration
@@ -4561,6 +4583,11 @@ extension RawMessage {
     func toAgentMessage(mediaResolver: (MediaRef) -> URL) -> AgentMessage {
         let agentRole: AgentMessage.Role = role == .user ? .user : .assistant
         var agentParts: [AgentContentPart] = []
+        // [T-chat-quote-reply] Rebuild the structured quote block on reload so
+        // follow-up turns still know which earlier message was referenced.
+        if let quote {
+            agentParts.append(.text(quote.modelFacingText))
+        }
 
         for part in parts {
             switch part {
@@ -4589,6 +4616,7 @@ extension RawMessage {
         }
 
         var msg = AgentMessage(role: agentRole, parts: agentParts)
+        msg.quote = quote
         msg.reasoningContent = reasoningContent
         msg.reasoningDuration = reasoningDuration
         msg.firstTokenLatency = firstTokenLatency
@@ -6559,7 +6587,7 @@ extension ChatStore {
 
     func loadSingleMessage(id: String) -> RawMessage? {
         let sql = """
-            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, sort_order
+            SELECT id, session_id, role, parts_json, created_at, token_usage, reasoning_content, reasoning_duration, first_token_latency, task_duration, stream_interrupt_count, sort_order, quote_json
             FROM messages WHERE id = ?
         """
         var stmt: OpaquePointer?
@@ -6580,6 +6608,7 @@ extension ChatStore {
                 let taskDuration = sqlite3_column_type(stmt, 9) != SQLITE_NULL ? sqlite3_column_double(stmt, 9) : nil
                 let streamInterruptCount = Int(sqlite3_column_int(stmt, 10))
                 let sortOrder = Int(sqlite3_column_int64(stmt, 11))
+                let quoteJson = sqlite3_column_text(stmt, 12).map { String(cString: $0) }
 
                 let role = MessageRole(rawValue: roleStr) ?? .user
                 let parts = (try? JSONDecoder().decode([ContentPart].self, from: Data(partsJson.utf8))) ?? []
@@ -6594,7 +6623,8 @@ extension ChatStore {
                     reasoningDuration: reasoningDuration,
                     firstTokenLatency: firstTokenLatency,
                     taskDuration: taskDuration,
-                    streamInterruptCount: streamInterruptCount
+                    streamInterruptCount: streamInterruptCount,
+                    quote: quoteJson.flatMap { try? JSONDecoder().decode(MessageQuote.self, from: Data($0.utf8)) }
                 )
                 raw.sortOrder = sortOrder
                 message = raw

@@ -657,6 +657,7 @@ enum SoulHeaderActivity {
         case "file_write", "remote_sftp_write": return "写入文件"
         case "file_edit": return "修改文件"
         case "browser_use": return "浏览网页"
+        case "browser_request_takeover": return "等待你完成浏览器操作"
         case "web_search", "search": return "搜索资料"
         case "read_image": return "查看图片"
         case "memory_get": return "读取记忆"
@@ -669,6 +670,43 @@ enum SoulHeaderActivity {
         case "remote_server_list", "remote_sftp_list": return "查看远程资源"
         default: return "处理中"
         }
+    }
+}
+
+/// [T-avatar-idle-static] Pure presentation policy for the idle poster. Kept
+/// outside the UIKit view so SoulAvatarStateTests can compile the same rules
+/// without a simulator. Idle shows the transparent main image composited at
+/// runtime over the solid background baked into each idle clip; a short
+/// original idle clip plays every 8–15 seconds and fades back to the poster.
+enum SoulAvatarIdlePolicy {
+    static let posterAsset = "SoulAvatar-main"
+
+    /// Exact sRGB components baked into the idle clips. The static poster
+    /// composites `posterAsset` over these colours instead of shipping two
+    /// pre-composited PNGs.
+    struct PosterBackground: Equatable {
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+    }
+
+    static let lightPosterBackground = PosterBackground(red: 251, green: 251, blue: 251)
+    static let darkPosterBackground = PosterBackground(red: 12, green: 10, blue: 20)
+    static let playbackInterval: ClosedRange<Double> = 8...15
+    static let playbackDuration: Double = 2.4
+
+    static func posterBackground(theme: String) -> PosterBackground {
+        theme == "dark" ? darkPosterBackground : lightPosterBackground
+    }
+
+    static func showsStaticPoster(motion: SoulAvatarMotion, idlePlaybackActive: Bool) -> Bool {
+        motion == .idle && !idlePlaybackActive
+    }
+
+    static func idlePlaybackDelay(randomUnit: Double) -> Double {
+        let unit = min(max(randomUnit, 0), 1)
+        return playbackInterval.lowerBound
+            + (playbackInterval.upperBound - playbackInterval.lowerBound) * unit
     }
 }
 
@@ -782,13 +820,19 @@ struct SoulHeaderAvatar: View {
             layer.removeFromSuperlayer()
         }
     }
-    private let fallback = UIImageView(image: UIImage(named: "SoulAvatar-main"))
+    /// Static idle poster: the transparent main image composited over the
+    /// theme's baked background colour at runtime, so the poster follows
+    /// light/dark exactly like the idle video's two baked backgrounds.
+    private let fallback = UIImageView()
     private var current: Clip?
     private var incoming: Clip?
     private var outgoing: Clip?
     private var motion: SoulAvatarMotion = .idle
     private var wantsPlayback = false
     private var asset = ""
+    private var idlePlaybackActive = false
+    private var idleScheduleTask: Task<Void, Never>?
+    private var idleSegmentTask: Task<Void, Never>?
     private var generation = 0
     private(set) var motionName = "idle"
     private(set) var completedTransitions = 0
@@ -796,13 +840,35 @@ struct SoulHeaderAvatar: View {
     var readyForDisplay: Bool { current?.asset == asset && current?.layer.isReadyForDisplay == true }
     var selectedAsset: String { asset }
     var retainedPlayerCount: Int { [current, incoming, outgoing].compactMap { $0 }.count }
-    var isPlaying: Bool { current?.player.rate ?? 0 > 0 }
+    var isPlaying: Bool { (current?.player.rate ?? 0) > 0 }
+    /// True when idle is showing the static main image (the normal idle state).
+    var isShowingIdlePoster: Bool {
+        SoulAvatarIdlePolicy.showsStaticPoster(motion: motion, idlePlaybackActive: idlePlaybackActive)
+            && !fallback.isHidden && fallback.image != nil
+    }
+    /// True only during the short original idle clip that occasionally plays.
+    var isPlayingIdleSegment: Bool { motion == .idle && idlePlaybackActive && isPlaying }
+    var idlePosterAsset: String { SoulAvatarIdlePolicy.posterAsset }
+    var idlePosterImage: UIImage? { fallback.image }
+    /// Actual solid background behind the transparent main image, read back
+    /// from the poster layer so verification checks the visible result.
+    var idlePosterBackground: SoulAvatarIdlePolicy.PosterBackground? {
+        guard let color = fallback.backgroundColor else { return nil }
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return nil }
+        func component(_ value: CGFloat) -> UInt8 {
+            UInt8((min(max(value, 0), 1) * 255).rounded())
+        }
+        return SoulAvatarIdlePolicy.PosterBackground(
+            red: component(red), green: component(green), blue: component(blue))
+    }
 
     init() {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         backgroundColor = .clear
         clipsToBounds = true
+        updatePosterImage()
         fallback.contentMode = .scaleAspectFit
         addSubview(fallback)
         accessibilityIdentifier = "chat.soulAnimation"
@@ -819,30 +885,80 @@ struct SoulHeaderAvatar: View {
         layer.cornerRadius = min(bounds.width, bounds.height) / 2
         CATransaction.commit()
     }
-    override func didMoveToWindow() { super.didMoveToWindow(); syncPlayback() }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            cancelIdleSchedule()
+        }
+        syncPlayback()
+        if window != nil { scheduleIdlePlaybackIfNeeded() }
+    }
     override func traitCollectionDidChange(_ previous: UITraitCollection?) {
         super.traitCollectionDidChange(previous)
-        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle { loadIfNeeded() }
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            updatePosterImage()
+            loadIfNeeded()
+        }
     }
     func configure(motion: SoulAvatarMotion, playing: Bool) {
+        let previousMotion = self.motion
         self.motion = motion
         motionName = motion.rawValue
         accessibilityValue = motion.rawValue
         wantsPlayback = playing
+
+        if motion == .idle {
+            if previousMotion != .idle
+                || (!playing && (idlePlaybackActive || fallback.isHidden)) {
+                cancelIdlePlayback(showPoster: true)
+            }
+            loadIfNeeded()
+            scheduleIdlePlaybackIfNeeded()
+            syncPlayback()
+            return
+        }
+
+        cancelIdleSchedule()
+        idlePlaybackActive = false
         loadIfNeeded()
         syncPlayback()
     }
+    private func updatePosterImage() {
+        let theme = traitCollection.userInterfaceStyle == .dark ? "dark" : "light"
+        let background = SoulAvatarIdlePolicy.posterBackground(theme: theme)
+        fallback.backgroundColor = UIColor(
+            red: CGFloat(background.red) / 255,
+            green: CGFloat(background.green) / 255,
+            blue: CGFloat(background.blue) / 255,
+            alpha: 1)
+        fallback.image = UIImage(named: SoulAvatarIdlePolicy.posterAsset)
+    }
     private func loadIfNeeded() {
+        updatePosterImage()
         let theme = traitCollection.userInterfaceStyle == .dark ? "dark" : "light"
         let next = motion.asset + "-" + theme
-        guard next != asset else { return }
-        asset = next
-        generation += 1
-        let token = generation
-        incoming?.dispose()
-        incoming = nil
-        outgoing?.dispose()
-        outgoing = nil
+        if next != asset {
+            asset = next
+            generation += 1
+            idleSegmentTask?.cancel()
+            idleSegmentTask = nil
+            incoming?.dispose()
+            incoming = nil
+            outgoing?.dispose()
+            outgoing = nil
+            if motion == .idle {
+                idlePlaybackActive = false
+                showIdlePoster(animated: current != nil)
+            }
+        }
+        guard motion != .idle else {
+            if !idlePlaybackActive { fallback.isHidden = false }
+            return
+        }
+        guard current?.asset != next, incoming?.asset != next else { return }
+        beginLoad(next: next, token: generation)
+    }
+    private func beginLoad(next: String, token: Int) {
         guard let bytes = NSDataAsset(name: next)?.data else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
@@ -907,19 +1023,125 @@ struct SoulHeaderAvatar: View {
             previous?.dispose()
             guard let self else { return }
             if self.outgoing === previous { self.outgoing = nil }
-            if self.current === clip { self.fallback.isHidden = true }
+            // Never hide the poster after a delayed reveal if the state has
+            // already returned to idle poster mode in the meantime.
+            if self.current === clip, (self.motion != .idle || self.idlePlaybackActive) {
+                self.fallback.isHidden = true
+            }
         }
         syncPlayback()
+        if motion == .idle, idlePlaybackActive {
+            scheduleIdleSegmentEnd(for: clip)
+        }
+    }
+    private func scheduleIdlePlaybackIfNeeded() {
+        guard motion == .idle, wantsPlayback, window != nil,
+              !idlePlaybackActive, idleScheduleTask == nil else { return }
+        let delay = SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: Double.random(in: 0...1))
+        idleScheduleTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            guard !Task.isCancelled, let self, self.motion == .idle,
+                  self.wantsPlayback, self.window != nil, !self.idlePlaybackActive else { return }
+            self.idleScheduleTask = nil
+            self.beginIdlePlayback()
+        }
+    }
+    private func beginIdlePlayback() {
+        guard motion == .idle, wantsPlayback, window != nil, !idlePlaybackActive else { return }
+        idlePlaybackActive = true
+        fallback.isHidden = false
+        loadIfNeeded()
+        if current?.asset == asset {
+            syncPlayback()
+            if let current { scheduleIdleSegmentEnd(for: current) }
+        } else if incoming?.asset != asset {
+            beginLoad(next: asset, token: generation)
+        }
+    }
+    private func scheduleIdleSegmentEnd(for clip: Clip) {
+        idleSegmentTask?.cancel()
+        let token = generation
+        idleSegmentTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(SoulAvatarIdlePolicy.playbackDuration * 1000)))
+            guard !Task.isCancelled, let self, self.generation == token,
+                  self.motion == .idle, self.idlePlaybackActive,
+                  self.current === clip else { return }
+            self.idleSegmentTask = nil
+            self.idlePlaybackActive = false
+            self.showIdlePoster(animated: true)
+            self.scheduleIdlePlaybackIfNeeded()
+        }
+    }
+    private func cancelIdleSchedule() {
+        idleScheduleTask?.cancel()
+        idleScheduleTask = nil
+    }
+    private func cancelIdlePlayback(showPoster: Bool) {
+        cancelIdleSchedule()
+        idleSegmentTask?.cancel()
+        idleSegmentTask = nil
+        let wasPlaying = idlePlaybackActive
+        idlePlaybackActive = false
+        guard showPoster, wasPlaying || current != nil || incoming != nil || outgoing != nil else {
+            fallback.isHidden = false
+            return
+        }
+        showIdlePoster(animated: true)
+    }
+    private func showIdlePoster(animated: Bool) {
+        idleSegmentTask?.cancel()
+        idleSegmentTask = nil
+        fallback.isHidden = false
+        let clips = [current, incoming, outgoing].compactMap { $0 }
+        guard animated, !clips.isEmpty else {
+            incoming?.dispose()
+            incoming = nil
+            outgoing?.dispose()
+            outgoing = nil
+            current?.dispose()
+            current = nil
+            return
+        }
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
+        let token = generation
+        if duration > 0 {
+            for clip in clips {
+                let from = clip.layer.presentation()?.opacity ?? clip.layer.opacity
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                clip.layer.opacity = 0
+                CATransaction.commit()
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = from
+                fade.toValue = 0
+                fade.duration = duration
+                fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                clip.layer.add(fade, forKey: "idlePosterCrossfade")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.generation == token else { return }
+            self.incoming?.dispose()
+            self.incoming = nil
+            self.outgoing?.dispose()
+            self.outgoing = nil
+            self.current?.dispose()
+            self.current = nil
+        }
     }
     private func syncPlayback() {
+        let shouldPlay = window != nil && wantsPlayback && (motion != .idle || idlePlaybackActive)
         for clip in [current, incoming, outgoing] {
-            if window != nil && wantsPlayback { clip?.player.play() }
-            else { clip?.player.pause() }
+            if shouldPlay { clip?.player.play() } else { clip?.player.pause() }
         }
     }
     func stop() {
         wantsPlayback = false
         generation += 1
+        cancelIdleSchedule()
+        idleSegmentTask?.cancel()
+        idleSegmentTask = nil
+        idlePlaybackActive = false
         incoming?.dispose()
         incoming = nil
         outgoing?.dispose()
@@ -1021,7 +1243,8 @@ struct SoulHeaderAvatar: View {
         case .fileReadTool: return "file_read"
         case .fileWriteTool: return "file_write"
         case .fileEditTool: return "file_edit"
-        case .browserTool: return "browser_use"
+        case .browserTool(let action):
+            return action == "request_takeover" ? "browser_request_takeover" : "browser_use"
         case .readImageTool: return "read_image"
         case .memoryTool(let action): return action
         default: return ""

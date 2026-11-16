@@ -4,7 +4,7 @@ import os
 
 // Fixtures required by the unchanged production collection-view subclass.
 func AppLogger(category: String) -> Logger { Logger(subsystem: "com.ze.keyboard-harness", category: category) }
-final class MessageListLayout: UICollectionViewFlowLayout { var streamingCellIndex: Int? }
+final class MessageListLayout: UICollectionViewFlowLayout { var streamingCellIndex: Int?; var isKeyboardTransitioning: Bool = false }
 final class MessageListViewController: UIViewController { func prewarmVisibleCellsAfterWidthChange() {} }
 
 struct FixtureMessages: UIViewRepresentable {

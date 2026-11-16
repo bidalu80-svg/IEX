@@ -133,20 +133,25 @@ struct RemoteServerProfile: Codable, Identifiable, Hashable {
 enum RemoteServerAuthentication: String, Codable, CaseIterable, Identifiable {
     case privateKey
     case password
+    /// Servers that accept the SSH "none" authentication method: no password,
+    /// no key, no stored secret — just the username in the handshake.
+    case none
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .privateKey: return "私钥"
-        case .password: return "密码（仅本次连接）"
+        case .password: return "密码"
+        case .none: return "无认证"
         }
     }
 }
 
-/// The AI never receives credentials. This value only decides which operation
-/// requests may be proposed, and write/command operations still require a
-/// user confirmation at execution time.
+/// AI access only decides which operation requests may be proposed. Credentials
+/// are write-only: they can be saved after explicit confirmation but never read
+/// back, and write/command operations still require a user confirmation at
+/// execution time.
 enum RemoteServerAIAccessLevel: String, Codable, CaseIterable, Identifiable {
     case none
     case readOnly
@@ -254,11 +259,11 @@ enum RemoteServerError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidProfile(let detail): return "服务器配置无效：\(detail)"
-        case .secretMissing: return "未找到此服务器所需的私钥或本次连接密码"
+        case .secretMissing: return "未找到此服务器所需的私钥、私钥口令或密码"
         case .hostKeyUntrusted: return "此服务器的主机指纹尚未确认"
         case .hostKeyChanged: return "服务器主机指纹已变化，连接已被阻止"
         case .unsupportedPrivateKey: return "暂不支持此私钥格式"
-        case .authenticationFailed: return "SSH 认证失败"
+        case .authenticationFailed: return "服务器拒绝了这次认证，请检查认证方式或凭据"
         case .connectionFailed(let detail): return "连接失败：\(detail)"
         case .operationNotPermitted: return "当前服务器权限不允许此操作"
         }

@@ -386,6 +386,7 @@ extension AIChatViewModel {
                     case "file_write": .fileWriteTool(path: "")
                     case "file_edit": .fileEditTool(path: "")
                     case "browser_use": .browserTool(action: "")
+                    case "browser_request_takeover": .browserTool(action: "request_takeover")
                     case "read_image": .readImageTool(path: "")
                     case "memory_write", "memory_get", "ask_user", "spawn_agent", "send_input", "wait_agent", "close_agent", "resume_agent": .memoryTool(action: name)
                     default: .shellTool(command: name)
@@ -624,6 +625,8 @@ extension AIChatViewModel {
                         if let action = extractPartialStringValue("action", from: accumulated) {
                             return .browserTool(action: action)
                         }
+                    case "browser_request_takeover":
+                        return .browserTool(action: "request_takeover")
                     case "read_image":
                         if let path = extractPartialStringValue("path", from: accumulated) {
                             return .readImageTool(path: path)
@@ -652,7 +655,7 @@ extension AIChatViewModel {
                     if let preview { blk.content = preview }
                     if let desc { blk.toolSummary = desc }
                     if let streamingContent { blk.streamingFileContent = streamingContent }
-                    let streamingBrowserURL = partialURL ?? ((name == "browser_use") ? browserTabPool.activeManager?.currentURL : nil)
+                    let streamingBrowserURL = partialURL ?? ((name == "browser_use" || name == "browser_request_takeover") ? browserTabPool.activeManager?.currentURL : nil)
                     if let streamingBrowserURL, !streamingBrowserURL.isEmpty { blk.browserURL = streamingBrowserURL }
                     blk.toolStatus = .streaming(bytes: byteCount)
                     #if DEBUG
@@ -739,6 +742,17 @@ extension AIChatViewModel {
                         if let url = args["url"] as? String {
                             messages[msgIdx].blocks[blockIdx].browserURL = url
                         } else if let mgr = browserTabPool.activeManager {
+                            let cur = mgr.currentURL
+                            if !cur.isEmpty {
+                                messages[msgIdx].blocks[blockIdx].browserURL = cur
+                            }
+                        }
+                    case "browser_request_takeover":
+                        messages[msgIdx].blocks[blockIdx].kind = .browserTool(action: "request_takeover")
+                        if let reason = args["reason"] as? String, !reason.isEmpty {
+                            messages[msgIdx].blocks[blockIdx].content = "等待用户完成：\(reason)"
+                        }
+                        if let mgr = browserTabPool.activeManager {
                             let cur = mgr.currentURL
                             if !cur.isEmpty {
                                 messages[msgIdx].blocks[blockIdx].browserURL = cur
@@ -1042,6 +1056,9 @@ extension AIChatViewModel {
         case "browser_use":
             let d = detail ?? clip(args["action"] as? String, 40) ?? ""
             return zh ? "正在操作浏览器:\(d)" : "Using browser: \(d)"
+        case "browser_request_takeover":
+            let d = detail ?? clip(args["reason"] as? String, 40) ?? ""
+            return zh ? "等待你完成浏览器操作:\(d)" : "Waiting for you in the browser: \(d)"
         case "read_image":
             let d = detail ?? fileName(args["path"] as? String)
             return zh ? "正在读取图片:\(d)" : "Reading image: \(d)"
@@ -1074,6 +1091,8 @@ extension AIChatViewModel {
             return "Editing \((args["path"] as? String) ?? "?")..."
         case "browser_use":
             return "Browser: \((args["action"] as? String) ?? "?")..."
+        case "browser_request_takeover":
+            return "Waiting for you: \((args["reason"] as? String) ?? "browser task")..."
         case "read_image":
             return "Reading image \((args["path"] as? String) ?? "?")..."
         case "ask_user":
@@ -1142,6 +1161,10 @@ extension AIChatViewModel {
                     detail = ""
                 }
                 return ("Browser: \(action)\(detail)", desc)
+            }
+        case "browser_request_takeover":
+            if let reason = extractPartialStringValue("reason", from: json) {
+                return ("Waiting for you: \(reason)", desc)
             }
         case "read_image":
             if let val = extractPartialStringValue("path", from: json) {

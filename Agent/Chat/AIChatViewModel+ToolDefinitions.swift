@@ -90,7 +90,7 @@ extension AIChatViewModel {
                 description: "Control a web browser with up to 3 tabs. Do NOT use this tool for ze:// action URLs (open_terminal, views, settings) — those are app deep links, use Markdown links in chat instead. The browser supports both web URLs and ze:// resource URLs. Use ze:// URLs to preview session files (e.g. navigate to ze://workspace/index.html). Sub-resources (JS, CSS, images, fonts) referenced via ze:// absolute paths or relative paths within HTML pages resolve correctly. Use navigate to open URLs, screenshot to see the page (returns an image), click/type to interact with elements, get_text/get_readable to extract content, scroll to navigate long pages, scroll_and_collect to scroll through infinite-scroll/virtual-rendered pages (like Twitter/X timelines) and accumulate unique content items across scroll positions in a single call, find_elements to discover interactive elements, get_page_info for page metadata, get_backbone to get a structural overview of the page DOM as a simplified tree, fetch to download files/resources using the page's session (returns metadata and a ze:// URL), new_tab to open an additional tab, close_tab to close a tab, and list_tabs to see all open tabs. Use set_viewport with viewport_width + viewport_height to override the viewport for the current session (e.g. before screenshotting a 1920×1080 HTML composition that would otherwise be cropped to the phone viewport); pass reset=true to drop the session override and fall back to the global browser setting. Use get_cookies to retrieve cookies for the current page URL / current site root domain only (including HttpOnly cookies). get_cookies supports optional 'keyword' (filter by cookie name) and 'fuzzy' (true=contains match, false=exact match, default true). It returns only a summary and an offload env file path — raw cookie values are NOT included in the tool response. To reuse cookies in shell commands: `. /var/ze/offloads/env_cookies_xxx.sh && command`. You may define alias variables when needed. Use set_cookies to write cookies into the current page's cookie store via the native cookie store (so even HttpOnly cookies, which JS cannot set, land). Pass a 'cookies' array of objects, each with name + value (required) and optional domain (defaults to the current page host), path (defaults to '/'), secure, http_only, and expires (Unix timestamp in seconds; omit for a session cookie). Use wait_for_dom_stable to wait until the page DOM stops changing (useful after navigation or interactions that trigger async data loading — polls every 0.5s, resolves when mutation rate gradient is stable for 3+ intervals, default timeout 10s). Use tab_id to target a specific tab (defaults to the most recently used tab).",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Open Wikipedia homepage', 'Take screenshot of current page'). Use the same language as the user."),
-                    "action": AgentToolParam(type: .string, description: "The browser action to perform", enumValues: BrowserAction.allCases.map(\.rawValue)),
+                    "action": AgentToolParam(type: .string, description: "The browser action to perform", enumValues: BrowserAction.allCases.filter { $0 != .requestTakeover }.map(\.rawValue)),
                     "url": AgentToolParam(type: .string, description: "URL to navigate to (for navigate action) or resource to download (for fetch action)"),
                     "selector": AgentToolParam(type: .string, description: "CSS selector for targeting elements (click, type, get_text, scroll, hover, find_elements). For scroll: specify a scrollable container to scroll (e.g. 'div.timeline'); if omitted, auto-detects the best scrollable element."),
                     "text": AgentToolParam(type: .string, description: "Text to type (for type action)"),
@@ -115,6 +115,15 @@ extension AIChatViewModel {
                 ],
                 required: ["tool_title", "action"],
                 propertyOrdering: ["tool_title", "action", "tab_id", "url", "selector", "text", "coordinate_x", "coordinate_y", "direction", "amount", "scroll_count", "item_selector", "script", "user_agent", "max_depth", "keywords", "fuzzy", "cookies", "timeout", "viewport_width", "viewport_height", "reset", "full_page"]
+            ),
+            AgentToolDefinition(
+                name: "browser_request_takeover",
+                description: "Hand the browser to the user for a step only a human can complete — logging in, solving a CAPTCHA, payment/2FA, or a native file picker. This tool BLOCKS (waits, without timeout) while the user works in the browser. When the user taps 完成 it returns success with the current page URL/title and control: agent so you can continue; if the user closes/cancels it returns a structured user_cancelled result with control: idle. Use this instead of guessing credentials or giving up; do not use it for ordinary browsing actions.",
+                parameters: [
+                    "reason": AgentToolParam(type: .string, description: "One short sentence telling the user what to do (e.g. 「登录淘宝」「完成验证码」「完成付款」). Shown at the top of the browser."),
+                ],
+                required: ["reason"],
+                propertyOrdering: ["reason"]
             ),
         ]
 
@@ -229,6 +238,10 @@ extension AIChatViewModel {
             ))
         }
 
+        // Sub-agent configuration reads and writes the exact same UserDefaults
+        // keys as SubAgentSettingsView; there is no second settings store.
+        tools.append(contentsOf: SubAgentAIToolGateway.definitions())
+
         // Remote SSH/SFTP is deliberately a distinct, opt-in tool family.
         // The gateway publishes only per-server AI-authorized metadata and
         // never exposes credentials or Keychain material to the model.
@@ -265,6 +278,17 @@ extension AIChatViewModel {
                 ],
                 required: ["tool_title", "session_id"],
                 propertyOrdering: ["tool_title", "session_id"]
+            ),
+            AgentToolDefinition(
+                name: "session_create",
+                description: "新建一个本机会话记录（标题可选、模型可选）。只创建空会话，不切换当前会话，也不向新会话发送任何消息。非破坏性操作，不需要确认。",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "显示给用户的简短操作标题"),
+                    "title": AgentToolParam(type: .string, description: "可选的会话标题；留空则创建未命名会话"),
+                    "model_id": AgentToolParam(type: .string, description: "可选的模型 id 或模型 entry id；缺省使用当前对话的默认模型"),
+                ],
+                required: ["tool_title"],
+                propertyOrdering: ["tool_title", "title", "model_id"]
             ),
         ]
     }
@@ -353,9 +377,71 @@ extension AIChatViewModel {
             Self.deletePersistentSessionFiles(id)
             return .init(output: "已永久删除会话“\(title)”（\(id)），其消息、媒体、会话文件和浏览器数据已清理。", success: true)
 
+        case "session_create":
+            let rawTitle = (arguments["title"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = rawTitle.isEmpty ? nil : String(rawTitle.prefix(200))
+            var modelId = defaultSessionModelId()
+            var selectedEntry: ModelEntry?
+            let rawModel = (arguments["model_id"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rawModel.isEmpty {
+                let store = ProviderConfigStore.shared
+                if let entry = store.entry(for: rawModel) {
+                    selectedEntry = entry
+                } else if let entry = store.modelEntries.first(where: { $0.model.id == rawModel && !$0.isHidden }) {
+                    selectedEntry = entry
+                } else {
+                    return .init(output: "新建失败：找不到可用模型“\(rawModel)”。请省略 model_id 以使用当前默认模型。", success: false)
+                }
+                if let entry = selectedEntry { modelId = entry.model.id }
+            }
+
+            let session = await ChatStore.shared.createSession(modelId: modelId, title: title)
+            if let entry = selectedEntry {
+                ProviderConfigStore.shared.setBinding(
+                    SessionModelBinding(
+                        sessionId: session.id,
+                        primarySource: .directEntry(modelEntryId: entry.id),
+                        subModelSource: nil
+                    ),
+                    for: session.id
+                )
+            }
+            // Refresh both layouts without touching the active selection or
+            // sending anything into the new session.
+            NotificationCenter.default.post(name: .sessionDidCreate, object: session.id)
+            NotificationCenter.default.post(name: .sessionDidUpdate, object: session.id)
+
+            let payload: [String: Any] = [
+                "session_id": session.id,
+                "title": session.title ?? "未命名会话",
+                "model_id": modelId,
+                "note": "已创建空会话；当前会话未被切换，也没有向新会话发送任何消息。",
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+                  let output = String(data: data, encoding: .utf8) else {
+                return .init(output: "会话已创建（\(session.id)），但结果序列化失败。", success: true)
+            }
+            return .init(output: output, success: true)
+
         default:
             return .init(output: "未知会话操作。", success: false)
         }
+    }
+
+    /// Model recorded on a session created without an explicit model_id.
+    /// Prefer the user's default primary group (the same routing used when a
+    /// new chat is opened), then fall back to the current conversation model.
+    private func defaultSessionModelId() -> String {
+        let store = ProviderConfigStore.shared
+        if let groupId = store.defaultPrimaryGroupId,
+           let group = store.group(for: groupId),
+           let entryId = ModelGroupRouter.resolve(group: group, sessionId: UUID().uuidString, store: store),
+           let entry = store.entry(for: entryId) {
+            return entry.model.id
+        }
+        return resolveCurrentEntry()?.model.id ?? selectedModel.id
     }
 
     private static func deletePersistentSessionFiles(_ sessionId: String) {

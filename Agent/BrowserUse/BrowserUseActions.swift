@@ -25,6 +25,9 @@ enum BrowserAction: String, CaseIterable {
     case setCookies = "set_cookies"
     case scrollAndCollect = "scroll_and_collect"
     case waitForDomStable = "wait_for_dom_stable"
+    /// Waiting action exposed as the dedicated `browser_request_takeover`
+    /// tool. It is routed by BrowserTabPool before any tab is acquired.
+    case requestTakeover = "request_takeover"
 }
 
 // MARK: - Browser Action Input
@@ -66,6 +69,9 @@ struct BrowserActionInput {
     /// `set_user_agent` with a value `userAgent` could not be parsed from can
     /// name that value in its error instead of silently picking a profile.
     var userAgentRaw: String? = nil
+    /// One-line instruction shown to the user when the agent requests browser
+    /// takeover (`request_takeover`). Required for that action only.
+    var reason: String? = nil
 
     enum ScrollDirection: String {
         case up, down
@@ -111,7 +117,8 @@ struct BrowserActionInput {
             viewportReset: dict["reset"] as? Bool,
             fullPage: dict["full_page"] as? Bool,
             cookies: Self.parseCookies(dict["cookies"]),
-            userAgentRaw: dict["user_agent"] as? String
+            userAgentRaw: dict["user_agent"] as? String,
+            reason: dict["reason"] as? String
         )
     }
 
@@ -216,6 +223,45 @@ extension UserAgentProfile {
     }
 }
 
+// MARK: - Browser Control
+
+/// Pool-level single source of truth for who is driving the browser.
+/// `agent` covers an in-flight agent action (and its short post-action grace);
+/// `user` means the user holds control — either they pressed 接管 themselves
+/// or the agent asked for help via `browser_request_takeover`; `idle` means
+/// nobody is driving.
+enum BrowserControlState: String, Sendable, Equatable {
+    case agent
+    case user
+    case idle
+}
+
+/// A pending, agent-initiated handover. `controlState` is still the single
+/// authority for who owns the browser; this only carries the one-line reason
+/// plus an identity used to finish exactly one waiter.
+struct BrowserTakeoverRequestInfo: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let reason: String
+}
+
+/// A control transition delivered to the session layer. `url`/`title` describe
+/// the page the user is on at the moment of the transition. `requested` marks
+/// an agent-initiated handover so its event copy is distinguishable from a
+/// user-initiated 接管; `reason` is that request's one-line instruction.
+struct BrowserControlEvent: Sendable {
+    enum Kind: String, Sendable, Equatable {
+        case takeover
+        case requestedTakeover
+        case handBack
+    }
+    let kind: Kind
+    let state: BrowserControlState
+    let url: String
+    let title: String
+    var requested: Bool = false
+    var reason: String? = nil
+}
+
 // MARK: - Browser Action Result
 
 struct BrowserActionResult {
@@ -239,10 +285,16 @@ struct BrowserActionResult {
     /// wrong one, sometimes surfacing as empty get_text results.
     /// [T-ios-browser-result-tab-id]
     var tabId: Int?
+    /// Who was in control when this result was produced. Every browser tool
+    /// result carries it so a model that missed the takeover event still sees
+    /// `control: user` before trying another write.
+    var control: BrowserControlState = .idle
+    /// Structured machine-readable error code (currently `user_takeover`).
+    var errorCode: String?
 
     init(text: String, success: Bool = true, base64Image: String? = nil, imageFilePath: String? = nil,
          fetchedFileData: Data? = nil, fetchedFileName: String? = nil, pageURL: String? = nil,
-         tabId: Int? = nil) {
+         tabId: Int? = nil, control: BrowserControlState = .idle, errorCode: String? = nil) {
         self.text = text
         self.success = success
         self.base64Image = base64Image
@@ -251,9 +303,45 @@ struct BrowserActionResult {
         self.fetchedFileName = fetchedFileName
         self.pageURL = pageURL
         self.tabId = tabId
+        self.control = control
+        self.errorCode = errorCode
     }
 
     static func error(_ message: String) -> BrowserActionResult {
         BrowserActionResult(text: "Error: \(message)", success: false)
+    }
+
+    /// Structured refusal for every agent write attempted while the user holds
+    /// control. Includes the page the user is on so the model does not have to
+    /// ask where they ended up.
+    static func userTakeover(pageURL: String?, pageTitle: String?) -> BrowserActionResult {
+        var text = "Error: user_takeover — the user has taken over the browser. "
+            + "Do not operate the browser until the user hands control back."
+        let url = pageURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !url.isEmpty || !title.isEmpty {
+            text += "\nCurrent page: \(title.isEmpty ? "(untitled)" : title) \(url)"
+        }
+        return BrowserActionResult(text: text, success: false,
+                                   pageURL: url.isEmpty ? nil : url,
+                                   control: .user, errorCode: "user_takeover")
+    }
+
+    /// Structured normal outcome for `browser_request_takeover` when the user
+    /// closes the sheet instead of completing the task. Deliberately a result,
+    /// not a thrown error: the model decides whether to try another route.
+    static func userCancelled(pageURL: String?, pageTitle: String?,
+                              sessionStopped: Bool = false) -> BrowserActionResult {
+        let url = pageURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var text = sessionStopped
+            ? "user_cancelled: the session was stopped while waiting for the user to finish the browser task."
+            : "user_cancelled: the user cancelled the browser takeover request without completing it."
+        if !url.isEmpty || !title.isEmpty {
+            text += "\nCurrent page: \(title.isEmpty ? "(untitled)" : title) \(url)"
+        }
+        return BrowserActionResult(text: text, success: true,
+                                   pageURL: url.isEmpty ? nil : url,
+                                   control: .idle, errorCode: "user_cancelled")
     }
 }

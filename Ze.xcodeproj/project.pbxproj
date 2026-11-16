@@ -137,6 +137,8 @@
 		E57000009 /* FaviconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57000019 /* FaviconService.swift */; };
 		E5700000A /* FaviconDiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001A /* FaviconDiskCache.swift */; };
 		E5700000B /* FaviconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001B /* FaviconView.swift */; };
+		E5700000C /* BrowserTabOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001C /* BrowserTabOverviewView.swift */; };
+		E5700000D /* BrowserDownloadPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5700001D /* BrowserDownloadPreview.swift */; };
 		E5CAL0001 /* CookieAuditLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5CAL0002 /* CookieAuditLogger.swift */; };
 		E58000001 /* GeminiProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000011 /* GeminiProvider.swift */; };
 		E58000002 /* GeminiModelsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E58000012 /* GeminiModelsAPI.swift */; };
@@ -442,6 +444,7 @@
 		E5VMB0007 /* ChatURLBrokerage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0017 /* ChatURLBrokerage.swift */; };
 		ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0011 /* ZeSubAgentCoordinator.swift */; };
 		ZESA0002 /* ZeSubAgentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0012 /* ZeSubAgentViews.swift */; };
+		ZESA0021 /* SubAgentAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = ZESA0022 /* SubAgentAIToolGateway.swift */; };
 		E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0011 /* AIChatViewModel+ISHCommand.swift */; };
 		E5VMC0002 /* AIChatViewModel+FileTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0012 /* AIChatViewModel+FileTools.swift */; };
 		E5VMC0003 /* AIChatViewModel+Offloading.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0013 /* AIChatViewModel+Offloading.swift */; };
@@ -814,6 +817,8 @@
 		E57000019 /* FaviconService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconService.swift; sourceTree = "<group>"; };
 		E5700001A /* FaviconDiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconDiskCache.swift; sourceTree = "<group>"; };
 		E5700001B /* FaviconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaviconView.swift; sourceTree = "<group>"; };
+		E5700001C /* BrowserTabOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserTabOverviewView.swift; sourceTree = "<group>"; };
+		E5700001D /* BrowserDownloadPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserDownloadPreview.swift; sourceTree = "<group>"; };
 		E58000011 /* GeminiProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiProvider.swift; sourceTree = "<group>"; };
 		E58000012 /* GeminiModelsAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiModelsAPI.swift; sourceTree = "<group>"; };
 		E58000013 /* GeminiOAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiOAuthManager.swift; sourceTree = "<group>"; };
@@ -1139,6 +1144,7 @@
 		E5VMB0017 /* ChatURLBrokerage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatURLBrokerage.swift; sourceTree = "<group>"; };
 		ZESA0011 /* ZeSubAgentCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentCoordinator.swift; sourceTree = "<group>"; };
 		ZESA0012 /* ZeSubAgentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeSubAgentViews.swift; sourceTree = "<group>"; };
+		ZESA0022 /* SubAgentAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubAgentAIToolGateway.swift; sourceTree = "<group>"; };
 		E5VMC0011 /* AIChatViewModel+ISHCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ISHCommand.swift"; sourceTree = "<group>"; };
 		E5VMC0012 /* AIChatViewModel+FileTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+FileTools.swift"; sourceTree = "<group>"; };
 		E5VMC0013 /* AIChatViewModel+Offloading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Offloading.swift"; sourceTree = "<group>"; };
@@ -1673,6 +1679,8 @@
 				E57000019 /* FaviconService.swift */,
 				E5700001A /* FaviconDiskCache.swift */,
 				E5700001B /* FaviconView.swift */,
+				E5700001C /* BrowserTabOverviewView.swift */,
+				E5700001D /* BrowserDownloadPreview.swift */,
 				E5CKB0002 /* CookieBackupStore.swift */,
 				E5CAL0002 /* CookieAuditLogger.swift */,
 			);
@@ -2093,6 +2101,7 @@
 				CC0BA661E4B3E57D9C043B2A /* VisualizationAttachment.swift */,
 				524A6D1E3110EF76209A9E71 /* VisualizationVerification.swift */,
 				ZESA0011 /* ZeSubAgentCoordinator.swift */,
+				ZESA0022 /* SubAgentAIToolGateway.swift */,
 				B10940000000000000000011 /* ConsecutiveToolCallsPolicy.swift */,
 				B10940000000000000000012 /* ConsecutiveToolCallsHeader.swift */,
 				B10940000000000000000013 /* ScheduledTaskActivityPolicy.swift */,
@@ -2862,6 +2871,7 @@
 				C9ED889B1715F4ADFDCF21AE /* VisualizationAttachment.swift in Sources */,
 				CBA240139CE7A850A5FEAFBB /* VisualizationVerification.swift in Sources */,
 				ZESA0001 /* ZeSubAgentCoordinator.swift in Sources */,
+				ZESA0021 /* SubAgentAIToolGateway.swift in Sources */,
 				B10940000000000000000001 /* ConsecutiveToolCallsPolicy.swift in Sources */,
 				B10940000000000000000002 /* ConsecutiveToolCallsHeader.swift in Sources */,
 				B10940000000000000000003 /* ScheduledTaskActivityPolicy.swift in Sources */,
@@ -2961,6 +2971,8 @@
 				E57000009 /* FaviconService.swift in Sources */,
 				E5700000A /* FaviconDiskCache.swift in Sources */,
 				E5700000B /* FaviconView.swift in Sources */,
+				E5700000C /* BrowserTabOverviewView.swift in Sources */,
+				E5700000D /* BrowserDownloadPreview.swift in Sources */,
 				E5CKB0001 /* CookieBackupStore.swift in Sources */,
 				E55000001 /* ISHShellExecutor.m in Sources */,
 				E5L000001 /* FFmpegOffload.m in Sources */,

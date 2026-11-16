@@ -7,6 +7,15 @@ out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
 original = json.loads((root / 'scripts/soul-avatar-assets.json').read_text(encoding='utf-8'))
 refined = json.loads((root / 'scripts/soul-laptop-refinement.json').read_text(encoding='utf-8'))
 assets = {}
+
+# [T-avatar-idle-static] The idle poster is composed at runtime from the
+# transparent main image and SoulAvatarIdlePolicy's theme colours. No derived
+# poster imagesets may be shipped again; the main RGBA source is validated
+# through the imported-asset manifest below.
+for theme in ('light', 'dark'):
+    stale = root / 'Assets.xcassets' / f'SoulAvatar-main-{theme}.imageset'
+    assert not stale.exists(), f'Derived idle poster should be composed at runtime: {theme}'
+
 for key, entry in original['assets'].items():
     catalog = root / 'Assets.xcassets' / ('SoulAvatar-main.imageset' if key == 'main' else f'SoulAvatar-{key}.dataset')
     contents = json.loads((catalog / 'Contents.json').read_text(encoding='utf-8'))

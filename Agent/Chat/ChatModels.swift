@@ -5,6 +5,36 @@ import UIKit
 
 // MARK: - Models
 
+/// Snapshot of the message a user prompt replies to. Persisted alongside the
+/// user row so the quote header survives reload and the model can be told
+/// exactly which earlier message the new prompt references.
+struct MessageQuote: Codable, Hashable {
+    /// UI ChatMessage UUID (RawMessage id) of the quoted message.
+    var targetMessageId: String
+    /// Text snapshot taken when the user tapped Reply.
+    var text: String
+
+    private static let maxSnapshotCharacters = 1_000
+
+    init(targetMessageId: String, text: String) {
+        self.targetMessageId = targetMessageId
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.text = trimmed.count > Self.maxSnapshotCharacters
+            ? String(trimmed.prefix(Self.maxSnapshotCharacters)) + "…"
+            : trimmed
+    }
+
+    /// Structured block placed immediately before the user's own text in the
+    /// model-facing message, so the quote is real context rather than UI-only.
+    var modelFacingText: String {
+        let escaped = text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        return "<quoted-message id=\"\(targetMessageId)\">\n\(escaped)\n</quoted-message>"
+    }
+}
+
 /// Structured metadata for a user-attached file (image, document, etc.).
 struct AttachmentMeta: Identifiable, Equatable {
     let id = UUID()
@@ -104,6 +134,9 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// Message creation time. This is supplied from persisted history on reload
     /// so user-message context menus show the original send time.
     let timestamp: Date
+    /// [T-chat-quote-reply] Snapshot of the message this user prompt replies to.
+    /// Nil for normal messages and all assistant rows.
+    var quote: MessageQuote?
 
     /// Exact BPE count cached by the stripped text that is actually rendered in
     /// the user bubble. SwiftUI may evaluate a row body many times while the
@@ -117,7 +150,8 @@ final class ChatMessage: Identifiable, ObservableObject {
         blocks: [AssistantBlock] = [],
         isQueued: Bool = false,
         timestamp: Date = Date(),
-        id: UUID = UUID()
+        id: UUID = UUID(),
+        quote: MessageQuote? = nil
     ) {
         self.id = id
         self.role = role
@@ -125,6 +159,7 @@ final class ChatMessage: Identifiable, ObservableObject {
         self.blocks = blocks
         self.isQueued = isQueued
         self.timestamp = timestamp
+        self.quote = quote
     }
 
     func userDisplayTokenCount(for text: String) -> Int {
@@ -163,6 +198,8 @@ struct QueuedPrompt: Identifiable {
     let id = UUID()
     let text: String
     let attachments: [InputAttachment]
+    /// [T-chat-quote-reply] Quote snapshot carried through the queue/drain path.
+    var quote: MessageQuote? = nil
     let timestamp = Date()
 }
 

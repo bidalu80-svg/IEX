@@ -19,8 +19,12 @@ struct ContextPolicy {
     let exhaustedOnly: Bool
     /// Whether user-initiated manual compact is allowed.
     let manualCompactAllowed: Bool
+    /// The context window this policy was built for (used to size the
+    /// pre-compaction warning band).
+    let contextWindow: Int
 
     init(contextWindow: Int) {
+        self.contextWindow = contextWindow
         if contextWindow < 32_000 {
             // < 32K: no offload, no compact
             offloadThreshold = 0
@@ -82,6 +86,24 @@ struct ContextPolicy {
         }
 
         return .ok
+    }
+
+    /// Token count where the composer starts warning that auto-compaction is
+    /// imminent. Sits one band below `compactThreshold`; the band is 1/16th of
+    /// the window, clamped to [4K, 20K]. Returns 0 when auto-compaction (and
+    /// therefore the warning) is disabled for this tier.
+    var compactWarningThreshold: Int {
+        guard compactThreshold > 0 else { return 0 }
+        let band = min(20_000, max(4_000, contextWindow / 16))
+        return max(1, compactThreshold - band)
+    }
+
+    /// Whether the context is inside the pre-compaction warning band — close
+    /// to the trigger line but not yet at it. Used for the composer's one-shot
+    /// red-mist warning; the send path still owns the actual compaction.
+    func isApproachingCompact(estimatedTokens: Int) -> Bool {
+        guard compactThreshold > 0 else { return false }
+        return estimatedTokens >= compactWarningThreshold && estimatedTokens < compactThreshold
     }
 
     /// Whether auto-offload should trigger at the given token count.

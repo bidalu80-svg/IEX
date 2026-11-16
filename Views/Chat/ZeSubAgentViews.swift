@@ -261,6 +261,7 @@ enum ZeSubAgentPresentation {
         case "file_write", "write_file": return "doc.text.fill"
         case "file_edit", "edit_file": return "square.and.pencil"
         case "browser_use": return "globe"
+        case "browser_request_takeover": return "hand.raised.fill"
         case "read_image": return "photo"
         default: return step.icon
         }
@@ -1063,6 +1064,7 @@ struct SubAgentSettingsView: View {
     @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
     @State private var taskText = ""
     @State private var selectedRecordId: String?
+    @State private var thinkingEnabled = false
 
     private var records: [ZeSubAgentRecord] {
         coordinator.records(for: ZeSubAgentPreferences.settingsRootSessionId)
@@ -1098,6 +1100,20 @@ struct SubAgentSettingsView: View {
                 Text(String(localized: "子代理模型"))
             } footer: {
                 Text(String(localized: "选择已配置服务商中的具体模型。留空时，聊天内创建的子代理跟随当前用户对话模型；本页直接提交的任务使用当前默认模型组。"))
+            }
+
+            Section {
+                Toggle(String(localized: "子代理思考"), isOn: Binding(
+                    get: { thinkingEnabled },
+                    set: { newValue in
+                        thinkingEnabled = newValue
+                        ZeSubAgentThinkingSettings.setEnabled(newValue)
+                    }
+                ))
+            } header: {
+                Text(String(localized: "子代理思考"))
+            } footer: {
+                Text(String(localized: "只影响之后新建的子代理，已在运行的任务不会改变。开启时使用中等思考档；模型不支持思考时会自动按关闭处理，不会中断子代理。"))
             }
 
             Section {
@@ -1146,6 +1162,9 @@ struct SubAgentSettingsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(String(localized: "子代理"))
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            thinkingEnabled = ZeSubAgentThinkingSettings.resolvedEnabled
+        }
         .sheet(item: Binding<ZeSubAgentRecord?>(
             get: { selectedRecordId.flatMap { coordinator.record(id: $0) } },
             set: { selectedRecordId = $0?.id }
@@ -1174,44 +1193,60 @@ struct SubAgentSettingsView: View {
 private struct ZeSubAgentModelPickerView: View {
     @Binding var selection: String
     @ObservedObject private var store = ProviderConfigStore.shared
+    @State private var searchText = ""
 
     private var entries: [ModelEntry] {
-        store.modelEntries.filter { entry in
-            guard !entry.isHidden,
-                  let instance = store.instance(for: entry.providerInstanceId) else { return false }
-            return instance.isEnabled && instance.hasAnyCredential
+        ZeSubAgentModelCatalog.availableEntries()
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var filteredEntries: [ModelEntry] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return entries }
+        return entries.filter { entry in
+            entry.model.displayName.localizedCaseInsensitiveContains(keyword)
+                || entry.model.id.localizedCaseInsensitiveContains(keyword)
+                || providerLabel(for: entry).localizedCaseInsensitiveContains(keyword)
+                || entry.model.provider.localizedCaseInsensitiveContains(keyword)
         }
     }
 
     var body: some View {
         List {
-            Section {
-                Button {
-                    selection = ""
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(String(localized: "跟随当前对话"))
-                            Text(String(localized: "不固定子代理模型"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if selection.isEmpty {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.tint)
+            if !isSearching {
+                Section {
+                    Button {
+                        selection = ""
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(String(localized: "跟随当前对话"))
+                                Text(String(localized: "不固定子代理模型"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selection.isEmpty {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
                         }
                     }
+                    .foregroundStyle(.primary)
                 }
-                .foregroundStyle(.primary)
             }
 
             Section {
-                if entries.isEmpty {
-                    Text(String(localized: "暂无可用的已配置模型"))
+                if filteredEntries.isEmpty {
+                    Text(isSearching
+                         ? String(localized: "没有匹配的模型或服务商")
+                         : String(localized: "暂无可用的已配置模型"))
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(entries) { entry in
+                    ForEach(filteredEntries) { entry in
                         Button {
                             selection = entry.id
                         } label: {
@@ -1236,14 +1271,19 @@ private struct ZeSubAgentModelPickerView: View {
                     }
                 }
             } header: {
-                Text(String(localized: "已配置服务商模型"))
+                Text(isSearching ? String(localized: "搜索结果") : String(localized: "已配置服务商模型"))
             }
         }
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: Text(String(localized: "搜索模型或服务商"))
+        )
         .navigationTitle(String(localized: "子代理模型"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
     private func providerLabel(for entry: ModelEntry) -> String {
-        store.instance(for: entry.providerInstanceId)?.label ?? entry.model.provider
+        ZeSubAgentModelCatalog.providerLabel(for: entry)
     }
 }

@@ -164,6 +164,36 @@ final class ContextPolicyTests: XCTestCase {
         }
     }
 
+    // MARK: - Pre-compaction warning band
+
+    func testWarningBand_64_128K() {
+        let policy = ContextPolicy(contextWindow: 100_000)
+        // compact at 90K; band = max(4K, 100K/16) = 6,250
+        XCTAssertEqual(policy.compactWarningThreshold, 83_750)
+        XCTAssertFalse(policy.isApproachingCompact(estimatedTokens: 83_749))
+        XCTAssertTrue(policy.isApproachingCompact(estimatedTokens: 83_750))
+        XCTAssertTrue(policy.isApproachingCompact(estimatedTokens: 89_999))
+        XCTAssertFalse(policy.isApproachingCompact(estimatedTokens: 90_000),
+                       "At the trigger line the warning band ends")
+    }
+
+    func testWarningBand_128Kplus_clamps() {
+        let policy = ContextPolicy(contextWindow: 200_000)
+        // compact at 180K; band = min(20K, max(4K, 12,500)) = 12,500
+        XCTAssertEqual(policy.compactWarningThreshold, 167_500)
+        XCTAssertFalse(policy.isApproachingCompact(estimatedTokens: 167_499))
+        XCTAssertTrue(policy.isApproachingCompact(estimatedTokens: 167_500))
+        XCTAssertFalse(policy.isApproachingCompact(estimatedTokens: 180_000))
+    }
+
+    func testWarningBand_disabledWithoutAutoCompact() {
+        for w in [16_000, 32_000, 48_000, 63_999] {
+            let policy = ContextPolicy(contextWindow: w)
+            XCTAssertEqual(policy.compactWarningThreshold, 0, "window=\(w)")
+            XCTAssertFalse(policy.isApproachingCompact(estimatedTokens: w - 1), "window=\(w)")
+        }
+    }
+
     // MARK: - shouldOffload()
 
     func testShouldOffload_disabled_below32K() {

@@ -85,6 +85,18 @@ actor ISHExecutionCoordinator {
 
     private let preemptTimeout: TimeInterval = 600 // 10 minutes
 
+    /// [T-ish-oom-selfheal] Shell/guest OOM signatures. Keep this narrow:
+    /// matching a generic "memory" word would restart the container for
+    /// ordinary commands like `free -h`.
+    private static func outputIndicatesOutOfMemory(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        let lower = text.lowercased()
+        return lower.contains("out of memory")
+            || lower.contains("cannot allocate memory")
+            || lower.contains("enomem")
+            || lower.contains("memory exhausted")
+    }
+
     // MARK: - Public API
 
     /// Execute a shell command within a session's mount context.
@@ -415,6 +427,7 @@ actor ISHExecutionCoordinator {
                 return (partialLines[partialHead...].joined(separator: "\n"), partialTruncated)
             }
 
+            let initialGuestRestartGeneration = ISHKernel.shared.guestRestartGeneration
             let pid = ISHShellExecutor.executeExecutable(
                 "/bin/sh",
                 arguments: nil,
@@ -441,6 +454,24 @@ actor ISHExecutionCoordinator {
                     output += (output.isEmpty ? "" : "\n") + errOutput
                 }
 
+                // [T-ish-oom-selfheal] The guest kernel's shell prints
+                // "sh: out of memory" / mmap ENOMEM when its address space is
+                // exhausted. Killing every guest task reclaims those address
+                // spaces and the fakefs (all user files) stays mounted; tell
+                // the model explicitly so it retries instead of probing.
+                var didRestartGuest = false
+                if Self.outputIndicatesOutOfMemory(output) {
+                    ISHKernel.shared.restartGuestContainer(withReason: "shell command reported out of memory")
+                    didRestartGuest = true
+                }
+                if ISHKernel.shared.guestRestartGeneration != initialGuestRestartGeneration {
+                    // A CRITICAL-pressure restart killed this command mid-flight.
+                    didRestartGuest = true
+                }
+                if didRestartGuest {
+                    output += "\n\n容器内存不足，已自动重启。容器已重启，请重试。"
+                }
+
                 if result.exitCode != 0 && !output.contains("exit code") {
                     output += "\n(exit code: \(result.exitCode))"
                 }
@@ -458,7 +489,10 @@ actor ISHExecutionCoordinator {
                 let errorMsg: String
                 switch ISHShellExecutorError(rawValue: Int(pid)) {
                 case .processCreationFailed:
-                    errorMsg = "Failed to create process"
+                    // Fork/clone failure is the executor-level ENOMEM path:
+                    // heal the guest and give the agent an explicit retry cue.
+                    ISHKernel.shared.restartGuestContainer(withReason: "shell executor process creation failed")
+                    errorMsg = "容器内存不足，已自动重启。容器已重启，请重试。"
                 case .execFailed:
                     errorMsg = "Failed to execute command"
                 case .timeout:

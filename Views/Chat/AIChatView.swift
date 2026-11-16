@@ -234,6 +234,15 @@ class SystemResourceMonitor: ObservableObject {
 
 // MARK: - Main View
 
+/// [T-keyboard-hang] Reference-typed gate for the composer morph. It is
+/// deliberately NOT @State/@Published: flipping it must not invalidate body.
+/// The geometry observer reads `.active` synchronously; only the final height
+/// commit touches @State inputBarHeight.
+private final class ComposerChromeTransitionGate {
+    var active = false
+    var task: Task<Void, Never>?
+}
+
 struct AIChatView: View {
     var sessionId: String? = nil
     /// The draft ID from the parent (e.g. "__new__<UUID>") for notification correlation.
@@ -308,6 +317,11 @@ struct AIChatView: View {
     @State private var inputIsScrollable: Bool = false
     @State private var inputBarHeight: CGFloat = 0
     @State private var inputBarHeightDebounce: Task<Void, Never>?
+    /// [T-keyboard-hang] Non-zero while the composer is morphing between its
+    /// compact and expanded chrome (keyboard show/hide or first content).
+    /// onGeometryChange records the freshest height but does not publish it
+    /// on every animation frame; the transition end commits it once.
+    @State private var composerChromeTransition = ComposerChromeTransitionGate()
     /// [T-voice-inputbar-anim-tail] The most recent ON-SCREEN composer height
     /// reported by onGeometryChange. The debounced commit reads THIS instead of
     /// the height captured when its 300ms timer was armed: the panel's
@@ -465,6 +479,12 @@ struct AIChatView: View {
     @ObservedObject private var remoteServerAIDraftStore = RemoteServerAIDraftStore.shared
     /// Opacity for the fallback capsule highlight (animated 3× pulse on model switch).
     @State private var fallbackPulseOpacity: Double = 0
+    /// [T-chat-auto-compact-warning] Opacity for the composer's red mist.
+    /// Reuses the same 3× red breathing visual as the provider fallback.
+    @State private var compactWarningPulseOpacity: Double = 0
+    /// Human-readable warning shown above the composer while the context is
+    /// inside the pre-compaction band (and auto-compact is on).
+    @State private var showAutoCompactWarning = false
 
     /// Snapshot of the current session's title + category, refreshed when the
     /// session updates (e.g. auto-generated title arrives). Nil until first load.
@@ -584,6 +604,13 @@ struct AIChatView: View {
             .opacity(showChatSearch ? 0 : 1)
             .allowsHitTesting(!showChatSearch)
             .accessibilityHidden(showChatSearch)
+            // [T-keyboard-hang P0-1.3] Deliberately retained: the current
+            // ZStack(alignment: .bottom) implementation puts the popup's
+            // bottom edge at the composer's bottom minus this padding. The
+            // `popupOverlayContainer` comment describes an older catcher-
+            // overlay layout that no longer exists; removing this padding
+            // would drop the slash/@ menu over the input bar. It now reads a
+            // value that is committed at most once per keyboard transition.
             inputPopupOverlay
                 .padding(.bottom, inputBarHeight)
                 .opacity(showChatSearch ? 0 : 1)
@@ -763,6 +790,7 @@ struct AIChatView: View {
             topSafeAreaInset: $topSafeAreaInset,
             providerBadge: AnyView(chatNavPrincipalContent),
             headerSize: chatHeaderSize,
+            headerKey: chatNavigationHeaderKey,
             onHeaderOverflow: { value in
                 if abs(headerOverflowInset - value) > 0.5 { headerOverflowInset = value }
             }))
@@ -887,13 +915,13 @@ struct AIChatView: View {
         .animation(.spring(response: 0.3), value: forcePullToast)
         // [T-browser-download-ux-v2] Downloads panel opened from the floating
         // download button (mounted next to the scroll buttons, see
-        // downloadFloatingButton). Completed rows jump to the file browser
-        // located at the downloaded file in the session workspace.
+        // downloadFloatingButton). Completed rows preview/share the file;
+        // "Show in Files" locates it in the session workspace.
         .sheet(isPresented: $showDownloadsPanel) {
-            BrowserDownloadPanelSheet(sessionId: vm.sessionId ?? "") { filename in
+            BrowserDownloadPanelSheet(sessionId: vm.sessionId ?? "", onLocate: { filename in
                 showDownloadsPanel = false
                 locateDownloadTarget = DownloadLocateTarget(filename: filename)
-            }
+            })
         }
         .sheet(item: $locateDownloadTarget) { target in
             if let sid = vm.sessionId {
@@ -1133,10 +1161,20 @@ struct AIChatView: View {
                 FileBrowserView(rootPath: base, initialPath: base.appendingPathComponent("var/ze"), rootLabel: "/")
             }
         }
+        .onReceive(vm.browserTabPool.$pendingTakeoverRequest) { request in
+            // An agent-initiated handover must come to the foreground even if
+            // the user was not looking at the browser. Reuse the same
+            // showBrowserSheet state that the "…" menu's browser entry uses.
+            // When ToolLiveSheet is on top it owns the secondary-sheet slot and
+            // presents the browser itself.
+            if request != nil, !ZeOpenURLBroker.shared.toolSheetVisible {
+                showBrowserSheet = true
+            }
+        }
         .sheet(isPresented: $showBrowserSheet) {
-            BrowserSheetView(pool: vm.browserTabPool, isAgentBusy: vm.browserTabPool.isAgentBrowsing, onTakeover: {
-                vm.browserTakeoverActive = true
-            })
+            // Control is owned by the pool's BrowserControlState; the sheet
+            // observes it directly (takeover no longer pauses the whole loop).
+            BrowserSheetView(pool: vm.browserTabPool)
         }
         )
     }
@@ -1374,6 +1412,7 @@ struct AIChatView: View {
             vm.draftId = draftId
             vm.remoteDeviceId = remoteDeviceId
             vm.initialGroupId = initialGroupId
+            refreshAutoCompactWarning()
             // Snapshot total session count once so the New-Chat onboarding
             // grid only appears for first-time users (no prior sessions).
             // [T-ios-session-coldload-listsessions-block] Use the bare
@@ -1508,6 +1547,9 @@ struct AIChatView: View {
         }
         .onDisappear {
             endVoiceCall()
+            composerChromeTransition.task?.cancel()
+            composerChromeTransition.task = nil
+            composerChromeTransition.active = false
             isChatViewVisible = false
             if speechManager.state == .recording {
                 speechManager.stopRecording()
@@ -1614,6 +1656,18 @@ struct AIChatView: View {
             if phase != .active, speechManager.state == .recording {
                 speechManager.stopRecording()
             }
+        }
+        .onChange(of: vm.messages.count) { _ in
+            refreshAutoCompactWarning()
+        }
+        .onChange(of: vm.isProcessing) { _ in
+            refreshAutoCompactWarning()
+        }
+        .onChange(of: vm.isCompacting) { _ in
+            refreshAutoCompactWarning()
+        }
+        .onChange(of: vm.autoCompactEnabled) { _ in
+            refreshAutoCompactWarning()
         }
         .onChange(of: deepLink.showTerminal) { show in
             if show {
@@ -1961,6 +2015,7 @@ struct AIChatView: View {
             enhancedCacheEnabled: cached.vm.enhancedCacheEnabled,
             showFastModeToggle: activeModelSupportsFastMode,
             fastModeEnabled: codexFastModeEnabled,
+            autoCompactEnabled: cached.vm.autoCompactEnabled,
             onNewChat: { requestNewChatFromMenu() },
             // [T-chat-menu-compact-entry] Same effect as the /compact slash
             // command (AIChatViewModel+SlashCommands case "compact").
@@ -1996,6 +2051,7 @@ struct AIChatView: View {
             // reads the same key at request-build time, so the flip applies
             // to the very next Codex request.
             setFastMode: { enabled in codexFastModeEnabled = enabled },
+            setAutoCompact: { enabled in cached.vm.autoCompactEnabled = enabled },
             onTokenUsage: { showTokenUsage = true },
             // [T-chat-search] Sits above Share Session in the menu.
             onSearchChat: { openChatSearch() },
@@ -2097,6 +2153,21 @@ struct AIChatView: View {
         // Only the circular avatar occupies the same vertical band as buttons.
         return CGSize(width: max(140, min(200, width - 120)),
                       height: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize) + 56 + (headerActivityText == nil ? 0 : 18))
+    }
+
+    /// [T-keyboard-hang] Everything the root-hosted header badge displays.
+    /// Unrelated chat-body state (composer height, keyboard visibility) must
+    /// not re-root the badge or re-run its safe-area layout.
+    private var chatNavigationHeaderKey: ChatNavigationHeaderKey {
+        ChatNavigationHeaderKey(
+            avatarSize: SoulAppearancePreferences.headerAvatarSize(headerAvatarSize),
+            activityText: headerActivityText,
+            soulName: soulName,
+            providerIdentity: navigationProviderIconIdentity,
+            titleLocked: titleIsVisuallyLocked,
+            viewportWidth: chatViewportWidth,
+            celebration: avatarCelebration,
+            fallbackPulse: fallbackPulseOpacity)
     }
 
     private var chatNavPrincipalContent: some View {
@@ -2423,6 +2494,10 @@ struct AIChatView: View {
                 inputFocused: inputFocused,
                 onRetryMessage: { vm.retryFromMessage($0); vm.forceScrollToBottom.send() },
                 onRetryLast: { vm.retry(); vm.forceScrollToBottom.send() },
+                onReplyMessage: { [self] msgId in
+                    vm.beginReply(to: msgId)
+                    inputFocused = true
+                },
                 onEdit: { [self] msgId in
                     vm.editMessage(msgId)
                     inputFocused = true
@@ -3351,12 +3426,108 @@ struct AIChatView: View {
         }
 
         guard softwareKeyboardVisible != visible else { return }
+        if !voiceInputActive { beginComposerChromeTransition() }
         softwareKeyboardVisible = visible
+    }
+
+    /// [T-keyboard-hang] The composer's compact/expanded paddings animate for
+    /// 0.2s. onGeometryChange samples every animation frame; each sample used
+    /// to become a global inputBarHeight write, rebuilding the whole page and
+    /// both hosting roots. Freeze the write during the morph and commit the
+    /// freshest reported height exactly once after it settles.
+    private func beginComposerChromeTransition() {
+        let gate = composerChromeTransition
+        gate.task?.cancel()
+        gate.active = true
+        gate.task = Task { @MainActor in
+            // 280ms > the 200ms easeOut chrome animation. The final geometry
+            // callback lands inside this window; the value committed is the
+            // latest one onGeometryChange reported, never an older sample.
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            gate.active = false
+            // Voice mode owns its own 380ms expand/collapse commit path.
+            guard !voiceInputActive else { return }
+            let settled = latestInputBarFrameH
+            if settled > 0, abs(inputBarHeight - settled) > 0.5 {
+                #if DEBUG
+                KeyboardHangProbe.recordInputBarHeightWrite()
+                #endif
+                inputBarHeight = settled
+                AppLogger(category: "InputBarLayout")
+                    .info("inputBarHeight final commit=\(settled) after composer transition")
+            }
+        }
+    }
+
+    /// [T-chat-quote-reply] Composer strip shown while a reply target is
+    /// selected. Mirrors the attachment tray's card chrome; ✕ cancels.
+    private func replyQuoteStrip(_ quote: MessageQuote) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ChatColors.secondaryText)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("正在回复 \(replyTargetLabel(for: quote))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ChatColors.primaryText)
+                Text(quote.text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChatColors.secondaryText)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 8)
+            Button {
+                vm.cancelReply()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(ChatColors.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "取消回复"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(ChatColors.secondaryText.opacity(0.12), lineWidth: 0.5)
+        )
+    }
+
+    private func replyTargetLabel(for quote: MessageQuote) -> String {
+        guard let target = vm.messages.first(where: { $0.id.uuidString == quote.targetMessageId }) else {
+            return String(localized: "这条消息")
+        }
+        return target.role == .assistant ? soulName : String(localized: "你的消息")
     }
 
     private var inputComposerChrome: AnyView {
         AnyView(
             VStack(spacing: 8) {
+                if showAutoCompactWarning && vm.autoCompactEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(String(localized: "上下文快满，将自动压缩"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(Color.red.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.red.opacity(0.10), in: Capsule(style: .continuous))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let quote = vm.pendingQuote {
+                    replyQuoteStrip(quote)
+                }
+
                 VStack(spacing: 0) {
                     inputBottomRow
                         .padding(.horizontal, 10)
@@ -3417,6 +3588,36 @@ struct AIChatView: View {
         )
     }
 
+    /// [T-chat-auto-compact-warning] Re-evaluate the pre-compaction band.
+    /// Called only on coarse lifecycle events (message count / turn / compact
+    /// / toggle), never from a timer or render pass. The first approach in a
+    /// session starts the finite 3-pulse red mist; later passes only keep the
+    /// inline sentence in sync.
+    private func refreshAutoCompactWarning() {
+        let active = vm.autoCompactEnabled && vm.isContextInAutoCompactWarningBand()
+        if showAutoCompactWarning != active {
+            showAutoCompactWarning = active
+        }
+        guard active else { return }
+        guard !vm.autoCompactWarningShown else { return }
+        vm.autoCompactWarningShown = true
+        pulseCompactWarning()
+    }
+
+    /// Exactly three red breathing pulses (the provider-switch visual), then
+    /// the opacity settles at 0 and the overlay branch is removed.
+    private func pulseCompactWarning() {
+        compactWarningPulseOpacity = 0
+        let fade = 0.35
+        for (index, target) in [1.0, 0.0, 1.0, 0.0, 1.0, 0.0].enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + fade * Double(index)) {
+                withAnimation(.easeInOut(duration: fade)) {
+                    compactWarningPulseOpacity = target
+                }
+            }
+        }
+    }
+
     private var inputBar: AnyView {
         AnyView(
         VStack(spacing: 0) {
@@ -3435,10 +3636,39 @@ struct AIChatView: View {
 
             inputComposerChrome
             .background(ChatCallLayoutMarker(identifier: "chat.verify.input"))
+            // [T-chat-auto-compact-warning] Red mist around the composer,
+            // matching the provider-switch breathing highlight. The opacity
+            // is driven by the finite 3-pulse sequence; at rest this branch
+            // is absent, so no render work continues after the animation.
+            .overlay {
+                if compactWarningPulseOpacity > 0 {
+                    Capsule(style: .continuous)
+                        .stroke(Color.red.opacity(0.55 * compactWarningPulseOpacity), lineWidth: 2)
+                        .blur(radius: 4)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background {
+                if compactWarningPulseOpacity > 0 {
+                    Capsule(style: .continuous)
+                        .fill(Color.red.opacity(0.22 * compactWarningPulseOpacity))
+                        .blur(radius: 12)
+                        .scaleEffect(1.03)
+                        .allowsHitTesting(false)
+                }
+            }
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, composerHorizontalPadding)
-            // The cosmetic capsule morph stays local; UIKit owns its position.
-            .animation(.easeOut(duration: 0.2), value: usesExpandedComposerChrome)
+            // [T-keyboard-hang] Do NOT animate the chrome's layout padding.
+            // The old .animation(.easeOut(duration: 0.2), value:
+            // usesExpandedComposerChrome) changed composerVerticalPadding
+            // (4↔8) and composerHorizontalPadding (34↔12) over 20+ frames;
+            // onGeometryChange then wrote inputBarHeight from every frame,
+            // rebuilding the full page and both hosting roots. The chrome
+            // still changes shape, just without a per-frame layout clock.
+            .onChange(of: hasComposerContent) { _ in
+                if !voiceInputActive { beginComposerChromeTransition() }
+            }
             // The attachment tray is the preceding sibling in the bottom
             // stack. Do not leave the composer's normal top gutter between a
             // pending attachment and this capsule; with no floating bar that
@@ -3519,13 +3749,25 @@ struct AIChatView: View {
                     inputBarHeightDebounce?.cancel()
                     inputBarHeightDebounce = nil
                     didSeedInputBarHeight = true
-                    if abs(inputBarHeight - newH) > 0.5 { inputBarHeight = newH }
+                    // [T-keyboard-hang] The transition task commits the final
+                    // height once. Writing here during the morph would rebuild
+                    // body/chatLifecycle and both hosting roots every frame.
+                    guard !composerChromeTransition.active else { return }
+                    if abs(inputBarHeight - newH) > 0.5 {
+                        #if DEBUG
+                        KeyboardHangProbe.recordInputBarHeightWrite()
+                        #endif
+                        inputBarHeight = newH
+                    }
                     return
                 }
 
                 if !didSeedInputBarHeight, onscreen {
                     didSeedInputBarHeight = true
                     inputBarHeightDebounce?.cancel()
+                    #if DEBUG
+                    KeyboardHangProbe.recordInputBarHeightWrite()
+                    #endif
                     inputBarHeight = newH
                     AppLogger(category: "InputBarLayout").info("inputBarHeight seeded=\(newH) x=\(Int(frame.minX))")
                     // [T-inputbar-stale-across-reentry] The seed is applied
@@ -3544,6 +3786,9 @@ struct AIChatView: View {
                         guard !Task.isCancelled, voiceAtSeed == voiceInputActive else { return }
                         let settled = latestInputBarFrameH
                         if settled > 0, abs(settled - newH) > 0.5 {
+                            #if DEBUG
+                            KeyboardHangProbe.recordInputBarHeightWrite()
+                            #endif
                             inputBarHeight = settled
                             AppLogger(category: "InputBarLayout").info("inputBarHeight SEED-CORRECTED \(newH)→\(settled) — seed had caught an animation frame")
                         }
@@ -3585,6 +3830,9 @@ struct AIChatView: View {
                     }
                     // Commit the LATEST height, not the one that armed the timer.
                     let committed = latestInputBarFrameH > 0 ? latestInputBarFrameH : newH
+                    #if DEBUG
+                    KeyboardHangProbe.recordInputBarHeightWrite()
+                    #endif
                     inputBarHeight = committed
                     let armed = newH
                     AppLogger(category: "InputBarLayout").info("inputBarHeight settled=\(committed) x=\(Int(frame.minX))\(abs(committed - armed) > 0.5 ? " (armedWith=\(armed), used latest)" : "")")
@@ -3603,6 +3851,9 @@ struct AIChatView: View {
                     guard voiceAtCapture == voiceInputActive else { return }
                     let settled = latestInputBarFrameH
                     if settled > 0, abs(settled - committed) > 0.5 {
+                        #if DEBUG
+                        KeyboardHangProbe.recordInputBarHeightWrite()
+                        #endif
                         inputBarHeight = settled
                         AppLogger(category: "InputBarLayout").info("inputBarHeight CORRECTED \(committed)→\(settled) — commit had caught an animation-tail frame")
                     }
@@ -5241,10 +5492,25 @@ extension UIWindow {
     }
 }
 
+private struct ChatNavigationHeaderKey: Equatable {
+    let avatarSize: CGFloat
+    let activityText: String?
+    let soulName: String
+    let providerIdentity: String
+    let titleLocked: Bool
+    let viewportWidth: CGFloat
+    /// The avatar's tap celebration deadline is a real badge input; without
+    /// it the gated host would ignore a new tap. The fallback pulse likewise
+    /// animates a capsule inside the badge.
+    let celebration: Date?
+    let fallbackPulse: Double
+}
+
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
     var providerBadge: AnyView? = nil
     var headerSize: CGSize? = nil
+    var headerKey: ChatNavigationHeaderKey? = nil
     var onHeaderOverflow: ((CGFloat) -> Void)? = nil
 
     func body(content: Content) -> some View {
@@ -5253,6 +5519,7 @@ private struct NavBarStyleModifier: ViewModifier {
             .toolbarBackground(.hidden, for: .navigationBar)
             .background(ChatNavigationBarAppearance(providerBadge: providerBadge,
                                                     headerSize: headerSize,
+                                                    headerKey: headerKey,
                                                     onHeaderOverflow: onHeaderOverflow,
                                                     onTopInset: { value in
                 if abs(topSafeAreaInset - value) > 0.5 { topSafeAreaInset = value }
@@ -5265,6 +5532,7 @@ private struct NavBarStyleModifier: ViewModifier {
 private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
     var providerBadge: AnyView? = nil
     var headerSize: CGSize? = nil
+    var headerKey: ChatNavigationHeaderKey? = nil
     var onHeaderOverflow: ((CGFloat) -> Void)? = nil
     var onTopInset: ((CGFloat) -> Void)? = nil
     func makeUIViewController(context: Context) -> Controller { Controller() }
@@ -5272,7 +5540,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         controller.onTopInset = onTopInset
         controller.onHeaderOverflow = onHeaderOverflow
         controller.updateBadge(providerBadge.map { AnyView($0.environment(\.self, context.environment)) },
-                               headerSize: headerSize)
+                               headerSize: headerSize,
+                               headerKey: headerKey)
         controller.applyIfNeeded()
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
@@ -5299,9 +5568,25 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var reportedHeaderOverflow: CGFloat = -1
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
+        private var lastHeaderKey: ChatNavigationHeaderKey?
+        private var lastAppliedHeaderKey: ChatNavigationHeaderKey?
 
-        func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil) {
+        func updateBadge(_ badge: AnyView?, headerSize: CGSize? = nil,
+                         headerKey: ChatNavigationHeaderKey? = nil) {
+            // [T-keyboard-hang] The chat body is re-evaluated for composer
+            // state (inputBarHeight/softwareKeyboardVisible). This representable
+            // used to re-root the badge hosting controller on every one of
+            // those passes, re-laying a view that sits in the status-bar safe
+            // area. Only the header's actual display inputs may do that.
+            if let headerKey, headerKey == lastHeaderKey,
+               (badge != nil) == (badgeHost != nil) {
+                return
+            }
+            lastHeaderKey = headerKey
             self.headerSize = headerSize
+            #if DEBUG
+            KeyboardHangProbe.recordBadgeUpdate()
+            #endif
             guard let badge else {
                 headerHitRouting.remove()
                 badgeHost?.willMove(toParent: nil)
@@ -5432,7 +5717,14 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 // SwiftUI may reorder the navigation container after adding our
                 // overlay. Reassert sibling order so its transparent navbar does
                 // not intercept touches intended for the visible avatar.
-                overlayView.bringSubviewToFront(badgeHost.view)
+                // Re-assert sibling order only when SwiftUI actually put
+                // another view above the badge. Unconditional
+                // bringSubviewToFront on every layout pass invalidates the
+                // root view's subview order (and its safe-area layout) for
+                // no visual change.
+                if overlayView.subviews.last !== badgeHost.view {
+                    overlayView.bringSubviewToFront(badgeHost.view)
+                }
                 if badgeHost.view.frame != overlayFrame { badgeHost.view.frame = overlayFrame }
             }
         }
@@ -5445,8 +5737,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             }
             guard navigation.topViewController === owner else { return }
             let target = owner.navigationItem
-            if item === target, target.standardAppearance === installed {
-                layoutHeader(in: navigation)
+            if item === target, target.standardAppearance === installed,
+               lastHeaderKey == lastAppliedHeaderKey {
                 return
             }
             if item !== target {
@@ -5473,6 +5765,7 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             installedScroll = target.scrollEdgeAppearance
             installedCompact = target.compactAppearance
             installedCompactScroll = target.compactScrollEdgeAppearance
+            lastAppliedHeaderKey = lastHeaderKey
             layoutHeader(in: navigation)
         }
         func restore() {
@@ -5481,6 +5774,8 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             badgeHost?.view.removeFromSuperview()
             badgeHost?.removeFromParent()
             frostedOverlay.removeFromSuperview()
+            lastHeaderKey = nil
+            lastAppliedHeaderKey = nil
             guard let target = item else { return }
             if target.standardAppearance === installed { target.standardAppearance = previousStandard }
             if target.scrollEdgeAppearance === installedScroll { target.scrollEdgeAppearance = previousScroll }
@@ -6041,6 +6336,8 @@ private struct ChatTrailingMenu: View, Equatable {
     /// [T-codex-fast-mode] Mirrors ChatTrailingMenuButton.
     let showFastModeToggle: Bool
     let fastModeEnabled: Bool
+    /// [T-chat-auto-compact-warning] Global auto-compact opt-in.
+    let autoCompactEnabled: Bool
 
     let onNewChat: () -> Void
     let onCompact: () -> Void
@@ -6056,6 +6353,7 @@ private struct ChatTrailingMenu: View, Equatable {
     let setSpeakEnabled: (Bool) -> Void
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
+    let setAutoCompact: (Bool) -> Void
     let onTokenUsage: () -> Void
     let onSearchChat: () -> Void
     let onShareSession: () -> Void
@@ -6071,6 +6369,7 @@ private struct ChatTrailingMenu: View, Equatable {
             && lhs.enhancedCacheEnabled == rhs.enhancedCacheEnabled
             && lhs.showFastModeToggle == rhs.showFastModeToggle
             && lhs.fastModeEnabled == rhs.fastModeEnabled
+            && lhs.autoCompactEnabled == rhs.autoCompactEnabled
     }
 
     var body: some View {
@@ -6193,6 +6492,16 @@ private struct ChatTrailingMenu: View, Equatable {
                 Label(String(localized: "Share Session"), systemImage: "square.and.arrow.up")
             }
             .disabled(messagesEmpty)
+
+            // [T-chat-auto-compact-warning] Toggle row directly below Share
+            // Session, mirroring the UIKit menu. A Toggle (not a plain action)
+            // makes the on/off state visible at a glance.
+            Toggle(isOn: Binding(
+                get: { autoCompactEnabled },
+                set: { setAutoCompact($0) }
+            )) {
+                Label(String(localized: "自动压缩"), systemImage: "arrow.down.right.and.arrow.up.left")
+            }
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 14, weight: .medium))
@@ -6238,6 +6547,8 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     /// Codex OAuth instance (OpenAI OAuth, no custom base).
     let showFastModeToggle: Bool
     let fastModeEnabled: Bool
+    /// [T-chat-auto-compact-warning] Global auto-compact opt-in.
+    let autoCompactEnabled: Bool
 
     let onNewChat: () -> Void
     let onCompact: () -> Void
@@ -6253,6 +6564,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     let setSpeakEnabled: (Bool) -> Void
     let setEnhancedCache: (Bool) -> Void
     let setFastMode: (Bool) -> Void
+    let setAutoCompact: (Bool) -> Void
     let onTokenUsage: () -> Void
     let onSearchChat: () -> Void
     let onShareSession: () -> Void
@@ -6269,6 +6581,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
         let enhancedCacheEnabled: Bool
         let showFastModeToggle: Bool
         let fastModeEnabled: Bool
+        let autoCompactEnabled: Bool
     }
 
     private var key: Key {
@@ -6278,7 +6591,8 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
             showEnhancedCacheToggle: showEnhancedCacheToggle,
             enhancedCacheEnabled: enhancedCacheEnabled,
             showFastModeToggle: showFastModeToggle,
-            fastModeEnabled: fastModeEnabled)
+            fastModeEnabled: fastModeEnabled,
+            autoCompactEnabled: autoCompactEnabled)
     }
 
     final class Coordinator {
@@ -6420,6 +6734,13 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
                                   image: UIImage(systemName: "square.and.arrow.up"),
                                   attributes: key.messagesEmpty ? [.disabled] : []) { _ in
             coordinator.parent.onShareSession()
+        })
+        // [T-chat-auto-compact-warning] Toggle row below Share Session. The
+        // checkmark state is the UIKit-menu equivalent of the SwiftUI Toggle.
+        tailGroup.append(UIAction(title: String(localized: "自动压缩"),
+                                  image: UIImage(systemName: "arrow.down.right.and.arrow.up.left"),
+                                  state: key.autoCompactEnabled ? .on : .off) { _ in
+            coordinator.parent.setAutoCompact(!key.autoCompactEnabled)
         })
         groups.append(UIMenu(options: .displayInline, children: tailGroup))
 

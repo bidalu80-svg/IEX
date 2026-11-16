@@ -169,7 +169,7 @@ import Foundation
     /// Set `withBase64` to true only when the caller explicitly wants the
     /// raw base64 blob inline (e.g. piping to another tool).
     ///
-    /// Keys on success: text, success, page_url?, image_path?,
+    /// Keys on success: text, success, control, page_url?, image_path?,
     /// ze_url?, image_base64?, fetched_file?, fetched_bytes?,
     /// fetched_path?, fetched_ze_url?.
     /// Keys on failure: text, success=false.
@@ -260,6 +260,8 @@ import Foundation
         let out = NSMutableDictionary()
         out["text"] = r.text
         out["success"] = r.success
+        out["control"] = r.control.rawValue
+        if let code = r.errorCode { out["error_code"] = code }
         if let url = r.pageURL, !url.isEmpty { out["page_url"] = url }
 
         // Persist screenshot + fetched bytes under the invoking session's

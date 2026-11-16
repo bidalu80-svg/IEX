@@ -454,6 +454,40 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 self.objectWillChange.send()
                 if !enabled { self.stopSpeech() }
             }
+
+        // Browser control transitions surface as an ephemeral system-info row
+        // (never a fabricated user message) and ride the next browser tool
+        // result as a `<system-reminder>` event. The pool owns the state; this
+        // VM only renders and forwards it.
+        browserTabPool.onControlStateChange = { [weak self] event in
+            guard let self else { return }
+            let page: String
+            if event.url.isEmpty {
+                page = ""
+            } else if event.title.isEmpty {
+                page = "：\(event.url)"
+            } else {
+                page = "：\(event.title) \(event.url)"
+            }
+            switch event.kind {
+            case .takeover:
+                self.appendSystemInfo("用户已接管浏览器\(page)。交还前模型不会操作浏览器。",
+                                      icon: "hand.raised.fill")
+            case .requestedTakeover:
+                let reason = event.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let detail = reason.isEmpty ? "" : "：\(reason)"
+                self.appendSystemInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
+                                      icon: "hand.raised.fill")
+            case .handBack:
+                if event.requested {
+                    self.appendSystemInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
+                                          icon: "checkmark.circle.fill")
+                } else {
+                    self.appendSystemInfo("用户已交还浏览器控制权\(page)。",
+                                          icon: "hand.wave.fill")
+                }
+            }
+        }
     }
 
     deinit {
@@ -546,6 +580,13 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             updateMentionMenuState()
         }
     }
+    /// [T-chat-quote-reply] The message currently being replied to. Shown as
+    /// a dismissible strip above the composer and consumed by the next send.
+    @Published var pendingQuote: MessageQuote?
+    /// [T-chat-auto-compact-warning] One-shot per conversation: once the red
+    /// mist has played, re-entering the same session must not flash again.
+    /// Kept on the VM (not view @State) so a view recreation cannot replay it.
+    var autoCompactWarningShown = false
     /// Caret position (character offset) published by the input text view.
     /// Used by the `@` mention detector to locate the active token.
     @Published var inputCaret: Int = 0 {
@@ -1226,6 +1267,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     // MARK: - Browser
     let browserTabPool = BrowserTabPool()
+    /// Dynamic control status appended to every request's system prompt, so a
+    /// model that missed the transient takeover event still knows the user owns
+    /// the browser before it tries a write.
+    var browserControlPromptFragment: String { browserTabPool.controlPromptFragment }
     /// When true, the agent loop pauses at the next checkpoint to let the user operate the browser.
     @Published var browserTakeoverActive = false
 
@@ -1762,6 +1807,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             + "- file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.\n"
             + "- browser_use: Web browsing (navigate, screenshot, click, type, get_text, scroll, scroll_and_collect, get_readable, get_backbone, fetch, etc.). "
             + "Starts with a desktop Safari user agent. Use screenshot to see the page.\n"
+            + "- browser_request_takeover: Hand the browser to the user for a step only they can do (login, CAPTCHA, payment, file picker). It waits with no timeout; when they tap 完成 it returns the current URL/title and control: agent, or user_cancelled if they close it.\n"
             + "- memory_write: Save a memory entry to today's daily log (YYYY-MM-DD.md). Use proactively to note user preferences, project patterns, and important context.\n"
             + "- memory_get: Recall memories with keyword search. Check memory at the start of new topics to leverage past knowledge.\n"
             + (ZeSubAgentPreferences.isEnabled
@@ -1933,7 +1979,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     /// Session ID for persistence integration. Set by the view on appear.
     var sessionId: String? {
-        didSet { browserTabPool.sessionId = sessionId }
+        didSet {
+            browserTabPool.sessionId = sessionId
+            if oldValue != sessionId { autoCompactWarningShown = false }
+        }
     }
 
     /// Filesystem routing identity used by shell/file tools. Child agents keep
@@ -2150,6 +2199,32 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         send(voiceCallText: nil, voiceCallTurnID: nil)
     }
 
+    /// [T-chat-quote-reply] Capture an immutable text snapshot of the target
+    /// message. Assistant turns use their visible text blocks; user turns use
+    /// the bubble text. The composer strip and the send path share this value.
+    func beginReply(to messageID: UUID) {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              !message.isCompactedHistory else { return }
+        let snapshot: String
+        if message.role == .assistant {
+            snapshot = message.blocks
+                .filter { if case .text = $0.kind { return true }; return false }
+                .map(\.content)
+                .joined(separator: "\n\n")
+        } else {
+            snapshot = message.content
+        }
+        pendingQuote = MessageQuote(
+            targetMessageId: message.id.uuidString,
+            text: snapshot.isEmpty ? String(localized: "（无文字内容）") : snapshot
+        )
+        AppFeedback.haptic()
+    }
+
+    func cancelReply() {
+        pendingQuote = nil
+    }
+
     func send(voiceCallText: String?, voiceCallTurnID callTurnID: UUID?) {
         if let callTurnID {
             guard voiceCallTurnID == callTurnID, voiceCallText != nil else { return }
@@ -2170,6 +2245,10 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
         let text = (voiceCallText ?? inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         let pendingAttachments: [InputAttachment] = voiceCallText == nil ? attachments : []
+        // [T-chat-quote-reply] Snapshot before any early-return path; the
+        // pending quote is only consumed once this send actually dispatches
+        // (auto-compact / compact-prompt paths keep it for the retried send).
+        let replyQuote: MessageQuote? = voiceCallText == nil ? pendingQuote : nil
         #if DEBUG
         logger.info("🔑DRAFT [vm=\(self.vmInstanceId)] send() text=\(text.count)ch attachments=\(pendingAttachments.count) isProcessing=\(self.isProcessing) sessionId=\(self.sessionId ?? "nil") draftId=\(self.draftId ?? "nil") inputText='\(String(self.inputText.prefix(30)))'")
         #else
@@ -2350,8 +2429,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
 
         // Note: toolSnapshots are NOT cleared here so the floating toolbar shows the full session history
+        if voiceCallText == nil { pendingQuote = nil }
         let displayText = text.isEmpty && pendingAttachments.isEmpty ? "" : text
-        let userMsg = ChatMessage(role: .user, content: displayText)
+        let userMsg = ChatMessage(role: .user, content: displayText, quote: replyQuote)
         messages.append(userMsg)
 
         // Snapshot and clear composer attachments only for a composer send.
@@ -2555,10 +2635,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 ))
             }
 
+            // [T-chat-quote-reply] Structured quote block comes first, then the
+            // actual prompt; buildRawMessage persists the snapshot separately.
+            if let replyQuote {
+                userParts.append(.text(replyQuote.modelFacingText))
+            }
             if !text.isEmpty {
                 userParts.append(.text(text))
             }
             let userMessage = AgentMessage(role: .user, parts: userParts)
+            userMessage.quote = replyQuote
             let userIdx = self.agentHistory.count
             self.agentHistory.append(userMessage)
 
@@ -3659,6 +3745,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             midActionTakeoverContinuation = nil
             c.resume()
         }
+        // A model-requested handover is also a suspension: stopping the
+        // session must resume its waiter with user_cancelled and reset control
+        // instead of leaving a zombie continuation.
+        if browserTabPool.pendingTakeoverRequest != nil {
+            browserTabPool.cancelTakeoverRequest()
+        }
         if let obs = foregroundObserver {
             NotificationCenter.default.removeObserver(obs)
             foregroundObserver = nil
@@ -3810,12 +3902,16 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                         chatMsg.inputAttachments = []
                     }
                 }
+                if let quote = prompt.quote {
+                    combinedParts.append(.text(quote.modelFacingText))
+                }
                 if !prompt.text.isEmpty {
                     combinedParts.append(.text(prompt.text))
                 }
             }
 
             let queueAgentMsg = AgentMessage(role: .user, parts: combinedParts)
+            queueAgentMsg.quote = queued.compactMap(\.quote).first
             let qIdx = self.agentHistory.count
             self.agentHistory.append(queueAgentMsg)
             if let pid = await self.persistAgentMessage(queueAgentMsg), qIdx < self.agentHistory.count {
@@ -3932,6 +4028,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                     chatMsg.inputAttachments = []
                 }
             }
+            if let quote = prompt.quote {
+                qCombinedParts.append(.text(quote.modelFacingText))
+            }
             if !prompt.text.isEmpty {
                 qCombinedParts.append(.text(prompt.text))
             }
@@ -3968,6 +4067,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         }
 
         let queueMsg = AgentMessage(role: .user, parts: qCombinedParts)
+        queueMsg.quote = queued.compactMap(\.quote).first
         let queueIdx = agentHistory.count
         agentHistory.append(queueMsg)
         if let pid = await persistAgentMessage(queueMsg, snapshots: [:]), queueIdx < agentHistory.count {
@@ -4476,6 +4576,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         var tools = makeAgentTools()
 
         var userSystemPrompt = baseSystemPrompt + "\n\n" + ZeVisualizationPrompt.instructions
+        userSystemPrompt += browserControlPromptFragment
         let activeModel = ProviderConfigStore.shared.entry(for: entry.id)?.model ?? selectedModel
         if let capFragment = activeModel.capabilityPromptFragment {
             userSystemPrompt += "\n\n" + capFragment
@@ -4865,6 +4966,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 logger.info("🔀AGENT_LOOP provider updated after fallback: \(prevEntryId ?? "nil") → \(newEntryId)")
                 provider = await makeAgentProvider(for: newEntry)
                 userSystemPrompt = baseSystemPrompt
+                userSystemPrompt += browserControlPromptFragment
                 if let capFragment = newEntry.model.capabilityPromptFragment {
                     userSystemPrompt += "\n\n" + capFragment
                 }
@@ -6110,4 +6212,3 @@ enum LLMProviderError: LocalizedError {
         }
     }
 }
-

@@ -10,6 +10,9 @@ final class ChatLayoutApplicationUITests: XCTestCase {
                                "--verify-conversation-chat", "--verify-chat-layout-only"]
         let verifyAvatar = ProcessInfo.processInfo.environment["ZE_VERIFY_SOUL_HEADER"] == "1"
         if verifyAvatar { app.launchArguments.append("--verify-soul-avatar") }
+        if ProcessInfo.processInfo.environment["ZE_VERIFY_KEYBOARD_HANG"] == "1" {
+            app.launchArguments.append("--verify-keyboard-hang")
+        }
         if let fallback = ProcessInfo.processInfo.environment["ZE_LAYOUT_DYLD"], !fallback.isEmpty {
             app.launchEnvironment["DYLD_FALLBACK_LIBRARY_PATH"] = fallback
         }

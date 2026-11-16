@@ -192,6 +192,11 @@ final class BrowserTabPoolRegistry {
 final class BrowserTabPool: ObservableObject {
     static let maxTabs = 3
 
+    /// Upper bound on tab-overview thumbnails kept in memory. Snapshots are
+    /// never written to disk; this cap is the cache's only growth bound, and
+    /// old entries are evicted oldest-first.
+    static let maxTabSnapshots = BrowserTabPool.maxTabs
+
     #if DEBUG
     /// Debug-only weak reference for the debug server to access the active pool.
     static weak var debugInstance: BrowserTabPool?
@@ -260,6 +265,11 @@ final class BrowserTabPool: ObservableObject {
     /// finished action only removes its own entry.
     private var inFlightAborts: [Int: (token: UInt64, abort: () -> Void)] = [:]
 
+    /// Per-tab in-flight action cancellation for 接管. Ends the action through
+    /// `ActionDeadTimeout(isTakeover:)` without rebuilding the tab. Tagged with
+    /// the same token as `inFlightAborts` so stale entries clean themselves up.
+    private var inFlightTakeoverAborts: [Int: (token: UInt64, abort: () -> Void)] = [:]
+
     /// Max time a browser_use call waits to acquire a tab id's serial slot, i.e.
     /// for the in-flight operation on that SAME tab to finish. This is the
     /// LOCK-WAIT timeout ONLY — it is deliberately separate from the per-action
@@ -269,6 +279,16 @@ final class BrowserTabPool: ObservableObject {
     private static let serialWaitTimeout: TimeInterval = 20
 
     @Published var tabs: [Tab] = []
+
+    /// Last captured overview thumbnail per tab id. Keyed by tab id instead of
+    /// stored on `Tab` so a tab whose WKWebView is torn down (idle eviction)
+    /// keeps its final picture for as long as the bounded cache allows.
+    /// Memory only — never persisted. [P2-tab-overview]
+    @Published private(set) var tabSnapshots: [Int: UIImage] = [:]
+    /// Oldest-first tab ids backing `tabSnapshots`, used to enforce
+    /// `maxTabSnapshots`.
+    private var tabSnapshotOrder: [Int] = []
+
     // [T-p2-shared-workspace] One pool can now serve a parent agent and its
     // helpers. Each agent (`owner` = its session id) keeps its own default
     // tab, so an implicit-tab action from one agent never lands on the tab
@@ -344,7 +364,16 @@ final class BrowserTabPool: ObservableObject {
     }
 
     @Published var selectedTabId: Int = 0 {
-        didSet { rebindLoadingObservation() }
+        didSet {
+            rebindLoadingObservation()
+            // Capture the tab being left before the view swaps it out. Doing
+            // this in the setter covers every switch path (tab chips,
+            // overview, new/closed tabs, agent-driven selection), not just the
+            // ones that happen to call a UI helper. [P2-tab-overview]
+            if oldValue != selectedTabId {
+                captureTabSnapshot(tabId: oldValue)
+            }
+        }
     }
     /// The GLOBAL default profile (Browser Settings / ze-config), as this
     /// pool last read it from UserDefaults. It decides what a tab is CREATED
@@ -382,6 +411,11 @@ final class BrowserTabPool: ObservableObject {
             if let sessionId, sessionId != oldValue {
                 loadPersistedURLs()
             }
+            // A reused pool that moves to a different real session starts
+            // clean; a draft→real id migration (nil → id) does not.
+            if let oldValue, oldValue != sessionId {
+                resetControlForNewSession()
+            }
         }
     }
 
@@ -392,10 +426,51 @@ final class BrowserTabPool: ObservableObject {
     /// Whether the active tab's webview is currently loading a page.
     @Published var isBrowserLoading: Bool = false
 
-    /// Whether the agent is actively executing a browser action on any tab.
-    var isAgentBrowsing: Bool {
-        tabs.contains { $0.inUse }
-    }
+    /// Compatibility alias for the control state machine. Kept for callers
+    /// outside the sheet; never a second gate inside the UI.
+    var isAgentBrowsing: Bool { controlState == .agent }
+
+    // MARK: - Browser Control (P3)
+
+    /// Pool-level single source of truth for UI usability. `agent` while the
+    /// agent drives, `user` after 接管 (until 交还), `idle` otherwise. The old
+    /// `isAgentBusy` blanket lock is replaced by this state in BrowserSheetView.
+    @Published private(set) var controlState: BrowserControlState = .idle
+
+    /// Called on every user-visible control transition. The chat VM turns it
+    /// into an ephemeral session system event; it never fabricates a user
+    /// message.
+    var onControlStateChange: ((BrowserControlEvent) -> Void)?
+
+    /// Non-nil while an agent-initiated `browser_request_takeover` is waiting
+    /// for the user. `controlState` is `.user` throughout; this carries the
+    /// reason shown in the sheet banner and the id that guards the single
+    /// waiter from double-resume.
+    @Published private(set) var pendingTakeoverRequest: BrowserTakeoverRequestInfo?
+
+    /// True while the current `.user` control state came from the agent's
+    /// `browser_request_takeover` tool (as opposed to the user pressing 接管).
+    var isTakeoverRequested: Bool { pendingTakeoverRequest != nil }
+
+    /// Continuation for the waiting `browser_request_takeover` action. The
+    /// action yields here — no polling, no timeout, no main-thread blocking.
+    private var takeoverRequestContinuation: CheckedContinuation<BrowserActionResult, Never>?
+    /// Covers the tiny window where the user finishes/cancels before the
+    /// action reaches its continuation (e.g. an already-cancelled task).
+    private var bufferedTakeoverRequestResult: (id: UUID, result: BrowserActionResult)?
+
+    /// System-event lines waiting to ride the next browser tool result. Bounded
+    /// like the dialog queue so a pathological flapping session cannot grow it
+    /// without limit.
+    private var pendingControlEvents: [String] = []
+    private static let maxPendingControlEvents = 8
+
+    /// Read-only actions allowed while the user holds control. Everything else
+    /// returns `user_takeover` before touching the WKWebView.
+    private static let readOnlyActions: Set<BrowserAction> = [
+        .screenshot, .getText, .getPageInfo, .getReadable, .getBackbone,
+        .findElements, .getCookies, .listTabs, .waitForDomStable, .fetch
+    ]
 
     /// The manager for the currently selected UI tab.
     var activeManager: BrowserUseManager? {
@@ -475,6 +550,7 @@ final class BrowserTabPool: ObservableObject {
         // create the tab: the agent needs *some* surface to act on, and
         // failing here would surface as an unrecoverable tool error.
         BrowserTabPoolRegistry.shared.requestSlot(for: self)
+        discardTabSnapshot(forTabId: 0)
         let manager = makeManager()
         let tab = Tab(id: 0, manager: manager, inUse: true)
         tabs.append(tab)
@@ -494,6 +570,7 @@ final class BrowserTabPool: ObservableObject {
                 logger.info("Skipping UI prefetch tab — global cap reached and no idle siblings to evict")
                 return
             }
+            discardTabSnapshot(forTabId: 0)
             let manager = makeManager()
             let tab = Tab(id: 0, manager: manager, inUse: false)
             tabs.append(tab)
@@ -524,6 +601,7 @@ final class BrowserTabPool: ObservableObject {
             return .error("Browser memory cap reached across all sessions (\(BrowserTabPoolRegistry.globalTabCap) tabs). Close a tab here or in another session first.")
         }
         let nextId = (tabs.map(\.id).max() ?? -1) + 1
+        discardTabSnapshot(forTabId: nextId)
         let manager = makeManager()
         let tab = Tab(id: nextId, manager: manager, inUse: true)
         tabs.append(tab)
@@ -582,6 +660,7 @@ final class BrowserTabPool: ObservableObject {
             return nil
         }
         let nextId = (tabs.map(\.id).max() ?? -1) + 1
+        discardTabSnapshot(forTabId: nextId)
         // A popup is a new tab like any other: it starts from the global
         // default as it stands now, not from what this pool read at init.
         syncGlobalDefaultsFromStore()
@@ -612,6 +691,7 @@ final class BrowserTabPool: ObservableObject {
         }
         // Don't save URL on explicit close — user intentionally closed it
         savedURLs.removeValue(forKey: id)
+        discardTabSnapshot(forTabId: id)
         tabs.remove(at: idx)
         tabOwner.removeValue(forKey: id)
         for (o, t) in lastTabByOwner where t == id { lastTabByOwner.removeValue(forKey: o) }
@@ -798,8 +878,27 @@ final class BrowserTabPool: ObservableObject {
             url: input.url,
             tabId: input.tabId
         )
+        // A browser action from the agent/CLI is an agent-control action.
+        // `list_tabs` is pure metadata and must not flash the takeover card.
+        if input.action != .listTabs, controlState != .user {
+            controlState = .agent
+        }
         do {
-            let result = try await executeInner(action: input, singleTab: singleTab, owner: owner)
+            var result = try await executeInner(action: input, singleTab: singleTab, owner: owner)
+            // Every browser tool result carries control. A takeover event that
+            // happened while this action was in flight is prepended too, so the
+            // next model turn cannot miss it.
+            result.control = controlState
+            if let eventText = drainControlEventText() {
+                result.text = eventText + "\n" + result.text
+            }
+            // A completed takeover request hands control to the agent by
+            // definition (`control: agent`); settling it to idle here would
+            // make the very result that announced the handoff lie about it.
+            // Every subsequent action settles normally.
+            if !(input.action == .requestTakeover && result.success) {
+                settleControlAfterActionIfIdle()
+            }
             BrowserResourceMonitor.shared.actionDidFinish(
                 diagId,
                 success: result.success,
@@ -810,6 +909,7 @@ final class BrowserTabPool: ObservableObject {
             )
             return result
         } catch {
+            settleControlAfterActionIfIdle()
             BrowserResourceMonitor.shared.actionDidFinish(
                 diagId,
                 success: false,
@@ -828,6 +928,18 @@ final class BrowserTabPool: ObservableObject {
         // The tab an implicit (no tab_id) action from this agent falls back to.
         let implicitDefault = preferredTab(for: owner) ?? selectedTabId
         logger.info("[PoolTiming] enter action=\(input.action.rawValue) tab_id=\(input.tabId.map(String.init) ?? "nil") singleTab=\(singleTab)")
+
+        // Control gate before ANY tab is picked or created. Write actions are
+        // refused outright; read actions fall through and carry control: user.
+        if controlState == .user, !Self.readOnlyActions.contains(input.action) {
+            return takeoverRefusal()
+        }
+
+        // Waiting handover has no tab target: it suspends before any tab
+        // resolution so it cannot hold a serial slot while the user works.
+        if input.action == .requestTakeover {
+            return await requestTakeover(reason: input.reason ?? "")
+        }
 
         // Handle tab management actions
         switch input.action {
@@ -1001,7 +1113,15 @@ final class BrowserTabPool: ObservableObject {
         defer {
             if let i = tabs.firstIndex(where: { $0.id == targetId }) {
                 tabs[i].lastActivityDate = Date()
-                armPostActionGrace(tabId: targetId)
+                if controlState == .user {
+                    // Takeover wins: the tab is the user's now, so no agent
+                    // grace window may keep it marked inUse.
+                    tabs[i].inUse = false
+                    tabs[i].graceExpiryTask?.cancel()
+                    tabs[i].graceExpiryTask = nil
+                } else {
+                    armPostActionGrace(tabId: targetId)
+                }
             }
         }
 
@@ -1040,6 +1160,12 @@ final class BrowserTabPool: ObservableObject {
             logger.info("[PoolTiming] serial_slot_waited elapsed=\(serialAcquiredMs)ms tab=\(targetId)")
         }
         defer { releaseSerialSlot() }
+
+        // The user may have taken over while this action was queued behind a
+        // predecessor in the same tab's serial chain.
+        if controlState == .user, !Self.readOnlyActions.contains(input.action) {
+            return takeoverRefusal()
+        }
 
         // Re-resolve the tab by id — `idx` was computed before the serial-slot
         // await, during which the tabs array may have changed (idle reclaim,
@@ -1118,6 +1244,21 @@ final class BrowserTabPool: ObservableObject {
             }
             result = Self.stampTabId(r, targetId: targetId)
         } catch let dead as ActionDeadTimeout {
+            if dead.isTakeover {
+                // 接管 interrupted this action. Do NOT rebuild the tab: the
+                // user is now looking at that very page.
+                let pageURL = manager.webView.url?.absoluteString ?? manager.currentURL
+                var r = BrowserActionResult.userTakeover(pageURL: pageURL,
+                                                        pageTitle: manager.pageTitle)
+                r.tabId = targetId
+                if let i = tabs.firstIndex(where: { $0.id == targetId }) {
+                    tabs[i].inUse = false
+                    tabs[i].graceExpiryTask?.cancel()
+                    tabs[i].graceExpiryTask = nil
+                }
+                logger.info("[Takeover] action cancelled tab=\(targetId) action=\(input.action.rawValue) url=\(pageURL.prefix(80))")
+                return r
+            }
             // [T-browser-bg-stuck-diag] The action blew past actionDeadTimeout
             // — or [T-browser-cli-timeout-reclaim] its caller gave up on it
             // first (`abortedByCaller`) and asked for the tab back.
@@ -1176,6 +1317,8 @@ final class BrowserTabPool: ObservableObject {
     /// task was cancelled, or `abortAndRebuildTab` fired).
     private struct ActionDeadTimeout: Error {
         var abortedByCaller = false
+        /// True when the interruption came from 接管 rather than a wedged tab.
+        var isTakeover = false
     }
 
     /// One-shot race arbiter: exactly one of {operation completes, timer fires}
@@ -1273,9 +1416,19 @@ final class BrowserTabPool: ObservableObject {
             box.finish(.failure(ActionDeadTimeout(abortedByCaller: true)))
         }
         inFlightAborts[targetId] = (abortToken, abort)
+        // Separate channel so 接管 can end the wait without asking the
+        // dead-tab path to rebuild the WKWebView the user is taking over.
+        let takeoverAbort: @Sendable () -> Void = {
+            logger.warning("[Takeover] cancelling in-flight action tab=\(targetId) action=\(action)")
+            box.finish(.failure(ActionDeadTimeout(abortedByCaller: true, isTakeover: true)))
+        }
+        inFlightTakeoverAborts[targetId] = (abortToken, takeoverAbort)
         defer {
             if inFlightAborts[targetId]?.token == abortToken {
                 inFlightAborts.removeValue(forKey: targetId)
+            }
+            if inFlightTakeoverAborts[targetId]?.token == abortToken {
+                inFlightTakeoverAborts.removeValue(forKey: targetId)
             }
         }
 
@@ -1322,6 +1475,7 @@ final class BrowserTabPool: ObservableObject {
         // release call). Stash the last-known URL for the model.
         let deadURL = tabs.first(where: { $0.id == oldId })?.manager.currentURL ?? ""
         tabs.removeAll { $0.id == oldId }
+        discardTabSnapshot(forTabId: oldId)
         if selectedTabId == oldId { selectedTabId = tabs.first?.id ?? 0 }
 
         // Open a fresh tab (its own WebContent process). newTab selects it.
@@ -1342,6 +1496,7 @@ final class BrowserTabPool: ObservableObject {
             tabs[i].lastActivityDate = now
         }
         persistURLs()
+        if controlState == .agent { controlState = .idle }
         logger.info("Released all tabs (\(self.tabs.count) total)")
     }
 
@@ -1383,6 +1538,17 @@ final class BrowserTabPool: ObservableObject {
                 self.tabs[i].inUse = false
                 self.tabs[i].graceExpiryTask = nil
             }
+            self.settleControlAfterActionIfIdle()
+        }
+    }
+
+    /// After the last tab's grace window expires (or a metadata-only action
+    /// returns), an agent-controlled pool goes back to idle. Never overrides
+    /// `.user` — takeover persists until the explicit 交还.
+    private func settleControlAfterActionIfIdle() {
+        guard controlState == .agent else { return }
+        if !tabs.contains(where: { $0.inUse }) {
+            controlState = .idle
         }
     }
 
@@ -1390,6 +1556,343 @@ final class BrowserTabPool: ObservableObject {
     func touchActivity() {
         if let idx = tabs.firstIndex(where: { $0.id == selectedTabId }) {
             tabs[idx].lastActivityDate = Date()
+        }
+    }
+
+    // MARK: - User Takeover (P3)
+
+    /// The user tapped 接管. State flips first (so no queued action can slip
+    /// through), then every tab's in-flight agent action is interrupted via
+    /// the per-tab serial chain. Returns the page the user landed on.
+    @discardableResult
+    func userTakeover() -> BrowserActionResult {
+        guard controlState != .user else {
+            let snap = selectedPageSnapshot()
+            return BrowserActionResult(text: "User already controls the browser.",
+                                       pageURL: snap.url.isEmpty ? nil : snap.url,
+                                       control: .user)
+        }
+        controlState = .user
+        let snap = selectedPageSnapshot()
+
+        // Stop in-flight work and clear any post-action grace so `inUse`
+        // cannot keep the agent's claim on a tab the user now owns.
+        for i in tabs.indices {
+            tabs[i].inUse = false
+            tabs[i].graceExpiryTask?.cancel()
+            tabs[i].graceExpiryTask = nil
+        }
+        for tab in tabs {
+            if let entry = inFlightTakeoverAborts[tab.id] { entry.abort() }
+            tab.manager.stopLoading()
+        }
+
+        enqueueControlEvent("<system-reminder>用户已接管浏览器，当前页面："
+            + "\(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url)。交还前不要操作浏览器。</system-reminder>")
+        onControlStateChange?(BrowserControlEvent(kind: .takeover, state: .user,
+                                                  url: snap.url, title: snap.title))
+        logger.info("[Takeover] user took control url=\(snap.url.prefix(80))")
+        return BrowserActionResult(text: "User took over the browser.",
+                                   pageURL: snap.url.isEmpty ? nil : snap.url,
+                                   control: .user)
+    }
+
+    /// Clear every tab's agent claim and interrupt in-flight work before a
+    /// model-requested handover gives the browser to the user.
+    private func cancelAgentWorkForUserControl() {
+        for i in tabs.indices {
+            tabs[i].inUse = false
+            tabs[i].graceExpiryTask?.cancel()
+            tabs[i].graceExpiryTask = nil
+        }
+        for tab in tabs {
+            if let entry = inFlightTakeoverAborts[tab.id] { entry.abort() }
+            tab.manager.stopLoading()
+        }
+    }
+
+    // MARK: - Requested Takeover (P3.1)
+
+    /// Agent-initiated handover used by the `browser_request_takeover` tool.
+    /// This is the waiting action itself: it flips control to `.user` with a
+    /// `pendingTakeoverRequest` marker, fires the sheet's presentation
+    /// publisher, then suspends on a continuation until the user taps 完成
+    /// (`completeTakeoverRequest`) or closes/cancels (`cancelTakeoverRequest`).
+    /// There is deliberately no timeout task and no polling loop.
+    func requestTakeover(reason: String) async -> BrowserActionResult {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .error("request_takeover requires a non-empty `reason` describing what the user should do.")
+        }
+        guard controlState != .user else {
+            let snap = selectedPageSnapshot()
+            return .userTakeover(pageURL: snap.url, pageTitle: snap.title)
+        }
+
+        // A handover without a page is still a valid request (e.g. login before
+        // any navigation) — let the sheet open with its normal empty tab.
+        if tabs.isEmpty { ensureTabForUI() }
+
+        let request = BrowserTakeoverRequestInfo(id: UUID(), reason: trimmed)
+        controlState = .user
+        pendingTakeoverRequest = request
+        let snap = selectedPageSnapshot()
+
+        cancelAgentWorkForUserControl()
+
+        enqueueControlEvent("<system-reminder>模型请求用户接管浏览器，原因：\(trimmed)。当前页面："
+            + "\(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url)。用户完成前不要操作浏览器。</system-reminder>")
+        onControlStateChange?(BrowserControlEvent(kind: .requestedTakeover, state: .user,
+                                                  url: snap.url, title: snap.title,
+                                                  requested: true, reason: trimmed))
+        logger.info("[Takeover] model requested user takeover reason=\(trimmed.prefix(80)) url=\(snap.url.prefix(80))")
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<BrowserActionResult, Never>) in
+                if let buffered = bufferedTakeoverRequestResult {
+                    bufferedTakeoverRequestResult = nil
+                    if buffered.id == request.id {
+                        continuation.resume(returning: buffered.result)
+                    } else {
+                        takeoverRequestContinuation = continuation
+                    }
+                } else {
+                    takeoverRequestContinuation = continuation
+                }
+            }
+        } onCancel: {
+            // Session Stop cancels the tool task. Resume the waiter so the
+            // continuation cannot outlive the turn; the result is ignored by
+            // the cancelled turn but state must still go back to idle.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = self.finishTakeoverRequest(id: request.id, outcome: .cancelled(sessionStopped: true))
+            }
+        }
+    }
+
+    /// User tapped 完成 in the request banner or the sheet's existing 完成
+    /// button. Returns the result that resumes the waiting tool call.
+    @discardableResult
+    func completeTakeoverRequest() -> BrowserActionResult {
+        guard let request = pendingTakeoverRequest else {
+            let snap = selectedPageSnapshot()
+            return BrowserActionResult(text: "No pending browser takeover request.",
+                                       pageURL: snap.url.isEmpty ? nil : snap.url,
+                                       control: controlState)
+        }
+        return finishTakeoverRequest(id: request.id, outcome: .completed)
+    }
+
+    /// User closed the sheet or tapped 取消 while a request was pending.
+    @discardableResult
+    func cancelTakeoverRequest() -> BrowserActionResult {
+        guard let request = pendingTakeoverRequest else {
+            let snap = selectedPageSnapshot()
+            return BrowserActionResult(text: "No pending browser takeover request.",
+                                       pageURL: snap.url.isEmpty ? nil : snap.url,
+                                       control: controlState)
+        }
+        return finishTakeoverRequest(id: request.id, outcome: .cancelled(sessionStopped: false))
+    }
+
+    private enum TakeoverRequestOutcome {
+        case completed
+        case cancelled(sessionStopped: Bool)
+    }
+
+    /// Single finish path for both UI buttons and task cancellation. Guarding
+    /// on the request id makes duplicate taps / a late cancellation a no-op,
+    /// so the checked continuation can never be resumed twice.
+    @discardableResult
+    private func finishTakeoverRequest(id: UUID,
+                                       outcome: TakeoverRequestOutcome) -> BrowserActionResult {
+        guard let request = pendingTakeoverRequest, request.id == id else {
+            let snap = selectedPageSnapshot()
+            return BrowserActionResult(text: "No pending browser takeover request.",
+                                       pageURL: snap.url.isEmpty ? nil : snap.url,
+                                       control: controlState)
+        }
+        pendingTakeoverRequest = nil
+        let snap = selectedPageSnapshot()
+        let result: BrowserActionResult
+
+        switch outcome {
+        case .completed:
+            // Explicit hand-back to the agent. Do not settle this to idle in
+            // execute()'s wrapper: the result must say control: agent.
+            controlState = .agent
+            enqueueControlEvent("<system-reminder>用户已完成浏览器接管请求，当前页面："
+                + "\(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url)。你可以继续操作浏览器。</system-reminder>")
+            onControlStateChange?(BrowserControlEvent(kind: .handBack, state: .agent,
+                                                      url: snap.url, title: snap.title,
+                                                      requested: true, reason: request.reason))
+            result = BrowserActionResult(
+                text: "User completed the requested browser task.\n"
+                    + "Current page: \(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url)",
+                success: true,
+                pageURL: snap.url.isEmpty ? nil : snap.url,
+                control: .agent
+            )
+            logger.info("[Takeover] requested takeover completed url=\(snap.url.prefix(80))")
+
+        case .cancelled(let sessionStopped):
+            controlState = .idle
+            result = .userCancelled(pageURL: snap.url, pageTitle: snap.title,
+                                    sessionStopped: sessionStopped)
+            logger.info("[Takeover] requested takeover cancelled sessionStopped=\(sessionStopped) url=\(snap.url.prefix(80))")
+        }
+
+        if let continuation = takeoverRequestContinuation {
+            takeoverRequestContinuation = nil
+            continuation.resume(returning: result)
+        } else {
+            bufferedTakeoverRequestResult = (request.id, result)
+        }
+        return result
+    }
+
+    /// The user tapped 交还. State returns to idle; the event carries the page
+    /// they stopped on so the model can pick up without asking.
+    @discardableResult
+    func handControlBack() -> BrowserActionResult {
+        // While a model request is pending, 交还 / 完成 both mean "the user is
+        // done" and must resume the waiting tool call through the same path.
+        if pendingTakeoverRequest != nil {
+            return completeTakeoverRequest()
+        }
+        guard controlState == .user else {
+            let snap = selectedPageSnapshot()
+            return BrowserActionResult(text: "The user does not currently hold control.",
+                                       pageURL: snap.url.isEmpty ? nil : snap.url,
+                                       control: controlState)
+        }
+        controlState = .idle
+        let snap = selectedPageSnapshot()
+        enqueueControlEvent("<system-reminder>用户已交还浏览器控制权，当前页面："
+            + "\(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url)。你可以继续操作浏览器。</system-reminder>")
+        onControlStateChange?(BrowserControlEvent(kind: .handBack, state: .idle,
+                                                  url: snap.url, title: snap.title))
+        logger.info("[Takeover] user handed control back url=\(snap.url.prefix(80))")
+        return BrowserActionResult(text: "User handed browser control back.",
+                                   pageURL: snap.url.isEmpty ? nil : snap.url,
+                                   control: .idle)
+    }
+
+    /// Event lines for the next browser tool result, formatted as the existing
+    /// `<system-reminder>` session convention. Drains exactly once.
+    func drainControlEventText() -> String? {
+        guard !pendingControlEvents.isEmpty else { return nil }
+        let text = pendingControlEvents.joined(separator: "\n")
+        pendingControlEvents.removeAll()
+        return text
+    }
+
+    /// Prompt-level status so the model also sees control at turn start, even
+    /// before it issues another browser tool call.
+    var controlPromptFragment: String {
+        switch controlState {
+        case .idle:
+            return ""
+        case .agent:
+            return "\n\n<browser_control>Browser control: agent. The user has not taken over.</browser_control>"
+        case .user:
+            let snap = selectedPageSnapshot()
+            if let request = pendingTakeoverRequest {
+                return "\n\n<browser_control>Browser control: USER (agent requested takeover: \(request.reason)). "
+                    + "The user is performing this step now. Current page: "
+                    + "\(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url). "
+                    + "Wait for the browser_request_takeover tool result; do not perform browser write actions "
+                    + "until it returns. Read-only actions are allowed and report control: user.</browser_control>"
+            }
+            return "\n\n<browser_control>Browser control: USER. The user has taken over the browser. "
+                + "Current page: \(snap.title.isEmpty ? "(untitled)" : snap.title) \(snap.url). "
+                + "Do not perform browser write actions (navigate, click, type, scroll, new_tab, close_tab, "
+                + "set_user_agent, set_viewport, execute_js) until the user hands control back — they return "
+                + "user_takeover. Read-only actions are allowed and report control: user.</browser_control>"
+        }
+    }
+
+    private func takeoverRefusal() -> BrowserActionResult {
+        let snap = selectedPageSnapshot()
+        return .userTakeover(pageURL: snap.url, pageTitle: snap.title)
+    }
+
+    private func selectedPageSnapshot() -> (url: String, title: String) {
+        guard let manager = activeManager ?? tabs.first?.manager else { return ("", "") }
+        let url = manager.webView.url?.absoluteString ?? manager.currentURL
+        return (url, manager.pageTitle)
+    }
+
+    private func enqueueControlEvent(_ text: String) {
+        pendingControlEvents.append(text)
+        while pendingControlEvents.count > Self.maxPendingControlEvents {
+            pendingControlEvents.removeFirst()
+        }
+    }
+
+    private func resetControlForNewSession() {
+        if let request = pendingTakeoverRequest {
+            _ = finishTakeoverRequest(id: request.id, outcome: .cancelled(sessionStopped: true))
+        }
+        controlState = .idle
+        pendingControlEvents.removeAll()
+    }
+
+    // MARK: - Tab Overview Snapshots
+
+    /// Last overview thumbnail captured for `id`, or nil when the card should
+    /// fall back to favicon + title.
+    func tabSnapshot(forTabId id: Int) -> UIImage? {
+        tabSnapshots[id]
+    }
+
+    /// Capture a thumbnail of `tabId`'s visible page. Called from the
+    /// `selectedTabId` setter (the outgoing tab is still the visible one —
+    /// SwiftUI only swaps the web view on its next update) and by the overview
+    /// opener for the tab currently on screen. The capture itself never
+    /// changes the webView frame/viewport (see `captureThumbnail`).
+    func captureTabSnapshot(tabId: Int) {
+        guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
+        let manager = tab.manager
+        manager.captureThumbnail { [weak self] image in
+            guard let image else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Ignore a late capture from a tab that was closed or whose
+                // WKWebView was rebuilt before the snapshot finished.
+                guard self.tabs.contains(where: { $0.id == tabId && $0.manager === manager }) else { return }
+                self.storeTabSnapshot(image, forTabId: tabId)
+            }
+        }
+    }
+
+    private func storeTabSnapshot(_ image: UIImage, forTabId id: Int) {
+        tabSnapshots[id] = image
+        tabSnapshotOrder.removeAll { $0 == id }
+        tabSnapshotOrder.append(id)
+        while tabSnapshotOrder.count > Self.maxTabSnapshots {
+            let evictedId = tabSnapshotOrder.removeFirst()
+            tabSnapshots.removeValue(forKey: evictedId)
+        }
+    }
+
+    private func discardTabSnapshot(forTabId id: Int) {
+        guard tabSnapshots[id] != nil || tabSnapshotOrder.contains(id) else { return }
+        tabSnapshots.removeValue(forKey: id)
+        tabSnapshotOrder.removeAll { $0 == id }
+    }
+
+    /// Called after `didFinish`. A short delay lets the first frame paint and
+    /// keeps the capture clear of the sheet's presentation/resize animation;
+    /// the capture itself is frame-preserving either way.
+    private func scheduleTabSnapshotAfterLoad(manager: BrowserUseManager) {
+        guard let tabId = tabs.first(where: { $0.manager === manager })?.id else { return }
+        Task { @MainActor [weak self, weak manager] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, let self, let manager else { return }
+            guard self.tabs.contains(where: { $0.id == tabId && $0.manager === manager }) else { return }
+            self.captureTabSnapshot(tabId: tabId)
         }
     }
 
@@ -1520,6 +2023,12 @@ final class BrowserTabPool: ObservableObject {
         }
         manager.closeHandler = { [weak self] webView in
             self?.closeWebView(webView)
+        }
+        // Refresh this tab's overview thumbnail after each completed load.
+        // The closure is weak on both sides; the pool owns the manager.
+        manager.onPageLoadFinished = { [weak self, weak manager] in
+            guard let self, let manager else { return }
+            self.scheduleTabSnapshotAfterLoad(manager: manager)
         }
         // Downloads land in this session's /var/ze/workspace/ so the agent
         // can read and operate on them in follow-up turns.

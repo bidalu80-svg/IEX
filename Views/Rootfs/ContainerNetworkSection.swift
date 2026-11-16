@@ -58,6 +58,29 @@ struct ContainerNetworkSection: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .disabled(servers.isEmpty)
+
+                // [T-container-dns-feedback] Surface the result of the last
+                // apply directly under the save button. Previously lastApplied
+                // and lastError were published but never displayed, so the
+                // button looked inert on both success and failure.
+                if let lastError = dns.lastError {
+                    Label {
+                        Text(lastError)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red)
+                } else if let lastApplied = dns.lastApplied {
+                    Label {
+                        Text("已应用：\(lastApplied.formatted(date: .abbreviated, time: .shortened))")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill")
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(.green)
+                }
             }
         } header: {
             Text("Container Network")

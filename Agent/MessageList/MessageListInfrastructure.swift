@@ -298,6 +298,36 @@ class SelfSizingCell: UICollectionViewCell {
             return copy
         }
 
+        // [T-keyboard-hang] Same-width cache BEFORE super. This is the broad
+        // window the old code checked only AFTER `super` had already re-entered
+        // UIHostingConfiguration/TextKit. During a keyboard transition UIKit
+        // re-asks every visible cell on each bounds-height change; returning
+        // the last measured height for the same content width is an O(1)
+        // answer and never enters SwiftUI. Content/config changes clear this
+        // cache in applyContentConfiguration/clearCachedHeight, so a genuine
+        // width/content change still measures through the normal path below.
+        if let cached = lastComputedHeight,
+           let cachedW = lastComputedWidth,
+           abs(layoutAttributes.size.width - cachedW) < 1 {
+            #if DEBUG
+            if let cv = superview as? UICollectionView,
+               (cv.collectionViewLayout as? MessageListLayout)?.isKeyboardTransitioning == true {
+                KeyboardHangProbe.recordKeyboardCacheHit()
+            }
+            #endif
+            let copy = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+            copy.size.width = cachedW
+            copy.size.height = cached
+            Self.broadHits &+= 1
+            let now = CACurrentMediaTime()
+            if now - Self.broadLastFlush > 1.0 {
+                AppLogger(category: "ScrollStall").debug("[CACHE-BROAD] last1s hits=\(Self.broadHits)")
+                Self.broadHits = 0
+                Self.broadLastFlush = now
+            }
+            return copy
+        }
+
         // [T-ios-selfsizingcell-super-plaf-async-race, crash3 build 43 iOS 18.3]
         // `super.preferredLayoutAttributesFitting` is NOT a passive attribute
         // copy — it drives UICollectionViewCell.systemLayoutSizeFittingSize →
@@ -320,6 +350,9 @@ class SelfSizingCell: UICollectionViewCell {
         var hostingSubtree: [UIView] = []
         Self.collectSubtree(self.contentView, into: &hostingSubtree)
         var superAttrs: UICollectionViewLayoutAttributes = layoutAttributes
+        #if DEBUG
+        KeyboardHangProbe.recordSelfSizingSuperCall()
+        #endif
         let superOk = noff_try_objc {
             withExtendedLifetime(hostingSubtree) {
                 superAttrs = super.preferredLayoutAttributesFitting(layoutAttributes)
@@ -1067,6 +1100,8 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var onStop: (() -> Void)?
     @Published var onRetry: (() -> Void)?
     @Published var onEdit: (() -> Void)?
+    /// [T-chat-quote-reply] Start a reply to this message.
+    @Published var onReply: (() -> Void)?
     @Published var onDelete: (() -> Void)?
     @Published var onWithdraw: (() -> Void)?
     @Published var autoRetryAttempt: Int = 0

@@ -1,3 +1,4 @@
+import Citadel
 import Foundation
 
 /// Result returned to the model after a remote-server tool request. The
@@ -18,8 +19,9 @@ struct RemoteServerAIConfirmationRequest: Identifiable {
 }
 
 /// Non-secret connection details proposed by a model. A draft is never
-/// persisted or connected automatically: the native editor remains the only
-/// place where a user can enter credentials and save a server profile.
+/// persisted or connected automatically. Credentials are entered in the native
+/// editor, or written directly to Keychain by the separate explicitly
+/// confirmed configure-credentials tool; neither path puts secrets in a draft.
 struct RemoteServerAIDraft: Identifiable, Hashable {
     let id = UUID()
     let name: String
@@ -89,6 +91,11 @@ final class RemoteServerAIConfirmationGate: ObservableObject {
 /// The only route through which a model may inspect or operate a configured
 /// server. It exposes profile metadata and approved results, never private
 /// keys, passphrases, passwords, Keychain records, or raw connection internals.
+///
+/// `remote_server_configure_credentials` is the single write-only exception:
+/// it accepts credentials the user explicitly supplied, shows a confirmation
+/// that contains only the server identity and credential type, writes through
+/// `RemoteServerSecretStore`, and never reads an existing credential back.
 @MainActor
 enum RemoteServerAIToolGateway {
     private static let store = RemoteServerStore.shared
@@ -100,14 +107,14 @@ enum RemoteServerAIToolGateway {
 
     static var statusFragment: String {
         let servers = authorizedServers
-        let configurationGuidance = "\n\nRemote server configuration: When the user explicitly asks to add an SSH server and has supplied its host and username, use remote_server_draft to prepare a native review form. Pass only non-secret metadata. Never pass, request through this tool, infer, print, or store passwords, private keys, passphrases, Keychain values, or host-key approvals. The user must review the form, enter credentials locally, save it, and confirm the SSH host fingerprint themselves."
+        let configurationGuidance = "\n\nRemote server configuration: When the user explicitly asks to add an SSH server and has supplied its host and username, use remote_server_draft to prepare a native review form. Pass only non-secret metadata. If the user explicitly gives you a password, private key, or private-key passphrase and asks to save it for a server, use remote_server_configure_credentials; it writes the value directly to the device Keychain after a user confirmation. Credentials are write-only: never echo them in the tool result, chat text, session title, logs, or files, never ask the tool to read an existing credential, and never pass a credential to any other tool. The user must still review the native form's non-secret fields and confirm the SSH host fingerprint themselves."
         guard !servers.isEmpty else {
             return configurationGuidance + "\n\nRemote server access: no server is currently authorized for AI. Do not claim that you can operate a user's SSH server."
         }
         let descriptions = servers.map { server in
-            "- \(server.name) [id: \(server.id.uuidString), endpoint: \(server.endpointDescription), connected: \(connection.isConnected(to: server.id)), access: \(server.aiAccess.title)]"
+            "- \(server.name) [id: \(server.id.uuidString), endpoint: \(server.endpointDescription), auth: \(server.authentication.title), connected: \(connection.isConnected(to: server.id)), access: \(server.aiAccess.title)]"
         }.joined(separator: "\n")
-        return configurationGuidance + "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve passwords, private keys, passphrases, or Keychain data. A server must already be connected by the user in Settings. Every command and every write/delete/rename operation opens a user confirmation; never describe an action as completed before the tool returns success."
+        return configurationGuidance + "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve existing passwords, private keys, passphrases, or Keychain data. Only pass credentials the user has explicitly supplied to remote_server_configure_credentials. A server must already be connected by the user in Settings before commands or SFTP operations. Every command and every write/delete/rename operation opens a user confirmation; never describe an action as completed before the tool returns success."
     }
 
     static func definitions() -> [AgentToolDefinition] {
@@ -139,7 +146,7 @@ enum RemoteServerAIToolGateway {
         tools += [
             AgentToolDefinition(
                 name: "remote_server_list",
-                description: "List AI-authorized SSH server metadata and connection state. This reveals no password, private key, passphrase, or Keychain content.",
+                description: "List AI-authorized SSH server metadata (including the authentication method) and connection state. This reveals no password, private key, passphrase, or Keychain content.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
                 ],
@@ -194,6 +201,29 @@ enum RemoteServerAIToolGateway {
                 required: ["tool_title", "server_id", "action", "path"],
                 propertyOrdering: ["tool_title", "server_id", "action", "path", "new_path", "content", "is_directory"]
             ),
+            AgentToolDefinition(
+                name: "remote_server_configure_credentials",
+                description: "Save credentials the user explicitly supplied for one AI-authorized server. The credential type is chosen by the server's authentication method: password requires password, private key requires private_key (with optional passphrase). The value is written only to the device Keychain through the same store as Settings; it is never read back, echoed, logged, or placed in the result. Always requires user confirmation showing the server name/address and credential type, never the credential itself.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
+                    "server_id": commonServer,
+                    "password": AgentToolParam(type: .string, description: "The password explicitly supplied by the user for a password-authenticated server. Write-only; never read back."),
+                    "private_key": AgentToolParam(type: .string, description: "The OpenSSH private key explicitly supplied by the user for a private-key server. Write-only; never read back."),
+                    "passphrase": AgentToolParam(type: .string, description: "Optional private-key passphrase explicitly supplied by the user. Leave empty for an unencrypted key."),
+                ],
+                required: ["tool_title", "server_id"],
+                propertyOrdering: ["tool_title", "server_id", "password", "private_key", "passphrase"]
+            ),
+            AgentToolDefinition(
+                name: "remote_server_delete",
+                description: "Permanently delete one AI-authorized server profile, disconnect it first, and clear its Keychain credentials. This is irreversible and always requires a destructive user confirmation showing the server name and address.",
+                parameters: [
+                    "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
+                    "server_id": commonServer,
+                ],
+                required: ["tool_title", "server_id"],
+                propertyOrdering: ["tool_title", "server_id"]
+            ),
         ]
         return tools
     }
@@ -212,6 +242,10 @@ enum RemoteServerAIToolGateway {
             return await readFile(arguments)
         case "remote_sftp_write":
             return await mutateFileSystem(arguments)
+        case "remote_server_configure_credentials":
+            return await configureCredentials(arguments)
+        case "remote_server_delete":
+            return await deleteServer(arguments)
         default:
             return .init(output: "Error: Unknown remote server tool '\(name)'.", success: false)
         }
@@ -256,13 +290,14 @@ enum RemoteServerAIToolGateway {
                 "endpoint": server.endpointDescription,
                 "labels": server.labels,
                 "connected": connection.isConnected(to: server.id),
+                "authentication": server.authentication.rawValue,
                 "access": server.aiAccess.title,
                 "can_read": server.aiAccess.allowsRead,
                 "can_run_commands": server.aiAccess.allowsCommands,
                 "can_write": server.aiAccess.allowsWrites,
             ]
         }
-        return json(["servers": rows, "security": "Credentials are intentionally unavailable to AI."])
+        return json(["servers": rows, "security": "Credentials are write-only for AI: they can never be read back, echoed, or logged."])
     }
 
     private static func runCommand(_ arguments: [String: Any]) async -> RemoteServerAIToolResult {
@@ -365,6 +400,100 @@ enum RemoteServerAIToolGateway {
         }
     }
 
+    private static func configureCredentials(_ arguments: [String: Any]) async -> RemoteServerAIToolResult {
+        guard let server = authorizedServer(from: arguments) else {
+            return .init(output: "Error: Server is not authorized for AI. Ask the user to grant AI access in Settings → 服务器与连接 first.", success: false)
+        }
+
+        switch server.authentication {
+        case .password:
+            guard let password = arguments["password"] as? String, !password.isEmpty else {
+                return .init(output: "Error: This server uses password authentication. Provide the user-supplied password in the password parameter.", success: false)
+            }
+            let approved = await RemoteServerAIConfirmationGate.shared.request(
+                serverName: server.name,
+                operation: "保存服务器密码",
+                detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n凭据类型：密码",
+                isDestructive: false
+            )
+            guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
+            do {
+                try RemoteServerSecretStore.save(password, kind: .password, for: server.id)
+                RemoteServerSecretStore.delete(kind: .privateKey, for: server.id)
+                RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
+                RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
+                return .init(output: "Success: Saved the password for '\(server.name)' to the device Keychain. The value was not returned or logged.", success: true)
+            } catch {
+                return .init(output: "Error: Could not save the server password: \(error.localizedDescription)", success: false)
+            }
+
+        case .privateKey:
+            guard let privateKey = arguments["private_key"] as? String,
+                  !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .init(output: "Error: This server uses private-key authentication. Provide the user-supplied private key in the private_key parameter.", success: false)
+            }
+            do {
+                _ = try SSHKeyDetection.detectPrivateKeyType(from: privateKey)
+            } catch {
+                return .init(output: "Error: Unsupported private key format. Only OpenSSH RSA and Ed25519 keys are accepted.", success: false)
+            }
+            let passphrase = (arguments["passphrase"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let approved = await RemoteServerAIConfirmationGate.shared.request(
+                serverName: server.name,
+                operation: "保存服务器私钥",
+                detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n凭据类型：私钥\(passphrase == nil ? "" : "及私钥口令")",
+                isDestructive: false
+            )
+            guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
+            do {
+                try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: server.id)
+                if let passphrase {
+                    try RemoteServerSecretStore.save(passphrase, kind: .privateKeyPassphrase, for: server.id)
+                } else {
+                    RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
+                }
+                RemoteServerSecretStore.delete(kind: .password, for: server.id)
+                RemoteServerSessionCredentials.shared.clear(for: server.id)
+                return .init(output: "Success: Saved the private key\(passphrase == nil ? "" : " and passphrase") for '\(server.name)' to the device Keychain. The values were not returned or logged.", success: true)
+            } catch {
+                return .init(output: "Error: Could not save the server private key: \(error.localizedDescription)", success: false)
+            }
+
+        case .none:
+            return .init(output: "Error: This server uses none authentication and stores no credential.", success: false)
+        }
+    }
+
+    private static func deleteServer(_ arguments: [String: Any]) async -> RemoteServerAIToolResult {
+        guard let server = authorizedServer(from: arguments) else {
+            return .init(output: "Error: Server is not authorized for AI. Ask the user to grant AI access in Settings → 服务器与连接 first.", success: false)
+        }
+        let approved = await RemoteServerAIConfirmationGate.shared.request(
+            serverName: server.name,
+            operation: "删除服务器",
+            detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n将断开当前连接并永久删除服务器配置及其 Keychain 中的密码、私钥和口令。此操作不可撤销。",
+            isDestructive: true
+        )
+        guard approved else {
+            return .init(output: "User denied deleting the server. Do not retry unless the user asks again.", success: false)
+        }
+        if connection.isConnected(to: server.id) {
+            await connection.disconnect(serverID: server.id)
+        }
+        do {
+            try store.delete(server)
+            return .init(output: "Success: Deleted server '\(server.name)' (\(server.endpointDescription)), disconnected it, and cleared its Keychain credentials.", success: true)
+        } catch {
+            return .init(output: "Error: Could not delete the server: \(error.localizedDescription)", success: false)
+        }
+    }
+
+    private static func authorizedServer(from arguments: [String: Any]) -> RemoteServerProfile? {
+        guard let value = string("server_id", from: arguments), let id = UUID(uuidString: value),
+              let server = store.server(id: id), server.enabled, server.aiAccess != .none else { return nil }
+        return server
+    }
+
     private enum RequiredAccess { case read, commands, write }
 
     private static func server(from arguments: [String: Any], required: RequiredAccess) -> RemoteServerProfile? {
@@ -409,7 +538,11 @@ enum RemoteServerAIToolGateway {
     }
 
     private static func authentication(from arguments: [String: Any]) -> RemoteServerAuthentication {
-        string("authentication", from: arguments) == "password" ? .password : .privateKey
+        switch string("authentication", from: arguments) {
+        case "password": return .password
+        case "none": return .none
+        default: return .privateKey
+        }
     }
 
     private static func accessLevel(from arguments: [String: Any]) -> RemoteServerAIAccessLevel {

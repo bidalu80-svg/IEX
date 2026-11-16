@@ -216,6 +216,7 @@ extension AIChatViewModel {
                 currentProvider = await makeAgentProvider(for: nextEntry)
                 // Rebuild system prompt for the new model's capabilities
                 var rebuiltPrompt = baseSystemPrompt
+                rebuiltPrompt += browserControlPromptFragment
                 if let capFragment = nextEntry.model.capabilityPromptFragment {
                     rebuiltPrompt += "\n\n" + capFragment
                 }
@@ -269,6 +270,7 @@ extension AIChatViewModel {
                     currentEntryId = nextEntryId
                     currentProvider = await makeAgentProvider(for: nextEntry)
                     var rebuiltPrompt = baseSystemPrompt
+                    rebuiltPrompt += browserControlPromptFragment
                     if let capFragment = nextEntry.model.capabilityPromptFragment {
                         rebuiltPrompt += "\n\n" + capFragment
                     }
@@ -351,6 +353,7 @@ extension AIChatViewModel {
                     currentEntryId = nextEntryId
                     currentProvider = await makeAgentProvider(for: nextEntry)
                     var rebuiltPrompt = baseSystemPrompt
+                    rebuiltPrompt += browserControlPromptFragment
                     if let capFragment = nextEntry.model.capabilityPromptFragment {
                         rebuiltPrompt += "\n\n" + capFragment
                     }

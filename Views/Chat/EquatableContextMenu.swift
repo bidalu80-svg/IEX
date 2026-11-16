@@ -41,6 +41,7 @@ struct AssistantMenuKey: Equatable {
     let hasReadAloud: Bool
     let hasCopyScreenshot: Bool
     let hasCompact: Bool
+    let hasReply: Bool
     let isActive: Bool
 }
 

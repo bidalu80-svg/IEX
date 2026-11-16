@@ -126,6 +126,10 @@ struct AgentMessage: @unchecked Sendable {
     /// via id instead of sort_order. nil while the message is still in-flight
     /// (e.g. mid-stream before persist).
     var dbMessageId: String? = nil
+    /// [T-chat-quote-reply] UI-only quote snapshot carried into persistence.
+    /// The model-facing block is already present in `parts`; buildRawMessage
+    /// strips it from parts_json and stores this field separately.
+    var quote: MessageQuote? = nil
 }
 
 // MARK: - Stream Events

@@ -9,6 +9,9 @@ enum RemoteServerSecretStore {
     enum Kind: String, CaseIterable {
         case privateKey
         case privateKeyPassphrase
+        /// SSH password authentication. Stored with the same device-only
+        /// Keychain policy as the private-key material.
+        case password
         /// Passwords and S3 secret keys for backup destinations. They are
         /// device-only and intentionally excluded from Codable profiles.
         case remoteSecret
@@ -84,8 +87,10 @@ enum RemoteServerSecretStoreError: LocalizedError {
     }
 }
 
-/// Password authentication is session-only by design. It has no disk or
-/// Keychain persistence and is cleared on an explicit disconnect/delete.
+/// Transient in-memory cache for password authentication. Passwords are
+/// persisted in the Keychain under `RemoteServerSecretStore.Kind.password`;
+/// this map is only the in-process fallback used by older flows and by the
+/// connection path when a Keychain read is unavailable.
 @MainActor
 final class RemoteServerSessionCredentials {
     static let shared = RemoteServerSessionCredentials()

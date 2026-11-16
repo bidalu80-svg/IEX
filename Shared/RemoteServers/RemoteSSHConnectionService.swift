@@ -201,7 +201,13 @@ final class RemoteSSHConnectionService: ObservableObject {
     private func authenticationMethod(for server: RemoteServerProfile) throws -> SSHAuthenticationMethod {
         switch server.authentication {
         case .password:
-            guard let password = RemoteServerSessionCredentials.shared.password(for: server.id), !password.isEmpty else {
+            // Keychain is authoritative; the in-memory value is a fallback for
+            // servers configured earlier in this process.
+            let storedPassword = try? RemoteServerSecretStore.value(kind: .password, for: server.id)
+            let memoryPassword = RemoteServerSessionCredentials.shared.password(for: server.id)
+            guard let password = [storedPassword, memoryPassword]
+                .compactMap({ $0 })
+                .first(where: { !$0.isEmpty }) else {
                 throw RemoteServerError.secretMissing
             }
             return .passwordBased(username: server.username, password: password)
@@ -232,6 +238,14 @@ final class RemoteSSHConnectionService: ObservableObject {
             default:
                 throw RemoteServerError.unsupportedPrivateKey
             }
+
+        case .none:
+            // Citadel 0.11.1 exposes the `none` offer through NIOSSH's
+            // NIOSSHUserAuthenticationOffer.Offer, not as a public factory on
+            // SSHAuthenticationMethod. This delegate sends exactly
+            // `.user(username, offer: .none)` on the first challenge and then
+            // fails the same way Citadel's own user-offer path does.
+            return .custom(RemoteSSHNoneAuthentication(username: server.username))
         }
     }
 
@@ -251,7 +265,64 @@ final class RemoteSSHConnectionService: ObservableObject {
                 return RemoteServerError.hostKeyChanged(expected: expected, received: received)
             }
         }
+        // Citadel.SSHClientError case 4 is allAuthenticationOptionsFailed:
+        // every offered credential was rejected. Other "unsupported …"
+        // cases mean the server did not accept the chosen method at all.
+        // Both are authentication outcomes, not transport failures — never
+        // surface the library's enum spelling to the user.
+        if let sshError = error as? SSHClientError {
+            switch sshError {
+            case .allAuthenticationOptionsFailed,
+                 .unsupportedPasswordAuthentication,
+                 .unsupportedPrivateKeyAuthentication,
+                 .unsupportedHostBasedAuthentication:
+                return RemoteServerError.authenticationFailed
+            case .channelCreationFailed:
+                break
+            }
+        }
+        if error is AuthenticationFailed {
+            return RemoteServerError.authenticationFailed
+        }
+        if let citadelError = error as? CitadelError,
+           case .unauthorized = citadelError {
+            return RemoteServerError.authenticationFailed
+        }
+        // Some NIO wrappers preserve the enum spelling only in the textual
+        // description; this is still an auth outcome, never a transport error.
+        let description = String(describing: error)
+        if description.contains("allAuthenticationOptionsFailed") {
+            return RemoteServerError.authenticationFailed
+        }
         return RemoteServerError.connectionFailed(error.localizedDescription)
+    }
+}
+
+/// Sends a single `NIOSSHUserAuthenticationOffer.Offer.none` offer for servers
+/// whose only supported method is "none". Citadel 0.11.1's
+/// SSHAuthenticationMethod has no public none factory (its internal
+/// `.user(username, offer:)` initializer is module-private), so the public
+/// `.custom` entry point is used to produce the same wire offer.
+private final class RemoteSSHNoneAuthentication: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+    private let username: String
+    private var didOffer = false
+
+    init(username: String) {
+        self.username = username
+    }
+
+    func nextAuthenticationType(
+        availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+        nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
+        guard !didOffer else {
+            nextChallengePromise.fail(SSHClientError.allAuthenticationOptionsFailed)
+            return
+        }
+        didOffer = true
+        nextChallengePromise.succeed(
+            NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .none)
+        )
     }
 }
 

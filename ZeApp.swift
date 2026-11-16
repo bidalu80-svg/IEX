@@ -405,7 +405,12 @@ struct ZeApp: App {
                 // never paused. (Mirrors the Android foreground reconcile.)
                 let activeNow = SessionActivityTracker.shared.activeSessions
                 SessionBadgeStore.shared.reconcileInterruptedSessions(interruptedSessions.subtracting(activeNow))
-                ISHKernel.shared.refreshDns()
+                // [T-container-dns-foreground] Route foreground DNS through the
+                // settings entry point. Calling refreshDns() unconditionally
+                // rebuilt resolv.conf from the system resolver and silently
+                // overwrote a user-pinned Custom DNS on every foreground.
+                // apply() respects the persisted mode and re-pins Custom.
+                ContainerDNSSettings.shared.apply()
 
                 #if DEBUG
                 debugServer.restartIfDead(port: 8321)

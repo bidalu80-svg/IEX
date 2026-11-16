@@ -24,6 +24,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var inputFocused: Bool
     var onRetryMessage: ((UUID) -> Void)?
     var onRetryLast: (() -> Void)?
+    var onReplyMessage: ((UUID) -> Void)?
     var onEdit: ((UUID) -> Void)?
     var onDelete: ((UUID) -> Void)?
     var onWithdraw: ((UUID) -> Void)?
@@ -70,6 +71,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.rebindViewModelIfNeeded(vm)
         coord.onRetryMessage = onRetryMessage
         coord.onRetryLast = onRetryLast
+        coord.onReplyMessage = onReplyMessage
         coord.onEdit = onEdit
         coord.onDelete = onDelete
         coord.onWithdraw = onWithdraw
@@ -346,6 +348,13 @@ fileprivate struct BridgedAssistantBlockV3: View {
                     } label: {
                         Label(String(localized: "Copy Markdown"), systemImage: "text.quote")
                     }
+                    if let onReply = bridge.onReply {
+                        Button {
+                            onReply()
+                        } label: {
+                            Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left")
+                        }
+                    }
                     if let onReadAloud = bridge.onReadAloud {
                         Button {
                             onReadAloud()
@@ -426,6 +435,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
 
     private enum CompletionAction: Equatable {
         case copy
+        case reply
         case play
         case retry
     }
@@ -527,6 +537,13 @@ fileprivate struct BridgedAssistantFooterV3: View {
                     } label: {
                         Label(String(localized: "Copy Markdown"), systemImage: "text.quote")
                     }
+                    if let onReply = bridge.onReply {
+                        Button {
+                            onReply()
+                        } label: {
+                            Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left")
+                        }
+                    }
                     if let onReadAloud = bridge.onReadAloud {
                         Button {
                             onReadAloud()
@@ -589,6 +606,20 @@ fileprivate struct BridgedAssistantFooterV3: View {
 
             completionActionEntry(index: 1) {
                 completionActionButton(
+                    systemImage: transientCompletionAction == .reply ? "checkmark" : "arrowshape.turn.up.left",
+                    isSelected: transientCompletionAction == .reply,
+                    selectedColor: .accentColor,
+                    accessibilityLabel: String(localized: "回复"),
+                    action: {
+                        flashCompletionAction(.reply)
+                        bridge.onReply?()
+                    }
+                )
+                .disabled(bridge.onReply == nil)
+            }
+
+            completionActionEntry(index: 2) {
+                completionActionButton(
                     systemImage: "play",
                     symbolSize: 17,
                     isSelected: transientCompletionAction == .play,
@@ -602,7 +633,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
             }
 
 
-            completionActionEntry(index: 2) {
+            completionActionEntry(index: 3) {
                 completionActionButton(
                     systemImage: "arrow.clockwise",
                     isSelected: transientCompletionAction == .retry,
@@ -793,6 +824,7 @@ private struct BridgedWholeMessageV3: View {
             commandStartTime: nil,
             onStop: nil,
             onRetry: bridge.onRetry,
+            onReply: bridge.onReply,
             onEdit: bridge.onEdit,
             onDelete: bridge.onDelete,
             onWithdraw: bridge.onWithdraw,
@@ -877,6 +909,7 @@ extension CollectionViewMessageListV3 {
         // Callbacks
         var onRetryMessage: ((UUID) -> Void)?
         var onRetryLast: (() -> Void)?
+        var onReplyMessage: ((UUID) -> Void)?
         var onEdit: ((UUID) -> Void)?
         var onDelete: ((UUID) -> Void)?
         var onWithdraw: ((UUID) -> Void)?
@@ -1749,6 +1782,7 @@ extension CollectionViewMessageListV3 {
 
             let retryMsg = onRetryMessage
             let retryLast = onRetryLast
+            let replyMsg = onReplyMessage
             let edit = onEdit
             let compact = onCompact
             let forceSync = onForceSync
@@ -1767,7 +1801,7 @@ extension CollectionViewMessageListV3 {
             }
 
             if message.isCompactedHistory || message.role == .compactDivider || message.role == .systemInfo {
-                bridge.onRetry = nil; bridge.onEdit = nil; bridge.onCompact = nil
+                bridge.onRetry = nil; bridge.onReply = nil; bridge.onEdit = nil; bridge.onCompact = nil
             } else if !vm.isProcessing && !vm.isCompacting {
                 if message.role == .user {
                     bridge.onRetry = { retryMsg?(message.id) }
@@ -1776,10 +1810,11 @@ extension CollectionViewMessageListV3 {
                 } else {
                     bridge.onRetry = nil
                 }
+                bridge.onReply = { replyMsg?(message.id) }
                 bridge.onEdit = message.role == .user ? { edit?(message.id) } : nil
                 bridge.onCompact = { compact?(message.id) }
             } else {
-                bridge.onRetry = nil; bridge.onEdit = nil; bridge.onCompact = nil
+                bridge.onRetry = nil; bridge.onReply = nil; bridge.onEdit = nil; bridge.onCompact = nil
             }
         }
 
@@ -3579,11 +3614,10 @@ extension CollectionViewMessageListV3 {
                 return attachCount > 0 ? attachH : nil
             }
 
-            let collapsible = UserMessageCollapsePolicy.shouldCollapse(text) {
-                message.userDisplayTokenCount(for: text)
-            }
+            let collapsible = UserMessageCollapsePolicy.shouldCollapse(text)
             let collapsed = collapsible && !message.isUserTextExpanded
-            let key = "\(text.count)|\(Int(usableTextWidth))|\(Int(fontSize))|\(attachCount)|collapsed:\(collapsed)|\(text.hashValue)"
+            let quoteKey = message.quote.map { "\($0.targetMessageId):\($0.text.count)" } ?? "none"
+            let key = "\(text.count)|\(Int(usableTextWidth))|\(Int(fontSize))|\(attachCount)|collapsed:\(collapsed)|quote:\(quoteKey)|\(text.hashValue)"
             if let cached = cache[key] { return cached }
 
             // [T-ios-user-msg-estimate-tail-jitter] Measure with UILabel, NOT raw
@@ -3628,8 +3662,11 @@ extension CollectionViewMessageListV3 {
             // Both collapsed and expanded long bubbles include the control:
             // 8pt VStack spacing + roughly one caption line (15pt).
             let disclosureH: CGFloat = collapsible ? 23 : 0
+            // [T-chat-quote-reply] Quote header: 2-line caption block (~33pt),
+            // 14pt vertical padding, 8pt VStack spacing, 1pt safety.
+            let quoteH: CGFloat = message.quote == nil ? 0 : 56
             // bubble vertical padding (10*2) + attachment block + 1pt safety.
-            let total = textH + disclosureH + 20 + attachH + 1
+            let total = textH + disclosureH + quoteH + 20 + attachH + 1
                 + (cjk && attachCount == 0 ? 7 : 0)
             cache[key] = total
             return total
@@ -3706,7 +3743,8 @@ extension CollectionViewMessageListV3 {
                 let n = msg(id)?.content.count ?? 0
                 let a = msg(id)?.attachments.count ?? 0
                 let x = msg(id)?.isUserTextExpanded == true ? 1 : 0
-                return "w:\(id.uuidString):\(n):\(a):x\(x)"
+                let q = msg(id)?.quote?.text.count ?? -1
+                return "w:\(id.uuidString):\(n):\(a):x\(x):q\(q)"
             case .assistantHeader(let id):
                 return "h:\(id.uuidString)"
             case .assistantFooter(let id):

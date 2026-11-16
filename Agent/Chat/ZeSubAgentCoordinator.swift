@@ -6,6 +6,7 @@ enum ZeSubAgentPreferences {
     static let enabledKey = "subAgentsEnabled"
     static let dockEnabledKey = "subAgentDockEnabled"
     static let modelEntryKey = "subAgentModelEntryId"
+    static let thinkingEnabledKey = "subAgentThinkingEnabled"
     static let settingsRootSessionId = "__ze_subagent_settings__"
 
     static var isEnabled: Bool {

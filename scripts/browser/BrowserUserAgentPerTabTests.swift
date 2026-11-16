@@ -84,6 +84,7 @@ let liftedFromPool = [
 let keyLines = ["uaProfileKey = ", "uaCustomStringKey = ", "viewportWidthKey = ", "viewportHeightKey = "]
     .map { line(pool, containing: "private static let " + $0) }.joined(separator: "\n")
 let liftedFromActions = [
+    block(actions, "enum BrowserControlState: String, Sendable, Equatable {"),
     block(actions, "enum BrowserAction: String, CaseIterable {"),
     block(actions, "struct BrowserActionInput {"),
     block(actions, "enum UserAgentProfile: String {"),
@@ -202,6 +203,9 @@ final class BrowserTabPool {
     private func wireManager(_ manager: BrowserUseManager) {}
     private func restoreSavedURL(for tabId: Int, manager: BrowserUseManager) {}
     private func persistURLs() {}
+    // P2 tab-overview cache hook: the lifted tab-creation paths clear any
+    // stale thumbnail for a reused id. The harness has no cache to clear.
+    private func discardTabSnapshot(forTabId id: Int) {}
 
     // Doors to the private shipping methods.
     func manager(_ id: Int) -> BrowserUseManager { tabs.first { $0.id == id }!.manager }

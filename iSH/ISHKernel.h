@@ -11,6 +11,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern NSNotificationName const ISHProcessExitedNotification;
 extern NSNotificationName const ISHTerminalOutputNotification;
+/// Posted on the main queue after the guest process table has been cleared by
+/// the OOM self-heal (system memory-pressure CRITICAL or an executor ENOMEM).
+/// Files on the fakefs are preserved; interactive shells must start again.
+extern NSNotificationName const ISHKernelDidRestartNotification;
 
 typedef void (^ISHOutputCallback)(NSData *data);
 typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullable error);
@@ -92,6 +96,17 @@ typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullab
 /// system resolver. Linux only uses the first three entries. Passing an empty
 /// array is ignored, so callers keep the previous file.
 - (void)setCustomDns:(NSArray<NSString *> *)servers;
+
+/// [T-ish-oom-selfheal] Kill every guest task except PID 1, release their
+/// address spaces, and reset the fork-guard's cached footprint. The fakefs
+/// stays mounted, so files persist; the next command/terminal starts a fresh
+/// shell. No-op while not booted; rate-limited to avoid a restart storm.
+- (void)restartGuestContainerWithReason:(NSString *)reason;
+
+/// Monotonic generation, incremented by every guest restart. An executor
+/// captures it before a command and compares afterwards to tell the model a
+/// running command was interrupted by the OOM self-heal.
+@property (nonatomic, readonly) uint64_t guestRestartGeneration;
 
 @end
 

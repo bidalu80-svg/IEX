@@ -1,43 +1,49 @@
 import XCTest
 
 final class UserMessageCollapsePolicyTests: XCTestCase {
-    func testExactly500TokensRemainsExpanded() {
-        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(tokenCount: 500))
+    func testExactlyCharacterThresholdRemainsExpanded() {
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(
+            characterCount: UserMessageCollapsePolicy.characterThreshold
+        ))
     }
 
-    func testMoreThan500TokensStartsCollapsed() {
-        XCTAssertTrue(UserMessageCollapsePolicy.shouldCollapse(tokenCount: 501))
+    func testMoreThanCharacterThresholdStartsCollapsed() {
+        XCTAssertTrue(UserMessageCollapsePolicy.shouldCollapse(
+            characterCount: UserMessageCollapsePolicy.characterThreshold + 1
+        ))
     }
 
     func testCollapsedPreviewHasAStablePositiveLineLimit() {
         XCTAssertGreaterThan(UserMessageCollapsePolicy.collapsedLineLimit, 0)
-        XCTAssertEqual(UserMessageCollapsePolicy.tokenThreshold, 500)
+        XCTAssertEqual(UserMessageCollapsePolicy.characterThreshold, 1_200)
+        XCTAssertEqual(UserMessageCollapsePolicy.lineThreshold, 16)
     }
 
-    func testShortUtf8TextSkipsTokenizer() {
-        var tokenizerCalled = false
-        let result = UserMessageCollapsePolicy.shouldCollapse(
-            String(repeating: "a", count: 500)
-        ) {
-            tokenizerCalled = true
-            return 501
-        }
-
-        XCTAssertFalse(result)
-        XCTAssertFalse(tokenizerCalled)
+    func testShortTextRemainsExpanded() {
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(String(repeating: "a", count: 500)))
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(String(repeating: "中", count: 500)))
     }
 
-    func testLongTextUsesExactTokenCounter() {
-        var tokenizerCalled = false
-        let result = UserMessageCollapsePolicy.shouldCollapse(
-            String(repeating: "a", count: 501)
-        ) {
-            tokenizerCalled = true
-            return 501
-        }
+    func testSameLengthChineseAndEnglishCollapseIdentically() {
+        let english = String(repeating: "a", count: 1_201)
+        let chinese = String(repeating: "中", count: 1_201)
+        XCTAssertTrue(UserMessageCollapsePolicy.shouldCollapse(english))
+        XCTAssertTrue(UserMessageCollapsePolicy.shouldCollapse(chinese))
 
-        XCTAssertTrue(result)
-        XCTAssertTrue(tokenizerCalled)
+        let englishShort = String(repeating: "a", count: 1_200)
+        let chineseShort = String(repeating: "中", count: 1_200)
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(englishShort))
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(chineseShort))
+    }
+
+    func testManyHardLineBreaksCollapseShortText() {
+        let text = Array(repeating: "x", count: UserMessageCollapsePolicy.lineThreshold + 2)
+            .joined(separator: "\n")
+        XCTAssertFalse(UserMessageCollapsePolicy.shouldCollapse(
+            characterCount: text.count,
+            lineCount: UserMessageCollapsePolicy.lineThreshold
+        ))
+        XCTAssertTrue(UserMessageCollapsePolicy.shouldCollapse(text))
     }
 
     func testViewportOffsetPreservesMessageScreenPosition() {

@@ -359,6 +359,7 @@ final class AgentLiveActivityManager {
     static func sfSymbol(forTool toolName: String) -> String {
         switch toolName {
         case "browser", "browser_use":          return "globe"
+        case "browser_request_takeover":        return "hand.raised.fill"
         case "shell", "shell_execute":          return "terminal"
         case "file_read":                       return "doc.text"
         case "file_write":                      return "doc.text.fill"
@@ -377,6 +378,7 @@ final class AgentLiveActivityManager {
     static func displayName(forTool toolName: String) -> String {
         switch toolName {
         case "browser", "browser_use":          return "浏览器"
+        case "browser_request_takeover":        return "等待你操作浏览器"
         case "shell", "shell_execute":          return "终端"
         case "file_read":                       return "读取文件"
         case "file_write":                      return "写入文件"

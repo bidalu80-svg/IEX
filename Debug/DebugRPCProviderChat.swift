@@ -1360,7 +1360,7 @@ enum DebugRPCChat {
     /// links, fenced code blocks) — the kinds of structures that actually
     /// stress TextKit1 attribute resolution + paragraph layout, not the
     /// happy-path long-paragraph case.
-    private static func buildSyntheticMarkdown(targetChars: Int, blockChars: Int) -> (String, Int) {
+    static func buildSyntheticMarkdown(targetChars: Int, blockChars: Int) -> (String, Int) {
         let vocab = [
             "lorem", "ipsum", "dolor", "sit", "amet", "consectetur",
             "adipiscing", "elit", "sed", "do", "eiusmod", "tempor",

@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 struct GlassUniforms {
     simd_float2 size;
@@ -222,7 +223,39 @@ struct SourceGroup {
     std::vector<GlassElement *> configs;
     std::vector<CGRect> cachedRects;
     std::vector<uint32_t> cutoffs;
+    uint64_t layoutSignature = 0;
+    BOOL hasLayoutSignature = NO;
 };
+
+// [T-glass-layout] Stable signature of the inputs that can move/relayout a
+// lens. Config structs are POD but may contain padding bytes, so hash the
+// named visual fields rather than memcmp'ing the whole struct.
+static uint64_t ogHashMix(uint64_t hash, uint64_t value) {
+    hash ^= value;
+    hash *= 1099511628211ULL;
+    return hash;
+}
+
+static uint64_t ogHashFloat(uint64_t hash, float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return ogHashMix(hash, bits);
+}
+
+static uint64_t ogConfigSignature(const OGGlassConfig &c) {
+    uint64_t hash = 1469598103934665603ULL;
+    hash = ogHashFloat(hash, c.cornerRadius);
+    hash = ogHashFloat(hash, c.refractionStrength);
+    hash = ogHashFloat(hash, c.edgeBandMultiplier);
+    hash = ogHashFloat(hash, c.chromeStrength);
+    hash = ogHashFloat(hash, c.blurRadius);
+    hash = ogHashFloat(hash, c.zoom);
+    hash = ogHashFloat(hash, c.edgeShadowStrength);
+    hash = ogHashFloat(hash, c.overallShadowStrength);
+    hash = ogHashFloat(hash, c.glassTintStrength);
+    hash = ogHashMix(hash, (uint64_t)c.physicsMode);
+    return hash;
+}
 
 static OGGlassEngine *sShared = nil;
 
@@ -523,7 +556,40 @@ struct LumUniforms {
             _verificationBeforeLayout = nil;
             callback();
         }
-        [source layoutIfNeeded];
+        // [T-glass-layout] Ze's four lenses all use physicsMode == .none, so
+        // there is no per-frame physics that requires a fresh layout. Forcing
+        // [window.rootViewController.view layoutIfNeeded] every 33ms is what
+        // turned the glass into a keyboard-layout amplifier. Only lay out when
+        // the source or a lens geometry/config actually changed. Rendering
+        // still runs every frame from the live layer tree, so content that
+        // scrolls under the glass continues to refract correctly.
+        BOOL allPhysicsNone = YES;
+        uint64_t preSignature = 1469598103934665603ULL;
+        preSignature = ogHashFloat(preSignature, (float)source.bounds.origin.x);
+        preSignature = ogHashFloat(preSignature, (float)source.bounds.origin.y);
+        preSignature = ogHashFloat(preSignature, (float)source.bounds.size.width);
+        preSignature = ogHashFloat(preSignature, (float)source.bounds.size.height);
+        for (size_t i = 0; i < count; i++) {
+            UIView *view = group.views[i];
+            GlassElement &elem = *group.configs[i];
+            if (elem.config.physicsMode != OGPhysicsModeNone) allPhysicsNone = NO;
+            CGRect r = [view convertRect:view.bounds toView:source];
+            preSignature = ogHashFloat(preSignature, (float)r.origin.x);
+            preSignature = ogHashFloat(preSignature, (float)r.origin.y);
+            preSignature = ogHashFloat(preSignature, (float)r.size.width);
+            preSignature = ogHashFloat(preSignature, (float)r.size.height);
+            preSignature = ogHashFloat(preSignature, (float)view.bounds.size.width);
+            preSignature = ogHashFloat(preSignature, (float)view.bounds.size.height);
+            preSignature = ogHashMix(preSignature, ogConfigSignature(elem.config));
+            preSignature = ogHashMix(preSignature, elem.contentTexture != nil ? 1ULL : 0ULL);
+        }
+        BOOL needsLayout = !allPhysicsNone
+            || !group.hasLayoutSignature
+            || group.layoutSignature != preSignature
+            || source.layer.needsLayout;
+        if (needsLayout) {
+            [source layoutIfNeeded];
+        }
 
         group.cachedRects.resize(count);
         [_scratchGlassLayers removeAllObjects];
@@ -543,6 +609,29 @@ struct LumUniforms {
                 unionRect = CGRectIsNull(unionRect) ? cr : CGRectUnion(unionRect, cr);
             }
         }
+
+        // Remember the settled geometry/config so the next idle frame can
+        // skip the forced layout pass entirely.
+        uint64_t settledSignature = 1469598103934665603ULL;
+        settledSignature = ogHashFloat(settledSignature, (float)source.bounds.origin.x);
+        settledSignature = ogHashFloat(settledSignature, (float)source.bounds.origin.y);
+        settledSignature = ogHashFloat(settledSignature, (float)source.bounds.size.width);
+        settledSignature = ogHashFloat(settledSignature, (float)source.bounds.size.height);
+        for (size_t i = 0; i < count; i++) {
+            CGRect r = group.cachedRects[i];
+            settledSignature = ogHashFloat(settledSignature, (float)r.origin.x);
+            settledSignature = ogHashFloat(settledSignature, (float)r.origin.y);
+            settledSignature = ogHashFloat(settledSignature, (float)r.size.width);
+            settledSignature = ogHashFloat(settledSignature, (float)r.size.height);
+            UIView *view = group.views[i];
+            settledSignature = ogHashFloat(settledSignature, (float)view.bounds.size.width);
+            settledSignature = ogHashFloat(settledSignature, (float)view.bounds.size.height);
+            GlassElement &elem = *group.configs[i];
+            settledSignature = ogHashMix(settledSignature, ogConfigSignature(elem.config));
+            settledSignature = ogHashMix(settledSignature, elem.contentTexture != nil ? 1ULL : 0ULL);
+        }
+        group.layoutSignature = settledSignature;
+        group.hasLayoutSignature = YES;
 
         if (CGRectIsNull(unionRect)) continue;
 

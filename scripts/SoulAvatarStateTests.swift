@@ -18,6 +18,31 @@ import Foundation
                                                    childrenActive: child, awaitingResponse: awaiting)
             precondition(actual == expected, "Expected \(expected), got \(actual)")
         }
+        // [T-avatar-idle-static] Idle is the transparent main image composited
+        // at runtime over the theme's baked background colour; only the
+        // explicit short idle-playback window may show video. The four working
+        // states keep their existing animated assets.
+        precondition(SoulAvatarIdlePolicy.posterAsset == "SoulAvatar-main")
+        precondition(SoulAvatarIdlePolicy.posterBackground(theme: "light")
+                     == SoulAvatarIdlePolicy.PosterBackground(red: 251, green: 251, blue: 251))
+        precondition(SoulAvatarIdlePolicy.posterBackground(theme: "dark")
+                     == SoulAvatarIdlePolicy.PosterBackground(red: 12, green: 10, blue: 20))
+        precondition(SoulAvatarIdlePolicy.posterBackground(theme: "unspecified")
+                     == SoulAvatarIdlePolicy.PosterBackground(red: 251, green: 251, blue: 251))
+        precondition(SoulAvatarIdlePolicy.showsStaticPoster(motion: .idle, idlePlaybackActive: false))
+        precondition(!SoulAvatarIdlePolicy.showsStaticPoster(motion: .idle, idlePlaybackActive: true))
+        for motion in [SoulAvatarMotion.thinking, .speaking, .working, .celebrate] {
+            precondition(!SoulAvatarIdlePolicy.showsStaticPoster(motion: motion, idlePlaybackActive: false),
+                         "Only idle may show the static poster: \(motion)")
+            precondition(motion.asset.hasPrefix("SoulAvatar-"),
+                         "Non-idle states still resolve to animated assets: \(motion)")
+        }
+        precondition(SoulAvatarIdlePolicy.playbackInterval.lowerBound >= 8
+                     && SoulAvatarIdlePolicy.playbackInterval.upperBound <= 15)
+        precondition(SoulAvatarIdlePolicy.playbackDuration > 0
+                     && SoulAvatarIdlePolicy.playbackDuration <= 3)
+        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 0) == 8)
+        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 1) == 15)
         let labels: [(Bool, Bool, Bool, Int, String?, Bool, String?)] = [
             (false, false, false, 0, nil, false, nil),
             (false, true, false, 0, "file_read", false, nil),

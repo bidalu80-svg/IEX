@@ -1052,6 +1052,10 @@ extension AIChatViewModel {
         // provider + latest text model. See createInitialBinding doc for the
         // 3-tier fallback chain.
         await createInitialBinding(for: session.id, preserveThinkingLevel: userSetThinkingLevel)
+        // Child agents have their own explicit thinking switch. This runs after
+        // the group-default seeding above so an explicit setting wins, while
+        // an absent key leaves the legacy default-group behaviour untouched.
+        applySubAgentThinkingOverride(for: session.id)
 
         // Notify sidebar to replace placeholder with the real session.
         // Include draftId so the receiver can verify this came from the active draft.
@@ -1339,6 +1343,32 @@ extension AIChatViewModel {
         }
     }
 
+    /// Apply the sub-agent thinking switch to a newly created child session.
+    ///
+    /// The key is tri-state: when it has never been written, this returns early
+    /// and the child keeps the exact same group-default (or `.off`) behaviour
+    /// it had before the feature shipped. Once the user or the
+    /// `subagent_config_set` tool writes it, on = medium and off = off, clamped
+    /// by the selected model's ceiling. Models that do not allow reasoning fall
+    /// back to off silently so the child still runs.
+    private func applySubAgentThinkingOverride(for sessionId: String) {
+        guard sessionSource == "subagent",
+              let requested = ZeSubAgentThinkingSettings.explicitLevel else { return }
+        let store = ProviderConfigStore.shared
+        let entry = resolveCurrentEntry()
+        let supportsReasoning = entry.map { Self.entryAllowsReasoning($0, store: store) } ?? false
+        let level: ThinkingLevel = requested.isEnabled && !supportsReasoning ? .off : requested
+        let maxLevel = entry?.effectiveMaxThinkingLevel ?? .xhigh
+        let clamped = ThinkingLevelCatalog.normalizedLevel(
+            level,
+            for: entry?.model.id ?? selectedModel.id,
+            maximum: maxLevel
+        )
+        var cfg = store.inferenceConfig(for: sessionId) ?? SessionInferenceConfig()
+        cfg.thinkingLevel = clamped
+        store.setInferenceConfig(cfg, for: sessionId)
+    }
+
     /// Persist an AgentMessage to the database as a RawMessage.
     /// Build a RawMessage from an AgentMessage without persisting it.
     func buildRawMessage(_ msg: AgentMessage, tokenUsage: TokenUsage? = nil, snapshots: [String: (toolName: String, snapshot: ToolSnapshot)] = [:], thoughtSignatures: [String: String] = [:], reasoningContent: String? = nil, streamInterruptCount: Int = 0, toolStatuses: [String: String] = [:]) async -> RawMessage? {
@@ -1349,6 +1379,10 @@ extension AIChatViewModel {
         for part in msg.parts {
             switch part {
             case .text(let s):
+                // [T-chat-quote-reply] The model-facing quote block stays in
+                // agentHistory for the live request, but is persisted through
+                // RawMessage.quote instead of duplicating it inside parts_json.
+                if let quote = msg.quote, s == quote.modelFacingText { continue }
                 parts.append(.text(s))
             case .toolUse(let id, let name, let input):
                 let inputJSON: String
@@ -1400,7 +1434,8 @@ extension AIChatViewModel {
             reasoningDuration: msg.reasoningDuration,
             firstTokenLatency: msg.firstTokenLatency,
             taskDuration: msg.taskDuration,
-            streamInterruptCount: streamInterruptCount
+            streamInterruptCount: streamInterruptCount,
+            quote: msg.quote
         )
     }
 

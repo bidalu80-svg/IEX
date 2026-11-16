@@ -59,8 +59,16 @@ final class RemoteServerStore: ObservableObject {
     }
 
     func delete(_ server: RemoteServerProfile) throws {
+        let previous = servers
         servers.removeAll(where: { $0.id == server.id })
-        try persist()
+        do {
+            try persist()
+        } catch {
+            // Keep memory and disk consistent when the write fails, so a
+            // failed deletion cannot look successful until relaunch.
+            servers = previous
+            throw error
+        }
         RemoteServerSecretStore.deleteAll(for: server.id)
         RemoteServerSessionCredentials.shared.clear(for: server.id)
     }

@@ -445,6 +445,17 @@ struct ToolLiveSheet: View {
         return toolSnapshots.first(where: { $0.id == blockId })
     }
 
+    /// Auto-present the browser when the agent asks the user to take over
+    /// (`browser_request_takeover`). This sheet may already be on top of the
+    /// chat, so the request has to open as its own secondary sheet rather than
+    /// relying on AIChatView's sheet slot.
+    private var pendingTakeoverPublisher: AnyPublisher<BrowserTakeoverRequestInfo?, Never> {
+        guard let browserPool else {
+            return Empty<BrowserTakeoverRequestInfo?, Never>().eraseToAnyPublisher()
+        }
+        return browserPool.$pendingTakeoverRequest.eraseToAnyPublisher()
+    }
+
     private var block: AssistantBlock {
         let idx = min(currentIdx, toolBlocks.count - 1)
         guard idx >= 0 else { return AssistantBlock(kind: .text, content: "") }
@@ -543,6 +554,10 @@ struct ToolLiveSheet: View {
             activeSheet = .linkPreview(url)
             ZeOpenURLBroker.shared.consume()
         }
+        .onReceive(pendingTakeoverPublisher) { request in
+            guard request != nil else { return }
+            activeSheet = .takeoverBrowser
+        }
         .onChange(of: isLive) { live in
             if live && isCurrentShell { resourceMonitor.start() } else { resourceMonitor.stop() }
         }
@@ -573,7 +588,7 @@ struct ToolLiveSheet: View {
             switch sheet {
             case .takeoverBrowser:
                 if let pool = browserPool {
-                    BrowserSheetView(pool: pool, isAgentBusy: false)
+                    BrowserSheetView(pool: pool)
                 }
             case .linkPreview(let url):
                 ZeLinkPreviewView(url: url, browserPool: browserPool)

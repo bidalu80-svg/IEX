@@ -14,6 +14,7 @@ import Darwin
     private static var inputDiagnostics: [[String: Any]] = []
     private static var voiceLayoutDiagnostics: [[String: Any]] = []
     private static var headerHitDiagnostics: [[String: Any]] = []
+    private static var keyboardHangDiagnostics: [[String: Any]] = []
     private static let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("chat-verification")
 
@@ -329,6 +330,52 @@ import Darwin
         }
     }
 
+    /// Samples the real composer's window-space top while the software
+    /// keyboard animates. Used by verifyKeyboardHang to prove the fix did not
+    /// turn the keyboard motion into an instant jump.
+    @MainActor private final class KeyboardTransitionSampler: NSObject {
+        weak var window: UIWindow?
+        weak var input: PastableUITextView?
+        private var link: CADisplayLink?
+        private(set) var samples: [CGFloat] = []
+
+        init(window: UIWindow, input: PastableUITextView?) {
+            self.window = window
+            self.input = input
+            super.init()
+        }
+
+        func start() {
+            let displayLink = CADisplayLink(target: self, selector: #selector(tick))
+            link = displayLink
+            displayLink.add(to: .main, forMode: .common)
+            tick()
+        }
+
+        func stop() {
+            guard link != nil else { return }
+            link?.invalidate()
+            link = nil
+            tick()
+        }
+
+        @objc private func tick() {
+            guard let window, let input, input.window === window else { return }
+            samples.append(input.convert(input.bounds, to: window).minY)
+        }
+
+        func intermediatePositionCount(from start: CGFloat, to end: CGFloat) -> Int {
+            var unique: [CGFloat] = []
+            for value in samples {
+                let rounded = (value * 2).rounded() / 2
+                if !unique.contains(where: { abs($0 - rounded) < 0.5 }) {
+                    unique.append(rounded)
+                }
+            }
+            return unique.filter { abs($0 - start) > 4 && abs($0 - end) > 4 }.count
+        }
+    }
+
     private static func writeVoiceLayoutDiagnostics() throws {
         try JSONSerialization.data(withJSONObject: voiceLayoutDiagnostics, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("voice-layout-diagnostics.json"), options: .atomic)
@@ -591,6 +638,12 @@ import Darwin
             try require(historyVM.sessionId == session.id, "Visible history uses persisted session VM")
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
+            if ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang") {
+                try await verifyKeyboardHang(window: window, vm: historyVM)
+                try checkpoint("complete")
+                try writeResult(success: true, error: nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only") {
                 if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
                     try await verifySoulAvatar(window: window, vm: historyVM)
@@ -659,6 +712,153 @@ import Darwin
         }
     }
 
+
+    /// [T-keyboard-hang] Authoritative reproducer for the 0x8BADF00D report:
+    /// a 29k-character table/code/math assistant message, a three-line draft,
+    /// and ten real keyboard show/hide cycles through the production composer.
+    /// Captures HangDetector events plus the four counters that expose a
+    /// layout storm (inputBarHeight writes, SelfSizingCell super calls,
+    /// ChatKeyboardViewport.update, ChatNavigationBarAppearance.updateBadge)
+    /// and proves the keyboard still has intermediate positions.
+    private static func verifyKeyboardHang(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("keyboard-hang-fixture")
+        window.endEditing(true)
+        await settle(0.6)
+
+        let marker = "KEYBOARD-HANG-END-\(UUID().uuidString.prefix(8))"
+        let (synthetic, blockCount) = DebugRPCChat.buildSyntheticMarkdown(targetChars: 29_000, blockChars: 800)
+        let user = ChatMessage(role: .user, content: "键盘卡死复现：普通用户消息，用于保留可见短 cell。")
+        let shortReply = ChatMessage(role: .assistant, content: "普通短回复，键盘弹起时必须保持可布局。")
+        let heavy = ChatMessage(role: .assistant, content: synthetic + "\n\n" + marker)
+        vm.messages = [user, shortReply, heavy]
+        vm.inputText = "第一行草稿\n第二行草稿\n第三行草稿"
+
+        try await waitFor("heavy markdown collection view mounted", timeout: 20) {
+            descendants(window).contains {
+                guard let collection = $0 as? UICollectionView else { return false }
+                return collection.collectionViewLayout is MessageListLayout && isVisible(collection, in: window)
+            }
+        }
+        guard let list = descendants(window).compactMap({ $0 as? UICollectionView })
+            .first(where: { $0.collectionViewLayout is MessageListLayout && isVisible($0, in: window) }) else {
+            try require(false, "Keyboard-hang fixture has a real message list")
+            return
+        }
+        // Real bottom anchoring, repeated because the 29k cell can correct its
+        // height while TextKit finishes laying it out.
+        for _ in 0..<4 {
+            let bottom = max(0, list.contentSize.height - list.bounds.height + list.adjustedContentInset.bottom)
+            list.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+            await settle(0.7)
+        }
+        try await waitFor("heavy markdown ending rendered", timeout: 60) {
+            renderedHistory(marker, in: window)
+        }
+        try await waitFor("three-line draft reaches production composer") {
+            composer(in: window)?.text == vm.inputText
+        }
+        await settle(0.8)
+
+        // Warm the leading-edge seed and one keyboard cycle before measuring,
+        // so cycle 1 is not charged for first-appearance layout.
+        vm.requestComposerFocusSignal.send()
+        try await waitFor("keyboard warmup shown") { composer(in: window)?.isFirstResponder == true }
+        await settle(0.8)
+        window.endEditing(true)
+        await settle(0.8)
+        KeyboardHangProbe.reset()
+        HangDetector.clearEvents()
+        guard HangDetector.start(withThresholdMs: 500) else {
+            throw NSError(domain: "ConversationChatVerification", code: -20,
+                          userInfo: [NSLocalizedDescriptionKey: "HangDetector could not start"])
+        }
+        defer { HangDetector.stop() }
+
+        var cycles: [[String: Any]] = []
+        for cycle in 1...10 {
+            KeyboardHangProbe.reset()
+            let visibleCells = max(1, list.visibleCells.count)
+            guard let input = composer(in: window) else {
+                throw NSError(domain: "ConversationChatVerification", code: -21,
+                              userInfo: [NSLocalizedDescriptionKey: "Keyboard-hang cycle \(cycle): composer missing"])
+            }
+            let startY = input.convert(input.bounds, to: window).minY
+            let sampler = KeyboardTransitionSampler(window: window, input: input)
+            sampler.start()
+            vm.requestComposerFocusSignal.send()
+            try await waitFor("keyboard shown cycle \(cycle)") {
+                composer(in: window)?.isFirstResponder == true
+            }
+            await settle(0.75)
+            sampler.stop()
+            let endY = composer(in: window).map { $0.convert($0.bounds, to: window).minY } ?? startY
+            let intermediates = sampler.intermediatePositionCount(from: startY, to: endY)
+            window.endEditing(true)
+            try await waitFor("keyboard hidden cycle \(cycle)") {
+                composer(in: window)?.isFirstResponder != true
+            }
+            await settle(0.6)
+            let counters = KeyboardHangProbe.snapshot()
+            let entry: [String: Any] = [
+                "cycle": cycle,
+                "visibleCells": visibleCells,
+                "inputBarHeightWrites": counters.inputBarHeightWrites,
+                "selfSizingSuperCalls": counters.selfSizingSuperCalls,
+                "viewportUpdates": counters.viewportUpdates,
+                "badgeUpdates": counters.badgeUpdates,
+                "keyboardCacheHits": counters.keyboardCacheHits,
+                "keyboardIntermediatePositions": intermediates,
+                "composerStartY": startY,
+                "composerEndY": endY,
+            ]
+            cycles.append(entry)
+            keyboardHangDiagnostics.append(entry)
+            try JSONSerialization.data(withJSONObject: cycles, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("keyboard-hang.json"), options: .atomic)
+        }
+
+        let events = HangDetector.dumpLast(0, clear: true)
+        let severe = events.filter { $0.durationMs >= 1000 }
+        let maxDuration = events.map { $0.durationMs }.max() ?? 0
+        let summary: [String: Any] = [
+            "cycles": cycles,
+            "hangEventCount": events.count,
+            "hangEventsAtOrAbove1000ms": severe.count,
+            "maxHangDurationMs": maxDuration,
+            "fixtureChars": synthetic.count,
+            "fixtureBlocks": blockCount,
+            "thresholdMs": 500,
+        ]
+        keyboardHangDiagnostics.append(summary)
+        try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("keyboard-hang-summary.json"), options: .atomic)
+
+        try require(severe.isEmpty,
+                    "Ten keyboard cycles produce no HangDetector event >=1000ms (max=\(String(format: "%.0f", maxDuration))ms)")
+        for (index, entry) in cycles.enumerated() {
+            let cycle = index + 1
+            let writes = entry["inputBarHeightWrites"] as? Int ?? -1
+            let superCalls = entry["selfSizingSuperCalls"] as? Int ?? -1
+            let viewportUpdates = entry["viewportUpdates"] as? Int ?? -1
+            let badgeUpdates = entry["badgeUpdates"] as? Int ?? -1
+            let intermediates = entry["keyboardIntermediatePositions"] as? Int ?? -1
+            let visible = entry["visibleCells"] as? Int ?? 1
+            try require(writes <= 2,
+                        "Cycle \(cycle): inputBarHeight writes <=2 (got \(writes))")
+            try require(superCalls <= visible + 2,
+                        "Cycle \(cycle): SelfSizingCell super calls <= visible cells + 2 (got \(superCalls), visible \(visible))")
+            // A cycle contains two transitions (show + hide); each may
+            // legitimately rebuild once for visibility and once for the final
+            // height commit.
+            try require(viewportUpdates <= 4,
+                        "Cycle \(cycle): ChatKeyboardViewport.update <=4 (2 per transition, got \(viewportUpdates))")
+            try require(badgeUpdates <= 1,
+                        "Cycle \(cycle): ChatNavigationBarAppearance.updateBadge <=1 (got \(badgeUpdates))")
+            try require(intermediates >= 4,
+                        "Cycle \(cycle): keyboard keeps >=4 intermediate composer positions (got \(intermediates))")
+        }
+        try require(true, "Ten-cycle keyboard-hang reproducer completes with bounded counters")
+    }
 
     /// Uses the complete production page, including the nested keyboard host,
     /// actual collection cells, attachment grid and FloatingToolBar.
@@ -874,8 +1074,12 @@ import Darwin
                 .first { isVisible($0, in: window) }
         }
         var observations: [[String: Any]] = []
+        let posterAsset = SoulAvatarIdlePolicy.posterAsset
+        let mainPoster = UIImage(named: posterAsset)
+        try require(mainPoster != nil, "SoulAvatar-main transparent image is packaged")
         for (style, theme) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
             window.overrideUserInterfaceStyle = style
+            let posterBackground = SoulAvatarIdlePolicy.posterBackground(theme: theme)
             for state in ["idle", "thinking", "speaking", "awaiting", "working"] {
                 ZeSubAgentCoordinator.shared.setAvatarVerificationChild(active: state == "working", root: root)
                 vm.isProcessing = state != "idle"
@@ -883,22 +1087,59 @@ import Darwin
                 reply.isAwaitingModelResponse = state == "awaiting"
                 let expected = state == "awaiting" ? "thinking" : state
                 let clip = ["idle": "idle", "thinking": "working", "speaking": "making", "working": "working"][expected]!
+                let isIdle = expected == "idle"
                 try await waitFor("actual avatar \(state) \(theme)") {
                     guard let view = avatar() else { return false }
-                    return view.motionName == expected && view.selectedAsset == "SoulAvatar-\(clip)-\(theme)"
-                        && view.readyForDisplay && view.playbackTime > 0.05
+                    guard view.motionName == expected,
+                          view.selectedAsset == "SoulAvatar-\(clip)-\(theme)" else { return false }
+                    if isIdle {
+                        // Idle is the transparent main image composited over
+                        // the theme background. The only other legal state is
+                        // the short original-idle playback window.
+                        let poster = view.isShowingIdlePoster && !view.isPlaying
+                            && view.idlePosterAsset == posterAsset
+                            && view.idlePosterBackground == posterBackground
+                            && view.idlePosterImage?.size == mainPoster?.size
+                        return poster || view.isPlayingIdleSegment
+                    }
+                    return view.readyForDisplay && view.playbackTime > 0.05
                 }
                 guard let view = avatar() else { throw NSError(domain: "SoulAvatar", code: 1) }
                 let time = view.playbackTime
                 // Streaming updates must keep this player's current position.
                 if state == "speaking" { reply.blocks.last?.content += "，继续输出" }
                 await settle(0.35)
-                try require(avatar() === view && view.playbackTime != time,
-                            "Real avatar plays without recreation: \(state) \(theme)")
+                if isIdle {
+                    // Testable idle contract: the main image is composited over
+                    // the theme background, the poster is visible and the
+                    // looping player is stopped. isPlayingIdleSegment is the
+                    // explicit "occasionally plays a short idle clip" window
+                    // exception; both flags are mutually exclusive.
+                    try require(avatar() === view
+                                && (view.isShowingIdlePoster || view.isPlayingIdleSegment),
+                                "Idle avatar stays static (or in its short playback window) without recreation: \(state) \(theme)")
+                    try require(view.idlePosterAsset == posterAsset
+                                && view.idlePosterBackground == posterBackground
+                                && view.idlePosterImage?.size == mainPoster?.size
+                                && view.isShowingIdlePoster != view.isPlayingIdleSegment,
+                                "Idle shows \(posterAsset) composited over the \(theme) background, not a pre-baked poster or looping video: \(state) \(theme)")
+                } else {
+                    try require(avatar() === view && view.playbackTime != time,
+                                "Real avatar plays without recreation: \(state) \(theme)")
+                }
                 let frame = view.convert(view.bounds, to: window)
                 try require(window.bounds.contains(frame), "Avatar stays inside viewport: \(state) \(theme)")
                 observations.append(["state": state, "theme": theme, "asset": view.selectedAsset,
-                                     "time": view.playbackTime, "frame": rectData(frame)])
+                                     "time": view.playbackTime, "idlePoster": view.isShowingIdlePoster,
+                                     "idlePlaybackWindow": view.isPlayingIdleSegment,
+                                     "idlePosterAsset": view.idlePosterAsset,
+                                     "idlePosterBackground": view.idlePosterBackground.map {
+                                         "\($0.red),\($0.green),\($0.blue)"
+                                     } ?? "",
+                                     "idlePosterImageSize": view.idlePosterImage.map {
+                                         "\($0.size.width)x\($0.size.height)"
+                                     } ?? "",
+                                     "frame": rectData(frame)])
                 let expectedStatus = ["idle": "idle", "thinking": "思考中", "speaking": "正在回复",
                                       "awaiting": "思考中", "working": "子任务执行中"][state]!
                 try await waitFor("header activity \(state) \(theme)") {
@@ -1124,6 +1365,7 @@ import Darwin
             "screenshots": screenshots, "systemVersion": UIDevice.current.systemVersion,
             "inputDiagnostics": inputDiagnostics,
             "voiceLayoutDiagnostics": voiceLayoutDiagnostics,
+            "keyboardHangDiagnostics": keyboardHangDiagnostics,
             "deviceModel": ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? UIDevice.current.model,
             "scope": "Production ContentView navigation and full AIChatView, real editable composer, persisted history, repeated home/reopen; original root retained.",
             "limitations": "Simulator runtime version recorded above; no physical-device or iOS 18.1 claim, no provider requests or device FPS measurement."

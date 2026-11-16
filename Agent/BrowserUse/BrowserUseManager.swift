@@ -39,6 +39,12 @@ final class BrowserUseManager: NSObject, ObservableObject {
     /// Called when a child window calls window.close() — the pool should close this tab.
     var closeHandler: ((_ webView: WKWebView) -> Void)?
 
+    /// Called after a page load finishes and the manager's state is current.
+    /// The pool uses it to refresh this tab's overview thumbnail. Keep it a
+    /// pure side effect: it must never touch the webView's frame or viewport.
+    /// [P2-tab-overview]
+    var onPageLoadFinished: (() -> Void)?
+
     // MARK: - Downloads
 
     /// BrowserDownloadCenter entry ids for this tab's in-flight WKDownloads.
@@ -298,6 +304,10 @@ final class BrowserUseManager: NSObject, ObservableObject {
     ]
 
     func execute(action input: BrowserActionInput) async throws -> BrowserActionResult {
+        // A 接管 cancellation arrives as Task cancellation; honour it before
+        // touching page state. Mid-action cancellation is additionally resolved
+        // by BrowserTabPool's takeover abort + stopLoading.
+        try Task.checkCancellation()
         let mgrStart = CFAbsoluteTimeGetCurrent()
         logger.info("[MgrTiming] enter action=\(input.action.rawValue)")
         // Backup + re-inject cookies (throttled to once per 60s) so login
@@ -347,6 +357,8 @@ final class BrowserUseManager: NSObject, ObservableObject {
             return try await fetch(url: input.url)
         case .newTab, .closeTab, .listTabs:
             return .error("Tab management actions must be routed through BrowserTabPool")
+        case .requestTakeover:
+            return .error("request_takeover must be routed through BrowserTabPool")
         case .getCookies:
             return await getCookies(keywords: input.keywords, fuzzy: input.fuzzy ?? true)
         case .setCookies:
@@ -856,6 +868,41 @@ final class BrowserUseManager: NSObject, ObservableObject {
             return BrowserActionResult(text: "Navigation did not complete within \(Int(Self.navigationTimeout))s — the page may be partially loaded or the renderer may be stalled. Content below reflects the current (possibly stale) state.\n\n\(meta)")
         }
         return BrowserActionResult(text: meta)
+    }
+
+    // MARK: - Tab Overview Thumbnail
+
+    /// Width of the card thumbnail, in points. `WKSnapshotConfiguration`
+    /// downsamples inside WebKit, so no extra bitmap work happens here.
+    private static let thumbnailSnapshotWidth: CGFloat = 360
+
+    /// Best-effort capture of this tab's visible page for the tab overview.
+    ///
+    /// Deliberately different from `screenshot()`: this method NEVER assigns
+    /// `webView.frame` and never applies a viewport. `takeSnapshot` alone
+    /// captures the webView's current bounds, which is exactly the "last
+    /// picture" the overview card should show. Resizing the frame here would
+    /// reflow the page and reintroduce the sheet viewport-pollution bug.
+    /// (T-ios-browser-sheet-viewport-pollution)
+    ///
+    /// The completion is invoked on the main thread by WebKit; callers store
+    /// the image in the pool's bounded in-memory cache. If the webView has no
+    /// usable bounds yet (never laid out), it completes with nil.
+    func captureThumbnail(completion: @escaping (UIImage?) -> Void) {
+        let size = webView.bounds.size
+        guard size.width > 1, size.height > 1 else {
+            completion(nil)
+            return
+        }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = CGRect(origin: .zero, size: size)
+        configuration.snapshotWidth = NSNumber(value: Double(Self.thumbnailSnapshotWidth))
+        webView.takeSnapshot(configuration: configuration) { image, error in
+            if let error {
+                logger.warning("Tab thumbnail snapshot failed: \(error.localizedDescription)")
+            }
+            completion(error == nil ? image : nil)
+        }
     }
 
     // MARK: - Screenshot
@@ -2393,6 +2440,10 @@ extension BrowserUseManager: WKNavigationDelegate {
             // not delay the navigation continuation above or touch the
             // webView's frame/viewport.
             self.capturePageFavicon()
+
+            // [P2-tab-overview] Refresh the tab's thumbnail once the page is
+            // done. The pool debounces this and captures without resizing.
+            self.onPageLoadFinished?()
         }
     }
 
@@ -2596,7 +2647,8 @@ extension BrowserUseManager: WKDownloadDelegate {
                 onCancel: { [weak self, weak download] in
                     guard let self, let download else { return }
                     self.cancelDownload(download)
-                })
+                },
+                fileURL: dest)
             logger.info("⬇️ Download started: \(name) → session \(sid.prefix(8)) workspace")
             completionHandler(dest)
         }
@@ -2967,6 +3019,19 @@ final class BrowserDownloadCenter: ObservableObject {
         var seen: Bool = false
         /// Cancels the underlying WKDownload (wired by BrowserUseManager).
         let onCancel: (() -> Void)?
+        /// Absolute on-disk destination. Optional for older entries/tests;
+        /// callers fall back to the session workspace + filename.
+        var fileURL: URL? = nil
+
+        /// The local file this entry points at, when it exists on disk.
+        var localFileURL: URL? {
+            if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
+                return fileURL
+            }
+            let fallback = AIChatViewModel.zeWorkspacePersistentDir(for: sessionId)
+                .appendingPathComponent(filename)
+            return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
+        }
     }
 
     @Published private(set) var entries: [Entry] = []
@@ -2987,11 +3052,11 @@ final class BrowserDownloadCenter: ObservableObject {
     }
 
     func began(sessionId: String, filename: String, progress: Progress,
-               onCancel: (() -> Void)? = nil) -> UUID {
+               onCancel: (() -> Void)? = nil, fileURL: URL? = nil) -> UUID {
         let id = UUID()
         entries.append(Entry(id: id, sessionId: sessionId, filename: filename,
                              progress: progress, state: .downloading,
-                             startedAt: Date(), onCancel: onCancel))
+                             startedAt: Date(), onCancel: onCancel, fileURL: fileURL))
         queueAgentEvent(sessionId: sessionId, filename: filename,
                         line: "\(filename): download started → saving to ze://workspace/\(filename)")
         return id
@@ -3031,6 +3096,21 @@ final class BrowserDownloadCenter: ObservableObject {
 
     func dismiss(id: UUID) {
         entries.removeAll { $0.id == id }
+    }
+
+    /// Toast dismissal: mark a terminal entry seen without deleting it from
+    /// the panel (the file and the download record both stay).
+    func markSeen(id: UUID) {
+        guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[idx].seen = true
+    }
+
+    /// The single entry the in-sheet toast should follow: newest active or
+    /// unseen terminal record. Seen terminal entries never resurface.
+    func toastEntry(for sessionId: String) -> Entry? {
+        downloads(for: sessionId)
+            .filter { $0.state == .downloading || !$0.seen }
+            .max { $0.startedAt < $1.startedAt }
     }
 
     /// Panel-open: everything currently listed has been viewed (clears the

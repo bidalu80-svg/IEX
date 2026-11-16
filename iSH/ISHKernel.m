@@ -10,6 +10,7 @@
 #include "ish/kernel/init.h"
 #include "ish/kernel/task.h"
 #include "ish/kernel/calls.h"
+#include "ish/kernel/signal.h"
 #include "ish/kernel/fs.h"
 #include "ish/fs/fake.h"
 #include "ish/fs/tty.h"
@@ -27,6 +28,7 @@
 #include <setjmp.h>
 #import <mach/mach.h>
 #import <mach/mach_time.h>
+#import <malloc/malloc.h>
 #include <unistd.h>
 #include <execinfo.h>
 #include <netinet/in.h>
@@ -64,6 +66,7 @@
 
 NSNotificationName const ISHProcessExitedNotification = @"ISHProcessExited";
 NSNotificationName const ISHTerminalOutputNotification = @"ISHTerminalOutput";
+NSNotificationName const ISHKernelDidRestartNotification = @"ISHKernelDidRestart";
 
 // Global reference to shared instance for C callbacks
 static ISHKernel *g_sharedKernel = nil;
@@ -161,6 +164,8 @@ static atomic_ullong g_fork_guard_stalls = 0;
 // [MemMonitor] readout; a private source is used rather than reaching into that
 // file's statics so the two stay independent.
 static atomic_uint_fast32_t g_fork_guard_pressure = ATOMIC_VAR_INIT(0);
+static atomic_bool g_fork_guard_critical_latched = ATOMIC_VAR_INIT(false);
+static atomic_uint_fast64_t g_guest_restart_generation = ATOMIC_VAR_INIT(0);
 static dispatch_source_t g_fork_guard_pressure_source = nil;
 
 // Footprint ceiling for this device, computed once at install.
@@ -194,6 +199,23 @@ static void ze_fork_guard_start_pressure_source(void) {
         if (flags & DISPATCH_MEMORYPRESSURE_CRITICAL) level = 2;
         else if (flags & DISPATCH_MEMORYPRESSURE_WARN) level = 1;
         atomic_store_explicit(&g_fork_guard_pressure, level, memory_order_relaxed);
+
+        // [T-ish-oom-selfheal] Reuse this exact pressure source as the OOM
+        // watchdog. Latch CRITICAL so a persistent pressure state doesn't
+        // restart the container on every event; clear it once pressure
+        // recovers so a later episode can heal again.
+        if (level == 2) {
+            if (!atomic_exchange_explicit(&g_fork_guard_critical_latched, true, memory_order_acq_rel)) {
+                ISHKernel *kernel = g_sharedKernel;
+                if (kernel != nil) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [kernel restartGuestContainerWithReason:@"system memory pressure critical"];
+                    });
+                }
+            }
+        } else {
+            atomic_store_explicit(&g_fork_guard_critical_latched, false, memory_order_relaxed);
+        }
     });
     dispatch_resume(g_fork_guard_pressure_source);
 }
@@ -603,6 +625,7 @@ static void handle_process_exit(struct task *task, int code) {
     ISHCommandCompletionCallback _commandCompletionCallback;
     NSTimer *_commandTimeoutTimer;
     dispatch_queue_t _commandQueue;
+    NSTimeInterval _lastGuestRestartAt;
 }
 
 + (ISHKernel *)shared {
@@ -622,12 +645,17 @@ static void handle_process_exit(struct task *task, int code) {
         _consoleTTY = NULL;
         _commandOutputBuffer = [NSMutableString new];
         _commandQueue = dispatch_queue_create("com.zeapp.ish.command", DISPATCH_QUEUE_SERIAL);
+        _lastGuestRestartAt = 0;
     }
     return self;
 }
 
 - (BOOL)isBooted {
     return _isBooted;
+}
+
+- (uint64_t)guestRestartGeneration {
+    return atomic_load_explicit(&g_guest_restart_generation, memory_order_relaxed);
 }
 
 - (int)bootWithRootPath:(NSString *)rootPath {
@@ -867,6 +895,61 @@ static void handle_process_exit(struct task *task, int code) {
     NSLog(@"ISHKernel: [DNS] configured: search=%lu servers=%d/%d fallback=%@",
           (unsigned long)searchDomains.count, written, serverCount, usedFallback ? @"yes" : @"no");
     [self writeResolvConf:resolvConf];
+}
+
+// [T-ish-oom-selfheal] Guest OOM self-heal. See ISHKernel.h for the contract.
+- (void)restartGuestContainerWithReason:(NSString *)reason {
+    if (!_isBooted) {
+        return;
+    }
+
+    // A critical-pressure episode fires repeatedly; one teardown per episode
+    // is enough. The next command creates a fresh shell from PID 1.
+    @synchronized(self) {
+        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        if (_lastGuestRestartAt > 0 && now - _lastGuestRestartAt < 15.0) {
+            NSLog(@"ISHKernel: [OOM] restart suppressed (cooldown) reason=%@", reason ?: @"?");
+            return;
+        }
+        _lastGuestRestartAt = now;
+    }
+
+    NSLog(@"ISHKernel: [OOM] Restarting guest container — reason=%@", reason ?: @"?");
+    int killed = 0;
+    struct siginfo_ info = SIGINFO_NIL;
+    lock(&pids_lock);
+    for (int i = 2; i < MAX_PID; i++) {
+        struct task *task = pid_get_task((dword_t)i);
+        if (task == NULL || task->group == NULL) {
+            continue;
+        }
+        send_signal(task, SIGKILL_, info);
+        killed++;
+    }
+    unlock(&pids_lock);
+
+    // The old console PTY belongs to one of the killed tasks. Drop our
+    // pointer so a restarted terminal creates a fresh PTY instead of writing
+    // into freed tty state.
+    _consoleTTY = NULL;
+
+    // Guest address spaces release as the SIGKILL exits run; reset the
+    // fork-guard cache so the next fork reads the lower, post-teardown
+    // footprint immediately. malloc pressure relief returns free pages to
+    // the OS without touching fakefs data.
+    atomic_fetch_add_explicit(&g_guest_restart_generation, 1, memory_order_relaxed);
+    atomic_store_explicit(&g_fork_guard_pressure, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_fork_guard_footprint_cached, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_fork_guard_footprint_stamp, 0, memory_order_relaxed);
+    malloc_zone_pressure_relief(malloc_default_zone(), 0);
+
+    NSLog(@"ISHKernel: [OOM] Guest restart signalled %d task(s); files preserved", killed);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:ISHKernelDidRestartNotification
+            object:self
+            userInfo:@{@"reason": reason ?: @""}];
+    });
 }
 
 /// Pin /etc/resolv.conf to an explicit nameserver list. Mirrors

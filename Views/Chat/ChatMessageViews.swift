@@ -105,6 +105,8 @@ struct ChatMessageRow: View {
     var commandStartTime: Date?
     var onStop: (() -> Void)?
     var onRetry: (() -> Void)?
+    /// [T-chat-quote-reply] Start a reply to this message.
+    var onReply: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     var onWithdraw: (() -> Void)?
@@ -319,9 +321,7 @@ struct ChatMessageRow: View {
     }
 
     private var isUserTextCollapsible: Bool {
-        UserMessageCollapsePolicy.shouldCollapse(userDisplayText) {
-            message.userDisplayTokenCount(for: userDisplayText)
-        }
+        UserMessageCollapsePolicy.shouldCollapse(userDisplayText)
     }
 
     private func toggleUserMessageExpansion() {
@@ -353,6 +353,28 @@ struct ChatMessageRow: View {
         let expanded = message.isUserTextExpanded
 
         return VStack(alignment: .leading, spacing: 8) {
+            // [T-chat-quote-reply] Quote header sits above the sent bubble
+            // text, matching the composer strip's wording and snapshot.
+            if let quote = message.quote {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("↩ 你回复了这条消息")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ChatColors.userMessageText.opacity(0.85))
+                    Text(quote.text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(ChatColors.userMessageText.opacity(0.72))
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(ChatColors.userMessageText.opacity(0.10))
+                )
+            }
+
             SearchHighlightText(userDisplayText, key: .init(messageId: message.id, blockId: nil, field: .body))
                 .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
                 .foregroundStyle(ChatColors.userMessageText)
@@ -432,6 +454,14 @@ struct ChatMessageRow: View {
                 Divider()
                 if let open = searchCenter?.openSearch {
                     Button { open(nil) } label: { Label(String(localized: "Search in Chat"), systemImage: "magnifyingglass") }
+                }
+
+                if let onReply {
+                    Button {
+                        onReply()
+                    } label: {
+                        Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left")
+                    }
                 }
 
                 Button {
@@ -639,6 +669,7 @@ struct ChatMessageRow: View {
                         hasReadAloud: onReadAloud != nil,
                         hasCopyScreenshot: onCopyScreenshot != nil,
                         hasCompact: onCompact != nil,
+                        hasReply: onReply != nil,
                         isActive: isActiveMessage
                     )) {
                         Button {
@@ -650,6 +681,13 @@ struct ChatMessageRow: View {
                             UIPasteboard.general.string = fullReplyText
                         } label: {
                             Label("Copy Markdown", systemImage: "text.quote")
+                        }
+                        if let onReply {
+                            Button {
+                                onReply()
+                            } label: {
+                                Label(String(localized: "回复"), systemImage: "arrowshape.turn.up.left")
+                            }
                         }
                         if let onReadAloud {
                             Button {

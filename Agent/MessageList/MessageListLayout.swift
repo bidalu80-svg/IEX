@@ -47,6 +47,14 @@ final class MessageListLayout: UICollectionViewLayout {
     /// lift and deceleration start) that let height changes slip through.
     var deferSelfSizing: Bool = false
 
+    /// [T-keyboard-hang] True while UIKit is animating the keyboard edge and
+    /// therefore changing this collection view's bounds height every frame.
+    /// SelfSizingCell answers those passes from its last same-width
+    /// measurement instead of re-entering UIHostingConfiguration/TextKit.
+    /// Cleared by ChatKeyboardViewportController after keyboardDidShow/Hide,
+    /// followed by one authoritative invalidateLayout() settle pass.
+    var isKeyboardTransitioning: Bool = false
+
     /// When true, `invalidationContext` will NOT set `contentOffsetAdjustment`.
     /// Used during capture-restore layout flushes where the caller handles
     /// offset preservation manually.

@@ -36,6 +36,19 @@ extension AIChatViewModel {
         return result
     }
 
+    /// Whether auto-compact is enabled and the estimated context has entered
+    /// the pre-trigger warning band. The composer uses this for its one-shot
+    /// red-mist warning; it never mutates state or triggers compaction.
+    func isContextInAutoCompactWarningBand() -> Bool {
+        guard autoCompactEnabled,
+              let entry = resolveCurrentEntry()
+        else { return false }
+        let contextWindow = effectiveContextWindow(for: entry.model)
+        guard contextWindow > 0 else { return false }
+        let policy = ContextPolicy(contextWindow: contextWindow)
+        return policy.isApproachingCompact(estimatedTokens: estimateContextTokens())
+    }
+
     /// Legacy compatibility — returns true if any intervention is needed before send.
     func needsCompactBeforeSend() -> Bool {
         checkContextBeforeSend() != .ok
@@ -49,10 +62,13 @@ extension AIChatViewModel {
         pendingSendText = nil
         pendingSendAttachments = []
 
-        // Show the message as queued immediately
-        let queuedPrompt = QueuedPrompt(text: text, attachments: atts)
+        // Show the message as queued immediately. The pending quote travels
+        // with the queued prompt so compaction cannot silently drop it.
+        let quote = pendingQuote
+        pendingQuote = nil
+        let queuedPrompt = QueuedPrompt(text: text, attachments: atts, quote: quote)
         promptQueue.append(queuedPrompt)
-        let chatMsg = ChatMessage(role: .user, content: text, isQueued: true)
+        let chatMsg = ChatMessage(role: .user, content: text, isQueued: true, quote: quote)
         chatMsg.queuedPromptId = queuedPrompt.id
         chatMsg.inputAttachments = atts
         messages.append(chatMsg)
@@ -68,6 +84,7 @@ extension AIChatViewModel {
             messages.removeAll { $0.queuedPromptId == queuedPrompt.id }
             inputText = text
             attachments = atts
+            pendingQuote = quote
             skipCompactCheck = true
             send()
             return

@@ -147,6 +147,11 @@ struct ISHTerminalView: View {
                 keyboardActive = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: ISHKernelDidRestartNotification)) { _ in
+            // [T-ish-oom-selfheal] The kernel killed every guest task; this
+            // view's interactive shell must be re-created against PID 1.
+            viewModel.handleKernelRestart(sessionId: sessionId)
+        }
         .sheet(isPresented: $showFileBrowser) {
             NavigationStack {
                 FileBrowserView()
@@ -272,6 +277,17 @@ class ISHTerminalViewModel: ObservableObject {
         emulator.onResponse = { [weak self] data in
             self?.sendInput(data)
         }
+    }
+
+    /// [T-ish-oom-selfheal] Show the human explanation, then start a fresh
+    /// interactive shell. Called on the main queue by the kernel notification.
+    func handleKernelRestart(sessionId: String?) {
+        let message = "\r\n" + String(localized: "容器内存不足，已自动重启") + "\r\n"
+        if let data = message.data(using: .utf8) {
+            emulator.feed(data)
+        }
+        isShellStarted = false
+        startShell(sessionId: sessionId, initCommand: nil)
     }
 
     func startShell(sessionId: String? = nil, initCommand: String? = nil) {

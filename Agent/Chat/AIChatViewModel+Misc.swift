@@ -64,16 +64,18 @@ extension AIChatViewModel {
         guard !text.isEmpty || !attachments.isEmpty, isProcessing else { return }
         AppFeedback.haptic()
         let pendingAttachments = attachments
-        let prompt = QueuedPrompt(text: text, attachments: pendingAttachments)
+        let quote = pendingQuote
+        let prompt = QueuedPrompt(text: text, attachments: pendingAttachments, quote: quote)
         promptQueue.append(prompt)
         // Show in chat immediately with queued styling
-        let chatMsg = ChatMessage(role: .user, content: text, isQueued: true)
+        let chatMsg = ChatMessage(role: .user, content: text, isQueued: true, quote: quote)
         chatMsg.queuedPromptId = prompt.id
         chatMsg.inputAttachments = pendingAttachments
         messages.append(chatMsg)
         scrollToBottomSignal.send()
         inputText = ""
         attachments = []
+        pendingQuote = nil
         logger.info("Enqueued prompt (\(text.count)ch, \(pendingAttachments.count) attachments), queue size=\(self.promptQueue.count)")
         // [T-ios-queued-candidate-not-onscreen] Log the queued candidate text
         // (prefix 100) + a queue/messages snapshot so we can later correlate a

@@ -901,7 +901,7 @@ private struct SFTPBackupServerEditor: View {
                         .autocorrectionDisabled()
                 }
                 Section {
-                    Text(String(localized: "The password is kept in the device session and is never written into a backup file."))
+                    Text(String(localized: "The password is kept in this device's Keychain and is never written into a backup file."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(String(localized: "The server host key must be confirmed in Ze server settings before connecting."))
@@ -941,6 +941,7 @@ private struct SFTPBackupServerEditor: View {
             let profile = RemoteServerProfile(id: id, name: cleanName, host: cleanHost, port: portValue,
                                               username: cleanUser, authentication: .password)
             try RemoteServerStore.shared.save(profile)
+            try RemoteServerSecretStore.save(password, kind: .password, for: id)
             RemoteServerSessionCredentials.shared.setPassword(password, for: id)
             let path = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
             onSave(.init(name: cleanName, kind: .sftpServer, serverID: id, remotePath: path.isEmpty ? "/" : path))

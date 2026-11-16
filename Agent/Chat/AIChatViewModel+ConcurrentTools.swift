@@ -533,6 +533,8 @@ extension AIChatViewModel {
                 }
             }
             toolOutput = browserResult.text
+                + "\ncontrol: \(browserResult.control.rawValue)"
+                + (browserResult.errorCode.map { "\nerror_code: \($0)" } ?? "")
             toolSuccess = browserResult.success
             toolPageURL = browserResult.pageURL
             if let b64 = browserResult.base64Image, let data = Data(base64Encoded: b64) {
@@ -592,6 +594,52 @@ extension AIChatViewModel {
                     toolOutput += "\n\n" + downloadReport
                 }
             }
+
+        case "browser_request_takeover":
+            let reason = (toolArgs["reason"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            var browserResult: BrowserActionResult
+            if reason.isEmpty {
+                browserResult = .error("browser_request_takeover requires a non-empty 'reason' describing what the user should do.")
+            } else {
+                if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                    messages[msgIdx].blocks[blockIdx].content = "等待用户完成：\(reason)"
+                }
+                // Same BrowserUse action channel as browser_use: the pool owns
+                // the waiting continuation, control state and UI presentation.
+                let input = BrowserActionInput(
+                    action: .requestTakeover,
+                    url: nil,
+                    selector: nil,
+                    text: nil,
+                    coordinateX: nil,
+                    coordinateY: nil,
+                    direction: nil,
+                    amount: nil,
+                    script: nil,
+                    userAgent: nil,
+                    maxDepth: nil,
+                    tabId: nil,
+                    reason: reason
+                )
+                do {
+                    browserResult = try await browserTabPool.execute(action: input)
+                } catch {
+                    browserResult = .error(error.localizedDescription)
+                }
+            }
+
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = browserResult.text
+                if let pageURL = browserResult.pageURL {
+                    messages[msgIdx].blocks[blockIdx].browserURL = pageURL
+                }
+            }
+            toolOutput = browserResult.text
+                + "\ncontrol: \(browserResult.control.rawValue)"
+                + (browserResult.errorCode.map { "\nerror_code: \($0)" } ?? "")
+            toolSuccess = browserResult.success
+            toolPageURL = browserResult.pageURL
 
         case "read_image":
             let pathArg = toolArgs["path"] as? String ?? ""
@@ -776,7 +824,15 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
-        case "session_list", "session_delete":
+        case "subagent_config_get", "subagent_config_set":
+            let subAgentResult = await SubAgentAIToolGateway.execute(name: tu.name, arguments: toolArgs)
+            toolOutput = subAgentResult.output
+            toolSuccess = subAgentResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
+        case "session_list", "session_delete", "session_create":
             let result = await executeSessionAgentTool(name: tu.name, arguments: toolArgs)
             toolOutput = result.output
             toolSuccess = result.success
@@ -784,7 +840,7 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
-        case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write":
+        case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write", "remote_server_configure_credentials", "remote_server_delete":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 messages[msgIdx].blocks[blockIdx].content = remoteResult.output

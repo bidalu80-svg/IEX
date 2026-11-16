@@ -143,7 +143,7 @@ struct RemoteServerEditorSheet: View {
             Form {
                 if draft != nil {
                     Section {
-                        Label("以下非敏感字段由 AI 生成，请逐项核对后再保存。密码、私钥、口令和主机指纹不能由 AI 填写或确认。", systemImage: "wand.and.stars")
+                        Label("以下非敏感字段由 AI 生成，请逐项核对后再保存。密码、私钥和口令需要你在此填写，或由你在对话中确认后由 AI 写入 Keychain；主机指纹必须由你确认。", systemImage: "wand.and.stars")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -171,12 +171,12 @@ struct RemoteServerEditorSheet: View {
                     .pickerStyle(.navigationLink)
 
                     if authentication == .password {
-                        SecureField("本次连接密码", text: $sessionPassword)
+                        SecureField("密码（留空则保留已保存密码）", text: $sessionPassword)
                             .textContentType(.password)
-                        Text("密码只保存在当前 App 进程内；断开连接、删除服务器或退出 App 后不会保留。")
+                        Text("密码使用本机 Keychain 保存（仅本设备，不参与 iCloud 或配置同步）；连接时优先读取 Keychain，断开连接不会清除。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                    } else {
+                    } else if authentication == .privateKey {
                         Button {
                             showKeyImporter = true
                         } label: {
@@ -191,6 +191,10 @@ struct RemoteServerEditorSheet: View {
                         Text("仅支持 OpenSSH RSA 和 Ed25519 私钥。私钥与口令使用本机 Keychain 保存，不参与 iCloud 或配置同步。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    } else {
+                        Text("此档不发送密码或私钥，只使用上方用户名发起 none 认证。适用于明确只接受无认证的网关；不保存任何凭据。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -201,7 +205,7 @@ struct RemoteServerEditorSheet: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
-                    Text("AI 永远不能读取私钥、密码或 Keychain 内容。即使允许命令或写入，每次执行仍须在界面中确认。")
+                    Text("AI 永远不能读取私钥、密码或 Keychain 内容；它只能在你明确确认后写入凭据。即使允许命令或写入，每次执行仍须在界面中确认。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -224,7 +228,12 @@ struct RemoteServerEditorSheet: View {
             }
             .fileImporter(
                 isPresented: $showKeyImporter,
-                allowedContentTypes: [.text, .data],
+                // [T-remote-ssh-key-import] Match the skill/SFTP picker path:
+                // .item lets any file (including extensionless private keys)
+                // be tapped. The SSHKeyDetection check on save is the format
+                // gate; a narrower text/data filter made valid key files
+                // appear non-selectable.
+                allowedContentTypes: [.item],
                 allowsMultipleSelection: false
             ) { result in
                 importPrivateKey(result)
@@ -281,12 +290,16 @@ struct RemoteServerEditorSheet: View {
 
             switch authentication {
             case .password:
-                RemoteServerSecretStore.deleteAll(for: id)
+                RemoteServerSessionCredentials.shared.clear(for: id)
+                RemoteServerSecretStore.delete(kind: .privateKey, for: id)
+                RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: id)
                 if !sessionPassword.isEmpty {
+                    try RemoteServerSecretStore.save(sessionPassword, kind: .password, for: id)
                     RemoteServerSessionCredentials.shared.setPassword(sessionPassword, for: id)
                 }
             case .privateKey:
                 RemoteServerSessionCredentials.shared.clear(for: id)
+                RemoteServerSecretStore.delete(kind: .password, for: id)
                 if !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     _ = try SSHKeyDetection.detectPrivateKeyType(from: privateKey)
                     try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: id)
@@ -298,6 +311,11 @@ struct RemoteServerEditorSheet: View {
                 } else if try RemoteServerSecretStore.value(kind: .privateKey, for: id) == nil {
                     throw RemoteServerError.secretMissing
                 }
+            case .none:
+                // The none method carries no secret; clear anything left over
+                // from a previous authentication choice.
+                RemoteServerSessionCredentials.shared.clear(for: id)
+                RemoteServerSecretStore.deleteAll(for: id)
             }
             dismiss()
         } catch {
@@ -417,15 +435,17 @@ private struct RemoteServerDetailView: View {
                 .sheet(isPresented: $showingEditor) {
                     RemoteServerEditorSheet(server: server)
                 }
-                .alert("输入本次连接密码", isPresented: $showingPasswordPrompt) {
+                .alert("输入连接密码", isPresented: $showingPasswordPrompt) {
                     SecureField("密码", text: $password)
                     Button("连接") {
+                        guard !password.isEmpty else { return }
                         RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
+                        try? RemoteServerSecretStore.save(password, kind: .password, for: server.id)
                         beginConnection(for: server)
                     }
                     Button("取消", role: .cancel) { password = "" }
                 } message: {
-                    Text("密码不会写入磁盘或 Keychain。")
+                    Text("密码会保存到本机 Keychain（仅本设备，不参与 iCloud 同步）。")
                 }
                 .confirmationDialog(
                     "确认服务器主机指纹",
@@ -467,12 +487,24 @@ private struct RemoteServerDetailView: View {
     }
 
     private func requestConnection(for server: RemoteServerProfile) {
-        if server.authentication == .password, RemoteServerSessionCredentials.shared.password(for: server.id) == nil {
+        if server.authentication == .password, !hasStoredPassword(for: server) {
             password = ""
             showingPasswordPrompt = true
         } else {
             beginConnection(for: server)
         }
+    }
+
+    /// Keychain is authoritative; the in-memory session value is the fallback.
+    private func hasStoredPassword(for server: RemoteServerProfile) -> Bool {
+        if let stored = try? RemoteServerSecretStore.value(kind: .password, for: server.id),
+           !stored.isEmpty {
+            return true
+        }
+        if let memory = RemoteServerSessionCredentials.shared.password(for: server.id), !memory.isEmpty {
+            return true
+        }
+        return false
     }
 
     private func beginConnection(for server: RemoteServerProfile) {
