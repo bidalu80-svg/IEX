@@ -96,25 +96,22 @@ check("hand-back event carries URL and title",
       && block(pool, "    func handControlBack() -> BrowserActionResult {").contains("snap.url")
       && block(pool, "    func handControlBack() -> BrowserActionResult {").contains("snap.title"))
 
-print("\n5. UI: glow + Ze card + takeover button, gated only by control state")
+print("\n5. UI: Ze card + takeover button, gated only by control state")
 check("agent overlay is driven by pool.controlState",
       sheet.contains("if pool.controlState == .agent") && sheet.contains("AgentBrowsingOverlay"))
 check("card text is the fixed product name Ze",
       sheet.contains("Text(\"Ze 正在浏览\")"))
 check("takeover capsule exists",
       sheet.contains("Label(\"接管\", systemImage: \"hand.raised.fill\")"))
-check("glow is a static AngularGradient with a slow breath",
-      sheet.contains("AgentGlowBorder") && sheet.contains("AngularGradient")
-      && sheet.contains("duration: 3.2"))
-check("breath is value-driven so parent re-renders do not reset it",
-      sheet.contains(".animation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true),")
-      && sheet.contains("value: breathing)"))
-check("breath no longer rides a one-shot onAppear transaction",
-      !sheet.contains("withAnimation(.easeInOut(duration: 3.2)"))
-let glowAnchor = "AgentGlowBorder(breathing: breathing)"
-let glowTail = sheet.range(of: glowAnchor).map { String(sheet[$0.lowerBound...].prefix(500)) } ?? ""
-check("glow layer cannot intercept touches",
-      glowTail.contains(".animation(") && glowTail.contains(".allowsHitTesting(false)"))
+check("glow border is gone (no AgentGlowBorder / AngularGradient)",
+      !sheet.contains("AgentGlowBorder") && !sheet.contains("AngularGradient"))
+check("no breathing state remains for the overlay",
+      !sheet.contains("breathing") && !sheet.contains("value: breathing)"))
+check("no slow glow breath animation remains",
+      !sheet.contains(".animation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true),"))
+check("no glow touch-shield anchor remains in the overlay",
+      !sheet.contains("AgentGlowBorder(breathing: breathing)")
+      && !block(sheet, "private struct AgentBrowsingOverlay").contains("Glow"))
 check("user state exposes the weak 交还 entry",
       sheet.contains("pool.handControlBack()") && sheet.contains("Label(\"交还\""))
 check("sheet has no remaining isAgentBusy gate",
