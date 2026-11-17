@@ -1131,4 +1131,8 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var showsCompletionActions: Bool = false
     /// Compact summary — presented from overlay outside cell tree for animation.
     var onShowCompactSummary: ((String) -> Void)?
+    /// [T-chat-quote-reply] Quote preview — also presented from the overlay
+    /// outside the cell tree so the cell's disabled animations cannot swallow
+    /// the sheet transition.
+    var onShowQuotePreview: ((MessageQuote) -> Void)?
 }

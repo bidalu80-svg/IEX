@@ -591,20 +591,8 @@ fileprivate struct BridgedAssistantFooterV3: View {
 
     private var completionActionBar: some View {
         HStack(spacing: 2) {
+            // Reply first: the most-used action sits at the leading edge.
             completionActionEntry(index: 0) {
-                completionActionButton(
-                systemImage: transientCompletionAction == .copy ? "checkmark" : "rectangle.on.rectangle",
-                isSelected: transientCompletionAction == .copy,
-                selectedColor: .green,
-                accessibilityLabel: String(localized: "Copy")
-                ) {
-                    UIPasteboard.general.string = ZeVisualizationStreaming.prepare(replyText, readable: true)
-                    flashCompletionAction(.copy)
-                    AppFeedback.haptic()
-                }
-            }
-
-            completionActionEntry(index: 1) {
                 completionActionButton(
                     systemImage: transientCompletionAction == .reply ? "checkmark" : "arrowshape.turn.up.left",
                     isSelected: transientCompletionAction == .reply,
@@ -616,6 +604,19 @@ fileprivate struct BridgedAssistantFooterV3: View {
                     }
                 )
                 .disabled(bridge.onReply == nil)
+            }
+
+            completionActionEntry(index: 1) {
+                completionActionButton(
+                systemImage: transientCompletionAction == .copy ? "checkmark" : "rectangle.on.rectangle",
+                isSelected: transientCompletionAction == .copy,
+                selectedColor: .green,
+                accessibilityLabel: String(localized: "Copy")
+                ) {
+                    UIPasteboard.general.string = ZeVisualizationStreaming.prepare(replyText, readable: true)
+                    flashCompletionAction(.copy)
+                    AppFeedback.haptic()
+                }
             }
 
             completionActionEntry(index: 2) {
@@ -825,6 +826,7 @@ private struct BridgedWholeMessageV3: View {
             onStop: nil,
             onRetry: bridge.onRetry,
             onReply: bridge.onReply,
+            onOpenQuote: bridge.onShowQuotePreview,
             onEdit: bridge.onEdit,
             onDelete: bridge.onDelete,
             onWithdraw: bridge.onWithdraw,
@@ -1127,6 +1129,7 @@ extension CollectionViewMessageListV3 {
         // === Sheet Presenters ===
         private let sheetPresenter = ToolSheetPresenter()
         private let compactSummaryPresenter = CompactSummaryPresenter()
+        private let quotePreviewPresenter = QuotePreviewPresenter()
         private var sheetOverlayHost: UIHostingController<SheetOverlayView>?
 
         // === References ===
@@ -1283,7 +1286,9 @@ extension CollectionViewMessageListV3 {
 
             // Install sheet overlay (outside UIHostingConfiguration cell tree)
             if sheetOverlayHost == nil {
-                let overlay = SheetOverlayView(toolPresenter: sheetPresenter, compactPresenter: compactSummaryPresenter)
+                let overlay = SheetOverlayView(toolPresenter: sheetPresenter,
+                                               compactPresenter: compactSummaryPresenter,
+                                               quotePresenter: quotePreviewPresenter)
                 let host = UIHostingController(rootView: overlay)
                 host.view.backgroundColor = .clear
                 host.view.isUserInteractionEnabled = true
@@ -1800,6 +1805,15 @@ extension CollectionViewMessageListV3 {
                 self.compactSummaryPresenter.summary = summary
             }
 
+            // [T-chat-quote-reply] Resolve the original message at tap time,
+            // against the current session, then fall back to the stored
+            // snapshot when it has been deleted/compacted away.
+            bridge.onShowQuotePreview = { [weak self] quote in
+                guard let self else { return }
+                self.quotePreviewPresenter.preview = QuotePreviewPresenter.Preview(
+                    text: Self.quotePreviewText(for: quote, in: self.vm?.messages ?? []))
+            }
+
             if message.isCompactedHistory || message.role == .compactDivider || message.role == .systemInfo {
                 bridge.onRetry = nil; bridge.onReply = nil; bridge.onEdit = nil; bridge.onCompact = nil
             } else if !vm.isProcessing && !vm.isCompacting {
@@ -1816,6 +1830,32 @@ extension CollectionViewMessageListV3 {
             } else {
                 bridge.onRetry = nil; bridge.onReply = nil; bridge.onEdit = nil; bridge.onCompact = nil
             }
+        }
+
+        /// [T-chat-quote-reply] Full text of the quoted original when it is
+        /// still in this session; otherwise the quote's own snapshot.
+        private static func quotePreviewText(for quote: MessageQuote, in messages: [ChatMessage]) -> String {
+            if let original = messages.first(where: {
+                $0.id.uuidString.caseInsensitiveCompare(quote.targetMessageId) == .orderedSame
+            }) {
+                let text: String
+                switch original.role {
+                case .user:
+                    text = ChatSearchDisplayText.userBubble(original.content)
+                case .assistant:
+                    let blocks = original.blocks
+                        .filter { if case .text = $0.kind { return true }; return false }
+                        .map(\.content)
+                        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                        .joined(separator: "\n\n")
+                    text = blocks.isEmpty ? original.content : blocks
+                case .compactDivider, .systemInfo:
+                    text = original.content
+                }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            return quote.text
         }
 
         private static func hasReplyText(_ message: ChatMessage) -> Bool {
@@ -5539,12 +5579,26 @@ private final class CompactSummaryPresenter: ObservableObject {
     var onRevert: (() -> Void)?
 }
 
+// MARK: - Quoted Message Preview Presenter
+
+/// [T-chat-quote-reply] Same overlay pattern as the compact summary: the
+/// sheet lives outside the collection cell tree so its presentation is not
+/// swallowed by the cell's disabled animations.
+private final class QuotePreviewPresenter: ObservableObject {
+    struct Preview: Identifiable {
+        let id = UUID()
+        let text: String
+    }
+    @Published var preview: Preview?
+}
+
 /// Transparent SwiftUI view that owns the .sheet() modifier.
 /// Installed as a child UIHostingController on MessageListViewController,
 /// outside any UIHostingConfiguration cell tree.
 private struct SheetOverlayView: View {
     @ObservedObject var toolPresenter: ToolSheetPresenter
     @ObservedObject var compactPresenter: CompactSummaryPresenter
+    @ObservedObject var quotePresenter: QuotePreviewPresenter
 
     var body: some View {
         Color.clear
@@ -5573,6 +5627,9 @@ private struct SheetOverlayView: View {
                     summary: compactPresenter.summary ?? "",
                     onRevert: compactPresenter.onRevert
                 )
+            }
+            .sheet(item: $quotePresenter.preview) { preview in
+                QuotedMessagePreviewSheet(text: preview.text)
             }
     }
 }

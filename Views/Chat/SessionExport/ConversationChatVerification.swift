@@ -775,38 +775,63 @@ import Darwin
         defer { HangDetector.stop() }
 
         var cycles: [[String: Any]] = []
-        for cycle in 1...10 {
+        var cycleIndex = 0
+
+        // [T-keyboard-hang-1253] One measured show/hide cycle. `setup` runs
+        // after the probe reset (so scenario-specific composer work is part
+        // of the measured window); `whileVisible` runs once the composer is
+        // first responder and before the settle sample (keyplane reload path).
+        func runKeyboardCycle(scenario: String,
+                              setup: () async throws -> Void = {},
+                              whileVisible: (() -> Void)? = nil) async throws -> [String: Any] {
+            cycleIndex += 1
             KeyboardHangProbe.reset()
+            try await setup()
             let visibleCells = max(1, list.visibleCells.count)
             guard let input = composer(in: window) else {
                 throw NSError(domain: "ConversationChatVerification", code: -21,
-                              userInfo: [NSLocalizedDescriptionKey: "Keyboard-hang cycle \(cycle): composer missing"])
+                              userInfo: [NSLocalizedDescriptionKey: "Keyboard-hang \(scenario) cycle \(cycleIndex): composer missing"])
             }
             let startY = input.convert(input.bounds, to: window).minY
             let sampler = KeyboardTransitionSampler(window: window, input: input)
             sampler.start()
             vm.requestComposerFocusSignal.send()
-            try await waitFor("keyboard shown cycle \(cycle)") {
+            try await waitFor("keyboard shown \(scenario) cycle \(cycleIndex)") {
                 composer(in: window)?.isFirstResponder == true
             }
+            whileVisible?()
             await settle(0.75)
             sampler.stop()
             let endY = composer(in: window).map { $0.convert($0.bounds, to: window).minY } ?? startY
             let intermediates = sampler.intermediatePositionCount(from: startY, to: endY)
             window.endEditing(true)
-            try await waitFor("keyboard hidden cycle \(cycle)") {
+            try await waitFor("keyboard hidden \(scenario) cycle \(cycleIndex)") {
                 composer(in: window)?.isFirstResponder != true
             }
             await settle(0.6)
             let counters = KeyboardHangProbe.snapshot()
             let entry: [String: Any] = [
-                "cycle": cycle,
+                "scenario": scenario,
+                "cycle": cycleIndex,
                 "visibleCells": visibleCells,
                 "inputBarHeightWrites": counters.inputBarHeightWrites,
+                "latestInputBarFrameHWrites": counters.latestInputBarFrameHWrites,
                 "selfSizingSuperCalls": counters.selfSizingSuperCalls,
                 "viewportUpdates": counters.viewportUpdates,
                 "badgeUpdates": counters.badgeUpdates,
                 "keyboardCacheHits": counters.keyboardCacheHits,
+                "viewDidLayoutSubviewsCalls": counters.viewDidLayoutSubviewsCalls,
+                "hostLayoutIfNeededCalls": counters.hostLayoutIfNeededCalls,
+                "composerHostLayoutIfNeededCalls": counters.composerHostLayoutIfNeededCalls,
+                "contentRootReplacements": counters.contentRootReplacements,
+                "composerRootReplacements": counters.composerRootReplacements,
+                "composerIntrinsicSizeCalls": counters.composerIntrinsicSizeCalls,
+                "composerSizeThatFitsCalls": counters.composerSizeThatFitsCalls,
+                "composerFullMeasurementCalls": counters.composerFullMeasurementCalls,
+                "composerMeasurementCacheHits": counters.composerMeasurementCacheHits,
+                "composerDuplicateMeasurementCalls": counters.composerDuplicateMeasurementCalls,
+                "composerMeasurementTotalMs": counters.composerMeasurementTotalMs,
+                "composerMeasurementMaxMs": counters.composerMeasurementMaxMs,
                 "keyboardIntermediatePositions": intermediates,
                 "composerStartY": startY,
                 "composerEndY": endY,
@@ -815,7 +840,45 @@ import Darwin
             keyboardHangDiagnostics.append(entry)
             try JSONSerialization.data(withJSONObject: cycles, options: [.prettyPrinted, .sortedKeys])
                 .write(to: directory.appendingPathComponent("keyboard-hang.json"), options: .atomic)
+            return entry
         }
+
+        // Baseline: ten plain keyboard show/hide cycles (existing coverage).
+        for _ in 1...10 {
+            _ = try await runKeyboardCycle(scenario: "baseline")
+        }
+
+        // Scenario 1: quote reply (pendingQuote strip appears) then raise the
+        // keyboard through the production focus signal.
+        vm.inputText = ""
+        await settle(0.3)
+        vm.beginReply(to: heavy.id)
+        try await waitFor("quote reply strip reaches production composer") { vm.pendingQuote != nil }
+        _ = try await runKeyboardCycle(scenario: "quote-reply")
+        vm.cancelReply()
+        await settle(0.3)
+
+        // Scenario 2: a long selected snippet appended to the composer, then
+        // raise the keyboard. Covers the append + width morph combination.
+        vm.inputText = ""
+        await settle(0.3)
+        let selectedSnippet = Array(repeating: "选取到输入框的长段落：这是从消息正文选取并追加到输入框的内容。", count: 24)
+            .joined(separator: "\n")
+        vm.appendToInputText(selectedSnippet)
+        try await waitFor("long selection reaches production composer") { composer(in: window)?.text == vm.inputText }
+        _ = try await runKeyboardCycle(scenario: "selection-append")
+        vm.inputText = ""
+        await settle(0.3)
+
+        // Scenario 3: first responder -> returnKeyType change -> reloadInputViews,
+        // the UIKit keyplane/input-mode proxy path (may be a no-op in simulator).
+        vm.inputText = "键盘平面切换代理路径"
+        try await waitFor("return-key draft reaches production composer") { composer(in: window)?.text == vm.inputText }
+        _ = try await runKeyboardCycle(scenario: "keyplane-reload", whileVisible: {
+            guard let input = composer(in: window), input.isFirstResponder else { return }
+            input.returnKeyType = (input.returnKeyType == .send) ? .default : .send
+            input.reloadInputViews()
+        })
 
         let events = HangDetector.dumpLast(0, clear: true)
         let severe = events.filter { $0.durationMs >= 1000 }
@@ -835,8 +898,9 @@ import Darwin
 
         try require(severe.isEmpty,
                     "Ten keyboard cycles produce no HangDetector event >=1000ms (max=\(String(format: "%.0f", maxDuration))ms)")
-        for (index, entry) in cycles.enumerated() {
-            let cycle = index + 1
+        for entry in cycles {
+            let cycle = entry["cycle"] as? Int ?? -1
+            let scenario = entry["scenario"] as? String ?? "baseline"
             let writes = entry["inputBarHeightWrites"] as? Int ?? -1
             let superCalls = entry["selfSizingSuperCalls"] as? Int ?? -1
             let viewportUpdates = entry["viewportUpdates"] as? Int ?? -1
@@ -844,18 +908,44 @@ import Darwin
             let intermediates = entry["keyboardIntermediatePositions"] as? Int ?? -1
             let visible = entry["visibleCells"] as? Int ?? 1
             try require(writes <= 2,
-                        "Cycle \(cycle): inputBarHeight writes <=2 (got \(writes))")
+                        "Cycle \(cycle) [\(scenario)]: inputBarHeight writes <=2 (got \(writes))")
             try require(superCalls <= visible + 2,
-                        "Cycle \(cycle): SelfSizingCell super calls <= visible cells + 2 (got \(superCalls), visible \(visible))")
+                        "Cycle \(cycle) [\(scenario)]: SelfSizingCell super calls <= visible cells + 2 (got \(superCalls), visible \(visible))")
             // A cycle contains two transitions (show + hide); each may
             // legitimately rebuild once for visibility and once for the final
             // height commit.
             try require(viewportUpdates <= 4,
-                        "Cycle \(cycle): ChatKeyboardViewport.update <=4 (2 per transition, got \(viewportUpdates))")
+                        "Cycle \(cycle) [\(scenario)]: ChatKeyboardViewport.update <=4 (2 per transition, got \(viewportUpdates))")
             try require(badgeUpdates <= 1,
-                        "Cycle \(cycle): ChatNavigationBarAppearance.updateBadge <=1 (got \(badgeUpdates))")
+                        "Cycle \(cycle) [\(scenario)]: ChatNavigationBarAppearance.updateBadge <=1 (got \(badgeUpdates))")
             try require(intermediates >= 4,
-                        "Cycle \(cycle): keyboard keeps >=4 intermediate composer positions (got \(intermediates))")
+                        "Cycle \(cycle) [\(scenario)]: keyboard keeps >=4 intermediate composer positions (got \(intermediates))")
+
+            // [T-keyboard-hang-1253] New instrument assertions. The layout
+            // pass limits are deliberately generous and are meant to be
+            // calibrated from the first CI baseline; they only reject a
+            // runaway per-frame storm, not normal 60/120Hz keyboard motion.
+            let layoutPasses = entry["viewDidLayoutSubviewsCalls"] as? Int ?? -1
+            let composerLayouts = entry["composerHostLayoutIfNeededCalls"] as? Int ?? -1
+            let contentRoots = entry["contentRootReplacements"] as? Int ?? -1
+            let composerRoots = entry["composerRootReplacements"] as? Int ?? -1
+            let duplicates = entry["composerDuplicateMeasurementCalls"] as? Int ?? -1
+            let fullMeasurements = entry["composerFullMeasurementCalls"] as? Int ?? -1
+            let measurementMax = entry["composerMeasurementMaxMs"] as? Double ?? 0
+            try require(layoutPasses <= 180,
+                        "Cycle \(cycle) [\(scenario)]: viewDidLayoutSubviews <=180 per keyboard cycle (got \(layoutPasses))")
+            try require(composerLayouts <= 90,
+                        "Cycle \(cycle) [\(scenario)]: composerHost layoutIfNeeded <=90 per keyboard cycle (got \(composerLayouts))")
+            try require(contentRoots <= 6,
+                        "Cycle \(cycle) [\(scenario)]: content root replacements <=6 (got \(contentRoots))")
+            try require(composerRoots <= 6,
+                        "Cycle \(cycle) [\(scenario)]: composer root replacements <=6 (got \(composerRoots))")
+            try require(duplicates == 0,
+                        "Cycle \(cycle) [\(scenario)]: no duplicate full measure for the same (text,width,font) (got \(duplicates))")
+            try require(fullMeasurements <= 8,
+                        "Cycle \(cycle) [\(scenario)]: full composer measurements <=8 (got \(fullMeasurements))")
+            try require(measurementMax < 50,
+                        "Cycle \(cycle) [\(scenario)]: composer measurement max <50ms (got \(String(format: "%.1f", measurementMax))ms)")
         }
         try require(true, "Ten-cycle keyboard-hang reproducer completes with bounded counters")
     }

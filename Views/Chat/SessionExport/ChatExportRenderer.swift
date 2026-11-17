@@ -60,7 +60,8 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
             return block
         }
         let result = ChatMessage(role: source.role, content: source.content, blocks: blocks,
-                                 isQueued: source.isQueued, timestamp: source.timestamp, id: source.id)
+                                 isQueued: source.isQueued, timestamp: source.timestamp, id: source.id,
+                                 quote: source.quote)
         result.error = source.error
         result.attachments = source.attachments
         result.inputAttachments = source.inputAttachments
@@ -70,7 +71,11 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
         result.streamInterruptCount = source.streamInterruptCount
         result.isCompactedHistory = source.isCompactedHistory
         result.isAwaitingModelResponse = source.isAwaitingModelResponse
-        result.isUserTextExpanded = true
+        // Mirror the message's live disclosure state: a long prompt that is
+        // collapsed in chat stays collapsed in the share preview, and an
+        // expanded one stays expanded. The export lays the row out with this
+        // same state, so its measured height matches what is rendered.
+        result.isUserTextExpanded = source.isUserTextExpanded
         result.isStepsCollapsed = source.isStepsCollapsed
         return result
     }
@@ -196,7 +201,11 @@ enum ChatExportContent {
             case .note: text = m.error ?? ""
             case .toolGroup, .taskHeader: text = ""
             }
-            return ChatShareEstimateInput(kind: cell.kind, text: text)
+            let userTextCollapsed = cell.kind == .user && !m.isUserTextExpanded
+                && UserMessageCollapsePolicy.shouldCollapse(ChatSearchDisplayText.userBubble(m.content))
+            return ChatShareEstimateInput(kind: cell.kind, text: text,
+                                         quoteText: cell.kind == .user ? m.quote?.text : nil,
+                                         isUserTextCollapsed: userTextCollapsed)
         }
     }
 

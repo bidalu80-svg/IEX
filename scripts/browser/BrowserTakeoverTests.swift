@@ -106,8 +106,15 @@ check("takeover capsule exists",
 check("glow is a static AngularGradient with a slow breath",
       sheet.contains("AgentGlowBorder") && sheet.contains("AngularGradient")
       && sheet.contains("duration: 3.2"))
+check("breath is value-driven so parent re-renders do not reset it",
+      sheet.contains(".animation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true),")
+      && sheet.contains("value: breathing)"))
+check("breath no longer rides a one-shot onAppear transaction",
+      !sheet.contains("withAnimation(.easeInOut(duration: 3.2)"))
+let glowAnchor = "AgentGlowBorder(breathing: breathing)"
+let glowTail = sheet.range(of: glowAnchor).map { String(sheet[$0.lowerBound...].prefix(500)) } ?? ""
 check("glow layer cannot intercept touches",
-      sheet.contains("AgentGlowBorder(breathing: breathing)\n                .allowsHitTesting(false)"))
+      glowTail.contains(".animation(") && glowTail.contains(".allowsHitTesting(false)"))
 check("user state exposes the weak 交还 entry",
       sheet.contains("pool.handControlBack()") && sheet.contains("Label(\"交还\""))
 check("sheet has no remaining isAgentBusy gate",

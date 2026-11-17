@@ -7,6 +7,19 @@ import UIKit
 struct ChatKeyboardViewport: UIViewControllerRepresentable {
     let content: AnyView
     let composer: AnyView
+    /// [T-keyboard-hang-1253] Changes only when the content host's actual
+    /// display inputs change (messages/overlays/committed composer inset).
+    /// Pure geometry-only body passes (latestInputBarFrameH and friends) must
+    /// not replace `host.rootView`.
+    /// `nil` keeps the legacy behaviour (replace on every update) for
+    /// standalone harnesses that do not supply a render key.
+    var contentRenderKey: AnyHashable? = nil
+    /// [T-keyboard-hang-1253] Changes only when the composer's display
+    /// content or chrome layout version changes. Interrupted per-frame
+    /// geometry (`latestInputBarFrameH`) is deliberately absent; the
+    /// settled `inputBarHeight` only appears because the popup overlay
+    /// consumes it, and it changes at most once per keyboard transition.
+    var composerRenderKey: AnyHashable? = nil
     var avoidsKeyboard: Bool = true
     /// Screen-space Y where the header dissolve completes (0 = no dissolve).
     /// The mask lives HERE, on the conversation's own container: the earlier
@@ -32,6 +45,8 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
         controller.update(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
+            contentRenderKey: contentRenderKey,
+            composerRenderKey: composerRenderKey,
             avoidsKeyboard: avoidsKeyboard,
             fadeCompleteY: fadeCompleteY,
             usesWindowHeaderFade: usesWindowHeaderFade)
@@ -55,6 +70,30 @@ final class ChatKeyboardViewportController: UIViewController {
     private var isKeyboardTransitioning = false
     private var keyboardTransitionEndWork: DispatchWorkItem?
     private static let keyboardTransitionSettleDelay: TimeInterval = 0.12
+
+    // [T-keyboard-hang-1253] Render-key gates for the two hosting roots.
+    // A nil key means "never rendered from an update yet".
+    private var lastContentRenderKey: AnyHashable?
+    private var lastComposerRenderKey: AnyHashable?
+    private var hasRenderedContentRoot = false
+    private var hasRenderedComposerRoot = false
+
+    // [T-keyboard-hang-1253] Dirty tracking for hosted layout. `layoutIfNeeded`
+    // must never be an unconditional per-layout tax: only a root replacement
+    // or an actual bounds change needs a synchronous hosting layout. During a
+    // keyboard transition host layout is authored once after the transaction
+    // settles; composer layout is still resolved synchronously when its own
+    // bounds change (fe75410's bottom-alignment contract), but a keyplane-only
+    // pass with unchanged bounds does no hosted layout at all.
+    private var lastHostLaidOutSize = CGSize.zero
+    private var lastComposerLaidOutSize = CGSize.zero
+    private var hostLayoutNeedsUpdate = true
+    private var composerLayoutNeedsUpdate = true
+    private var pendingHostSettleLayout = false
+    private var pendingComposerSettleLayout = false
+
+    private var appliedFadeCompleteY: CGFloat?
+    private var appliedUsesWindowHeaderFade: Bool?
 
     init(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
          usesWindowHeaderFade: Bool = false) {
@@ -130,6 +169,12 @@ final class ChatKeyboardViewportController: UIViewController {
                            name: UIResponder.keyboardDidShowNotification, object: nil)
         center.addObserver(self, selector: #selector(keyboardDidHide),
                            name: UIResponder.keyboardDidHideNotification, object: nil)
+        // [T-keyboard-hang-1253] A keyplane/input-method swap can drive a
+        // window layout without any keyboard frame/visibility notification.
+        // Treat it as the same keyboard transaction so the hosted-tree layout
+        // gate below also covers that system path.
+        center.addObserver(self, selector: #selector(inputModeDidChange),
+                           name: UITextInputMode.currentInputModeDidChangeNotification, object: nil)
     }
 
     deinit {
@@ -139,12 +184,72 @@ final class ChatKeyboardViewportController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        host.view.layoutIfNeeded()
-        composerHost.view.layoutIfNeeded()
+        #if DEBUG
+        KeyboardHangProbe.recordViewDidLayoutSubviewsCall()
+        #endif
         conversationContainer.updateMask()
+
+        let hostSize = host.view.bounds.size
+        let composerSize = composerHost.view.bounds.size
+        let hostSizeChanged = Self.sizeChanged(hostSize, from: lastHostLaidOutSize)
+        let composerSizeChanged = Self.sizeChanged(composerSize, from: lastComposerLaidOutSize)
+
+        if isKeyboardTransitioning {
+            // [T-keyboard-hang-1253] The keyboard transaction owns this pass.
+            // Only a hosting view whose own bounds actually changed is laid
+            // out synchronously; that preserves fe75410's in-transaction
+            // bottom alignment (and the keyboard's intermediate positions)
+            // without re-entering a hosting tree on a keyplane-only pass whose
+            // bounds did not move. Root replacements and other owed work are
+            // authored once by the post-transaction settle pass.
+            if hostSizeChanged {
+                performHostLayout()
+            } else if hostLayoutNeedsUpdate {
+                pendingHostSettleLayout = true
+            }
+            if composerSizeChanged {
+                performComposerLayout()
+            } else if composerLayoutNeedsUpdate {
+                pendingComposerSettleLayout = true
+            }
+            return
+        }
+
+        if hostLayoutNeedsUpdate || hostSizeChanged { performHostLayout() }
+        if composerLayoutNeedsUpdate || composerSizeChanged { performComposerLayout() }
+        if pendingHostSettleLayout { performHostLayout() }
+        if pendingComposerSettleLayout { performComposerLayout() }
+    }
+
+    private static func sizeChanged(_ current: CGSize, from previous: CGSize) -> Bool {
+        // Sub-point churn from fractional keyboard frames is not a content
+        // bounds change; a half-point threshold keeps the dirty gate stable
+        // across 2x/3x screens.
+        abs(current.width - previous.width) > 0.5 || abs(current.height - previous.height) > 0.5
+    }
+
+    private func performHostLayout() {
+        #if DEBUG
+        KeyboardHangProbe.recordHostLayoutIfNeededCall()
+        #endif
+        host.view.layoutIfNeeded()
+        lastHostLaidOutSize = host.view.bounds.size
+        hostLayoutNeedsUpdate = false
+        pendingHostSettleLayout = false
+    }
+
+    private func performComposerLayout() {
+        #if DEBUG
+        KeyboardHangProbe.recordComposerHostLayoutIfNeededCall()
+        #endif
+        composerHost.view.layoutIfNeeded()
+        lastComposerLaidOutSize = composerHost.view.bounds.size
+        composerLayoutNeedsUpdate = false
+        pendingComposerSettleLayout = false
     }
 
     @objc private func keyboardWillChangeFrame() { beginKeyboardTransition() }
+    @objc private func inputModeDidChange() { beginKeyboardTransition() }
     @objc private func keyboardWillHide() { beginKeyboardTransition() }
     @objc private func keyboardDidShow() { scheduleKeyboardTransitionEnd() }
     @objc private func keyboardDidHide() { scheduleKeyboardTransitionEnd() }
@@ -191,6 +296,12 @@ final class ChatKeyboardViewportController: UIViewController {
             layout.isKeyboardTransitioning = false
             layout.invalidateLayout()
         }
+        // [T-keyboard-hang-1253] One authoritative post-transaction pass.
+        // During the animation we deliberately skipped re-entering the
+        // hosting trees; resolve any owed work now, outside the keyboard's
+        // UIKit transaction.
+        if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
+        if pendingComposerSettleLayout || composerLayoutNeedsUpdate { performComposerLayout() }
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {
@@ -214,20 +325,60 @@ final class ChatKeyboardViewportController: UIViewController {
         return layouts
     }
 
-    func update(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
+    func update(content: AnyView, composer: AnyView, contentRenderKey: AnyHashable?, composerRenderKey: AnyHashable?,
+                avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
                 usesWindowHeaderFade: Bool = false) {
         #if DEBUG
         KeyboardHangProbe.recordViewportUpdate()
         #endif
-        // Refresh even when keyboard avoidance did not change (e.g. rotation,
-        // navigation transition or a SwiftUI parameter update).
-        conversationContainer.configure(completeY: fadeCompleteY, usesWindowSafeArea: usesWindowHeaderFade)
-        host.rootView = Self.root(content)
-        composerHost.rootView = Self.composerRoot(composer)
+        // Fade configuration is just two scalars; only push it into the mask
+        // owner when it actually changed. The old unconditional call did
+        // `setNeedsLayout()` + `updateMask()` on every SwiftUI update.
+        if appliedFadeCompleteY != fadeCompleteY || appliedUsesWindowHeaderFade != usesWindowHeaderFade {
+            appliedFadeCompleteY = fadeCompleteY
+            appliedUsesWindowHeaderFade = usesWindowHeaderFade
+            conversationContainer.configure(completeY: fadeCompleteY, usesWindowSafeArea: usesWindowHeaderFade)
+        }
+
+        // [T-keyboard-hang-1253] Re-root only when the hosted view's own
+        // display/layout version changed. Interrupted per-frame geometry
+        // (`latestInputBarFrameH`) never rebuilds either hosting tree; the
+        // settled `inputBarHeight` only appears in the caller's keys because
+        // the popup/message inset consumes it, once per transition.
+        var rootsChanged = false
+        // A nil key means the host is driven by a standalone harness that has
+        // no content-version model: keep the old replace-every-update path.
+        let replaceContent = contentRenderKey == nil
+            || !hasRenderedContentRoot
+            || lastContentRenderKey != contentRenderKey
+        if replaceContent {
+            lastContentRenderKey = contentRenderKey
+            hasRenderedContentRoot = true
+            host.rootView = Self.root(content)
+            hostLayoutNeedsUpdate = true
+            rootsChanged = true
+            #if DEBUG
+            KeyboardHangProbe.recordContentRootReplacement()
+            #endif
+        }
+        let replaceComposer = composerRenderKey == nil
+            || !hasRenderedComposerRoot
+            || lastComposerRenderKey != composerRenderKey
+        if replaceComposer {
+            lastComposerRenderKey = composerRenderKey
+            hasRenderedComposerRoot = true
+            composerHost.rootView = Self.composerRoot(composer)
+            composerLayoutNeedsUpdate = true
+            rootsChanged = true
+            #if DEBUG
+            KeyboardHangProbe.recordComposerRootReplacement()
+            #endif
+        }
         // A rootView replacement can mount a fresh collection view while the
         // keyboard is still moving. Carry the frozen-measurement window over
         // to it until the deferred settle pass runs.
-        if isKeyboardTransitioning { applyKeyboardTransitionFlag(true) }
+        if rootsChanged, isKeyboardTransitioning { applyKeyboardTransitionFlag(true) }
+        if rootsChanged, isViewLoaded { view.setNeedsLayout() }
         guard self.avoidsKeyboard != avoidsKeyboard else { return }
         self.avoidsKeyboard = avoidsKeyboard
         guard isViewLoaded else { return }
@@ -367,16 +518,38 @@ struct ChatAccessoryGeometryMarker: UIViewRepresentable {
 /// Locked counters for the keyboard-hang reproducer. The self-sizing counter
 /// can be bumped from a secondary layout thread, so every access takes the
 /// same lock; snapshot/reset run on the main thread between keyboard cycles.
+///
+/// [T-keyboard-hang-1253] The probe separates the input-bar account from the
+/// message-list account: viewDidLayoutSubviews / composerHost layout and the
+/// composer's TextKit measurements are the crash path; SelfSizingCell counters
+/// stay untouched for the other ledger.
 enum KeyboardHangProbe {
     private static let lock = NSLock()
     private static var inputBarHeightWrites = 0
+    private static var latestInputBarFrameHWrites = 0
     private static var selfSizingSuperCalls = 0
     private static var viewportUpdates = 0
     private static var badgeUpdates = 0
     private static var keyboardCacheHits = 0
+    private static var viewDidLayoutSubviewsCalls = 0
+    private static var hostLayoutIfNeededCalls = 0
+    private static var composerHostLayoutIfNeededCalls = 0
+    private static var contentRootReplacements = 0
+    private static var composerRootReplacements = 0
+    private static var composerIntrinsicSizeCalls = 0
+    private static var composerSizeThatFitsCalls = 0
+    private static var composerFullMeasurementCalls = 0
+    private static var composerMeasurementCacheHits = 0
+    private static var composerDuplicateMeasurementCalls = 0
+    private static var composerMeasurementTotalMs: Double = 0
+    private static var composerMeasurementMaxMs: Double = 0
+    private static var composerMeasuredKeys = Set<String>()
 
     static func recordInputBarHeightWrite() {
         lock.lock(); inputBarHeightWrites += 1; lock.unlock()
+    }
+    static func recordLatestInputBarFrameHWrite() {
+        lock.lock(); latestInputBarFrameHWrites += 1; lock.unlock()
     }
     static func recordSelfSizingSuperCall() {
         lock.lock(); selfSizingSuperCalls += 1; lock.unlock()
@@ -390,22 +563,85 @@ enum KeyboardHangProbe {
     static func recordKeyboardCacheHit() {
         lock.lock(); keyboardCacheHits += 1; lock.unlock()
     }
+    static func recordViewDidLayoutSubviewsCall() {
+        lock.lock(); viewDidLayoutSubviewsCalls += 1; lock.unlock()
+    }
+    static func recordHostLayoutIfNeededCall() {
+        lock.lock(); hostLayoutIfNeededCalls += 1; lock.unlock()
+    }
+    static func recordComposerHostLayoutIfNeededCall() {
+        lock.lock(); composerHostLayoutIfNeededCalls += 1; lock.unlock()
+    }
+    static func recordContentRootReplacement() {
+        lock.lock(); contentRootReplacements += 1; lock.unlock()
+    }
+    static func recordComposerRootReplacement() {
+        lock.lock(); composerRootReplacements += 1; lock.unlock()
+    }
+    static func recordComposerIntrinsicSizeCall() {
+        lock.lock(); composerIntrinsicSizeCalls += 1; lock.unlock()
+    }
+    static func recordComposerSizeThatFitsCall() {
+        lock.lock(); composerSizeThatFitsCalls += 1; lock.unlock()
+    }
+    static func recordComposerMeasurementCacheHit() {
+        lock.lock(); composerMeasurementCacheHits += 1; lock.unlock()
+    }
+    static func recordComposerFullMeasurement(key: String, durationMs: Double) {
+        lock.lock()
+        composerFullMeasurementCalls += 1
+        composerMeasurementTotalMs += durationMs
+        composerMeasurementMaxMs = max(composerMeasurementMaxMs, durationMs)
+        if composerMeasuredKeys.contains(key) {
+            composerDuplicateMeasurementCalls += 1
+        } else {
+            composerMeasuredKeys.insert(key)
+        }
+        lock.unlock()
+    }
 
     struct Snapshot: Equatable {
         let inputBarHeightWrites: Int
+        let latestInputBarFrameHWrites: Int
         let selfSizingSuperCalls: Int
         let viewportUpdates: Int
         let badgeUpdates: Int
         let keyboardCacheHits: Int
+        let viewDidLayoutSubviewsCalls: Int
+        let hostLayoutIfNeededCalls: Int
+        let composerHostLayoutIfNeededCalls: Int
+        let contentRootReplacements: Int
+        let composerRootReplacements: Int
+        let composerIntrinsicSizeCalls: Int
+        let composerSizeThatFitsCalls: Int
+        let composerFullMeasurementCalls: Int
+        let composerMeasurementCacheHits: Int
+        let composerDuplicateMeasurementCalls: Int
+        let composerMeasurementTotalMs: Double
+        let composerMeasurementMaxMs: Double
     }
 
     static func reset() {
         lock.lock()
         inputBarHeightWrites = 0
+        latestInputBarFrameHWrites = 0
         selfSizingSuperCalls = 0
         viewportUpdates = 0
         badgeUpdates = 0
         keyboardCacheHits = 0
+        viewDidLayoutSubviewsCalls = 0
+        hostLayoutIfNeededCalls = 0
+        composerHostLayoutIfNeededCalls = 0
+        contentRootReplacements = 0
+        composerRootReplacements = 0
+        composerIntrinsicSizeCalls = 0
+        composerSizeThatFitsCalls = 0
+        composerFullMeasurementCalls = 0
+        composerMeasurementCacheHits = 0
+        composerDuplicateMeasurementCalls = 0
+        composerMeasurementTotalMs = 0
+        composerMeasurementMaxMs = 0
+        composerMeasuredKeys.removeAll()
         lock.unlock()
     }
 
@@ -413,10 +649,23 @@ enum KeyboardHangProbe {
         lock.lock()
         defer { lock.unlock() }
         return Snapshot(inputBarHeightWrites: inputBarHeightWrites,
+                        latestInputBarFrameHWrites: latestInputBarFrameHWrites,
                         selfSizingSuperCalls: selfSizingSuperCalls,
                         viewportUpdates: viewportUpdates,
                         badgeUpdates: badgeUpdates,
-                        keyboardCacheHits: keyboardCacheHits)
+                        keyboardCacheHits: keyboardCacheHits,
+                        viewDidLayoutSubviewsCalls: viewDidLayoutSubviewsCalls,
+                        hostLayoutIfNeededCalls: hostLayoutIfNeededCalls,
+                        composerHostLayoutIfNeededCalls: composerHostLayoutIfNeededCalls,
+                        contentRootReplacements: contentRootReplacements,
+                        composerRootReplacements: composerRootReplacements,
+                        composerIntrinsicSizeCalls: composerIntrinsicSizeCalls,
+                        composerSizeThatFitsCalls: composerSizeThatFitsCalls,
+                        composerFullMeasurementCalls: composerFullMeasurementCalls,
+                        composerMeasurementCacheHits: composerMeasurementCacheHits,
+                        composerDuplicateMeasurementCalls: composerDuplicateMeasurementCalls,
+                        composerMeasurementTotalMs: composerMeasurementTotalMs,
+                        composerMeasurementMaxMs: composerMeasurementMaxMs)
     }
 }
 #endif

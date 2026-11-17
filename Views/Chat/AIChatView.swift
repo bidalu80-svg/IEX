@@ -238,9 +238,15 @@ class SystemResourceMonitor: ObservableObject {
 /// deliberately NOT @State/@Published: flipping it must not invalidate body.
 /// The geometry observer reads `.active` synchronously; only the final height
 /// commit touches @State inputBarHeight.
+///
+/// [T-keyboard-hang-1253] `latestFrameHeight` lives here too. It used to be a
+/// `@State` written from every `onGeometryChange` callback *before* the
+/// transition gate, which made every keyboard frame rebuild the whole chat
+/// body even when the height was never committed.
 private final class ComposerChromeTransitionGate {
     var active = false
     var task: Task<Void, Never>?
+    var latestFrameHeight: CGFloat = 0
 }
 
 struct AIChatView: View {
@@ -323,15 +329,15 @@ struct AIChatView: View {
     /// on every animation frame; the transition end commits it once.
     @State private var composerChromeTransition = ComposerChromeTransitionGate()
     /// [T-voice-inputbar-anim-tail] The most recent ON-SCREEN composer height
-    /// reported by onGeometryChange. The debounced commit reads THIS instead of
-    /// the height captured when its 300ms timer was armed: the panel's
-    /// expand/collapse + transcript-band animations are 280ms, so the value that
-    /// arms the timer is routinely a mid-animation sample, and committing it
-    /// froze the bottom inset at a transitional height (log 07-14 15:34:
-    /// settled=312.67 / 363 while the panel was really 232 → 210). Writing every
-    /// callback here and committing the freshest one makes the debounce a
-    /// genuine trailing edge.
-    @State private var latestInputBarFrameH: CGFloat = 0
+    /// reported by onGeometryChange lives in
+    /// `composerChromeTransition.latestFrameHeight` (a plain reference-type
+    /// property, not @State). The debounced commit reads IT instead of the
+    /// height captured when its timer was armed: the panel's expand/collapse +
+    /// transcript-band animations are 280ms, so the value that arms the timer
+    /// is routinely a mid-animation sample, and committing it froze the bottom
+    /// inset at a transitional height (log 07-14 15:34: settled=312.67 / 363
+    /// while the panel was really 232 → 210). [T-keyboard-hang-1253] Keeping
+    /// the per-frame sample off SwiftUI state makes the freshness free.
     /// [T-voice-inputbar-stale-height] False until the FIRST non-zero
     /// inputBarHeight lands. The first write (session open / initial composer
     /// layout) is applied IMMEDIATELY (leading edge) so the message list computes
@@ -466,6 +472,10 @@ struct AIChatView: View {
     @State private var topSafeAreaInset: CGFloat = 59
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.scenePhase) private var scenePhase
+    /// [T-keyboard-hang-1253] Render-key input: the keyboard viewport
+    /// hosts are re-rooted only when what they display (including the
+    /// effective color scheme) actually changes.
+    @Environment(\.colorScheme) private var chatRenderColorScheme
     /// Face ID lock state — observed so the navbar title can blur in
     /// lockstep with the chat-body SessionLockGateOverlay (both read
     /// `lockStore.isVisuallyLocked(sid)` rather than recomputing the
@@ -549,6 +559,8 @@ struct AIChatView: View {
             ChatKeyboardViewport(
                 content: chatViewportContent,
                 composer: chatComposerContent,
+                contentRenderKey: AnyHashable(chatViewportContentRenderKey),
+                composerRenderKey: AnyHashable(chatComposerRenderKey),
                 avoidsKeyboard: !voiceInputActive || voiceVM.isEditingTranscript,
                 // Header fading is rendered by the scoped navigation overlay,
                 // above scrolling content and below the header controls.
@@ -562,6 +574,83 @@ struct AIChatView: View {
             .overlay { SessionLockGateOverlay(sessionId: vm.sessionId) }
             .overlay { kernelBootOverlay }
         )
+    }
+
+    // [T-keyboard-hang-1253] Render keys for the two keyboard-hosted
+    // SwiftUI roots. They deliberately contain DISPLAY inputs only:
+    // per-frame geometry such as latestInputBarFrameH never appears here.
+    // `inputBarHeight` is the settled / committed height (at most once per
+    // keyboard transition), not the interrupted per-frame sample.
+    private var chatViewportContentRenderKey: ChatViewportContentRenderKey {
+        ChatViewportContentRenderKey(
+            messageCount: vm.messages.count,
+            firstMessageID: vm.messages.first?.id,
+            lastMessageID: vm.messages.last?.id,
+            sessionID: vm.sessionId,
+            isLoadingSession: vm.isLoadingSession,
+            hasCompletedInitialLoad: vm.hasCompletedInitialLoad,
+            errorMessage: vm.errorMessage,
+            transientNotice: vm.transientNotice,
+            isNearBottom: vm.isNearBottom,
+            isAtFirstTurn: vm.isAtFirstTurn,
+            inputBarHeight: inputBarHeight,
+            standaloneAttachmentTrayHeight: standaloneAttachmentTrayHeight,
+            floatingBarHeight: floatingBarHeight,
+            hasFloatingPreview: hasFloatingPreview,
+            maxContentWidth: maxContentWidth,
+            headerOverflowInset: headerOverflowInset,
+            voiceCallActive: voiceCallPresentation.isActive,
+            voiceCallExpanded: voiceCallExpanded,
+            subAgentsEnabled: subAgentsEnabled,
+            subAgentDockEnabled: subAgentDockEnabled,
+            isReadOnly: isReadOnly,
+            totalSessionCount: totalSessionCount,
+            speakEnabled: vm.speakEnabled,
+            speechPlayerExpanded: vm.speechPlayerExpanded,
+            isDark: chatRenderColorScheme == .dark)
+    }
+
+    private var chatComposerRenderKey: ChatComposerRenderKey {
+        ChatComposerRenderKey(
+            inputText: vm.inputText,
+            pendingQuote: vm.pendingQuote,
+            pendingCaret: vm.pendingCaret,
+            attachmentSignature: vm.attachments.map { "$\($0.id.uuidString)|$\($0.fileName)|$\($0.loadState)" },
+            loadingVideoCount: vm.loadingVideoCount,
+            isSuspended: vm.isSuspended,
+            isProcessing: vm.isProcessing,
+            isReady: vm.isReady,
+            editingMessageIndex: vm.editingMessageIndex,
+            showSlashMenu: vm.showSlashMenu,
+            showMentionMenu: vm.showMentionMenu,
+            slashFilter: vm.slashFilter,
+            slashMenuSelectedIndex: vm.slashMenuSelectedIndex,
+            mentionFilter: vm.mentionFilter,
+            mentionSelectedIndex: vm.mentionSelectedIndex,
+            thinkingLevel: String(describing: vm.currentThinkingLevel),
+            memoryEnabled: vm.memoryEnabled,
+            autoCompactEnabled: vm.autoCompactEnabled,
+            voiceUsedInComposition: vm.voiceUsedInComposition,
+            inputFocused: inputFocused,
+            inputHasSelection: inputHasSelection,
+            inputIsScrollable: inputIsScrollable,
+            voiceInputActive: voiceInputActive,
+            speechRecording: speechManager.state == .recording,
+            recognizedTextCount: speechManager.recognizedText.count,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            hasComposerContent: hasComposerContent,
+            showAutoCompactWarning: showAutoCompactWarning,
+            compactWarningPulseOpacity: compactWarningPulseOpacity,
+            hasInjectedShareContent: hasInjectedShareContent,
+            hasMovableShareContent: hasMovableShareContent,
+            showMoveToSheet: showMoveToSheet,
+            showChatSearch: showChatSearch,
+            voiceCallActive: voiceCallPresentation.isActive,
+            inputBarHeight: inputBarHeight,
+            maxContentWidth: maxContentWidth,
+            attachmentGridHeight: attachmentGridHeight,
+            inputFontSize: FontSettings.shared.scaledChatInput(16.5),
+            isDark: chatRenderColorScheme == .dark)
     }
 
     private var chatComposerContent: AnyView {
@@ -1550,6 +1639,7 @@ struct AIChatView: View {
             composerChromeTransition.task?.cancel()
             composerChromeTransition.task = nil
             composerChromeTransition.active = false
+            composerChromeTransition.latestFrameHeight = 0
             isChatViewVisible = false
             if speechManager.state == .recording {
                 speechManager.stopRecording()
@@ -2196,7 +2286,8 @@ struct AIChatView: View {
             showEnhancedCacheToggle: cached.vm.showEnhancedCacheToggle,
             enhancedCacheEnabled: cached.vm.enhancedCacheEnabled,
             showFastModeToggle: activeModelSupportsFastMode,
-            fastModeEnabled: codexFastModeEnabled
+            fastModeEnabled: codexFastModeEnabled,
+            autoCompactEnabled: cached.vm.autoCompactEnabled
         )
     }
 
@@ -3109,7 +3200,12 @@ struct AIChatView: View {
         let attachment = AnyView(attachmentMenuButton)
         let commands = AnyView(slashMenuButton)
         let send = AnyView(sendButton)
-        let row = HStack(spacing: 6) {
+        // A multi-line draft makes the text view taller than the controls.
+        // Keep the control row on the composer's bottom edge (ChatGPT-style)
+        // instead of letting the default .center alignment float it through
+        // the middle of the expanded chrome. The text view itself still
+        // starts at the top because it is the tallest child in this row.
+        let row = HStack(alignment: .bottom, spacing: 6) {
             HStack(spacing: 0) {
                 attachment
                 commands
@@ -3448,7 +3544,7 @@ struct AIChatView: View {
             gate.active = false
             // Voice mode owns its own 380ms expand/collapse commit path.
             guard !voiceInputActive else { return }
-            let settled = latestInputBarFrameH
+            let settled = composerChromeTransition.latestFrameHeight
             if settled > 0, abs(inputBarHeight - settled) > 0.5 {
                 #if DEBUG
                 KeyboardHangProbe.recordInputBarHeightWrite()
@@ -3507,6 +3603,19 @@ struct AIChatView: View {
         return target.role == .assistant ? soulName : String(localized: "你的消息")
     }
 
+    /// Fixed corner radius for the composer chrome. A Capsule always uses
+    /// half its height as the radius, so a multi-line composer turns into an
+    /// ellipse as it grows. This keeps only the corner radius fixed while the
+    /// height still follows the text. 25pt matches the focused single-line
+    /// composer (34pt controls + 8pt vertical padding); the shorter resting
+    /// chrome clamps to its own half-height, exactly like the Capsule it
+    /// replaces.
+    private static let inputComposerCornerRadius: CGFloat = 25
+
+    private var inputComposerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Self.inputComposerCornerRadius, style: .continuous)
+    }
+
     private var inputComposerChrome: AnyView {
         AnyView(
             VStack(spacing: 8) {
@@ -3533,7 +3642,7 @@ struct AIChatView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, composerVerticalPadding)
                 }
-                .contentShape(Capsule())
+                .contentShape(inputComposerShape)
                 .onTapGesture { inputFocused = true }
                 .onReceive(speechManager.$recognizedText) { text in
                     guard speechManager.state == .recording || !text.isEmpty else { return }
@@ -3578,10 +3687,10 @@ struct AIChatView: View {
                 // already-rounded and the corners stay clean. clipShape is
                 // kept so the text view still gets clipped to the rounded rect.
                 .background(
-                    Capsule(style: .continuous)
+                    inputComposerShape
                         .fill(ChatColors.inputBg)
                 )
-                .clipShape(Capsule(style: .continuous))
+                .clipShape(inputComposerShape)
                 .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
                 .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
             }
@@ -3642,7 +3751,7 @@ struct AIChatView: View {
             // is absent, so no render work continues after the animation.
             .overlay {
                 if compactWarningPulseOpacity > 0 {
-                    Capsule(style: .continuous)
+                    inputComposerShape
                         .stroke(Color.red.opacity(0.55 * compactWarningPulseOpacity), lineWidth: 2)
                         .blur(radius: 4)
                         .allowsHitTesting(false)
@@ -3650,7 +3759,7 @@ struct AIChatView: View {
             }
             .background {
                 if compactWarningPulseOpacity > 0 {
-                    Capsule(style: .continuous)
+                    inputComposerShape
                         .fill(Color.red.opacity(0.22 * compactWarningPulseOpacity))
                         .blur(radius: 12)
                         .scaleEffect(1.03)
@@ -3740,7 +3849,12 @@ struct AIChatView: View {
                 // debounce's settle-confirm read this, so it must already reflect
                 // the current callback (writing it after the seed's `return`
                 // would leave the confirm reading a stale/zero value).
-                if onscreen { latestInputBarFrameH = newH }
+                if onscreen {
+                    composerChromeTransition.latestFrameHeight = newH
+                    #if DEBUG
+                    KeyboardHangProbe.recordLatestInputBarFrameHWrite()
+                    #endif
+                }
 
                 // Text layout is already driven by the keyboard host. Publish
                 // its real height immediately; the voice panel retains its
@@ -3784,7 +3898,7 @@ struct AIChatView: View {
                     inputBarHeightDebounce = Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(380))
                         guard !Task.isCancelled, voiceAtSeed == voiceInputActive else { return }
-                        let settled = latestInputBarFrameH
+                        let settled = composerChromeTransition.latestFrameHeight
                         if settled > 0, abs(settled - newH) > 0.5 {
                             #if DEBUG
                             KeyboardHangProbe.recordInputBarHeightWrite()
@@ -3829,7 +3943,7 @@ struct AIChatView: View {
                         return
                     }
                     // Commit the LATEST height, not the one that armed the timer.
-                    let committed = latestInputBarFrameH > 0 ? latestInputBarFrameH : newH
+                    let committed = composerChromeTransition.latestFrameHeight > 0 ? composerChromeTransition.latestFrameHeight : newH
                     #if DEBUG
                     KeyboardHangProbe.recordInputBarHeightWrite()
                     #endif
@@ -3849,7 +3963,7 @@ struct AIChatView: View {
                     try? await Task.sleep(for: .milliseconds(320))
                     guard !Task.isCancelled else { return }
                     guard voiceAtCapture == voiceInputActive else { return }
-                    let settled = latestInputBarFrameH
+                    let settled = composerChromeTransition.latestFrameHeight
                     if settled > 0, abs(settled - committed) > 0.5 {
                         #if DEBUG
                         KeyboardHangProbe.recordInputBarHeightWrite()
@@ -3992,10 +4106,23 @@ struct AIChatView: View {
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            // [T-keyboard-hang-1253] Every keyboard frame — including a
+            // keyplane-only change where visibility does not flip — opens the
+            // same composer transition window. The old code only armed the
+            // gate when `softwareKeyboardVisible` changed, so an input-method
+            // plane swap bypassed it entirely.
+            if !voiceInputActive { beginComposerChromeTransition() }
             updateSoftwareKeyboardVisibility(from: $0)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) {
+            if !voiceInputActive { beginComposerChromeTransition() }
             updateSoftwareKeyboardVisibility(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UITextInputMode.currentInputModeDidChangeNotification)) { _ in
+            // Keyplane/input-method proxy path: `reloadInputViews()` and
+            // keyboard-extension switches land here even when the keyboard
+            // frame and visibility are unchanged.
+            if !voiceInputActive { beginComposerChromeTransition() }
         }
         .background(
             // Fade from transparent (top) to solid background (bottom half)
@@ -5883,26 +6010,26 @@ private struct RemoteServerAIDraftPresentationModifier: ViewModifier {
 
 // MARK: - Chat Trailing "…" Menu
 
-/// [T-ios-trailing-menu-streaming-stability] The chat page's "…" menu,
-/// extracted from AIChatView into an Equatable child so an OPEN menu stays
+/// [T-ios-trailing-menu-streaming-stability] The chat page's "…" menu is
+/// hosted inside the equatable toolbar gate below so an OPEN menu stays
 /// stable during streaming. AIChatView.body re-evaluates on every streaming
-/// tick (the whole view observes the view model); with the Menu declared
+/// tick (the whole view observes the view model); with the menu widget
 /// inline, each tick pushed rebuilt menu content into the presented UIMenu,
 /// which could reshuffle/reset it right as the user tapped — the reported
 /// mis-taps on menu items mid-stream.
 ///
-/// `.equatable()` at the call site makes SwiftUI diff with `==` below, which
-/// compares ONLY the values that change what the menu displays — none of
-/// which mutate during a stream — so streaming ticks stop invalidating this
-/// subtree entirely. Action closures are recreated by every parent body pass
-/// but never change behavior, so they're deliberately excluded from `==`.
+/// The host key compares ONLY the values that change what the toolbar/menu
+/// displays — none of which mutate during a stream — so streaming ticks stop
+/// invalidating this subtree entirely. Action closures are recreated by every
+/// parent body pass but never change behavior, so they're deliberately
+/// excluded from `==`.
 /// [T-ios-navbar-principal-streaming-stability] Generic value-keyed equatable
 /// wrapper. SwiftUI skips re-evaluating `content` while `key` compares equal —
-/// the same guard ChatTrailingMenu gets from its custom `==`, made reusable
+/// the same guard ChatToolbarHost gets from its custom `==`, made reusable
 /// for views (like the navbar titleView) that are too entangled with local
 /// @State/onChange plumbing to extract wholesale. The content closure is
 /// recreated every parent pass but is excluded from equality, exactly like
-/// ChatTrailingMenu's action closures. Internal @State / onReceive updates
+/// the chat trailing menu's action closures. Internal @State / onReceive updates
 /// inside `content` still fire on their own — only parent-driven invalidation
 /// is gated. Anything the content READS from the parent/vm must therefore be
 /// represented in `key`, or its changes will not render.
@@ -5975,7 +6102,7 @@ private struct NavTitleKey: Equatable {
 }
 
 /// [T-ios-navbar-toolbar-host] Combined display key for the WHOLE toolbar:
-/// the principal title's inputs plus the trailing menu's eight displayed
+/// the principal title's inputs plus every displayed trailing-menu value.
 /// values. While this is unchanged, ChatToolbarHost.body — and therefore the
 /// ToolbarContent builder — never re-runs.
 /// Waveform and per-token transcript changes stay below the large chat body.
@@ -6061,6 +6188,83 @@ private struct ChatVoiceCallPanelHost: View {
     }
 }
 
+/// [T-keyboard-hang-1253] Everything the conversation hosting root
+/// displays. Message bodies themselves are observed inside
+/// CollectionViewMessageListV3; this key only versions the view-level
+/// inputs that require re-rooting the SwiftUI host.
+private struct ChatViewportContentRenderKey: Hashable {
+    let messageCount: Int
+    let firstMessageID: UUID?
+    let lastMessageID: UUID?
+    let sessionID: String?
+    let isLoadingSession: Bool
+    let hasCompletedInitialLoad: Bool
+    let errorMessage: String?
+    let transientNotice: String?
+    let isNearBottom: Bool
+    let isAtFirstTurn: Bool
+    let inputBarHeight: CGFloat
+    let standaloneAttachmentTrayHeight: CGFloat
+    let floatingBarHeight: CGFloat
+    let hasFloatingPreview: Bool
+    let maxContentWidth: CGFloat?
+    let headerOverflowInset: CGFloat
+    let voiceCallActive: Bool
+    let voiceCallExpanded: Bool
+    let subAgentsEnabled: Bool
+    let subAgentDockEnabled: Bool
+    let isReadOnly: Bool
+    let totalSessionCount: Int?
+    let speakEnabled: Bool
+    let speechPlayerExpanded: Bool
+    let isDark: Bool
+}
+
+/// [T-keyboard-hang-1253] Everything the composer hosting root displays.
+/// `inputBarHeight` is the committed height because the popup overlay
+/// consumes it; interrupted per-frame geometry is deliberately absent.
+private struct ChatComposerRenderKey: Hashable {
+    let inputText: String
+    let pendingQuote: MessageQuote?
+    let pendingCaret: Int?
+    let attachmentSignature: [String]
+    let loadingVideoCount: Int
+    let isSuspended: Bool
+    let isProcessing: Bool
+    let isReady: Bool
+    let editingMessageIndex: Int?
+    let showSlashMenu: Bool
+    let showMentionMenu: Bool
+    let slashFilter: String
+    let slashMenuSelectedIndex: Int
+    let mentionFilter: String
+    let mentionSelectedIndex: Int
+    let thinkingLevel: String
+    let memoryEnabled: Bool
+    let autoCompactEnabled: Bool
+    let voiceUsedInComposition: Bool
+    let inputFocused: Bool
+    let inputHasSelection: Bool
+    let inputIsScrollable: Bool
+    let voiceInputActive: Bool
+    let speechRecording: Bool
+    let recognizedTextCount: Int
+    let softwareKeyboardVisible: Bool
+    let hasComposerContent: Bool
+    let showAutoCompactWarning: Bool
+    let compactWarningPulseOpacity: Double
+    let hasInjectedShareContent: Bool
+    let hasMovableShareContent: Bool
+    let showMoveToSheet: Bool
+    let showChatSearch: Bool
+    let voiceCallActive: Bool
+    let inputBarHeight: CGFloat
+    let maxContentWidth: CGFloat?
+    let attachmentGridHeight: CGFloat
+    let inputFontSize: CGFloat
+    let isDark: Bool
+}
+
 private struct ChatToolbarKey: Equatable {
     let navTitle: NavTitleKey
     let showsCompactNavigation: Bool
@@ -6078,6 +6282,9 @@ private struct ChatToolbarKey: Equatable {
     /// [T-codex-fast-mode] Menu row shown only for Codex OAuth models.
     let showFastModeToggle: Bool
     let fastModeEnabled: Bool
+    /// [T-chat-auto-compact-warning] The trailing menu's switch state. It must
+    /// pierce this host gate or the menu row cannot update in place.
+    let autoCompactEnabled: Bool
 }
 
 /// [T-ios-navbar-toolbar-host] Zero-footprint host that owns the navigation
@@ -6087,9 +6294,9 @@ private struct ChatToolbarKey: Equatable {
 /// inputs — its body (the ToolbarContent builder) only re-runs when something
 /// the toolbar actually shows changes. Streaming ticks leave the key equal,
 /// the builder never re-runs, the bridge gets no new ToolbarContent to push,
-/// and the OPEN native SwiftUI Menu stays untouched. Content closures are
+/// and the OPEN menu stays untouched. Content closures are
 /// recreated by every parent pass (excluded from ==, same pattern as
-/// EquatableByValue/ChatTrailingMenu) so a key change always renders through
+/// EquatableByValue) so a key change always renders through
 /// the freshest parent state.
 private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View, Equatable {
     let key: ChatToolbarKey
@@ -6128,6 +6335,7 @@ private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View
             if lhs.key.enhancedCacheEnabled != rhs.key.enhancedCacheEnabled { diffs.append("enhancedCacheEnabled") }
             if lhs.key.showFastModeToggle != rhs.key.showFastModeToggle { diffs.append("showFastModeToggle") }
             if lhs.key.fastModeEnabled != rhs.key.fastModeEnabled { diffs.append("fastModeEnabled") }
+            if lhs.key.autoCompactEnabled != rhs.key.autoCompactEnabled { diffs.append("autoCompactEnabled") }
             NavbarEvalStats.logger.info("[NavbarEval] host == FALSE diffs=[\(diffs.joined(separator: ","))]")
         }
         #endif
@@ -6311,7 +6519,8 @@ private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
     }
 }
 
-/// [T-ios-navbar-uikit-menu] UIKit-owned replacement for ChatTrailingMenu.
+/// [T-ios-navbar-uikit-menu] UIKit-owned button and menu for the chat trailing
+/// "…" menu.
 ///
 /// Instrumented device run (NavbarEval, 2026-07-17 19:35): during a streaming
 /// reply the toolbar builder ran 34 times while BOTH equatable gates held
@@ -6325,212 +6534,19 @@ private struct CompactChatInteractivePopEnabler: UIViewRepresentable {
 /// UIButton instance survives SwiftUI updates, the presented UIMenu is
 /// anchored to that stable instance, and updateUIView only touches
 /// `button.menu` when the DISPLAYED state actually changed — a no-op SwiftUI
-/// pass physically cannot reach the menu. Field names/order are identical to
-/// ChatTrailingMenu so the call site only swaps the type name. The DEBUG
-/// request-count rows use UIDeferredMenuElement.uncached to stay fresh at
-/// each open, matching the SwiftUI Menu's lazy content read.
-/// [T-ios-navbar-toolbar-host] Native SwiftUI "..." menu, restored. The
-/// UIKit ChatTrailingMenuButton below remains as the proven fallback (it
-/// verifiably stops the mid-stream refresh but loses the system's round
-/// Liquid-Glass chrome); with the toolbar now hosted in the equatable-gated
-/// ChatToolbarHost the ToolbarContent is never rebuilt during streaming, so
-/// the native Menu — and its native appearance — should be stable. Item set
-/// mirrors the UIKit buildMenu exactly (incl. Compact Messages + the divider
-/// between Clear Chat and the iCloud actions from T-chat-menu-compact-entry).
-private struct ChatTrailingMenu: View, Equatable {
-    let messagesEmpty: Bool
-    let hasSession: Bool
-    let isForcePulling: Bool
-    let iCloudSyncEnabled: Bool
-    let memoryEnabled: Bool
-    let speakEnabled: Bool
-    let showEnhancedCacheToggle: Bool
-    let enhancedCacheEnabled: Bool
-    /// [T-codex-fast-mode] Mirrors ChatTrailingMenuButton.
-    let showFastModeToggle: Bool
-    let fastModeEnabled: Bool
-    /// [T-chat-auto-compact-warning] Global auto-compact opt-in.
-    let autoCompactEnabled: Bool
+/// pass physically cannot reach the menu. Field names/order mirror the
+/// trailingMenu call site so the wiring stays explicit.
+///
+/// [T-ios-navbar-toolbar-host] ChatToolbarHost supplies the outer gate. Its
+/// ChatToolbarKey must carry every displayed menu value (including
+/// autoCompactEnabled); otherwise a menu-state flip never reaches the button's
+/// own Key and the open menu keeps rendering the stale switch image.
 
-    let onNewChat: () -> Void
-    let onCompact: () -> Void
-    let onClearChat: () -> Void
-    let onForceSync: () -> Void
-    let onForcePull: () -> Void
-    let onOpenTerminal: () -> Void
-    let onOpenBrowser: () -> Void
-    let onBrowseFiles: () -> Void
-    let onSkills: () -> Void
-    let onMCPs: () -> Void
-    let onMemories: () -> Void
-    let setSpeakEnabled: (Bool) -> Void
-    let setEnhancedCache: (Bool) -> Void
-    let setFastMode: (Bool) -> Void
-    let setAutoCompact: (Bool) -> Void
-    let onTokenUsage: () -> Void
-    let onSearchChat: () -> Void
-    let onShareSession: () -> Void
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.messagesEmpty == rhs.messagesEmpty
-            && lhs.hasSession == rhs.hasSession
-            && lhs.isForcePulling == rhs.isForcePulling
-            && lhs.iCloudSyncEnabled == rhs.iCloudSyncEnabled
-            && lhs.memoryEnabled == rhs.memoryEnabled
-            && lhs.speakEnabled == rhs.speakEnabled
-            && lhs.showEnhancedCacheToggle == rhs.showEnhancedCacheToggle
-            && lhs.enhancedCacheEnabled == rhs.enhancedCacheEnabled
-            && lhs.showFastModeToggle == rhs.showFastModeToggle
-            && lhs.fastModeEnabled == rhs.fastModeEnabled
-            && lhs.autoCompactEnabled == rhs.autoCompactEnabled
-    }
-
-    var body: some View {
-        #if DEBUG
-        let _ = {
-            NavbarEvalStats.menuEval += 1
-            NavbarEvalStats.logger.info("[NavbarEval] menuEval=\(NavbarEvalStats.menuEval) (toolbarPass=\(NavbarEvalStats.toolbarPass))")
-        }()
-        #endif
-        return Menu {
-            Button { onNewChat() } label: {
-                Label(String(localized: "New Chat"), systemImage: "square.and.pencil")
-            }
-
-            Divider()
-
-            // [T-chat-menu-compact-entry] Compact above Clear Chat.
-            Button { onCompact() } label: {
-                Label(String(localized: "Compact Messages"), systemImage: "arrow.down.right.and.arrow.up.left")
-            }
-            .disabled(messagesEmpty)
-
-            Button(role: .destructive) { onClearChat() } label: {
-                Label(String(localized: "Clear Chat"), systemImage: "trash")
-            }
-            .disabled(messagesEmpty)
-
-            Divider()
-
-            // iCloud sync actions: iOS 17+ (v2 sync engine) AND the user's
-            // iCloud Sync toggle on.
-            if #available(iOS 17.0, *), iCloudSyncEnabled {
-                Button { onForceSync() } label: {
-                    Label(String(localized: "Force iCloud Sync"), systemImage: "icloud.and.arrow.up")
-                }
-                .disabled(!hasSession || isForcePulling)
-
-                Button { onForcePull() } label: {
-                    Label(String(localized: "Force Pull Messages"), systemImage: "icloud.and.arrow.down")
-                }
-                .disabled(!hasSession || isForcePulling)
-
-                Divider()
-            }
-
-            Button { onOpenTerminal() } label: {
-                Label(String(localized: "Open Terminal"), systemImage: "terminal")
-            }
-
-            Button { onOpenBrowser() } label: {
-                Label(String(localized: "Open Browser"), systemImage: "globe")
-            }
-
-            Button { onBrowseFiles() } label: {
-                Label(String(localized: "Browse Chat Files"), systemImage: "folder")
-            }
-
-            Divider()
-
-            Button { onSkills() } label: {
-                Label(String(localized: "Skills in Session"), systemImage: "puzzlepiece.extension")
-            }
-
-            Button { onMCPs() } label: {
-                Label(String(localized: "MCPs in Session"), systemImage: "wrench.and.screwdriver")
-            }
-
-            if memoryEnabled {
-                Button { onMemories() } label: {
-                    Label(String(localized: "Memories in Session"), systemImage: "archivebox.fill")
-                }
-            }
-
-            Toggle(isOn: Binding(
-                get: { speakEnabled },
-                set: { setSpeakEnabled($0) }
-            )) {
-                Label(String(localized: "Speak Responses"), systemImage: "speaker.wave.2")
-            }
-
-            // [T-codex-fast-mode-menu-group] Model-control toggles in their
-            // own divider-separated section (mirrors the UIKit buildMenu).
-            if showEnhancedCacheToggle || showFastModeToggle {
-                Divider()
-
-                if showEnhancedCacheToggle {
-                    Toggle(isOn: Binding(
-                        get: { enhancedCacheEnabled },
-                        set: { setEnhancedCache($0) }
-                    )) {
-                        Label(String(localized: "Enhanced Cache"), systemImage: "clock.arrow.circlepath")
-                    }
-                }
-
-                if showFastModeToggle {
-                    Toggle(isOn: Binding(
-                        get: { fastModeEnabled },
-                        set: { setFastMode($0) }
-                    )) {
-                        Label(String(localized: "Enable Fast Mode"), systemImage: "bolt.fill")
-                    }
-                }
-            }
-
-            Divider()
-
-            Button { onTokenUsage() } label: {
-                Label(String(localized: "Token Usage"), systemImage: "chart.bar.fill")
-            }
-
-            // [T-chat-search] Above Share Session, matching the UIKit menu.
-            Button { onSearchChat() } label: {
-                Label(String(localized: "Search in Chat"), systemImage: "magnifyingglass")
-            }
-            .disabled(messagesEmpty)
-
-            // [T-session-share] Replaces the DEBUG-only "Copy Request Log" /
-            // "Copy Session Data" rows.
-            Button { onShareSession() } label: {
-                Label(String(localized: "Share Session"), systemImage: "square.and.arrow.up")
-            }
-            .disabled(messagesEmpty)
-
-            // [T-chat-auto-compact-warning] Toggle row directly below Share
-            // Session, mirroring the UIKit menu. A Toggle (not a plain action)
-            // makes the on/off state visible at a glance.
-            Toggle(isOn: Binding(
-                get: { autoCompactEnabled },
-                set: { setAutoCompact($0) }
-            )) {
-                Label(String(localized: "自动压缩"), systemImage: "arrow.down.right.and.arrow.up.left")
-            }
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(ChatColors.primaryText)
-        }
-    }
-}
-
-/// [T-ios-navbar-uikit-menu] PROVEN FALLBACK, currently unused: swaps in for
-/// ChatTrailingMenu at the trailingMenu call site if the ChatToolbarHost
-/// approach ever regresses. Verified on-device (2026-07-17) to stop the
-/// mid-stream menu refresh; its remaining flaw was appearance (no native
-/// round glass chrome — mitigated here by sizeThatFits reporting the
-/// button's intrinsic size so the system container wraps it like a plain
-/// toolbar icon).
-/// Preserve the persistent UIKit menu anchor and use its native highlight state.
+/// [T-ios-navbar-uikit-menu] Persistent UIKit menu anchor. The button instance
+/// survives SwiftUI updates, so a presented UIMenu is never re-anchored
+/// mid-stream. On pre-iOS 26 it adds a subtle press scale and backdrop because
+/// the toolbar's round glass chrome is unavailable there.
+/// Use its native highlight state rather than a custom overlay.
 private final class ChatLegacyMenuButton: UIButton {
     override var isHighlighted: Bool {
         didSet {
@@ -6637,7 +6653,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     func updateUIView(_ button: UIButton, context: Context) {
         // Closures capture view state -- refresh them every pass so actions
         // always see the latest values (excluded from the rebuild decision,
-        // exactly like ChatTrailingMenu's ==).
+        // exactly like the toolbar host's key-based == guard).
         context.coordinator.parent = self
         guard context.coordinator.lastKey != key else { return }
         context.coordinator.lastKey = key
@@ -6748,16 +6764,40 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
                                   attributes: key.messagesEmpty ? [.disabled] : []) { _ in
             coordinator.parent.onShareSession()
         })
-        // [T-chat-auto-compact-warning] Toggle row below Share Session. The
-        // checkmark state is the UIKit-menu equivalent of the SwiftUI Toggle.
+        // [T-chat-auto-compact-warning] Toggle row below Share Session.
+        //
+        // UIMenu's public API only accepts UIMenuElement values. A UISwitch is
+        // a UIView, so it cannot be embedded in a UIMenu (the only state a
+        // UIAction can express is the system checkmark). The closest faithful
+        // form is a live UISwitch snapshot as the row image: it uses the same
+        // on/off appearance, and tapping the row still flips the same setting
+        // through setAutoCompact. It is an image, not a draggable control.
         tailGroup.append(UIAction(title: String(localized: "自动压缩"),
-                                  image: UIImage(systemName: "arrow.down.right.and.arrow.up.left"),
-                                  state: key.autoCompactEnabled ? .on : .off) { _ in
+                                  image: Self.autoCompactSwitchImage(isOn: key.autoCompactEnabled),
+                                  state: .off) { _ in
             coordinator.parent.setAutoCompact(!key.autoCompactEnabled)
         })
         groups.append(UIMenu(options: .displayInline, children: tailGroup))
 
         return UIMenu(children: groups)
+    }
+
+    /// Renders the real UISwitch control at its natural size. `state: .off`
+    /// above keeps UIMenu from drawing its checkmark on top of the switch.
+    private static func autoCompactSwitchImage(isOn: Bool) -> UIImage {
+        let size = CGSize(width: 51, height: 31)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = UIScreen.main.scale
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+            let control = UISwitch(frame: CGRect(origin: .zero, size: size))
+            control.isOn = isOn
+            control.overrideUserInterfaceStyle = UITraitCollection.current.userInterfaceStyle
+            control.setNeedsLayout()
+            control.layoutIfNeeded()
+            control.layer.render(in: context.cgContext)
+        }
+        return image.withRenderingMode(.alwaysOriginal)
     }
 }
 

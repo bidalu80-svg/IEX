@@ -741,6 +741,12 @@ struct ContentView: View {
             }
         }
         .task {
+            // Cold launch: once the main view exists, let previously connected
+            // servers come back without a manual tap. This is process-guarded
+            // by the connection service and does not block the session load.
+            await RemoteSSHConnectionService.shared.restoreConnectionsIfNeeded()
+        }
+        .task {
             sessions = await ChatStore.shared.listSessions()
             chatFolders = await ChatStore.shared.listChatFolders()
             let shareAlreadyHandled = shareCoordinator.bufferVersion > 0

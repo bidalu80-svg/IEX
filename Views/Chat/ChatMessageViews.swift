@@ -94,6 +94,37 @@ private struct PreviewContentSizeKey: PreferenceKey {
     }
 }
 
+/// [T-chat-quote-reply] Read-only preview of a quoted message. Shows the
+/// original message text resolved from the current session, or the stored
+/// quote snapshot when the original no longer exists. No reply / send action
+/// lives here.
+struct QuotedMessagePreviewSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(text.isEmpty ? " " : text)
+                    .font(.system(size: FontSettings.shared.scaledMessage(16.5)))
+                    .foregroundStyle(ChatColors.primaryText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .background(ChatColors.background)
+            .navigationTitle(Text("引用的消息"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(String(localized: "Done")) { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 // MARK: - Chat Message Row
 
 struct ChatMessageRow: View {
@@ -107,6 +138,8 @@ struct ChatMessageRow: View {
     var onRetry: (() -> Void)?
     /// [T-chat-quote-reply] Start a reply to this message.
     var onReply: (() -> Void)?
+    /// [T-chat-quote-reply] Open a read-only preview of the quoted message.
+    var onOpenQuote: ((MessageQuote) -> Void)? = nil
     var onEdit: (() -> Void)?
     var onDelete: (() -> Void)?
     var onWithdraw: (() -> Void)?
@@ -356,23 +389,7 @@ struct ChatMessageRow: View {
             // [T-chat-quote-reply] Quote header sits above the sent bubble
             // text, matching the composer strip's wording and snapshot.
             if let quote = message.quote {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("↩ 你回复了这条消息")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ChatColors.userMessageText.opacity(0.85))
-                    Text(quote.text)
-                        .font(.system(size: 12))
-                        .foregroundStyle(ChatColors.userMessageText.opacity(0.72))
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(ChatColors.userMessageText.opacity(0.10))
-                )
+                quoteBlock(quote)
             }
 
             SearchHighlightText(userDisplayText, key: .init(messageId: message.id, blockId: nil, field: .body))
@@ -415,6 +432,41 @@ struct ChatMessageRow: View {
             RoundedRectangle(cornerRadius: 18)
                 .fill(ChatColors.userMessageBubble)
         )
+    }
+
+    /// [T-chat-quote-reply] The quote header is its own tap target. Its
+    /// `.onTapGesture` only covers this block, so the bubble's text selection,
+    /// long-press menu and existing gestures stay untouched.
+    @ViewBuilder
+    private func quoteBlock(_ quote: MessageQuote) -> some View {
+        let block = VStack(alignment: .leading, spacing: 2) {
+            Text("↩ 你回复了这条消息")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ChatColors.userMessageText.opacity(0.85))
+            Text(quote.text)
+                .font(.system(size: 12))
+                .foregroundStyle(ChatColors.userMessageText.opacity(0.72))
+                .lineLimit(2)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(ChatColors.userMessageText.opacity(0.10))
+        )
+
+        if let onOpenQuote {
+            block
+                .contentShape(Rectangle())
+                .onTapGesture { onOpenQuote(quote) }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint(String(localized: "预览被引用的消息"))
+                .accessibilityIdentifier("userMessageQuote")
+        } else {
+            block
+        }
     }
 
     private var userRow: some View {

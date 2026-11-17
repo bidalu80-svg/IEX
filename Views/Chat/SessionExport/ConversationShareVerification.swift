@@ -634,6 +634,14 @@ import PDFKit
         let messages = try fixture()
         let request = ChatShareSnapshot.request(messages: messages, title: "分享验证 Share Verification", vm: vm)
         try require(request.initialSelection.isEmpty, "Conversation menu starts with no selection")
+        try require(request.messages.first?.quote?.text == "QUOTE_SNAPSHOT 被引用的原始回复",
+                    "Share snapshot preserves the user message quote")
+        let plainHeight = ChatShareHeightEstimate.height(
+            of: ChatShareEstimateInput(kind: .user, text: "x"), contentWidth: 320)
+        let quoteHeight = ChatShareHeightEstimate.height(
+            of: ChatShareEstimateInput(kind: .user, text: "x", quoteText: "QUOTE_SNAPSHOT 被引用的原始回复"),
+            contentWidth: 320)
+        try require(quoteHeight - plainHeight >= 56, "Share height estimate reserves the quote block")
         let first = messages[1].blocks[0]
         let frozen = request.messages[1].blocks[0]
         first.content = "MUTATED LIVE CONTENT"
@@ -1061,8 +1069,12 @@ import PDFKit
         shell.toolSummary = "检查导出结果"
         shell.toolDuration = 1.2
         let tail = AssistantBlock(kind: .text, content: (1...70).map { "Paragraph \($0): 完整导出，逐行保留，不截断内容。" }.joined(separator: "\n\n") + "\n\nSHARE_END")
-        return [ChatMessage(role: .user, content: "请分享含表格、代码、图片与工具的对话。"),
-                ChatMessage(role: .assistant, content: "", blocks: [content, thought, read, shell, tail]),
+        let assistantId = UUID()
+        let quote = MessageQuote(targetMessageId: assistantId.uuidString,
+                                 text: "QUOTE_SNAPSHOT 被引用的原始回复")
+        return [ChatMessage(role: .user, content: "请分享含表格、代码、图片与工具的对话。", quote: quote),
+                ChatMessage(role: .assistant, content: "", blocks: [content, thought, read, shell, tail],
+                            id: assistantId),
                 ChatMessage(role: .user, content: "最后一条用户消息。")]
     }
 

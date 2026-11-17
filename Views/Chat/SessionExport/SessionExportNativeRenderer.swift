@@ -297,7 +297,8 @@ final class SessionExportNativeRenderer {
                                content: message.content,
                                blocks: filtered,
                                isQueued: false,
-                               timestamp: message.timestamp)
+                               timestamp: message.timestamp,
+                               quote: message.quote)
         copy.usage = message.usage
         copy.firstTokenLatency = message.firstTokenLatency
         copy.taskDuration = message.taskDuration

@@ -205,7 +205,8 @@ private struct SessionExportPickerRow: View {
                                content: message.content,
                                blocks: blocks,
                                isQueued: false,
-                               timestamp: message.timestamp)
+                               timestamp: message.timestamp,
+                               quote: message.quote)
         copy.attachments = message.attachments
         copy.inputAttachments = message.inputAttachments
         copy.firstTokenLatency = message.firstTokenLatency

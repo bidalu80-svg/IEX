@@ -135,7 +135,7 @@ struct SessionExportTool {
 enum SessionExportBlock {
     case header(SessionExportHeader)
     /// A user turn. `attachments` are display file names only.
-    case user(text: String, attachments: [String], timestamp: Date)
+    case user(text: String, attachments: [String], timestamp: Date, quote: MessageQuote?)
     /// Assistant prose (markdown, inline styling supported).
     case prose(String)
     /// A fenced code block lifted out of the prose stream.
@@ -178,7 +178,8 @@ enum SessionExportBuilder {
                 let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 let attachments = message.attachments.map(\.fileName)
                 guard !text.isEmpty || !attachments.isEmpty else { continue }
-                blocks.append(.user(text: text, attachments: attachments, timestamp: message.timestamp))
+                blocks.append(.user(text: text, attachments: attachments, timestamp: message.timestamp,
+                                    quote: message.quote))
 
             case .assistant:
                 guard !message.isInternalBridge else { continue }

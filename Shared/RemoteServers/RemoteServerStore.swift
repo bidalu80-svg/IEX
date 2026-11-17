@@ -86,6 +86,15 @@ final class RemoteServerStore: ObservableObject {
         try persist()
     }
 
+    /// Clears the durable "was connected" marker. Keeping this in sync with
+    /// `markConnected` is what lets a launch restore connections without
+    /// resurrecting servers that the user explicitly disconnected.
+    func markDisconnected(_ serverID: UUID) throws {
+        guard let index = servers.firstIndex(where: { $0.id == serverID }) else { return }
+        servers[index].lastConnectedAt = nil
+        try persist()
+    }
+
     private func normalized(_ proposed: RemoteServerProfile) -> RemoteServerProfile {
         var server = proposed
         server.name = server.name.trimmingCharacters(in: .whitespacesAndNewlines)

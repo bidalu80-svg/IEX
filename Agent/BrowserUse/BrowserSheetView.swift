@@ -645,7 +645,15 @@ private struct AgentBrowsingOverlay: View {
         ZStack {
             // Static gradient + a slow opacity breath only. No timeline,
             // no full-screen per-frame redraw; this layer never takes touches.
+            //
+            // The breath uses .animation(value:) below instead of a one-shot
+            // withAnimation in onAppear: the value-driven animation is tied to
+            // this view's state and survives the frequent BrowserSheetView
+            // rebuilds while the agent browses. No timeline, no per-frame
+            // redraw; this layer never takes touches.
             AgentGlowBorder(breathing: breathing)
+                .animation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true),
+                           value: breathing)
                 .allowsHitTesting(false)
 
             VStack(spacing: 14) {
@@ -691,10 +699,10 @@ private struct AgentBrowsingOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
-                breathing = true
-            }
+            guard !breathing else { return }
+            breathing = true
         }
+        .onDisappear { breathing = false }
     }
 }
 
@@ -714,14 +722,14 @@ private struct AgentGlowBorder: View {
                     lineWidth: 26
                 )
                 .blur(radius: 20)
-                .opacity(breathing ? 0.82 : 0.55)
+                .opacity(breathing ? 0.90 : 0.35)
 
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     AngularGradient(gradient: Gradient(colors: colors), center: .center),
                     lineWidth: 4
                 )
-                .opacity(breathing ? 1.0 : 0.72)
+                .opacity(breathing ? 1.0 : 0.50)
         }
         .padding(5)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

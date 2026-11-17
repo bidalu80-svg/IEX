@@ -51,6 +51,10 @@ struct SessionExportPreparedBlock {
     let style: SessionExportBlockStyle
     let spacingAfter: CGFloat
     let boxWidth: CGFloat
+    /// [T-chat-quote-reply] Rounded quote-block background, relative to the
+    /// block's text rect. Only drawn at the start of a block (never on a
+    /// continued PDF page).
+    var quoteDecoration: CGRect? = nil
 
     var boxHeight: CGFloat {
         textSize.height + style.padding.top + style.padding.bottom
@@ -90,8 +94,8 @@ final class SessionExportLayout {
         case .header(let header):
             return headerBlock(header)
 
-        case .user(let text, let attachments, _):
-            return userBlock(text: text, attachments: attachments)
+        case .user(let text, let attachments, _, let quote):
+            return userBlock(text: text, attachments: attachments, quote: quote)
 
         case .prose(let markdown):
             let attr = SessionExportMarkdown.attributed(markdown, palette: palette)
@@ -125,14 +129,54 @@ final class SessionExportLayout {
         )
     }
 
-    private func userBlock(text: String, attachments: [String]) -> SessionExportPreparedBlock {
+    private func userBlock(text: String, attachments: [String], quote: MessageQuote?) -> SessionExportPreparedBlock {
         var markdown = text
         if !attachments.isEmpty {
             let names = attachments.map { "📎 \($0)" }.joined(separator: "\n")
             markdown += markdown.isEmpty ? names : "\n\n\(names)"
         }
 
-        let attr = SessionExportMarkdown.attributed(markdown, palette: palette)
+        let body = SessionExportMarkdown.attributed(markdown, palette: palette)
+        let attr: NSAttributedString
+        var quoteOnly: NSAttributedString?
+        if let quote {
+            // [T-chat-quote-reply] Same wording / hierarchy / 2-line cap as the
+            // in-chat quote block, drawn above the bubble text.
+            let headerParagraph = NSMutableParagraphStyle()
+            headerParagraph.paragraphSpacingBefore = 7
+            headerParagraph.paragraphSpacing = 2
+            headerParagraph.firstLineHeadIndent = 10
+            headerParagraph.headIndent = 10
+            headerParagraph.tailIndent = -10
+
+            let quoteParagraph = NSMutableParagraphStyle()
+            quoteParagraph.lineSpacing = 2
+            quoteParagraph.paragraphSpacing = 7
+            quoteParagraph.firstLineHeadIndent = 10
+            quoteParagraph.headIndent = 10
+            quoteParagraph.tailIndent = -10
+
+            let quoteText = NSMutableAttributedString()
+            quoteText.append(NSAttributedString(string: "↩ 你回复了这条消息\n", attributes: [
+                .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: palette.userBubbleText.withAlphaComponent(0.85),
+                .paragraphStyle: headerParagraph,
+            ]))
+            let snapshot = Self.truncatedQuoteSnapshot(
+                quote.text,
+                width: max(metrics.contentWidth * 0.86 - 28 - 20, 40)
+            )
+            quoteText.append(NSAttributedString(string: snapshot + "\n", attributes: [
+                .font: UIFont.systemFont(ofSize: 12),
+                .foregroundColor: palette.userBubbleText.withAlphaComponent(0.72),
+                .paragraphStyle: quoteParagraph,
+            ]))
+            quoteOnly = NSAttributedString(attributedString: quoteText)
+            quoteText.append(body)
+            attr = quoteText
+        } else {
+            attr = body
+        }
         let padding = UIEdgeInsets(top: 11, left: 14, bottom: 11, right: 14)
         let maxWidth = metrics.contentWidth * 0.86
 
@@ -142,6 +186,12 @@ final class SessionExportLayout {
         let boxWidth = min(max(natural.width + padding.left + padding.right, 96), maxWidth)
         let textWidth = boxWidth - padding.left - padding.right
         let size = measure(attr, width: textWidth)
+        let quoteDecoration: CGRect? = quoteOnly.map {
+            // The measured quote string already carries its 7pt top/bottom
+            // paragraph padding and 10pt side indents.
+            let quoteSize = measure($0, width: max(textWidth, 40))
+            return CGRect(x: 0, y: 0, width: textWidth, height: quoteSize.height)
+        }
 
         let style = SessionExportBlockStyle(
             fillColor: palette.userBubbleFill,
@@ -157,8 +207,35 @@ final class SessionExportLayout {
             textSize: size,
             style: style,
             spacingAfter: 12,
-            boxWidth: boxWidth
+            boxWidth: boxWidth,
+            quoteDecoration: quoteDecoration
         )
+    }
+
+    /// Caps the quote snapshot at the chat's two lines, with a tail ellipsis.
+    private static func truncatedQuoteSnapshot(_ text: String, width: CGFloat) -> String {
+        let font = UIFont.systemFont(ofSize: 12)
+        let maxHeight = ceil(font.lineHeight * 2)
+        func measuredHeight(_ value: String) -> CGFloat {
+            let value = NSAttributedString(string: value, attributes: [.font: font])
+            return ceil(value.boundingRect(
+                with: CGSize(width: max(width, 1), height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            ).height)
+        }
+        if measuredHeight(text) <= maxHeight { return text }
+        var low = 0
+        var high = text.count
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if measuredHeight(String(text.prefix(mid)) + "…") <= maxHeight {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+        return String(text.prefix(low)) + "…"
     }
 
     private func codeBlock(text: String, language: String?) -> SessionExportPreparedBlock {
@@ -642,6 +719,14 @@ final class SessionExportRenderer {
             width: max(boxWidth - padding.left - padding.right, 20),
             height: max(boxHeight - padding.top - padding.bottom, 1)
         )
+
+        if textOffset == 0, let quoteDecoration = prepared.quoteDecoration {
+            let rect = quoteDecoration.offsetBy(dx: textRect.minX, dy: textRect.minY)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: 10)
+            ctx.setFillColor(palette.userBubbleText.withAlphaComponent(0.10).cgColor)
+            ctx.addPath(path.cgPath)
+            ctx.fillPath()
+        }
 
         let attr: NSAttributedString
         if textOffset > 0, textOffset < prepared.text.length {

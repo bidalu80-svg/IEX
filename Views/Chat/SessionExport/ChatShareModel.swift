@@ -399,6 +399,14 @@ enum ChatShareImageBudget {
 struct ChatShareEstimateInput: Equatable {
     let kind: ChatShareCell.Kind
     let text: String
+    /// Snapshot shown above a user bubble's text, matching the chat quote block.
+    var quoteText: String? = nil
+    /// Whether this user bubble is actually showing its collapsed form. A
+    /// collapsed bubble only shows `UserMessageCollapsePolicy.collapsedLineLimit`
+    /// lines; the estimate has to reserve that visible height, not the whole
+    /// prompt, or a collapsed share would be wrongly forced to PDF as if it
+    /// were still expanded. Non-collapsible prompts stay full height.
+    var isUserTextCollapsed: Bool = false
 }
 
 enum ChatShareHeightEstimate {
@@ -429,7 +437,17 @@ enum ChatShareHeightEstimate {
     static func height(of input: ChatShareEstimateInput, contentWidth: CGFloat) -> CGFloat {
         switch input.kind {
         case .user:
-            return wrappedHeight(input.text, width: contentWidth * 0.8 - 28) + 20
+            // [T-chat-quote-reply] The chat draws a quote block above the bubble
+            // text (2-line caption + 14pt vertical padding + 8pt VStack spacing).
+            // Reserve its worst-case height so a quoted row cannot be laid out
+            // short and clipped on a long image / PDF page.
+            let quoteHeight: CGFloat = input.quoteText == nil ? 0 : 56
+            let fullTextHeight = wrappedHeight(input.text, width: contentWidth * 0.8 - 28)
+            let visibleTextHeight = input.isUserTextCollapsed
+                ? min(fullTextHeight,
+                      lineHeight * CGFloat(UserMessageCollapsePolicy.collapsedLineLimit))
+                : fullTextHeight
+            return visibleTextHeight + 20 + quoteHeight
         case .callback: return 72
         case .tool: return 36
         case .toolGroup: return 30

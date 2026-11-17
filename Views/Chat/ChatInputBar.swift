@@ -817,6 +817,103 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
     var onTab: (() -> Bool)?
     var maxHeight: CGFloat = 120
 
+    // [T-keyboard-hang-1253] One authoritative TextKit measurement per
+    // (text, width, font). `intrinsicContentSize` and the representable's
+    // `sizeThatFits` used to run two independent full `UITextView.sizeThatFits`
+    // measurements with different width bases (bounds.width vs proposal.width)
+    // while also writing `isScrollEnabled` from inside layout. Both entry
+    // points now resolve the same half-point-quantized width through this
+    // cache; scroll state is derived from the measurement and committed off
+    // the layout pass.
+    private struct MeasurementKey: Hashable {
+        let text: String
+        let width: CGFloat
+        let fontName: String
+        let fontSize: CGFloat
+    }
+    /// Small bounded cache instead of a single last value: the composer
+    /// alternates between two widths (compact resting 34pt padding and
+    /// keyboard-expanded 12pt padding), so a one-entry cache would re-measure
+    /// the same (text, width) pair on every keyboard show/hide.
+    private var measurementCache: [MeasurementKey: CGSize] = [:]
+    private var measurementCacheOrder: [MeasurementKey] = []
+    private let measurementCacheLimit = 8
+    /// The width most recently proposed by SwiftUI. `intrinsicContentSize`
+    /// prefers it over a possibly stale `bounds.width`, so both entry points
+    /// measure against the same width basis during a keyboard width morph.
+    private var proposedMeasurementWidth: CGFloat?
+    private(set) var measuredOverflow = false
+    private var scrollStateCommitScheduled = false
+
+    private func normalizedMeasurementWidth(_ width: CGFloat) -> CGFloat {
+        max(0, (width * 2).rounded() / 2)
+    }
+
+    /// Shared by `intrinsicContentSize` and `PastableTextView.sizeThatFits`.
+    /// Returns the raw text height before the `maxHeight` clamp.
+    func measuredTextSize(forWidth width: CGFloat) -> CGSize {
+        let normalizedWidth = normalizedMeasurementWidth(width)
+        let key = MeasurementKey(text: text,
+                                 width: normalizedWidth,
+                                 fontName: font?.fontName ?? "",
+                                 fontSize: font?.pointSize ?? 0)
+        if let cached = measurementCache[key] {
+            #if DEBUG
+            KeyboardHangProbe.recordComposerMeasurementCacheHit()
+            #endif
+            updateMeasuredOverflow(for: cached)
+            return cached
+        }
+
+        #if DEBUG
+        let measurementStart = CFAbsoluteTimeGetCurrent()
+        #endif
+        let size = sizeThatFits(CGSize(width: normalizedWidth, height: .greatestFiniteMagnitude))
+        #if DEBUG
+        KeyboardHangProbe.recordComposerFullMeasurement(
+            key: "\(key.text.hashValue)-\(key.text.count)-\(key.width)-\(key.fontName)-\(key.fontSize)",
+            durationMs: (CFAbsoluteTimeGetCurrent() - measurementStart) * 1000)
+        #endif
+
+        measurementCache[key] = size
+        measurementCacheOrder.append(key)
+        if measurementCacheOrder.count > measurementCacheLimit {
+            let evicted = measurementCacheOrder.removeFirst()
+            measurementCache.removeValue(forKey: evicted)
+        }
+        updateMeasuredOverflow(for: size)
+        return size
+    }
+
+    func recordProposedMeasurementWidth(_ width: CGFloat) {
+        proposedMeasurementWidth = normalizedMeasurementWidth(width)
+    }
+
+    private func updateMeasuredOverflow(for size: CGSize) {
+        measuredOverflow = size.height > maxHeight
+        // Layout callbacks must not toggle a UIKit property that can schedule
+        // another layout. Publish the derived scroll state on the next
+        // runloop instead; the cache makes that follow-up pass cheap.
+        if measuredOverflow != isScrollEnabled {
+            scheduleDeferredScrollStateCommit()
+        }
+    }
+
+    private func scheduleDeferredScrollStateCommit() {
+        guard !scrollStateCommitScheduled else { return }
+        scrollStateCommitScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.commitDeferredScrollStateIfNeeded()
+        }
+    }
+
+    func commitDeferredScrollStateIfNeeded() {
+        scrollStateCommitScheduled = false
+        if isScrollEnabled != measuredOverflow {
+            isScrollEnabled = measuredOverflow
+        }
+    }
+
     // [T-voice-text-switch-autofocus-race] Gate against UIKit promoting this
     // freshly-mounted text view to first responder unsolicited. When the user
     // switches voice→text, the voice panel's transcript editor (or the raised
@@ -1030,14 +1127,17 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
     }
 
     override var intrinsicContentSize: CGSize {
+        #if DEBUG
+        KeyboardHangProbe.recordComposerIntrinsicSizeCall()
+        #endif
         // Guard against zero-width layout pass (happens on iOS 16 during keyboard animation)
         // to prevent sizeThatFits returning an inflated height that causes the input bar to jump.
-        guard bounds.width > 0 else {
+        let width = proposedMeasurementWidth ?? bounds.width
+        guard width > 0 else {
             return CGSize(width: UIView.noIntrinsicMetric, height: font?.lineHeight ?? 20)
         }
-        let size = sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude))
+        let size = measuredTextSize(forWidth: width)
         let clamped = min(size.height, maxHeight)
-        isScrollEnabled = size.height > maxHeight
         return CGSize(width: UIView.noIntrinsicMetric, height: clamped)
     }
 
@@ -1278,7 +1378,11 @@ struct PastableTextView: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView tv: PastableUITextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? UIScreen.main.bounds.width
+        #if DEBUG
+        KeyboardHangProbe.recordComposerSizeThatFitsCall()
+        #endif
+        let width = proposal.width ?? (tv.bounds.width > 0 ? tv.bounds.width : UIScreen.main.bounds.width)
+        tv.recordProposedMeasurementWidth(width)
         // Keep this measurement side-effect free. In particular, do not mutate
         // `textContainer.size` or call `ensureLayout` here. SwiftUI may ask for
         // the representable size while UIKit is already handling a selection
@@ -1290,19 +1394,15 @@ struct PastableTextView: UIViewRepresentable {
         // `UITextView.sizeThatFits` accepts the proposed width and performs the
         // measurement without changing the on-screen text container, so it is
         // safe for both long prose and long unbroken URLs.
-        let fitSize = tv.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        //
+        // [T-keyboard-hang-1253] This is the same cached measurement used by
+        // `intrinsicContentSize`; the width is quantized identically, so a
+        // layout pass performs at most one full TextKit measurement per
+        // (text, width, font). No `isScrollEnabled` write happens here.
+        let fitSize = tv.measuredTextSize(forWidth: width)
         let lineH = tv.font?.lineHeight ?? 20
         let effective = tv.text.isEmpty ? lineH : fitSize.height
-        let maxH = tv.maxHeight
-        let clamped = min(effective, maxH)
-        let shouldScroll = fitSize.height > maxH
-        if tv.isScrollEnabled != shouldScroll {
-            // This is the only UIKit state synchronization left here. Guarding
-            // the assignment prevents repeated layout invalidations during a
-            // SwiftUI measurement pass.
-            tv.isScrollEnabled = shouldScroll
-        }
-        return CGSize(width: width, height: clamped)
+        return CGSize(width: width, height: min(effective, tv.maxHeight))
     }
 
     func updateUIView(_ tv: PastableUITextView, context: Context) {
@@ -1450,8 +1550,9 @@ struct PastableTextView: UIViewRepresentable {
             }
         }
 
-        // Sync scroll state back to SwiftUI.
-        // isScrollEnabled is toggled in intrinsicContentSize, so just read it here.
+        // Sync scroll state back to SwiftUI. `isScrollEnabled` is derived from
+        // the cached measurement and committed on a later runloop, so reading
+        // it here never forces a TextKit pass during the SwiftUI update.
         let scrollable = tv.isScrollEnabled
         if isScrollable != scrollable {
             let binding = _isScrollable

@@ -15,8 +15,38 @@ final class RemoteSSHConnectionService: ObservableObject {
     @Published private(set) var diagnostics: [UUID: [RemoteServerConnectionDiagnostic]] = [:]
 
     private var clients: [UUID: SSHClient] = [:]
+    private var didAttemptConnectionRestore = false
+    private let logger = AppLogger(category: "RemoteServers")
 
     private init() {}
+
+    /// Restores the persisted connection state once per app process. A server
+    /// with `lastConnectedAt` was connected when the previous process ended;
+    /// `disconnect` clears that marker so a deliberate disconnect is durable.
+    /// Each candidate is attempted exactly once, sequentially, and failures
+    /// stay in the existing diagnostics instead of triggering alerts.
+    func restoreConnectionsIfNeeded() async {
+        guard !didAttemptConnectionRestore else { return }
+        didAttemptConnectionRestore = true
+
+        let candidates = RemoteServerStore.shared.servers.filter { $0.lastConnectedAt != nil }
+        for server in candidates {
+            do {
+                try await connect(to: server)
+            } catch {
+                // `connect` records handshake failures it maps itself. Profile
+                // validation and missing-credential failures happen before
+                // that catch, so record them here to keep the existing
+                // diagnostics section useful for automatic attempts too.
+                if diagnostics[server.id]?.last?.phase != RemoteServerConnectionPhase.failed {
+                    await append(
+                        .init(phase: .failed, title: "连接失败", detail: error.localizedDescription),
+                        for: server.id
+                    )
+                }
+            }
+        }
+    }
 
     func connect(to server: RemoteServerProfile) async throws {
         try validate(server)
@@ -46,12 +76,21 @@ final class RemoteSSHConnectionService: ObservableObject {
     }
 
     func disconnect(serverID: UUID) async {
-        guard let client = clients.removeValue(forKey: serverID) else { return }
+        let client = clients.removeValue(forKey: serverID)
         do {
-            try await client.close()
+            try RemoteServerStore.shared.markDisconnected(serverID)
         } catch {
-            // The connection has already been removed from active state. A
-            // transport-close error cannot resurrect it and is safe to ignore.
+            // The in-memory marker is already cleared; keep the transport
+            // teardown moving even if persisting the marker failed.
+            logger.error("Could not clear remote server reconnect marker: \(error.localizedDescription)")
+        }
+        if let client {
+            do {
+                try await client.close()
+            } catch {
+                // The connection has already been removed from active state. A
+                // transport-close error cannot resurrect it and is safe to ignore.
+            }
         }
         RemoteServerSessionCredentials.shared.clear(for: serverID)
     }
