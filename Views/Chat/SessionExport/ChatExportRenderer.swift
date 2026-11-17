@@ -201,11 +201,13 @@ enum ChatExportContent {
             case .note: text = m.error ?? ""
             case .toolGroup, .taskHeader: text = ""
             }
-            let userTextCollapsed = cell.kind == .user && !m.isUserTextExpanded
+            let collapsedVisibleLineLimit: Int? = cell.kind == .user && !m.isUserTextExpanded
                 && UserMessageCollapsePolicy.shouldCollapse(ChatSearchDisplayText.userBubble(m.content))
+                ? UserMessageCollapsePolicy.collapsedLineLimit
+                : nil
             return ChatShareEstimateInput(kind: cell.kind, text: text,
                                          quoteText: cell.kind == .user ? m.quote?.text : nil,
-                                         isUserTextCollapsed: userTextCollapsed)
+                                         collapsedVisibleLineLimit: collapsedVisibleLineLimit)
         }
     }
 

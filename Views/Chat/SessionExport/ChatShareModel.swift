@@ -401,12 +401,14 @@ struct ChatShareEstimateInput: Equatable {
     let text: String
     /// Snapshot shown above a user bubble's text, matching the chat quote block.
     var quoteText: String? = nil
-    /// Whether this user bubble is actually showing its collapsed form. A
-    /// collapsed bubble only shows `UserMessageCollapsePolicy.collapsedLineLimit`
-    /// lines; the estimate has to reserve that visible height, not the whole
-    /// prompt, or a collapsed share would be wrongly forced to PDF as if it
-    /// were still expanded. Non-collapsible prompts stay full height.
-    var isUserTextCollapsed: Bool = false
+    /// When this user bubble is showing its collapsed form, the number of
+    /// text lines it visibly shows; nil when it is not collapsed. The caller
+    /// owns the collapse policy and passes the limit in, so this standalone
+    /// model stays free of app types: a collapsed estimate must reserve only
+    /// the visible height, not the whole prompt, or it would be wrongly forced
+    /// to PDF as if it were still expanded. Non-collapsible prompts stay full
+    /// height.
+    var collapsedVisibleLineLimit: Int? = nil
 }
 
 enum ChatShareHeightEstimate {
@@ -443,10 +445,12 @@ enum ChatShareHeightEstimate {
             // short and clipped on a long image / PDF page.
             let quoteHeight: CGFloat = input.quoteText == nil ? 0 : 56
             let fullTextHeight = wrappedHeight(input.text, width: contentWidth * 0.8 - 28)
-            let visibleTextHeight = input.isUserTextCollapsed
-                ? min(fullTextHeight,
-                      lineHeight * CGFloat(UserMessageCollapsePolicy.collapsedLineLimit))
-                : fullTextHeight
+            let visibleTextHeight: CGFloat
+            if let lineLimit = input.collapsedVisibleLineLimit {
+                visibleTextHeight = min(fullTextHeight, lineHeight * CGFloat(lineLimit))
+            } else {
+                visibleTextHeight = fullTextHeight
+            }
             return visibleTextHeight + 20 + quoteHeight
         case .callback: return 72
         case .tool: return 36
