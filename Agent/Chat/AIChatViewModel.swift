@@ -2643,7 +2643,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             if !text.isEmpty {
                 userParts.append(.text(text))
             }
-            let userMessage = AgentMessage(role: .user, parts: userParts)
+            var userMessage = AgentMessage(role: .user, parts: userParts)
             userMessage.quote = replyQuote
             let userIdx = self.agentHistory.count
             self.agentHistory.append(userMessage)
@@ -3910,7 +3910,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
             }
 
-            let queueAgentMsg = AgentMessage(role: .user, parts: combinedParts)
+            var queueAgentMsg = AgentMessage(role: .user, parts: combinedParts)
             queueAgentMsg.quote = queued.compactMap(\.quote).first
             let qIdx = self.agentHistory.count
             self.agentHistory.append(queueAgentMsg)
@@ -4066,7 +4066,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
         }
 
-        let queueMsg = AgentMessage(role: .user, parts: qCombinedParts)
+        var queueMsg = AgentMessage(role: .user, parts: qCombinedParts)
         queueMsg.quote = queued.compactMap(\.quote).first
         let queueIdx = agentHistory.count
         agentHistory.append(queueMsg)
