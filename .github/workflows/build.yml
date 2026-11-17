@@ -226,7 +226,7 @@ jobs:
 
       - name: Verify continuous voice call controls on simulator
         if: ${{ inputs.keyboard_only != true }}
-              continue-on-error: true
+        continue-on-error: true
         timeout-minutes: 10
         run: bash scripts/test-voice-call-ui.sh
 
