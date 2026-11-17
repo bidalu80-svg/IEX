@@ -1110,6 +1110,10 @@ extension CollectionViewMessageListV3 {
         /// [T-ios-ui-blocks-lost-suspend-resume] Watches the vm for the moment
         /// `streamingUIUpdatesSuspended` clears, then flushes the pending snapshot.
         private var suspendResumeSub: AnyCancellable?
+        /// [T-ios-footer-stale-height] Last observed vm.isProcessing, used by
+        /// the state-bridge subscription to edge-detect the task-end
+        /// (true→false) transition whose footer content change must re-measure.
+        private var lastProcessingValue: Bool = false
 
         /// Adaptive streaming throttle: last time flushStreamingLayout actually ran.
         private var lastStreamingLayoutTime: Date = .distantPast
@@ -1661,6 +1665,9 @@ extension CollectionViewMessageListV3 {
 
         /// Subscriptions for bridge detailBlock → sheet presenter forwarding.
         private var bridgeSheetSubs: [UUID: AnyCancellable] = [:]
+        /// [T-ios-footer-stale-height] Per-message usage-capsule visibility
+        /// subscriptions — each flip invalidates that footer's cached height.
+        private var bridgeFooterHeightSubs: [UUID: AnyCancellable] = [:]
 
         private func getOrCreateBridge(for message: ChatMessage, in messages: [ChatMessage]) -> CellStateBridgeV2 {
             if let existing = cellBridges[message.id] { return existing }
@@ -1687,6 +1694,22 @@ extension CollectionViewMessageListV3 {
                         )
                     }
                     // Dismiss is handled by sheetPresenter.onDismiss (set in attach)
+                }
+            // [T-ios-footer-stale-height] Usage-capsule show/hide changes the
+            // footer's content height without changing its item identity, so
+            // the stale cached height would be reused. Invalidate + reconfigure
+            // that message's footer whenever either visibility flag flips.
+            // Low-frequency: only the user's double-tap toggle reaches here.
+            let messageId = message.id
+            bridgeFooterHeightSubs[messageId] = bridge.$showUsage
+                .dropFirst()
+                .merge(with: bridge.$usageContentVisible.dropFirst())
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.invalidateAndReconfigureFooterHeights(
+                        messageId: messageId,
+                        caller: "usage-capsule-visibility"
+                    )
                 }
             return bridge
         }
@@ -1926,6 +1949,9 @@ extension CollectionViewMessageListV3 {
         }
 
         private func bindViewModel(_ vm: AIChatViewModel) {
+            // [T-ios-footer-stale-height] Seed the task-end edge detector with
+            // the VM's current value so subscribing is not mistaken for a flip.
+            lastProcessingValue = vm.isProcessing
             // 1. Messages → snapshot
             //    Skip while isLoadingSession — binding 3 handles the post-load apply.
             //    This prevents a redundant apply when $messages and $isLoadingSession
@@ -2181,7 +2207,22 @@ extension CollectionViewMessageListV3 {
             )
             .removeDuplicates { a, b in a.0 == b.0 && a.1 == b.1 && a.2 == b.2 && a.3 == b.3 }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateLastCellBridge() }
+            .sink { [weak self] state in
+                guard let self else { return }
+                let wasProcessing = self.lastProcessingValue
+                self.lastProcessingValue = state.0
+                self.updateLastCellBridge()
+                // [T-ios-footer-stale-height] Task end (isProcessing true→false)
+                // changes the footer's content (typing indicator out, usage
+                // capsule / completion actions in). The footer item identity is
+                // unchanged, so its old measured height would be carried into
+                // the next layout; invalidate + reconfigure every footer so it
+                // re-measures at the real content height. Runs once per turn
+                // end on the existing state-bridge path — never per token.
+                if wasProcessing, !state.0 {
+                    self.invalidateAndReconfigureFooterHeights(caller: "isProcessing-end")
+                }
+            }
             .store(in: &subscriptions)
 
             // 6. Compact finished → reconfigure all cells to update opacity/divider
@@ -3068,7 +3109,10 @@ extension CollectionViewMessageListV3 {
             // Clean up bridges
             let currentIds = Set(messages.map(\.id))
             let removedIds = Set(cellBridges.keys).subtracting(currentIds)
-            for id in removedIds { bridgeSheetSubs.removeValue(forKey: id) }
+            for id in removedIds {
+                bridgeSheetSubs.removeValue(forKey: id)
+                bridgeFooterHeightSubs.removeValue(forKey: id)
+            }
             cellBridges = cellBridges.filter { currentIds.contains($0.key) }
 
             // Build items
@@ -3539,6 +3583,43 @@ extension CollectionViewMessageListV3 {
             attrStringHeightCache.removeAll()
             userBubbleHeightCache.removeAll()
             reconfigureVisibleCells()
+        }
+
+        /// [T-ios-footer-stale-height] A footer is estimated at 4pt
+        /// (`estimateItemHeight(.assistantFooter)`) and its measured height is
+        /// stored in the layout's index cache, which `updateCacheForSnapshot`
+        /// carries across snapshots by item identity. When the footer's
+        /// transient content changes (task end, usage capsule shown/hidden)
+        /// the item identity does not, so the stale 4pt measurement would be
+        /// reused and the new content would overlap the last text line. Drop
+        /// the cached height for the affected footer(s) and reconfigure the
+        /// cells — the same invalidateHeight + reconfigureItems sequence as
+        /// `blockContentFilledSignal` — so UIKit performs a real self-size.
+        /// `messageId == nil` covers every footer (task end); a concrete id
+        /// covers that message's footer only (usage-capsule visibility flips).
+        /// Called only from those low-frequency state edges, never from
+        /// streaming or scrolling paths.
+        private func invalidateAndReconfigureFooterHeights(messageId: UUID? = nil, caller: String) {
+            guard let ds = dataSource,
+                  let layout = viewController?.messageListLayout else { return }
+            var snapshot = ds.snapshot()
+            var footerIndices: [Int] = []
+            var footerItems: [MessageListItem] = []
+            for (index, item) in snapshot.itemIdentifiers.enumerated() {
+                guard case .assistantFooter(let footerMessageId) = item else { continue }
+                if let messageId, footerMessageId != messageId { continue }
+                footerIndices.append(index)
+                footerItems.append(item)
+            }
+            guard !footerItems.isEmpty else { return }
+            for index in footerIndices {
+                layout.invalidateHeight(at: index)
+            }
+            snapshot.reconfigureItems(footerItems)
+            ds.apply(snapshot, animatingDifferences: false)
+            AppLogger(category: "FooterHeight").info(
+                "[T-ios-footer-stale-height] caller=\(caller) messageId=\(messageId.map { String($0.uuidString.prefix(8)) } ?? "all") footers=\(footerItems.count) indices=\(footerIndices)"
+            )
         }
 
         /// Reconfigure all cells without clearing the height cache.

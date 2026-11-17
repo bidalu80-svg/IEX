@@ -885,6 +885,18 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
         return size
     }
 
+    /// [T-composer-multiline-row] One-line vs multi-line classification for
+    /// the composer's expanded layout. This is the SAME cached TextKit
+    /// measurement used by intrinsicContentSize/sizeThatFits — no second
+    /// measurement engine. The width passed here is always the ONE-LINE text
+    /// column width: once the row expands the field gets wider, so measuring
+    /// against the expanded width would flip the decision back and oscillate.
+    func measuredTextIsMultiline(forWidth width: CGFloat) -> Bool {
+        guard !text.isEmpty, width > 0 else { return false }
+        let lineH = font?.lineHeight ?? 20
+        return measuredTextSize(forWidth: width).height > lineH * 1.5
+    }
+
     func recordProposedMeasurementWidth(_ width: CGFloat) {
         proposedMeasurementWidth = normalizedMeasurementWidth(width)
     }
@@ -1282,6 +1294,13 @@ struct PastableTextView: UIViewRepresentable {
     @Binding var isFocused: Bool
     @Binding var hasSelection: Bool
     @Binding var isScrollable: Bool
+    /// [T-composer-multiline-row] Width the text column has in the ONE-LINE
+    /// composer. Used only to classify the draft; the actual layout width is
+    /// still whatever SwiftUI proposes for the current row.
+    var singleLineTextWidth: CGFloat = 0
+    /// Observed by the composer row. Updated from `updateUIView` only when
+    /// the measured classification changes, never during a layout frame.
+    @Binding var isMultiline: Bool
     var placeholder: String
     var onPasteImage: (UIImage) -> Void
     var onPasteFile: (URL) -> Void
@@ -1474,6 +1493,22 @@ struct PastableTextView: UIViewRepresentable {
         if tv.font != inputFont {
             tv.font = inputFont
             tv.invalidateIntrinsicContentSize()
+        }
+
+        // [T-composer-multiline-row] Publish the one-line/multi-line decision
+        // from the same cached measurement the layout path uses. This runs on
+        // state-driven updates, not on layout frames, and only crosses into
+        // @State when the classification actually flips.
+        if singleLineTextWidth > 0 {
+            let multiline = tv.measuredTextIsMultiline(forWidth: singleLineTextWidth)
+            if isMultiline != multiline {
+                let binding = _isMultiline
+                DispatchQueue.main.async {
+                    if binding.wrappedValue != multiline {
+                        binding.wrappedValue = multiline
+                    }
+                }
+            }
         }
 
         // Keep Return-key type in sync with the Appearance Settings toggle.

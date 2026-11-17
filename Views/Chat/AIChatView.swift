@@ -236,8 +236,8 @@ class SystemResourceMonitor: ObservableObject {
 
 /// [T-keyboard-hang] Reference-typed gate for the composer morph. It is
 /// deliberately NOT @State/@Published: flipping it must not invalidate body.
-/// The geometry observer reads `.active` synchronously; only the final height
-/// commit touches @State inputBarHeight.
+/// The geometry observer reads `.active` synchronously; only the final
+/// height/width commits touch @State.
 ///
 /// [T-keyboard-hang-1253] `latestFrameHeight` lives here too. It used to be a
 /// `@State` written from every `onGeometryChange` callback *before* the
@@ -247,6 +247,10 @@ private final class ComposerChromeTransitionGate {
     var active = false
     var task: Task<Void, Never>?
     var latestFrameHeight: CGFloat = 0
+    /// Freshest composer-row width reported by onGeometryChange. Like
+    /// `latestFrameHeight`, this is a plain reference property: recording a
+    /// width never invalidates body. The transition end commits it once.
+    var latestRowWidth: CGFloat = 0
 }
 
 struct AIChatView: View {
@@ -321,6 +325,16 @@ struct AIChatView: View {
     @State private var softwareKeyboardVisible = false
     @State private var inputHasSelection: Bool = false
     @State private var inputIsScrollable: Bool = false
+    /// [T-composer-multiline-row] One-line vs multi-line composer layout,
+    /// published by PastableTextView from its existing cached TextKit
+    /// measurement. Only a threshold crossing writes this state; layout
+    /// frames themselves never do.
+    @State private var composerTextIsMultiline: Bool = false
+    /// Inner width of the composer row (inside its 10pt horizontal padding).
+    /// The multiline decision is always measured against this width's
+    /// one-line text column, never the expanded text width, so growing the
+    /// row cannot flip the decision back and oscillate.
+    @State private var composerRowWidth: CGFloat = 0
     @State private var inputBarHeight: CGFloat = 0
     @State private var inputBarHeightDebounce: Task<Void, Never>?
     /// [T-keyboard-hang] Non-zero while the composer is morphing between its
@@ -589,6 +603,7 @@ struct AIChatView: View {
             sessionID: vm.sessionId,
             isLoadingSession: vm.isLoadingSession,
             hasCompletedInitialLoad: vm.hasCompletedInitialLoad,
+            isProcessing: vm.isProcessing,
             errorMessage: vm.errorMessage,
             transientNotice: vm.transientNotice,
             isNearBottom: vm.isNearBottom,
@@ -634,6 +649,8 @@ struct AIChatView: View {
             inputFocused: inputFocused,
             inputHasSelection: inputHasSelection,
             inputIsScrollable: inputIsScrollable,
+            composerRowWidth: composerRowWidth,
+            composerTextIsMultiline: composerTextIsMultiline,
             voiceInputActive: voiceInputActive,
             speechRecording: speechManager.state == .recording,
             recognizedTextCount: speechManager.recognizedText.count,
@@ -2257,7 +2274,8 @@ struct AIChatView: View {
             titleLocked: titleIsVisuallyLocked,
             viewportWidth: chatViewportWidth,
             celebration: avatarCelebration,
-            fallbackPulse: fallbackPulseOpacity)
+            fallbackPulse: fallbackPulseOpacity,
+            colorScheme: chatRenderColorScheme)
     }
 
     private var chatNavPrincipalContent: some View {
@@ -2756,17 +2774,16 @@ struct AIChatView: View {
 
     @ViewBuilder
     private var floatingToolPreview: some View {
-        let allToolBlocks = vm.messages
-            .filter { $0.role == .assistant && !$0.isCompactedHistory }
-            .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
-        if !allToolBlocks.isEmpty && (toolStatusBarEnabled || toolPreviewEnabled) {
-            FloatingToolBar(toolBlocks: allToolBlocks, toolSnapshots: vm.toolSnapshots, browserPool: vm.browserTabPool,
-                            attachmentTray: hasPendingAttachmentPreviews ? AnyView(attachmentPreviewTray) : nil,
-                            onBrowserTakeover: {
-                vm.browserTakeoverActive = true
-            }, onTakeoverDone: {
-                vm.resumeFromBrowserTakeover()
-                })
+        if toolStatusBarEnabled || toolPreviewEnabled {
+            LiveFloatingToolBar(
+                viewModel: vm,
+                attachmentTray: hasPendingAttachmentPreviews ? AnyView(attachmentPreviewTray) : nil,
+                onBrowserTakeover: {
+                    vm.browserTakeoverActive = true
+                }, onTakeoverDone: {
+                    vm.resumeFromBrowserTakeover()
+                }
+            )
                     .frame(maxWidth: maxContentWidth)
                     // Keep the floating status bar aligned with the composer
                     // edges in both compact resting and expanded keyboard states.
@@ -3191,37 +3208,98 @@ struct AIChatView: View {
         }
     }
 
-    /// One-line ChatGPT-style composer controls.
+    /// ChatGPT-style composer controls. The resting / one-line state keeps
+    /// the original single-row capsule; once the draft measures more than one
+    /// line at the one-line column width, the text moves to its own full-width
+    /// row and the unchanged button row sits underneath.
     /// Returns AnyView to keep `inputBar`'s generic type compact; SwiftUI
     /// runtime demangle chokes on deep nested types otherwise.
     private var inputBottomRow: AnyView {
-        // Erase each opaque leaf BEFORE HStack builds its tuple metadata.
-        // AnyView(row) alone runs too late to protect this builder.
+        // Erase each opaque leaf BEFORE the stack builders run.
         let attachment = AnyView(attachmentMenuButton)
         let commands = AnyView(slashMenuButton)
         let send = AnyView(sendButton)
-        // A multi-line draft makes the text view taller than the controls.
-        // Keep the control row on the composer's bottom edge (ChatGPT-style)
-        // instead of letting the default .center alignment float it through
-        // the middle of the expanded chrome. The text view itself still
-        // starts at the top because it is the tallest child in this row.
-        let row = HStack(alignment: .bottom, spacing: 6) {
-            HStack(spacing: 0) {
-                attachment
-                commands
+
+        // One button row, used unchanged in both layouts. Keeping the text
+        // field as the first child of the VStack in BOTH states preserves its
+        // UIView identity when the composer expands: only the buttons move
+        // from the bottom overlay into the VStack's second row.
+        let controls = AnyView(
+            HStack(alignment: .bottom, spacing: 6) {
+                HStack(spacing: 0) {
+                    attachment
+                    commands
+                }
+                if vm.editingMessageIndex != nil { AnyView(editExitButton) }
+                Spacer(minLength: 0)
+                // Mutually exclusive with editExitButton: while editing a past
+                // message the exit capsule owns this row — showing both capsules
+                // overflows the row and they render overlapped.
+                if voiceInputActive, vm.editingMessageIndex == nil {
+                    AnyView(readAloudToolbarToggle)
+                }
+                send
             }
-            if vm.editingMessageIndex != nil { AnyView(editExitButton) }
-            inputFieldOrWaveform
-                .frame(maxWidth: .infinity, alignment: .leading)
-            // Mutually exclusive with editExitButton: while editing a past
-            // message the exit capsule owns this row — showing both capsules
-            // overflows the row and they render overlapped.
-            if voiceInputActive, vm.editingMessageIndex == nil {
-                AnyView(readAloudToolbarToggle)
+            .frame(maxWidth: .infinity)
+        )
+
+        let field = inputFieldOrWaveform(horizontalPadding: composerUsesTwoRowLayout ? 0 : 4)
+            .padding(.leading, composerUsesTwoRowLayout ? 0 : composerLeadingControlWidth + 6)
+            .padding(.trailing, composerUsesTwoRowLayout ? 0 : composerTrailingControlWidth + 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        let row = ZStack(alignment: .bottom) {
+            VStack(spacing: composerUsesTwoRowLayout ? 6 : 0) {
+                field
+                if composerUsesTwoRowLayout { controls }
             }
-            send
+            if !composerUsesTwoRowLayout { controls }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            guard width.isFinite, width > 0 else { return }
+            // Record per-frame widths without touching @State; like the
+            // composer height, only the transition end publishes them.
+            composerChromeTransition.latestRowWidth = width
+            guard !composerChromeTransition.active else { return }
+            if abs(composerRowWidth - width) > 0.5 {
+                composerRowWidth = width
+            }
         }
         return AnyView(row)
+    }
+
+    /// Width of the 34pt controls flanking the one-line text column.
+    private var composerLeadingControlWidth: CGFloat {
+        var width: CGFloat = 34 * 2 // attachment + command
+        if vm.editingMessageIndex != nil { width += 6 + 34 }
+        return width
+    }
+
+    private var composerTrailingControlWidth: CGFloat {
+        var width: CGFloat = 34 // send
+        if voiceInputActive, vm.editingMessageIndex == nil { width += 6 + 34 }
+        return width
+    }
+
+    /// Text width in the ONE-LINE row. Two 6pt stack gaps plus the text
+    /// field's own 4pt horizontal padding on each side are outside the column.
+    private var composerSingleLineTextWidth: CGFloat {
+        guard composerRowWidth > 0 else { return 0 }
+        return max(0, composerRowWidth
+            - composerLeadingControlWidth
+            - composerTrailingControlWidth
+            - 12
+            - 8)
+    }
+
+    /// Voice / live-waveform states keep their existing single-row layout.
+    /// Their panel is not the text composer, so the text measurement cannot
+    /// classify them; never let a stale multiline flag rearrange them.
+    private var composerUsesTwoRowLayout: Bool {
+        composerTextIsMultiline && hasComposerContent
+            && !voiceInputActive && speechManager.state != .recording
     }
 
     /// "Read replies aloud" toggle shown centered in the toolbar during voice
@@ -3357,7 +3435,7 @@ struct AIChatView: View {
     /// decoder doesn't recurse past its stack limit (see crash 2026-04-17
     /// where `AIChatView.inputBar.getter` blew the stack via
     /// `__swift_instantiateConcreteTypeFromMangledNameV2`).
-    private var inputFieldOrWaveform: AnyView {
+    private func inputFieldOrWaveform(horizontalPadding: CGFloat) -> AnyView {
         if voiceInputActive {
             return AnyView(
                 // [voice-correction §6] Recent conversation turns, straight from the
@@ -3406,7 +3484,7 @@ struct AIChatView: View {
                     }
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 6)
             return AnyView(waveform)
         }
@@ -3415,6 +3493,8 @@ struct AIChatView: View {
             isFocused: $inputFocused,
             hasSelection: $inputHasSelection,
             isScrollable: $inputIsScrollable,
+            singleLineTextWidth: composerSingleLineTextWidth,
+            isMultiline: $composerTextIsMultiline,
             placeholder: "询问\(soulName)助手",
             onPasteImage: { image in vm.addImageAttachment(image) },
             onPasteFile: { url in vm.addFileAttachment(from: url) },
@@ -3442,7 +3522,7 @@ struct AIChatView: View {
             desiredCaret: vm.pendingCaret
         )
         .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 6)
         return AnyView(field)
     }
@@ -3542,6 +3622,13 @@ struct AIChatView: View {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
             gate.active = false
+            // Commit the width the geometry observer recorded during the
+            // transition before leaving. A root re-render during the keyboard
+            // animation would undo the [T-keyboard-hang] gate.
+            let settledWidth = gate.latestRowWidth
+            if settledWidth > 0, abs(composerRowWidth - settledWidth) > 0.5 {
+                composerRowWidth = settledWidth
+            }
             // Voice mode owns its own 380ms expand/collapse commit path.
             guard !voiceInputActive else { return }
             let settled = composerChromeTransition.latestFrameHeight
@@ -5631,6 +5718,11 @@ private struct ChatNavigationHeaderKey: Equatable {
     /// animates a capsule inside the badge.
     let celebration: Date?
     let fallbackPulse: Double
+    /// The effective interface style is a real badge input: the avatar's
+    /// idle poster and the provider capsule's glass are synthesized from
+    /// the current theme. Without it a light/dark switch leaves the gated
+    /// host on the previous appearance until the page is rebuilt.
+    let colorScheme: ColorScheme
 }
 
 private struct NavBarStyleModifier: ViewModifier {
@@ -6199,6 +6291,7 @@ private struct ChatViewportContentRenderKey: Hashable {
     let sessionID: String?
     let isLoadingSession: Bool
     let hasCompletedInitialLoad: Bool
+    let isProcessing: Bool
     let errorMessage: String?
     let transientNotice: String?
     let isNearBottom: Bool
@@ -6223,6 +6316,8 @@ private struct ChatViewportContentRenderKey: Hashable {
 /// [T-keyboard-hang-1253] Everything the composer hosting root displays.
 /// `inputBarHeight` is the committed height because the popup overlay
 /// consumes it; interrupted per-frame geometry is deliberately absent.
+/// `composerRowWidth` is likewise the settled one-line column basis, published
+/// once per composer transition, never the per-frame width sample.
 private struct ChatComposerRenderKey: Hashable {
     let inputText: String
     let pendingQuote: MessageQuote?
@@ -6246,6 +6341,8 @@ private struct ChatComposerRenderKey: Hashable {
     let inputFocused: Bool
     let inputHasSelection: Bool
     let inputIsScrollable: Bool
+    let composerRowWidth: CGFloat
+    let composerTextIsMultiline: Bool
     let voiceInputActive: Bool
     let speechRecording: Bool
     let recognizedTextCount: Int

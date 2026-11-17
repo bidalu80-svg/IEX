@@ -239,22 +239,60 @@ fileprivate func attributedShellLine(_ text: String) -> AttributedString {
     return AttributedString(mutable)
 }
 
-/// Wrapper that @ObservedObject's the ChatMessage so SwiftUI re-evaluates
-/// when blocks are added/changed.
-private struct FloatingToolPreviewContainer: View {
-    @ObservedObject var message: ChatMessage
-    var toolSnapshots: [ToolSnapshotItem] = []
-    var browserPool: BrowserTabPool?
+/// Live wrapper that subscribes to the view model, not the composer host, so
+/// tool blocks appended mid-task reach the floating bar without a host rebuild.
+struct LiveFloatingToolBar: View {
+    @ObservedObject var viewModel: AIChatViewModel
+    var attachmentTray: AnyView? = nil
+    var onBrowserTakeover: (() -> Void)?
+    var onTakeoverDone: (() -> Void)?
 
     private var toolBlocks: [AssistantBlock] {
-        message.blocks.filter { $0.toolStatus != nil }
+        viewModel.messages
+            .filter { $0.role == .assistant && !$0.isCompactedHistory }
+            .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
     }
 
     var body: some View {
         let tools = toolBlocks
         if !tools.isEmpty {
-            FloatingToolBar(toolBlocks: tools, toolSnapshots: toolSnapshots, browserPool: browserPool)
+            FloatingToolBar(
+                toolBlocks: tools,
+                toolSnapshots: viewModel.toolSnapshots,
+                browserPool: viewModel.browserTabPool,
+                attachmentTray: attachmentTray,
+                onBrowserTakeover: onBrowserTakeover,
+                onTakeoverDone: onTakeoverDone,
+                liveViewModel: viewModel
+            )
         }
+    }
+}
+
+/// Keeps the open sheet's block list and snapshots tied to the view model's
+/// live publications while preserving `ToolLiveSheet`'s static initializer.
+private struct LiveToolLiveSheet: View {
+    @ObservedObject var viewModel: AIChatViewModel
+    let initialIdx: Int
+    var browserPool: BrowserTabPool?
+    var onBrowserTakeover: (() -> Void)?
+    var onTakeoverDone: (() -> Void)?
+
+    private var toolBlocks: [AssistantBlock] {
+        viewModel.messages
+            .filter { $0.role == .assistant && !$0.isCompactedHistory }
+            .flatMap { $0.blocks.filter { $0.toolStatus != nil } }
+    }
+
+    var body: some View {
+        ToolLiveSheet(
+            toolBlocks: toolBlocks,
+            initialIdx: initialIdx,
+            toolSnapshots: viewModel.toolSnapshots,
+            browserPool: browserPool,
+            onBrowserTakeover: onBrowserTakeover,
+            onTakeoverDone: onTakeoverDone
+        )
     }
 }
 
@@ -266,6 +304,8 @@ struct FloatingToolBar: View {
     var attachmentTray: AnyView? = nil
     var onBrowserTakeover: (() -> Void)?
     var onTakeoverDone: (() -> Void)?
+    /// Non-nil only for the live chat host; static export callers leave it nil.
+    var liveViewModel: AIChatViewModel? = nil
     @State private var selectedIdx: Int? = nil
     @State private var expanded = false
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
@@ -315,14 +355,24 @@ struct FloatingToolBar: View {
         .animation(.easeInOut(duration: 0.18), value: toolStatusBarEnabled)
         .animation(.easeInOut(duration: 0.18), value: toolPreviewEnabled)
         .sheet(isPresented: $expanded) {
-            ToolLiveSheet(
-                toolBlocks: toolBlocks,
-                initialIdx: displayedIdx,
-                toolSnapshots: toolSnapshots,
-                browserPool: browserPool,
-                onBrowserTakeover: onBrowserTakeover,
-                onTakeoverDone: onTakeoverDone
-            )
+            if let liveViewModel {
+                LiveToolLiveSheet(
+                    viewModel: liveViewModel,
+                    initialIdx: displayedIdx,
+                    browserPool: browserPool,
+                    onBrowserTakeover: onBrowserTakeover,
+                    onTakeoverDone: onTakeoverDone
+                )
+            } else {
+                ToolLiveSheet(
+                    toolBlocks: toolBlocks,
+                    initialIdx: displayedIdx,
+                    toolSnapshots: toolSnapshots,
+                    browserPool: browserPool,
+                    onBrowserTakeover: onBrowserTakeover,
+                    onTakeoverDone: onTakeoverDone
+                )
+            }
         }
     }
 
