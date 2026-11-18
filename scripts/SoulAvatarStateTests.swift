@@ -37,12 +37,11 @@ import Foundation
             precondition(motion.asset.hasPrefix("SoulAvatar-"),
                          "Non-idle states still resolve to animated assets: \(motion)")
         }
-        precondition(SoulAvatarIdlePolicy.playbackInterval.lowerBound >= 8
-                     && SoulAvatarIdlePolicy.playbackInterval.upperBound <= 15)
-        precondition(SoulAvatarIdlePolicy.playbackDuration > 0
-                     && SoulAvatarIdlePolicy.playbackDuration <= 3)
-        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 0) == 8)
-        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 1) == 15)
+        precondition(SoulAvatarIdlePolicy.playbackInterval.lowerBound >= 2
+                     && SoulAvatarIdlePolicy.playbackInterval.upperBound <= 3)
+        precondition(SoulAvatarIdlePolicy.playbackLoops == 3)
+        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 0) == 2)
+        precondition(SoulAvatarIdlePolicy.idlePlaybackDelay(randomUnit: 1) == 3)
         let labels: [(Bool, Bool, Bool, Int, String?, Bool, String?)] = [
             (false, false, false, 0, nil, false, nil),
             (false, true, false, 0, "file_read", false, nil),

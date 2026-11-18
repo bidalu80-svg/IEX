@@ -677,7 +677,8 @@ enum SoulHeaderActivity {
 /// outside the UIKit view so SoulAvatarStateTests can compile the same rules
 /// without a simulator. Idle shows the transparent main image composited at
 /// runtime over the solid background baked into each idle clip; a short
-/// original idle clip plays every 8–15 seconds and fades back to the poster.
+/// original idle clip plays every 2–3 seconds, runs three full loops,
+/// and fades back to the poster.
 enum SoulAvatarIdlePolicy {
     static let posterAsset = "SoulAvatar-main"
 
@@ -692,8 +693,8 @@ enum SoulAvatarIdlePolicy {
 
     static let lightPosterBackground = PosterBackground(red: 251, green: 251, blue: 251)
     static let darkPosterBackground = PosterBackground(red: 12, green: 10, blue: 20)
-    static let playbackInterval: ClosedRange<Double> = 8...15
-    static let playbackDuration: Double = 2.4
+    static let playbackInterval: ClosedRange<Double> = 2...3
+    static let playbackLoops = 3
 
     static func posterBackground(theme: String) -> PosterBackground {
         theme == "dark" ? darkPosterBackground : lightPosterBackground
@@ -996,7 +997,7 @@ struct SoulHeaderAvatar: View {
         incoming = nil
         let previous = outgoing
         let previousOpacity = previous?.layer.presentation()?.opacity ?? 1
-        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : (motion == .idle ? 0.6 : 0.35)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         clip.layer.opacity = 1
@@ -1061,8 +1062,20 @@ struct SoulHeaderAvatar: View {
     private func scheduleIdleSegmentEnd(for clip: Clip) {
         idleSegmentTask?.cancel()
         let token = generation
+        // End on a loop boundary so the poster fade starts from the clip's
+        // first-frame pose: finish the current loop, then play whole loops.
+        let itemDuration = clip.player.currentItem?.duration.seconds ?? 0
+        let elapsed = clip.player.currentTime().seconds
+        let segmentDuration: Double
+        if itemDuration.isFinite, itemDuration > 0 {
+            let remaining = max(itemDuration - (elapsed.isFinite ? elapsed : 0), 0)
+            segmentDuration = remaining
+                + Double(SoulAvatarIdlePolicy.playbackLoops - 1) * itemDuration
+        } else {
+            segmentDuration = 15
+        }
         idleSegmentTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(Int(SoulAvatarIdlePolicy.playbackDuration * 1000)))
+            try? await Task.sleep(for: .milliseconds(Int(segmentDuration * 1000)))
             guard !Task.isCancelled, let self, self.generation == token,
                   self.motion == .idle, self.idlePlaybackActive,
                   self.current === clip else { return }
@@ -1102,7 +1115,7 @@ struct SoulHeaderAvatar: View {
             current = nil
             return
         }
-        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
+        let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.6
         let token = generation
         if duration > 0 {
             for clip in clips {
@@ -1258,17 +1271,45 @@ struct SoulHeaderAvatar: View {
     let vm: AIChatViewModel
     let assistantName: String
     let providerName: String
+    let modelName: String
     let onActivityChange: (String?) -> Void
     @StateObject private var activity = SoulHeaderActivityModel()
+    @State private var showsModelName = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Idle-only providers <-> model rotation. The status machine, its text,
+    /// and the header identity keys never see this state.
+    private var displayedName: String {
+        guard activity.text == nil else { return assistantName }
+        guard showsModelName, !modelName.isEmpty, modelName != providerName else {
+            return providerName
+        }
+        return modelName
+    }
+
+    private var rotationKey: RotationKey {
+        RotationKey(providerName: providerName, modelName: modelName, isIdle: activity.text == nil)
+    }
+
+    private struct RotationKey: Equatable {
+        let providerName: String
+        let modelName: String
+        let isIdle: Bool
+    }
 
     var body: some View {
         VStack(spacing: 2) {
-            Text(activity.text == nil ? providerName : assistantName)
+            Text(displayedName)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .id(displayedName)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 3)),
+                    removal: .opacity.combined(with: .offset(y: -3))
+                ))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: displayedName)
             if let text = activity.text {
                 Text(text)
                     .font(.system(size: 12))
@@ -1285,6 +1326,17 @@ struct SoulHeaderAvatar: View {
         .onAppear { activity.connect(vm) }
         .onDisappear { activity.disconnect() }
         .onChange(of: activity.text) { onActivityChange($0) }
+        .task(id: rotationKey) {
+            // Reset to providerName on any provider/model/activity change.
+            // SwiftUI cancels this task on disappear, so the timer stops then.
+            showsModelName = false
+            guard activity.text == nil, !modelName.isEmpty, modelName != providerName else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                showsModelName.toggle()
+            }
+        }
     }
 }
 

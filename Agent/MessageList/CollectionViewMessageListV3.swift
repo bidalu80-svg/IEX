@@ -27,6 +27,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var onReplyMessage: ((UUID) -> Void)?
     var onEdit: ((UUID) -> Void)?
     var onDelete: ((UUID) -> Void)?
+    var onDismissSystemInfo: ((UUID) -> Void)?
     var onWithdraw: ((UUID) -> Void)?
     var onResume: (() -> Void)?
     var onStop: (() -> Void)?
@@ -74,6 +75,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.onReplyMessage = onReplyMessage
         coord.onEdit = onEdit
         coord.onDelete = onDelete
+        coord.onDismissSystemInfo = onDismissSystemInfo
         coord.onWithdraw = onWithdraw
         coord.onResume = onResume
         coord.onStop = onStop
@@ -816,6 +818,8 @@ fileprivate struct BridgedAssistantFooterV3: View {
 private struct BridgedWholeMessageV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
+    /// Dismisses this browser-control systemInfo row; only wired for capsule rows.
+    var onDismissSystemInfo: (() -> Void)?
     var maxWidth: CGFloat
 
     var body: some View {
@@ -837,9 +841,11 @@ private struct BridgedWholeMessageV3: View {
             onCompact: bridge.onCompact,
             onCopyScreenshot: bridge.onCopyScreenshot,
             onShowCompactSummary: bridge.onShowCompactSummary,
+            onDismissSystemInfo: onDismissSystemInfo,
             onToggleUserMessageExpansion: bridge.onToggleUserMessageExpansion,
             browserPool: nil,
-            toolSnapshots: []
+            toolSnapshots: [],
+            maxWidth: maxWidth
         )
         .frame(maxWidth: maxWidth > 0 ? maxWidth : nil)
         .frame(maxWidth: .infinity)
@@ -914,6 +920,7 @@ extension CollectionViewMessageListV3 {
         var onReplyMessage: ((UUID) -> Void)?
         var onEdit: ((UUID) -> Void)?
         var onDelete: ((UUID) -> Void)?
+        var onDismissSystemInfo: ((UUID) -> Void)?
         var onWithdraw: ((UUID) -> Void)?
         var onResume: (() -> Void)?
         var onStop: (() -> Void)?
@@ -1453,6 +1460,9 @@ extension CollectionViewMessageListV3 {
                     BridgedWholeMessageV3(
                         message: message,
                         bridge: bridge,
+                        onDismissSystemInfo: message.browserControlInfo == true
+                            ? { [weak self] in self?.onDismissSystemInfo?(message.id) }
+                            : nil,
                         maxWidth: width
                     )
                     // Suppress SwiftUI async display-link geometry observation
@@ -1668,6 +1678,9 @@ extension CollectionViewMessageListV3 {
         /// [T-ios-footer-stale-height] Per-message usage-capsule visibility
         /// subscriptions — each flip invalidates that footer's cached height.
         private var bridgeFooterHeightSubs: [UUID: AnyCancellable] = [:]
+        /// [T-ios-resume-card-live] Per-message resume-banner visibility
+        /// subscriptions — each flip invalidates that footer's cached height.
+        private var bridgeCanResumeHeightSubs: [UUID: AnyCancellable] = [:]
 
         private func getOrCreateBridge(for message: ChatMessage, in messages: [ChatMessage]) -> CellStateBridgeV2 {
             if let existing = cellBridges[message.id] { return existing }
@@ -1709,6 +1722,19 @@ extension CollectionViewMessageListV3 {
                     self?.invalidateAndReconfigureFooterHeights(
                         messageId: messageId,
                         caller: "usage-capsule-visibility"
+                    )
+                }
+            // [T-ios-resume-card-live] Resume-banner show/hide changes the
+            // footer's content height too; invalidate + reconfigure that
+            // message's footer whenever canResume flips.
+            bridgeCanResumeHeightSubs[messageId] = bridge.$canResume
+                .dropFirst()
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.invalidateAndReconfigureFooterHeights(
+                        messageId: messageId,
+                        caller: "canResume-flip"
                     )
                 }
             return bridge
@@ -2224,6 +2250,25 @@ extension CollectionViewMessageListV3 {
                 }
             }
             .store(in: &subscriptions)
+
+            // 5b. [T-ios-resume-card-live] Session active-flag removal → bridge.
+            //     updateBridge samples SessionActivityTracker at write time; if
+            //     the tracker still listed this session as active, canResume was
+            //     written false and no later state change re-evaluates it. When
+            //     this VM's session leaves activeSessions, recompute once.
+            //     Additions are ignored — only removal changes the guard.
+            SessionActivityTracker.shared.$activeSessions
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .scan((previous: Set<String>(), current: Set<String>())) { state, sessions in
+                    (previous: state.current, current: sessions)
+                }
+                .sink { [weak self] state in
+                    guard let self, let sid = self.vm?.sessionId else { return }
+                    guard state.previous.contains(sid), !state.current.contains(sid) else { return }
+                    self.updateLastCellBridge()
+                }
+                .store(in: &subscriptions)
 
             // 6. Compact finished → reconfigure all cells to update opacity/divider
             vm.$isCompacting
@@ -3112,6 +3157,7 @@ extension CollectionViewMessageListV3 {
             for id in removedIds {
                 bridgeSheetSubs.removeValue(forKey: id)
                 bridgeFooterHeightSubs.removeValue(forKey: id)
+                bridgeCanResumeHeightSubs.removeValue(forKey: id)
             }
             cellBridges = cellBridges.filter { currentIds.contains($0.key) }
 

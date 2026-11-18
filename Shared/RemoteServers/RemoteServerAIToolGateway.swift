@@ -114,7 +114,7 @@ enum RemoteServerAIToolGateway {
         let descriptions = servers.map { server in
             "- \(server.name) [id: \(server.id.uuidString), endpoint: \(server.endpointDescription), auth: \(server.authentication.title), connected: \(connection.isConnected(to: server.id)), access: \(server.aiAccess.title)]"
         }.joined(separator: "\n")
-        return configurationGuidance + "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve existing passwords, private keys, passphrases, or Keychain data. Only pass credentials the user has explicitly supplied to remote_server_configure_credentials. A server must already be connected by the user in Settings before commands or SFTP operations. Every command and every write/delete/rename operation opens a user confirmation; never describe an action as completed before the tool returns success."
+        return configurationGuidance + "\n\nRemote server access: Use remote_server_list to refresh the current state before operating a server. The following server metadata is authorized for this model session:\n\(descriptions)\nUse only the remote_server_* tools. Never request, infer, print, or attempt to retrieve existing passwords, private keys, passphrases, or Keychain data. Only pass credentials the user has explicitly supplied to remote_server_configure_credentials. A server must already be connected by the user in Settings before commands or SFTP operations. Every command and every write/delete/rename operation opens a user confirmation, except on full_access servers, where these confirmations are skipped; never describe an action as completed before the tool returns success."
     }
 
     static func definitions() -> [AgentToolDefinition] {
@@ -130,7 +130,7 @@ enum RemoteServerAIToolGateway {
                 "authentication": AgentToolParam(type: .string, description: "Preferred native credential entry mode. This is not a credential.", enumValues: ["private_key", "password"]),
                 "labels": AgentToolParam(type: .string, description: "Optional comma-separated non-secret labels."),
                 "note": AgentToolParam(type: .string, description: "Optional non-secret note for the user."),
-                "ai_access": AgentToolParam(type: .string, description: "Suggested AI access only. The native form requires user review before save.", enumValues: ["none", "read_only", "commands_with_confirmation", "full_with_confirmation"]),
+                "ai_access": AgentToolParam(type: .string, description: "Suggested AI access only. The native form requires user review before save.", enumValues: ["none", "read_only", "commands_with_confirmation", "full_with_confirmation", "full_access"]),
             ],
             required: ["tool_title", "host", "username"],
             propertyOrdering: ["tool_title", "name", "host", "port", "username", "authentication", "labels", "note", "ai_access"]
@@ -155,7 +155,7 @@ enum RemoteServerAIToolGateway {
             ),
             AgentToolDefinition(
                 name: "remote_server_command",
-                description: "Run one shell command on a user-connected remote SSH server. Available only when the server allows AI commands. Every request requires a user confirmation before execution.",
+                description: "Run one shell command on a user-connected remote SSH server. Available only when the server allows AI commands. Every request requires a user confirmation before execution, except on full_access servers.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
                     "server_id": commonServer,
@@ -188,7 +188,7 @@ enum RemoteServerAIToolGateway {
             ),
             AgentToolDefinition(
                 name: "remote_sftp_write",
-                description: "Make a SFTP mutation on a user-connected remote server: write a UTF-8 text file, create a directory, rename, or delete. Available only when the server allows AI writes. Every request requires user confirmation.",
+                description: "Make a SFTP mutation on a user-connected remote server: write a UTF-8 text file, create a directory, rename, or delete. Available only when the server allows AI writes. Every request requires user confirmation, except on full_access servers.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "Brief user-visible action title in the user's language."),
                     "server_id": commonServer,
@@ -310,12 +310,17 @@ enum RemoteServerAIToolGateway {
         guard let command = string("command", from: arguments) else {
             return .init(output: "Error: Missing command.", success: false)
         }
-        let approved = await RemoteServerAIConfirmationGate.shared.request(
-            serverName: server.name,
-            operation: "执行远程命令",
-            detail: command,
-            isDestructive: true
-        )
+        let approved: Bool
+        if server.aiAccess == .fullAccess {
+            approved = true
+        } else {
+            approved = await RemoteServerAIConfirmationGate.shared.request(
+                serverName: server.name,
+                operation: "执行远程命令",
+                detail: command,
+                isDestructive: true
+            )
+        }
         guard approved else { return .init(output: "User denied the remote command. Do not retry unless the user asks again.", success: false) }
         do {
             let output = try await connection.executeCommand(command, on: server.id)
@@ -372,12 +377,17 @@ enum RemoteServerAIToolGateway {
         case "delete": detail = "删除：\(path)"
         default: return .init(output: "Error: Unsupported SFTP mutation '\(action)'.", success: false)
         }
-        let approved = await RemoteServerAIConfirmationGate.shared.request(
-            serverName: server.name,
-            operation: "修改远程文件",
-            detail: detail,
-            isDestructive: action == "delete" || action == "write"
-        )
+        let approved: Bool
+        if server.aiAccess == .fullAccess {
+            approved = true
+        } else {
+            approved = await RemoteServerAIConfirmationGate.shared.request(
+                serverName: server.name,
+                operation: "修改远程文件",
+                detail: detail,
+                isDestructive: action == "delete" || action == "write"
+            )
+        }
         guard approved else { return .init(output: "User denied the remote file operation. Do not retry unless the user asks again.", success: false) }
 
         do {
@@ -550,6 +560,7 @@ enum RemoteServerAIToolGateway {
         case "read_only": return .readOnly
         case "commands_with_confirmation": return .commandsWithConfirmation
         case "full_with_confirmation": return .fullWithConfirmation
+        case "full_access": return .fullAccess
         default: return .none
         }
     }

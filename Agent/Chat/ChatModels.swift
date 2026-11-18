@@ -85,6 +85,9 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var isCompactLoading = false
     /// SF Symbol name for systemInfo rows (e.g. "brain.head.profile", "arrow.down.right.and.arrow.up.left").
     var systemIcon: String?
+    /// True for browser-control takeover systemInfo rows, which render as a
+    /// dismissible capsule instead of the divider row.
+    var browserControlInfo: Bool?
     /// LLM-generated compact summary (for display in info sheet on compact divider).
     var compactSummary: String?
     /// sort_order of the FIRST raw message that contributed to this UI message.

@@ -2364,14 +2364,19 @@ struct AIChatView: View {
 
     private var titleView: some View {
         let providerName = navigationProvider?.label ?? "选择服务商"
+        let modelName = SessionModelDisplay(store: configStore, draftGroupId: vm.initialGroupId)
+            .displayName(for: vm.sessionId)
         let heading = headerActivityText == nil ? providerName : soulName
         let headingWidth = ceil((heading as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
+        ]).width)
+        let modelNameWidth = ceil((modelName as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)
         ]).width)
         let statusWidth = headerActivityText.map { ceil(($0 as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 12)
         ]).width) } ?? 0
-        let measuredNameWidth = max(headingWidth, statusWidth) + 28
+        let measuredNameWidth = max(max(headingWidth, statusWidth), modelNameWidth) + 28
         let pillWidth = min(chatHeaderSize.width, measuredNameWidth)
         let avatarDiscSize = SoulAppearancePreferences.headerAvatarSize(headerAvatarSize)
         return VStack(spacing: 0) {
@@ -2417,7 +2422,7 @@ struct AIChatView: View {
             }
 
             Button { showModelPicker = true } label: {
-                SoulHeaderActivityText(vm: vm, assistantName: soulName, providerName: providerName) { text in
+                SoulHeaderActivityText(vm: vm, assistantName: soulName, providerName: providerName, modelName: modelName) { text in
                     headerActivityText = text
                 }
                     .frame(width: pillWidth - 24)
@@ -2612,6 +2617,7 @@ struct AIChatView: View {
                     inputFocused = true
                 },
                 onDelete: { msgId in vm.deleteMessageAndFollowing(msgId) },
+                onDismissSystemInfo: { msgId in vm.dismissSystemInfoMessage(msgId) },
                 onWithdraw: { vm.withdrawQueuedMessage($0) },
                 onResume: { vm.resume(); vm.forceScrollToBottom.send() },
                 onStop: { vm.stopCurrentCommand() },

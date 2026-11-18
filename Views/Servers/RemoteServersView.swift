@@ -123,6 +123,10 @@ struct RemoteServerEditorSheet: View {
     @State private var sessionPassword = ""
     @State private var showKeyImporter = false
     @State private var errorMessage: String?
+    @State private var previousAIAccess: RemoteServerAIAccessLevel?
+    @State private var showFullAccessConfirmation = false
+    @State private var fullAccessConfirmationReady = false
+    @State private var fullAccessConfirmationTask: Task<Void, Never>?
 
     init(server: RemoteServerProfile?, draft: RemoteServerAIDraft? = nil) {
         self.server = server
@@ -201,11 +205,15 @@ struct RemoteServerEditorSheet: View {
                 Section("AI 访问") {
                     Picker("访问范围", selection: $aiAccess) {
                         ForEach(RemoteServerAIAccessLevel.allCases) { level in
-                            Text(level.title).tag(level)
+                            if level == .fullAccess {
+                                Label(level.title, systemImage: "shield.fill").tag(level)
+                            } else {
+                                Text(level.title).tag(level)
+                            }
                         }
                     }
                     .pickerStyle(.navigationLink)
-                    Text("AI 永远不能读取私钥、密码或 Keychain 内容；它只能在你明确确认后写入凭据。即使允许命令或写入，每次执行仍须在界面中确认。")
+                    Text("AI 永远不能读取私钥、密码或 Keychain 内容；它只能在你明确确认后写入凭据。即使允许命令或写入，每次执行仍须在界面中确认。完整权限除外：开启后命令与写入不再逐次确认。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -245,6 +253,36 @@ struct RemoteServerEditorSheet: View {
                 Button("好", role: .cancel) {}
             } message: {
                 Text(errorMessage ?? "")
+            }
+            .alert("开启完整权限？", isPresented: $showFullAccessConfirmation) {
+                Button("取消", role: .cancel) {
+                    fullAccessConfirmationTask?.cancel()
+                    fullAccessConfirmationTask = nil
+                    fullAccessConfirmationReady = false
+                    if let previousAIAccess {
+                        aiAccess = previousAIAccess
+                    }
+                }
+                Button("确认开启") {
+                    fullAccessConfirmationTask?.cancel()
+                    fullAccessConfirmationTask = nil
+                    fullAccessConfirmationReady = false
+                }
+                .disabled(!fullAccessConfirmationReady)
+            } message: {
+                Text("开启后，AI 可以直接读取、写入文件并执行命令，不再每次向你确认。请只对可信的服务器开启。")
+            }
+            .onChange(of: aiAccess) { oldValue, newValue in
+                guard newValue == .fullAccess, oldValue != .fullAccess else { return }
+                previousAIAccess = oldValue
+                fullAccessConfirmationReady = false
+                showFullAccessConfirmation = true
+                fullAccessConfirmationTask?.cancel()
+                fullAccessConfirmationTask = Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    guard !Task.isCancelled else { return }
+                    fullAccessConfirmationReady = true
+                }
             }
         }
     }

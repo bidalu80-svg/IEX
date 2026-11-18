@@ -471,20 +471,20 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             switch event.kind {
             case .takeover:
-                self.appendSystemInfo("用户已接管浏览器\(page)。交还前模型不会操作浏览器。",
-                                      icon: "hand.raised.fill")
+                self.appendBrowserControlInfo("用户已接管浏览器\(page)。交还前模型不会操作浏览器。",
+                                              icon: "hand.raised.fill")
             case .requestedTakeover:
                 let reason = event.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let detail = reason.isEmpty ? "" : "：\(reason)"
-                self.appendSystemInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
-                                      icon: "hand.raised.fill")
+                self.appendBrowserControlInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
+                                              icon: "hand.raised.fill")
             case .handBack:
                 if event.requested {
-                    self.appendSystemInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
-                                          icon: "checkmark.circle.fill")
+                    self.appendBrowserControlInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
+                                                  icon: "checkmark.circle.fill")
                 } else {
-                    self.appendSystemInfo("用户已交还浏览器控制权\(page)。",
-                                          icon: "hand.wave.fill")
+                    self.appendBrowserControlInfo("用户已交还浏览器控制权\(page)。",
+                                                  icon: "hand.wave.fill")
                 }
             }
         }
@@ -6197,6 +6197,20 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         let msg = ChatMessage(role: .systemInfo, content: text)
         msg.systemIcon = icon
         messages.append(msg)
+    }
+
+    /// Append a browser-control system-info row rendered as a dismissible capsule.
+    private func appendBrowserControlInfo(_ text: String, icon: String) {
+        let msg = ChatMessage(role: .systemInfo, content: text)
+        msg.systemIcon = icon
+        msg.browserControlInfo = true
+        messages.append(msg)
+    }
+
+    /// Remove one browser-control systemInfo row from the visible list.
+    /// These rows never enter agentHistory or the DB, so no ChatStore call is needed.
+    func dismissSystemInfoMessage(_ id: UUID) {
+        messages.removeAll { $0.id == id }
     }
 
 }

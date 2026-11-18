@@ -156,6 +156,8 @@ struct ChatMessageRow: View {
     /// When set, presents the compact summary sheet outside the cell tree (V3).
     /// Falls back to a local .sheet when nil (non-V3 / standalone usage).
     var onShowCompactSummary: ((String) -> Void)?
+    /// Removes this browser-control systemInfo row when its capsule is closed.
+    var onDismissSystemInfo: (() -> Void)?
     /// Triggers AIChatViewModel.revertCompact(). Wired from AIChatView so the
     /// row + sheet stay free of view-model imports.
     var onRevertCompact: (() -> Void)?
@@ -164,8 +166,11 @@ struct ChatMessageRow: View {
     var onToggleUserMessageExpansion: (() -> Void)?
     var browserPool: BrowserTabPool?
     var toolSnapshots: [ToolSnapshotItem] = []
+    /// Row width supplied by the V3 layout; caps the browser-control capsule at 88%.
+    var maxWidth: CGFloat = 0
     @State private var showUsage = false
     @State private var showCompactSummary = false
+    @State private var isBrowserControlExpanded = false
     /// Two-phase token usage reveal: space expands first, then content fades in.
     @State private var usageContentVisible = false
     /// Row frame in window coordinates — used to gate token-usage tap to bottom zone.
@@ -234,8 +239,12 @@ struct ChatMessageRow: View {
         case .compactDivider:
             compactDividerRow
         case .systemInfo:
-            systemDividerRow(icon: message.isCompactLoading ? nil : (message.systemIcon ?? "info.circle"),
-                             loading: message.isCompactLoading, compact: false)
+            if message.browserControlInfo == true {
+                browserControlCapsule
+            } else {
+                systemDividerRow(icon: message.isCompactLoading ? nil : (message.systemIcon ?? "info.circle"),
+                                 loading: message.isCompactLoading, compact: false)
+            }
         }
     }
 
@@ -280,6 +289,56 @@ struct ChatMessageRow: View {
         .sheet(isPresented: $showCompactSummary) {
             CompactSummarySheet(summary: message.compactSummary ?? "", onRevert: onRevertCompact)
         }
+    }
+
+    // MARK: Browser Control Capsule
+
+    /// Takeover events used to render as a full divider row that stayed in the
+    /// transcript. They now show as a compact capsule: tap the body to expand
+    /// the full text, tap × to remove just this ephemeral row.
+    private var browserControlCapsule: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: message.systemIcon ?? "info.circle")
+                        .font(.system(size: 10))
+                    Text(message.content)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(isBrowserControlExpanded ? nil : 1)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isBrowserControlExpanded.toggle()
+                }
+
+                Button {
+                    onDismissSystemInfo?()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("关闭"))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            .frame(maxWidth: browserControlCapsuleMaxWidth)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+
+    /// Maximum capsule width: 88% of the row width.
+    private var browserControlCapsuleMaxWidth: CGFloat {
+        (maxWidth > 0 ? maxWidth : UIScreen.main.bounds.width) * 0.88
     }
 
     // MARK: System Divider Row

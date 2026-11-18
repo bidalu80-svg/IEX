@@ -151,12 +151,14 @@ enum RemoteServerAuthentication: String, Codable, CaseIterable, Identifiable {
 /// AI access only decides which operation requests may be proposed. Credentials
 /// are write-only: they can be saved after explicit confirmation but never read
 /// back, and write/command operations still require a user confirmation at
-/// execution time.
+/// execution time. Full access is the exception: commands and writes execute
+/// without a per-operation confirmation.
 enum RemoteServerAIAccessLevel: String, Codable, CaseIterable, Identifiable {
     case none
     case readOnly
     case commandsWithConfirmation
     case fullWithConfirmation
+    case fullAccess
 
     var id: String { rawValue }
 
@@ -166,12 +168,13 @@ enum RemoteServerAIAccessLevel: String, Codable, CaseIterable, Identifiable {
         case .readOnly: return "仅允许读取"
         case .commandsWithConfirmation: return "允许执行命令（每次确认）"
         case .fullWithConfirmation: return "允许读写与命令（每次确认）"
+        case .fullAccess: return "完整权限"
         }
     }
 
     var allowsRead: Bool { self != .none }
-    var allowsCommands: Bool { self == .commandsWithConfirmation || self == .fullWithConfirmation }
-    var allowsWrites: Bool { self == .fullWithConfirmation }
+    var allowsCommands: Bool { self == .commandsWithConfirmation || self == .fullWithConfirmation || self == .fullAccess }
+    var allowsWrites: Bool { self == .fullWithConfirmation || self == .fullAccess }
 }
 
 struct RemoteServerQuickCommand: Codable, Identifiable, Hashable {
