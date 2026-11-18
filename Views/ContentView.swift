@@ -802,6 +802,8 @@ struct ContentView: View {
                 var tx = Transaction()
                 tx.disablesAnimations = true
                 withTransaction(tx) { openSession(Self.makeNewSessionId()) }
+            } else if ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") {
+                // The cold-start verifier owns navigation; launch defaults must not warm the keyboard.
             } else {
                 // No share — normal launch screen behavior
                 switch launchScreen {

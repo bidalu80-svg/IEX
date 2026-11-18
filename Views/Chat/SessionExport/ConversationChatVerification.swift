@@ -598,31 +598,41 @@ import Darwin
                            createdAt: Date().addingTimeInterval(0.1), tokenUsage: nil, reasoningContent: nil)
             ])
 
-            try checkpoint("open-first-new-chat")
-            NotificationCenter.default.post(name: .newChatRequested, object: nil)
-            try await waitFor("new chat actual composer") { composer(in: window) != nil }
-            try checkpoint("await-real-kernel-boot")
-            try await waitFor("real bundled rootfs installation and kernel boot", timeout: 90) {
-                ISHKernel.shared.isBooted
-            }
-            await settle(0.7)
-            try require(ISHKernel.shared.isBooted, "Real bundled rootfs boots before chat interaction")
-            try require(window.rootViewController === originalRoot, "New chat preserves production root")
-            try require(!renderedHistory(historyMarker, in: window), "New chat has no history fixture")
-            try capture("01-new-chat.png", window: window)
+            // Cold mode opens history directly: even an untyped new chat
+            // auto-focuses after 600ms and would warm the process keyboard.
+            let coldKeyboardStart = ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start")
+                && ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang")
+            if !coldKeyboardStart {
+                try checkpoint("open-first-new-chat")
+                NotificationCenter.default.post(name: .newChatRequested, object: nil)
+                try await waitFor("new chat actual composer") { composer(in: window) != nil }
+                try checkpoint("await-real-kernel-boot")
+                try await waitFor("real bundled rootfs installation and kernel boot", timeout: 90) {
+                    ISHKernel.shared.isBooted
+                }
+                await settle(0.7)
+                try require(ISHKernel.shared.isBooted, "Real bundled rootfs boots before chat interaction")
+                try require(window.rootViewController === originalRoot, "New chat preserves production root")
+                try require(!renderedHistory(historyMarker, in: window), "New chat has no history fixture")
+                try capture("01-new-chat.png", window: window)
 
-            try checkpoint("type-in-first-new-chat")
-            let firstComposer = try await typeIntoReadyComposer("新对话输入验证", in: window)
-            try require(firstComposer.isFirstResponder, "Actual new-chat composer accepts automatic focus")
-            try require(firstComposer.text.contains("新对话输入验证"), "Actual new-chat composer accepts typed text")
-            try capture("02-new-chat-typing.png", window: window)
-            firstComposer.resignFirstResponder()
+                try checkpoint("type-in-first-new-chat")
+                let firstComposer = try await typeIntoReadyComposer("新对话输入验证", in: window)
+                try require(firstComposer.isFirstResponder, "Actual new-chat composer accepts automatic focus")
+                try require(firstComposer.text.contains("新对话输入验证"), "Actual new-chat composer accepts typed text")
+                try capture("02-new-chat-typing.png", window: window)
+                firstComposer.resignFirstResponder()
+
+            }
 
             try checkpoint("open-persisted-history")
             NotificationCenter.default.post(name: .openSessionFromIntent, object: nil,
                                             userInfo: ["sessionId": session.id])
             try await waitFor("persisted history and full composer") {
                 composer(in: window) != nil && renderedHistory(historyMarker, in: window)
+            }
+            if coldKeyboardStart {
+                try await waitFor("cold history real kernel boot", timeout: 90) { ISHKernel.shared.isBooted }
             }
             await settle(0.5)
             try require(ISHKernel.shared.isBooted, "Historical chat retains the running kernel")
@@ -639,7 +649,7 @@ import Darwin
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
             if ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang") {
-                try await verifyKeyboardHang(window: window, vm: historyVM)
+                try await verifyKeyboardHang(window: window, vm: historyVM, coldStart: coldKeyboardStart)
                 try checkpoint("complete")
                 try writeResult(success: true, error: nil)
                 return
@@ -720,7 +730,7 @@ import Darwin
     /// layout storm (inputBarHeight writes, SelfSizingCell super calls,
     /// ChatKeyboardViewport.update, ChatNavigationBarAppearance.updateBadge)
     /// and proves the keyboard still has intermediate positions.
-    private static func verifyKeyboardHang(window: UIWindow, vm: AIChatViewModel) async throws {
+    private static func verifyKeyboardHang(window: UIWindow, vm: AIChatViewModel, coldStart: Bool = false) async throws {
         try checkpoint("keyboard-hang-fixture")
         window.endEditing(true)
         await settle(0.6)
@@ -759,13 +769,15 @@ import Darwin
         }
         await settle(0.8)
 
-        // Warm the leading-edge seed and one keyboard cycle before measuring,
-        // so cycle 1 is not charged for first-appearance layout.
-        vm.requestComposerFocusSignal.send()
-        try await waitFor("keyboard warmup shown") { composer(in: window)?.isFirstResponder == true }
-        await settle(0.8)
-        window.endEditing(true)
-        await settle(0.8)
+        if !coldStart {
+            // Warm the leading-edge seed and one keyboard cycle before measuring,
+            // so cycle 1 is not charged for first-appearance layout.
+            vm.requestComposerFocusSignal.send()
+            try await waitFor("keyboard warmup shown") { composer(in: window)?.isFirstResponder == true }
+            await settle(0.8)
+            window.endEditing(true)
+            await settle(0.8)
+        }
         KeyboardHangProbe.reset()
         HangDetector.clearEvents()
         guard HangDetector.start(withThresholdMs: 500) else {
@@ -844,8 +856,9 @@ import Darwin
         }
 
         // Baseline: ten plain keyboard show/hide cycles (existing coverage).
-        for _ in 1...10 {
-            _ = try await runKeyboardCycle(scenario: "baseline")
+        for index in 1...10 {
+            if coldStart && index == 1 { try checkpoint("keyboard-hang-cold-first-show") }
+            _ = try await runKeyboardCycle(scenario: coldStart && index == 1 ? "cold-first-show" : "baseline")
         }
 
         // Scenario 1: quote reply (pendingQuote strip appears) then raise the
@@ -890,6 +903,7 @@ import Darwin
             "maxHangDurationMs": maxDuration,
             "fixtureChars": synthetic.count,
             "fixtureBlocks": blockCount,
+            "coldStart": coldStart,
             "thresholdMs": 500,
         ]
         keyboardHangDiagnostics.append(summary)

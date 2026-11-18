@@ -867,6 +867,10 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
 
         #if DEBUG
         let measurementStart = CFAbsoluteTimeGetCurrent()
+        // Persist the entry before TextKit: a non-returning sizeThatFits must
+        // leave a start event even though the completion counters never run.
+        AppLogger(category: "ComposerMeasurement").info(
+            "begin key=\(key.text.hashValue)-\(key.text.count)-\(key.width)-\(key.fontName)-\(key.fontSize) startedAt=\(measurementStart)")
         #endif
         let size = sizeThatFits(CGSize(width: normalizedWidth, height: .greatestFiniteMagnitude))
         #if DEBUG

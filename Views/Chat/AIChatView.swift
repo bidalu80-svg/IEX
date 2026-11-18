@@ -245,6 +245,7 @@ class SystemResourceMonitor: ObservableObject {
 /// body even when the height was never committed.
 private final class ComposerChromeTransitionGate {
     var active = false
+    var waitsForKeyboard = false
     var task: Task<Void, Never>?
     var latestFrameHeight: CGFloat = 0
     /// Freshest composer-row width reported by onGeometryChange. Like
@@ -1600,6 +1601,8 @@ struct AIChatView: View {
                 zeLogger.info("🔄SESSION AIChatView.onAppear nil sessionId — draft mode")
                 // Draft session — auto-focus input for immediate typing
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    // Keep the first keyboard show inside the cold-start measurement.
+                    guard !ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") else { return }
                     guard !hasOverlayPresented, isChatViewVisible else { return }
                     inputFocused = true
                 }
@@ -1656,6 +1659,7 @@ struct AIChatView: View {
             composerChromeTransition.task?.cancel()
             composerChromeTransition.task = nil
             composerChromeTransition.active = false
+            composerChromeTransition.waitsForKeyboard = false
             composerChromeTransition.latestFrameHeight = 0
             isChatViewVisible = false
             if speechManager.state == .recording {
@@ -3608,44 +3612,49 @@ struct AIChatView: View {
         }
 
         guard softwareKeyboardVisible != visible else { return }
-        if !voiceInputActive { beginComposerChromeTransition() }
+        if !voiceInputActive { beginComposerChromeTransition(waitsForKeyboard: true) }
         softwareKeyboardVisible = visible
     }
 
-    /// [T-keyboard-hang] The composer's compact/expanded paddings animate for
-    /// 0.2s. onGeometryChange samples every animation frame; each sample used
-    /// to become a global inputBarHeight write, rebuilding the whole page and
-    /// both hosting roots. Freeze the write during the morph and commit the
-    /// freshest reported height exactly once after it settles.
-    private func beginComposerChromeTransition() {
+    /// Freeze width/height writes until the viewport's did-show/did-hide
+    /// settle signal. Frame-only and interrupted transitions share its fallback.
+    private func beginComposerChromeTransition(waitsForKeyboard: Bool = false) {
         let gate = composerChromeTransition
         gate.task?.cancel()
+        gate.task = nil
         gate.active = true
+        gate.waitsForKeyboard = gate.waitsForKeyboard || waitsForKeyboard
+        // The viewport owns BOTH keyboard completion and the 600ms fallback.
+        // A separate timer could expire before did-show + 120ms has settled.
+        guard !gate.waitsForKeyboard else { return }
         gate.task = Task { @MainActor in
-            // 280ms > the 200ms easeOut chrome animation. The final geometry
-            // callback lands inside this window; the value committed is the
-            // latest one onGeometryChange reported, never an older sample.
-            try? await Task.sleep(for: .milliseconds(280))
+            try? await Task.sleep(for: .seconds(ChatKeyboardViewportController.keyboardTransitionFallbackDelay))
             guard !Task.isCancelled else { return }
-            gate.active = false
-            // Commit the width the geometry observer recorded during the
-            // transition before leaving. A root re-render during the keyboard
-            // animation would undo the [T-keyboard-hang] gate.
-            let settledWidth = gate.latestRowWidth
-            if settledWidth > 0, abs(composerRowWidth - settledWidth) > 0.5 {
-                composerRowWidth = settledWidth
-            }
-            // Voice mode owns its own 380ms expand/collapse commit path.
-            guard !voiceInputActive else { return }
-            let settled = composerChromeTransition.latestFrameHeight
-            if settled > 0, abs(inputBarHeight - settled) > 0.5 {
-                #if DEBUG
-                KeyboardHangProbe.recordInputBarHeightWrite()
-                #endif
-                inputBarHeight = settled
-                AppLogger(category: "InputBarLayout")
-                    .info("inputBarHeight final commit=\(settled) after composer transition")
-            }
+            endComposerChromeTransition()
+        }
+    }
+
+    private func endComposerChromeTransition() {
+        let gate = composerChromeTransition
+        guard gate.active else { return }
+        gate.task?.cancel()
+        gate.task = nil
+        gate.active = false
+        gate.waitsForKeyboard = false
+        let settledWidth = gate.latestRowWidth
+        if settledWidth > 0, abs(composerRowWidth - settledWidth) > 0.5 {
+            composerRowWidth = settledWidth
+        }
+        // Voice mode owns its own 380ms expand/collapse commit path.
+        guard !voiceInputActive else { return }
+        let settled = composerChromeTransition.latestFrameHeight
+        if settled > 0, abs(inputBarHeight - settled) > 0.5 {
+            #if DEBUG
+            KeyboardHangProbe.recordInputBarHeightWrite()
+            #endif
+            inputBarHeight = settled
+            AppLogger(category: "InputBarLayout")
+                .info("inputBarHeight final commit=\(settled) after composer transition")
         }
     }
 
@@ -4204,18 +4213,21 @@ struct AIChatView: View {
             // same composer transition window. The old code only armed the
             // gate when `softwareKeyboardVisible` changed, so an input-method
             // plane swap bypassed it entirely.
-            if !voiceInputActive { beginComposerChromeTransition() }
+            if !voiceInputActive { beginComposerChromeTransition(waitsForKeyboard: true) }
             updateSoftwareKeyboardVisibility(from: $0)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) {
-            if !voiceInputActive { beginComposerChromeTransition() }
+            if !voiceInputActive { beginComposerChromeTransition(waitsForKeyboard: true) }
             updateSoftwareKeyboardVisibility(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ChatKeyboardViewportController.keyboardTransitionDidEndNotification)) { _ in
+            endComposerChromeTransition()
         }
         .onReceive(NotificationCenter.default.publisher(for: UITextInputMode.currentInputModeDidChangeNotification)) { _ in
             // Keyplane/input-method proxy path: `reloadInputViews()` and
             // keyboard-extension switches land here even when the keyboard
             // frame and visibility are unchanged.
-            if !voiceInputActive { beginComposerChromeTransition() }
+            if !voiceInputActive { beginComposerChromeTransition(waitsForKeyboard: true) }
         }
         .background(
             // Fade from transparent (top) to solid background (bottom half)

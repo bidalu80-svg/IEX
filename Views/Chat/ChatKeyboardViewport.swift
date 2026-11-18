@@ -70,6 +70,9 @@ final class ChatKeyboardViewportController: UIViewController {
     private var isKeyboardTransitioning = false
     private var keyboardTransitionEndWork: DispatchWorkItem?
     private static let keyboardTransitionSettleDelay: TimeInterval = 0.12
+    static let keyboardTransitionFallbackDelay: TimeInterval = 0.6
+    static let keyboardTransitionDidEndNotification = Notification.Name("ChatKeyboardViewportTransitionDidEnd")
+    private var pendingUpdate: (() -> Void)?
 
     // [T-keyboard-hang-1253] Render-key gates for the two hosting roots.
     // A nil key means "never rendered from an update yet".
@@ -262,7 +265,7 @@ final class ChatKeyboardViewportController: UIViewController {
             self?.endKeyboardTransition()
         }
         keyboardTransitionEndWork = fallback
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: fallback)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyboardTransitionFallbackDelay, execute: fallback)
         guard !isKeyboardTransitioning else { return }
         isKeyboardTransitioning = true
         applyKeyboardTransitionFlag(true)
@@ -292,6 +295,10 @@ final class ChatKeyboardViewportController: UIViewController {
         keyboardTransitionEndWork = nil
         guard isKeyboardTransitioning else { return }
         isKeyboardTransitioning = false
+        // Apply only the newest update, with the keyboard transaction closed.
+        let update = pendingUpdate
+        pendingUpdate = nil
+        update?()
         for layout in messageListLayouts(in: host.view) {
             layout.isKeyboardTransitioning = false
             layout.invalidateLayout()
@@ -302,6 +309,7 @@ final class ChatKeyboardViewportController: UIViewController {
         // UIKit transaction.
         if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
         if pendingComposerSettleLayout || composerLayoutNeedsUpdate { performComposerLayout() }
+        NotificationCenter.default.post(name: Self.keyboardTransitionDidEndNotification, object: self)
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {
@@ -331,6 +339,27 @@ final class ChatKeyboardViewportController: UIViewController {
         #if DEBUG
         KeyboardHangProbe.recordViewportUpdate()
         #endif
+        if isKeyboardTransitioning {
+            // Root assignment itself can synchronously enter SwiftUI layout.
+            // Coalesce the entire hosted update until the same settle pass.
+            pendingUpdate = { [weak self] in
+                self?.applyUpdate(content: content, composer: composer,
+                                  contentRenderKey: contentRenderKey, composerRenderKey: composerRenderKey,
+                                  avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fadeCompleteY,
+                                  usesWindowHeaderFade: usesWindowHeaderFade)
+            }
+            return
+        }
+        applyUpdate(content: content, composer: composer,
+                    contentRenderKey: contentRenderKey, composerRenderKey: composerRenderKey,
+                    avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fadeCompleteY,
+                    usesWindowHeaderFade: usesWindowHeaderFade)
+    }
+
+    private func applyUpdate(content: AnyView, composer: AnyView,
+                             contentRenderKey: AnyHashable?, composerRenderKey: AnyHashable?,
+                             avoidsKeyboard: Bool, fadeCompleteY: CGFloat,
+                             usesWindowHeaderFade: Bool) {
         // Fade configuration is just two scalars; only push it into the mask
         // owner when it actually changed. The old unconditional call did
         // `setNeedsLayout()` + `updateMask()` on every SwiftUI update.
