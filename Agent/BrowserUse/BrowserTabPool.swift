@@ -1659,7 +1659,7 @@ final class BrowserTabPool: ObservableObject {
 
     // MARK: - Tab Overview Snapshots
 
-    private func storeTabSnapshot(_ image: UIImage, forTabId id: Int) {
+    func storeTabSnapshot(_ image: UIImage, forTabId id: Int) {
         tabSnapshots[id] = image
         tabSnapshotOrder.removeAll { $0 == id }
         tabSnapshotOrder.append(id)
@@ -1673,7 +1673,7 @@ final class BrowserTabPool: ObservableObject {
 
     /// Remove tabs that have been idle (not in use) for longer than `idleTimeout`.
     /// Saves their URLs so they can be restored on next use.
-    private func evictIdleTabs() {
+    func evictIdleTabs() {
         let now = Date()
         var evicted = 0
         tabs.removeAll { tab in
@@ -1827,7 +1827,7 @@ final class BrowserTabPool: ObservableObject {
     /// Each tab keeps its OWN profile and UA string; only its size changes, and
     /// with no session override it falls back to the global custom viewport as
     /// it stands now, then to its own profile's default.
-    private func applyViewportToAllTabs() {
+    func applyViewportToAllTabs() {
         syncGlobalDefaultsFromStore()
         for tab in tabs {
             let profile = tab.manager.currentProfile
