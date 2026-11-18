@@ -552,6 +552,8 @@ extension AIChatViewModel {
                 }
 
             case .toolInputDelta(let name, let accumulated):
+                // Credential JSON must never reach previews, chunk diagnostics or titles.
+                if name == "remote_disk_configure_credentials" { continue }
                 // Maintain a per-tool ring buffer of the most recent `accumulated`
                 // snapshots. Cheap (a single Array append + drop-first) and lives
                 // outside the throttle so even a fast-truncating stream still
@@ -668,7 +670,10 @@ extension AIChatViewModel {
                     if shouldScroll { scrollToBottomSignal.send() }
                 }
 
-            case .toolCallComplete(let rawId, let name, let args, let metadata):
+            case .toolCallComplete(let rawId, let name, let rawArgs, let metadata):
+                let args: [String: Any] = if name == "remote_disk_configure_credentials" {
+                    await MainActor.run { RemoteDiskAICredentialInbox.stage(rawArgs) }
+                } else { rawArgs }
                 // [T-dedupe-toolcallid] Mirror the rewrite applied at
                 // contentBlockStart so the block-by-toolUseId lookup
                 // below finds the renamed block (the FIRST tool keeps

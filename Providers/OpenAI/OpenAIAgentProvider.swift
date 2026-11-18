@@ -223,7 +223,8 @@ final class OpenAIAgentProvider: AgentProvider {
                 do {
                     for try await line in lineStream {
                         diagLineCount += 1
-                        if diagFirstLines.count < diagCaptureLimit {
+                        if !tools.contains(where: { $0.name == "remote_disk_configure_credentials" }),
+                           diagFirstLines.count < diagCaptureLimit {
                             diagFirstLines.append(line.count > 240 ? String(line.prefix(240)) + "…" : line)
                         }
                         guard let payload = Self.ssePayload(from: line) else { continue }
@@ -1966,6 +1967,7 @@ final class OpenAIAgentProvider: AgentProvider {
     /// when the resolved dict is empty so we never print noise on the happy
     /// path. Output goes through AppLogger so it lands in the daily log file.
     fileprivate static func diagEmptyToolArgs(rawJson: String, toolName: String, toolId: String, model: String, source: String) {
+        guard toolName != "remote_disk_configure_credentials" else { return }
         let utf8Bytes = rawJson.utf8.count
         let trimmedEmpty = rawJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let isLiteralEmptyObj = rawJson.trimmingCharacters(in: .whitespacesAndNewlines) == "{}"

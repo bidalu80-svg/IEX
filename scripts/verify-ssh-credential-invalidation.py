@@ -52,14 +52,16 @@ for path in sorted(ROOT.rglob('*.swift')):
         write_count += len(writes)
         transactions[str(path.relative_to(ROOT))] = len(spans)
 check(transactions == {
+    'Shared/RemoteServers/RemoteDiskAIToolGateway.swift': 1,
     'Shared/RemoteServers/RemoteServerAIToolGateway.swift': 2,
     'Views/Servers/RemoteServersView.swift': 2,
     'Views/Backup/ICloudBackupView.swift': 1,
-}, 'four UI/tool entry points use five transactions (AI password/key branches)')
-check(write_count == 8, 'all eight password/key/passphrase save statements are covered')
+}, 'five UI/tool entry points use six transactions (server AI password/key branches)')
+check(write_count == 11, 'all eleven password/key/passphrase save statements are covered')
 helper = text('Shared/RemoteServers/RemoteServerCredentialChange.swift')
 ordered = ['invalidateCredentialConnection(serverID:', 'clear(for:', 'markCredentialsChanged(', 'clearSSHVerification(', 'try write()']
-positions = [helper.index(part) for part in ordered]
+ssh_change, _, _ = body(helper, 'static func perform(for serverID: UUID')
+positions = [ssh_change.index(part) for part in ordered]
 check(positions == sorted(positions) and 'async' not in helper and '@MainActor' in helper, 'synchronous invalidation precedes writes, including partial write failure')
 store = text('Shared/RemoteServers/RemoteServerStore.swift')
 change, _, _ = body(store, 'func markCredentialsChanged(')

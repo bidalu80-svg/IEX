@@ -339,7 +339,7 @@ final class AnthropicAgentProvider: AgentProvider {
                             if let toolId = currentToolId, let toolName = currentToolName {
                                 let finalJson = currentToolJsonJoined()
                                 let args = Self.parseJsonToDict(finalJson)
-                                if args.isEmpty {
+                                if args.isEmpty && toolName != "remote_disk_configure_credentials" {
                                     // [ToolArgsProbe] Diagnose Kimi/etc. empty-args bug
                                     // — distinguish never-received-delta vs literal "{}"
                                     // vs truncated JSON. See OpenAIAgentProvider.diagEmptyToolArgs

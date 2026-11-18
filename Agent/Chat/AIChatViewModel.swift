@@ -2003,6 +2003,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     var titleGenAttempts = 0
     /// Whether a title generation request is currently in-flight.
     var isTitleGenerating = false
+    var remoteDiskCredentialSessions = Set<String>()
 
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
     var agentHistory: [AgentMessage] = [] {
@@ -2016,7 +2017,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// registered for this turn. This is rebuilt per request because the user
     /// may connect/disconnect a server or alter its AI access from Settings.
     private var remoteServerStatusFragment: String {
-        RemoteServerAIToolGateway.statusFragment
+        RemoteServerAIToolGateway.statusFragment + RemoteDiskAIToolGateway.statusFragment
     }
 
     private var githubStatusFragment: String {

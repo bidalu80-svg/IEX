@@ -5589,7 +5589,15 @@ private struct SettingsSheet: View {
                     NavigationLink {
                         RemoteDiskSettingsView()
                     } label: {
-                        Label("网络磁盘", systemImage: "externaldrive.connected.to.line.below")
+                        Label {
+                            Text("网络磁盘")
+                        } icon: {
+                            Image(systemName: "externaldrive.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.teal, in: Circle())
+                        }
                     }
                     NavigationLink {
                         RemoteServersView()

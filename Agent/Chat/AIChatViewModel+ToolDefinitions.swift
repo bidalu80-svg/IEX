@@ -248,6 +248,7 @@ extension AIChatViewModel {
         tools.append(contentsOf: sessionAgentToolDefinitions())
         tools.append(contentsOf: scheduledTaskAgentToolDefinitions())
         tools.append(contentsOf: remoteDiskToolDefinitions())
+        tools.append(contentsOf: RemoteDiskAIToolGateway.definitions())
         tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
         tools.append(contentsOf: GitHubAIToolGateway.definitions())
         tools.append(contentsOf: mediaFavoriteToolDefinitions())

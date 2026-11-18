@@ -7,6 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D8D190000000000000000002 /* RemoteDiskAIDraftPresentationModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D1A0000000000000000002 /* RemoteDiskAIDraftPresentationModifier.swift */; };
+		D8D190000000000000000001 /* RemoteDiskAIToolGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D1A0000000000000000001 /* RemoteDiskAIToolGateway.swift */; };
+		A0AF100000000000000000B2 /* aot-targets.json in Resources */ = {isa = PBXBuildFile; fileRef = A0AF100000000000000000F2 /* aot-targets.json */; };
+		A0AF100000000000000000B1 /* AOJITRecordingTargets.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0AF100000000000000000F1 /* AOJITRecordingTargets.swift */; };
+		A0A1100000000000000000B6 /* AOJITRestore in Resources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F6 /* AOJITRestore */; };
+		A0A1100000000000000000B5 /* AOJITRestoreButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F5 /* AOJITRestoreButton.swift */; };
+		A0A1100000000000000000B4 /* AOJITRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F4 /* AOJITRestore.swift */; };
+		A0A1100000000000000000B3 /* AOJITShellStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F3 /* AOJITShellStats.swift */; };
+		A0A1100000000000000000B2 /* AOJITRuntimeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F2 /* AOJITRuntimeStatus.swift */; };
+		A0A1100000000000000000B1 /* AOJITModuleProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A1100000000000000000F1 /* AOJITModuleProbe.swift */; };
 		A09A55000000000000000003 /* OpenGlass in Frameworks */ = {isa = PBXBuildFile; productRef = A09A55000000000000000002 /* OpenGlass */; };
         A7B4E1000000000000000001 /* ChatKeyboardViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B4E1000000000000000002 /* ChatKeyboardViewport.swift */; };
 		FEE0A0010000000000000003 /* SoundHapticsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */; };
@@ -644,6 +654,16 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D8D1A0000000000000000002 /* RemoteDiskAIDraftPresentationModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskAIDraftPresentationModifier.swift; sourceTree = "<group>"; };
+		D8D1A0000000000000000001 /* RemoteDiskAIToolGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskAIToolGateway.swift; sourceTree = "<group>"; };
+		A0AF100000000000000000F2 /* aot-targets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "scripts/aot-targets.json"; sourceTree = SOURCE_ROOT; };
+		A0AF100000000000000000F1 /* AOJITRecordingTargets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITRecordingTargets.swift; sourceTree = "<group>"; };
+		A0A1100000000000000000F6 /* AOJITRestore */ = {isa = PBXFileReference; lastKnownFileType = folder; path = AOJITRestore; sourceTree = SOURCE_ROOT; };
+		A0A1100000000000000000F5 /* AOJITRestoreButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITRestoreButton.swift; sourceTree = "<group>"; };
+		A0A1100000000000000000F4 /* AOJITRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITRestore.swift; sourceTree = "<group>"; };
+		A0A1100000000000000000F3 /* AOJITShellStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITShellStats.swift; sourceTree = "<group>"; };
+		A0A1100000000000000000F2 /* AOJITRuntimeStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITRuntimeStatus.swift; sourceTree = "<group>"; };
+		A0A1100000000000000000F1 /* AOJITModuleProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AOJITModuleProbe.swift; sourceTree = "<group>"; };
         A7B4E1000000000000000002 /* ChatKeyboardViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardViewport.swift; sourceTree = "<group>"; };
 		FEE0A0010000000000000013 /* SoundHapticsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundHapticsSettingsView.swift; sourceTree = "<group>"; };
 		FEE0A0010000000000000012 /* AppFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeedback.swift; sourceTree = "<group>"; };
@@ -1898,6 +1918,7 @@
 				D7A900000000000000000019 /* RemoteStorageClients.swift */,
 				D8D160000000000000000003 /* RemoteDiskService.swift */,
 				D8D160000000000000000002 /* RemoteDiskStore.swift */,
+				D8D1A0000000000000000001 /* RemoteDiskAIToolGateway.swift */,
 				D8D160000000000000000001 /* RemoteStorageWireSupport.swift */,
 			);
 			path = RemoteServers;
@@ -2137,6 +2158,8 @@
 				E5VMC0015 /* AIChatViewModel+Persistence.swift */,
 				E5VMC0016 /* AIChatViewModel+BackgroundTask.swift */,
 				E5VMC0017 /* AIChatViewModel+ConcurrentTools.swift */,
+				A0A1100000000000000000F3 /* AOJITShellStats.swift */,
+				A0A1100000000000000000F2 /* AOJITRuntimeStatus.swift */,
 				E53000014 /* ChatStore.swift */,
 				BB1000110F700000000000AA /* ContextPolicy.swift */,
 				E5FMI0011 /* FileMentionIndex.swift */,
@@ -2206,6 +2229,10 @@
 				E5F000011 /* ISHExecutionCoordinator.swift */,
 				CDNS001 /* ContainerDNS.swift */,
 				AOJIT001 /* AOJITAcceleration.swift */,
+				A0AF100000000000000000F2 /* aot-targets.json */,
+				A0AF100000000000000000F1 /* AOJITRecordingTargets.swift */,
+				A0A1100000000000000000F4 /* AOJITRestore.swift */,
+				A0A1100000000000000000F1 /* AOJITModuleProbe.swift */,
 				MEMP001 /* MemoryPressureMonitor.swift */,
 				E5F000012 /* ZeFsRouter.swift */,
 				E5CR00011 /* ShellCommandRingBuffer.swift */,
@@ -2374,6 +2401,7 @@
 				D7A900000000000000000015 /* RemoteServersView.swift */,
 				D8D160000000000000000006 /* RemoteDiskBrowserView.swift */,
 				D8D160000000000000000004 /* RemoteDiskSettingsView.swift */,
+				D8D1A0000000000000000002 /* RemoteDiskAIDraftPresentationModifier.swift */,
 				D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */,
 				D7A900000000000000000017 /* RemoteCommandConsoleView.swift */,
 			);
@@ -2412,6 +2440,8 @@
 				AA0838FE2F3B941A00049557 /* MirrorSpeedTestView.swift */,
 				AA0838BE2F3B941A00049557 /* RootfsManagementView.swift */,
 				AOJS001 /* AOJITSection.swift */,
+				A0A1100000000000000000F6 /* AOJITRestore */,
+				A0A1100000000000000000F5 /* AOJITRestoreButton.swift */,
 				CNS001 /* ContainerNetworkSection.swift */,
 				AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */,
 			);
@@ -2678,6 +2708,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0AF100000000000000000B2 /* aot-targets.json in Resources */,
+				A0A1100000000000000000B6 /* AOJITRestore in Resources */,
 				E51000004 /* Preview Assets.xcassets in Resources */,
 				AA26CCB72F31067900AECF2D /* alpine-rootfs.zip in Resources */,
 				E5BSH0004 /* bashism_rules.json in Resources */,
@@ -2965,6 +2997,12 @@
 				E5T00000B /* UserMessageEntity.swift in Sources */,
 				E5F000001 /* ISHExecutionCoordinator.swift in Sources */,
 				AOJITB01 /* AOJITAcceleration.swift in Sources */,
+				A0AF100000000000000000B1 /* AOJITRecordingTargets.swift in Sources */,
+				A0A1100000000000000000B5 /* AOJITRestoreButton.swift in Sources */,
+				A0A1100000000000000000B4 /* AOJITRestore.swift in Sources */,
+				A0A1100000000000000000B3 /* AOJITShellStats.swift in Sources */,
+				A0A1100000000000000000B2 /* AOJITRuntimeStatus.swift in Sources */,
+				A0A1100000000000000000B1 /* AOJITModuleProbe.swift in Sources */,
 				MEMPB01 /* MemoryPressureMonitor.swift in Sources */,
 				CHSRB01 /* ChatSearch.swift in Sources */,
 				CHSOB01 /* ChatSearchOverlay.swift in Sources */,
@@ -3176,6 +3214,8 @@
 				D8D150000000000000000004 /* RemoteDiskSettingsView.swift in Sources */,
 				D8D150000000000000000003 /* RemoteDiskService.swift in Sources */,
 				D8D150000000000000000002 /* RemoteDiskStore.swift in Sources */,
+				D8D190000000000000000002 /* RemoteDiskAIDraftPresentationModifier.swift in Sources */,
+				D8D190000000000000000001 /* RemoteDiskAIToolGateway.swift in Sources */,
 				D8D150000000000000000001 /* RemoteStorageWireSupport.swift in Sources */,
 				F9GH00000000000000000001 /* GitHubModels.swift in Sources */,
 				F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */,

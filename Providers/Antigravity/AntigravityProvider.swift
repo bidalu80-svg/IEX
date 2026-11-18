@@ -553,6 +553,17 @@ final class AntigravityProvider: LLMProvider {
     }
 
     #if DEBUG
+    /// Write-only credential tools whose arguments must never reach logs.
+    private static let credentialToolNames: Set<String> = [
+        "remote_disk_configure_credentials",
+        "remote_server_configure_credentials",
+    ]
+
+    private static func containsCredentialToolName(in data: Data) -> Bool {
+        guard let text = String(data: data, encoding: .utf8) else { return false }
+        return credentialToolNames.contains { text.contains($0) }
+    }
+
     private func logFullRequest(_ request: URLRequest) {
         var parts: [String] = ["📤 Antigravity HTTP Request"]
         parts.append("  URL: \(request.url?.absoluteString ?? "<nil>")")
@@ -572,7 +583,9 @@ final class AntigravityProvider: LLMProvider {
 
         if let body = request.httpBody {
             parts.append("  Body (\(body.count) bytes):")
-            if let json = try? JSONSerialization.jsonObject(with: body),
+            if Self.containsCredentialToolName(in: body) {
+                parts.append("  <redacted: credential tool payload>")
+            } else if let json = try? JSONSerialization.jsonObject(with: body),
                let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
                let str = String(data: pretty, encoding: .utf8) {
                 LastAPIRequestBody.shared.set(str, provider: "Antigravity")

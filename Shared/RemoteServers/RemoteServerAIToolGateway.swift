@@ -43,7 +43,7 @@ final class RemoteServerAIDraftStore: ObservableObject {
     private init() {}
 
     func stage(_ draft: RemoteServerAIDraft) -> Bool {
-        guard pending == nil else { return false }
+        guard pending == nil, RemoteDiskAIDraftStore.shared.pending == nil else { return false }
         pending = draft
         return true
     }

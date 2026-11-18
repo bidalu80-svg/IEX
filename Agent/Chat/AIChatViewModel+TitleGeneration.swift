@@ -36,7 +36,15 @@ extension AIChatViewModel {
     /// Retries up to 3 times across agent loop iterations if the title is still missing.
     /// Skips if a generation request is already in-flight to avoid wasting tokens.
     func generateSessionTitleIfNeeded(toolEntries: [(name: String, args: [String: Any])] = []) {
-        guard let sessionId, titleGenAttempts < 3, !isTitleGenerating else { return }
+        guard let sessionId else { return }
+        if toolEntries.contains(where: { $0.name == "remote_disk_configure_credentials" }) {
+            remoteDiskCredentialSessions.insert(sessionId)
+            isTitleGenerating = false
+            titleGenAttempts = 3
+            Task { await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil) }
+            return
+        }
+        guard titleGenAttempts < 3, !isTitleGenerating else { return }
 
         let userMessages = messages.filter { $0.role == .user }
         let assistantMessages = messages.filter { $0.role == .assistant }
@@ -112,6 +120,7 @@ extension AIChatViewModel {
                     conversationSummary: summary,
                     subEntry: subEntry
                 )
+                guard self?.remoteDiskCredentialSessions.contains(sessionId) != true else { return }
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 guard !trimmed.isEmpty else {
@@ -131,6 +140,7 @@ extension AIChatViewModel {
                 }
                 logger.info("[TitleGen] Attempt \(attempt): saved session title: \(trimmed), category: \(category ?? "nil")")
             } catch {
+                guard self?.remoteDiskCredentialSessions.contains(sessionId) != true else { return }
                 // Classify the failure so logs show WHY (request error / timeout /
                 // model-unavailable / parse failure all funnel here via thrown
                 // NSError or LLMError).
@@ -174,6 +184,15 @@ extension AIChatViewModel {
     /// Uses the first user/assistant pair + last user/assistant pair for better context.
     static func regenerateSessionTitle(sessionId: String) async throws {
         let rawMessages = await ChatStore.shared.loadMessages(sessionId: sessionId)
+        if rawMessages.contains(where: { message in
+            message.parts.contains { part in
+                if case .toolUse(let tool) = part { return tool.name == "remote_disk_configure_credentials" }
+                return false
+            }
+        }) {
+            await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil)
+            return
+        }
 
         let userMessages = rawMessages.filter { $0.role == .user }
         let assistantMessages = rawMessages.filter { $0.role == .assistant }
@@ -247,6 +266,17 @@ extension AIChatViewModel {
             conversationSummary: summary,
             subEntry: subEntry
         )
+        // A credential call may have completed while the naming model ran.
+        let latestMessages = await ChatStore.shared.loadMessages(sessionId: sessionId)
+        if latestMessages.contains(where: { message in
+            message.parts.contains { part in
+                if case .toolUse(let tool) = part { return tool.name == "remote_disk_configure_credentials" }
+                return false
+            }
+        }) {
+            await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil)
+            return
+        }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         guard !trimmed.isEmpty else { return }

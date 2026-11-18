@@ -341,6 +341,7 @@ extension AIChatViewModel {
             if commandCancelledByUser || userDidCancel || Task.isCancelled {
                 throw CancellationError()
             }
+            let aojitStats = await AOJITShellStats.begin()
             let result: CommandResult
             do {
                 var lineBuffer: [String] = []
@@ -389,6 +390,7 @@ extension AIChatViewModel {
             } catch {
                 result = CommandResult(output: "Error: \(error.localizedDescription)", exitCode: -1)
             }
+            await AOJITShellStats.end(aojitStats, command: command, exitCode: result.exitCode)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 let existingContent = messages[msgIdx].blocks[blockIdx].content
                 let hasStreamedContent = !existingContent.isEmpty
@@ -836,6 +838,14 @@ extension AIChatViewModel {
             let result = await executeSessionAgentTool(name: tu.name, arguments: toolArgs)
             toolOutput = result.output
             toolSuccess = result.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
+        case "remote_disk_draft", "remote_disk_configure_credentials", "remote_disk_delete":
+            let diskResult = await RemoteDiskAIToolGateway.execute(name: tu.name, arguments: toolArgs)
+            toolOutput = diskResult.output
+            toolSuccess = diskResult.success
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }

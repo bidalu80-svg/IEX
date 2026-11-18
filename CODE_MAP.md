@@ -348,14 +348,14 @@ git status --short
 ## AOJIT（AOT 镜像）
 
 - 运行时：`Vendor/ZeNative/ish` 的 asbestos arm64 JIT，iOS 侧用 `-Djit=true -Djit_emit=false`（`Vendor/ZeNative/ish/app/xcode-meson.sh`）编译：只安装镜像里的翻译，不申请可执行内存。
-- 录制：`scripts/aot-manifest.txt` 每行一个模块（name | guest 路径子串 | 负载 | 超时），`/.github/workflows/aot-record.yml` 在 macOS 上跑 `tools/jit_aot/record.sh` + `gen.py` 生成 `aot/*.S`，再汇编成 `aot/*.o` 提交进仓库。
+- 录制：`scripts/aot-manifest.txt` 每行一个模块（name | guest 路径子串 | 负载 | 超时），`/.github/workflows/aot-record.yml` 在 macOS 上用 `scripts/record-aot.py` + `gen.py` 逐镜像录制，先校验 `scripts/aot-targets.json` 的精确包版本、ELF build-id 和 recorder ABI，再生成隔离的 `.aot-new/recorded/` artifact；25 项齐全后才汇总。
 - 接线：`scripts/sync-aot-objects.py` 扫描 `aot/*.o` 并重写 `Ze.xcodeproj/project.pbxproj` 的三处 `ZE_AOT_OBJECTS`；新增镜像必须跑它，否则文件在仓库里但不会被链接。
 - 自检：录制工作流末尾 “Verify the images attach and hit” 用 `ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1` 跑 musl+busybox，输出必须匹配 `AOT n (2 images)`；`build.yml` 的 IPA 审计要求二进制里存在 `__ish_aot` 段且大于 8 MB。
 - 匹配（1.15 格式）：`struct aot_module` 带 `abi`（`jit_abi()` 汇总的布局与代码版本）、模块的 `NT_GNU_BUILD_ID` 和 `family` 通配符。装载时先按 abi + 固定寄存器约定过滤，abi 不符的**拒绝并计入 rejected**（`ish_aot_rejected_*`）；再按 build-id 认“同一个 build”，找不到就按 `family`（`libz.so.1*`）认“同一文件的另一个版本”，块用 `by_hash`（`key_content_hash()`）按内容匹配，所以升级后偏移变了也能命中。`AOJITAcceleration.imageMatch` 要写 guest 文件名（`_json`、`math`、`binascii.cpython`、`libz.so`），不能直接拿目录 id。
 - 换引擎必须重录：`abi` 是 `JIT_CODE_VERSION` + 各结构体 offsetof 的哈希，改 `gen.c`/`jit.c`/`aot.h`/`fiber_block` 后旧镜像会被拒收，录制工作流要重跑。
 - 状态口径：linked（注册进来的）/ attached（abi 通过）/ rejected（被拒）/ served（`ish_aot_hits_for_image`）是四个不同的数，页面和 `ze-config aojit` 都要看 served，不能只看 attached。
-- 版本：`aot/VERSIONS.txt` 是镜像真正录制时的包版本，`AOJITAcceleration.imageVersions` 必须与它一致（`scripts/verify-aojit-status.py` 会比对）。状态页的“全速/部分”按镜像版本判定；设备上的 warm-up 记录只知道本机装了什么，拿它比较会把任何安装都显示成“全速”。
-- 已知缺口：`nodejs` 的 V8 启动在录制器里超过 60 分钟，暂不在目录内；需要时把清单里注释掉的行改成 10800 秒并接受六小时任务。
+- 版本：`aot/VERSIONS.txt` 是镜像真正录制时的包版本，`AOJITAcceleration.imageVersions` 必须与它一致（`scripts/verify-aojit-status.py` 会比对）。状态页通过 `AOJITModuleProbe` 读取实际链接镜像的身份并校验 guest ELF build-id；包版本与旧 warm-up 缓存均不能推出 Available，设备端不生成镜像。下一轮目标版本与当前实物版本分开维护。
+- 待录制：`nodejs` 已进目录和有效清单（22.23.2-r0、10800 秒），当前尚无 `.o`；现有 SQLite 镜像是 Python `_sqlite3`，页面按实物显示，下次录制改为 `libsqlite3.so`。不能把目录/清单修改等同于二进制一致。
 - 自查（给 Agent 用）：`ze-config get aojit` 返回开关、内核回读、linked/attached、命中计数、逐库表与逐镜像命中（`aojit.images`：path / size_kb / hits，热模块 hits 为 0 说明镜像接了但从没命中）；单值用 `aojit.enabled` / `aojit.jit_runtime` / `aojit.images_attached` / `aojit.aot_hits` / `aojit.hit_rate` / `aojit.status`。AOJIT 状态只在宿主进程里，guest 没有 `/proc` 条目或磁盘标记，`cat /proc/ish/jit`、`find / -name '*aot*'` 一律查不到——不要让 Agent 用这些路径判断开关。
 
 

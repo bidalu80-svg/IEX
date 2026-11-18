@@ -117,10 +117,9 @@ actor ISHExecutionCoordinator {
             throw ISHCoordinatorError.kernelNotBooted
         }
 
-        // [T-aojit] First shell use is what turns the feature on in practice —
-        // the settings screen is only needed to turn it *off*. `prepareOnce`
-        // makes sure the probe and the first recordings happen exactly once
-        // per launch, not on every command.
+        // Startup applies the saved AOJIT preference synchronously in kernel
+        // boot. First shell use only starts diagnostics and the memory feed;
+        // it does not record images or decide the first command's switch.
         // [T-ish-footprint-brake] The memory feed is independent of AOJIT:
         // admission has to follow jetsam whether or not the translator is on.
         // It used to hang off `prepareOnce()`, which only ran when AOJIT was
@@ -128,9 +127,7 @@ actor ISHExecutionCoordinator {
         // fixed page ledger.
         Task { @MainActor in
             MemoryPressureMonitor.shared.start()
-            if AOJITAcceleration.shared.isEnabled {
-                AOJITAcceleration.shared.prepareOnce()
-            }
+            AOJITAcceleration.shared.prepareOnce()
         }
 
         // Register ourselves in the in-flight table purely for

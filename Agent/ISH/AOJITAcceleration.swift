@@ -4,24 +4,10 @@
 //
 //  [T-aojit] AOJIT optimisation.
 //
-//  iSH translates guest instructions as it runs them. The first execution of a
-//  hot library therefore pays the translation cost, and a command that links
-//  musl + busybox + python3 pays it again on every cold start. AOJIT records a
-//  per-library image once — it runs that library's hot paths a single time and
-//  keeps the resulting profile — so later commands start with the translated
-//  code already in place instead of re-translating it instruction by
-//  instruction.
-//
-//  Each image is tied to the package version it was recorded from:
-//  - same version  → full speed, the whole image applies
-//  - other version → partial, unchanged code still comes from the image and
-//                    only the delta is interpreted
-//  - not installed → nothing to record; the row offers the exact package that
-//                    was recorded, so the image becomes usable after install
-//
-//  The toggle lives in Settings → Rootfs Management → AOJIT and only affects
-//  commands started after the switch, which is why the rows keep showing the
-//  recorded version even while AOJIT is off.
+//  Host-recorded, compiled and signed images are linked into the app.
+//  Device warm-up only measures an installed workload; it never creates an image.
+//  Exact availability requires the guest ELF build-id to match the linked image.
+//  Other builds in its family may supply unchanged blocks by content.
 //
 
 import Combine
@@ -37,18 +23,20 @@ struct AOJITLibrary: Identifiable {
     let summary: String
     /// apk package that owns the code.
     let package: String
-    /// Version the image is recorded from — also the repair target.
+    /// Catalog fallback: actual image provenance, or an explicitly pending recording target.
     let repairVersion: String
 
     /// The version the *committed image* was recorded from, when the build
     /// knows it (see AOJITAcceleration.imageVersions). Falls back to the
-    /// catalog constant for packages that have no image.
+    /// recording configuration for packages that have no image. Empty means unknown.
     var targetVersion: String { AOJITAcceleration.imageVersions[package] ?? repairVersion }
     /// Exit code 0 means the library is present.
     let probe: String
     /// Exercises the library's hot paths once.
     let warmup: String
     let timeout: TimeInterval
+
+    var offersOnlineFix: Bool { !targetVersion.isEmpty && !["musl", "busybox", "zlib", "libcrypto", "libssl"].contains(id) }
 
     var repairSpec: String { "\(package) \(targetVersion)" }
 
@@ -68,7 +56,7 @@ struct AOJITLibrary: Identifiable {
         case "pillow": return ["PIL/_imaging.cpython"]
         case "numpy": return ["_multiarray"]
         case "zlib": return ["libz.so"]
-        case "sqlite": return ["libsqlite3"]
+        case "sqlite": return AOJITModuleProbe.hasLegacySQLiteImage ? ["_sqlite3.cpython"] : ["libsqlite3"]
         case "libcrypto": return ["libcrypto"]
         case "libssl": return ["libssl"]
         case "libwebp": return ["libwebp"]
@@ -82,7 +70,7 @@ struct AOJITLibrary: Identifiable {
         case "pystruct": return ["_struct.cpython"]
         case "pydatetime": return ["_datetime.cpython"]
         case "pybinascii": return ["binascii.cpython"]
-        case "pymath": return ["math.cpython"]
+        case "pymath": return ["/math.cpython"]
         case "pyzlib": return ["zlib.cpython"]
         case "pysocket": return ["_socket.cpython"]
         case "pyselect": return ["select.cpython"]
@@ -97,9 +85,12 @@ struct AOJITLibraryState: Identifiable {
     enum Status {
         case available
         case partial
-        /// Installed, but no image recorded yet (first run or a rebuild).
-        case recording
+        /// Compatibility state while checking a module (not device recording).
+        case checking
         case notInstalled
+        case rejected
+        case mismatch
+        case noImage
     }
 
     let library: AOJITLibrary
@@ -118,7 +109,14 @@ struct AOJITLibraryState: Identifiable {
 
     var isAvailable: Bool { status != .notInstalled }
 
-    /// "musl 1.2.5-r8" — package name plus version, matching the row's title.
+    /// Installation status cannot prove an image exists (notably for Node).
+    var hasRecordedImage: Bool {
+        AOJITModuleProbe.images.contains { image in
+            library.imageMatch.contains { image.path.contains($0) }
+        }
+    }
+
+    /// Package name and actual recorded version (or the declared pending target).
     var recordedLine: String {
         "\(library.package) \(recordedVersion ?? library.targetVersion)"
     }
@@ -127,11 +125,17 @@ struct AOJITLibraryState: Identifiable {
         switch status {
         case .notInstalled:
             return nil
+        case .rejected:
+            return String(localized: "The engine rejected this image; reinstalling a guest package cannot repair its ABI.")
+        case .mismatch:
+            return String(localized: "The installed ELF does not match the linked image or its family.")
+        case .noImage:
+            return String(localized: "No linked image. Host recording and a new app build are required.")
         case .available:
             if imageHits > 0 {
-                return String(localized: "Full speed: this build's own image, \(imageHits) blocks served so far.")
+                return String(localized: "ELF build-id matches the linked image; \(imageHits) blocks served so far.")
             }
-            return String(localized: "Full speed: the installed version is exactly the recorded one.")
+            return String(localized: "ELF build-id matches the linked image. Coverage depends on the recorded workload.")
         case .partial:
             // [T-aojit-v2] "Attached" is not "serving": a family image that
             // has matched nothing is exactly the old fake-AOJIT case.
@@ -141,9 +145,9 @@ struct AOJITLibraryState: Identifiable {
             if imageMatch == 2 {
                 return String(localized: "Another version of this library, and no block has matched yet — the image is attached but not serving.")
             }
-            return String(localized: "Partial: the installed version differs, so unchanged code still runs from the image.")
-        case .recording:
-            return String(localized: "Recording an image for this library…")
+            return String(localized: "The module belongs to the image family; unchanged blocks may be served by content.")
+        case .checking:
+            return String(localized: "Checking the guest module…")
         }
     }
 
@@ -151,8 +155,11 @@ struct AOJITLibraryState: Identifiable {
         switch status {
         case .available:    return String(localized: "Available")
         case .partial:      return String(localized: "Partial")
-        case .recording:    return String(localized: "Preparing")
+        case .checking:    return String(localized: "Preparing")
         case .notInstalled: return String(localized: "Not Installed")
+        case .rejected:     return String(localized: "Rejected")
+        case .mismatch:     return String(localized: "Mismatch")
+        case .noImage:      return String(localized: "No Image")
         }
     }
 }
@@ -175,11 +182,14 @@ final class AOJITAcceleration: ObservableObject {
         "py3-pillow": "11.0.0-r0",
         "py3-numpy": "2.1.3-r0",
         "zlib": "1.3.1-r2",
-        "sqlite-libs": "3.48.0-r4",
+        // aot_sqlite.o currently contains Python _sqlite3 (python3 above).
+        "libwebp": "1.4.0-r0",
+        "libjpeg-turbo": "3.0.4-r0",
         "libcrypto3": "3.3.2-r4",
         "libssl3": "3.3.2-r4",
         "pcre2": "10.43-r1",
         "openssh-client-default": "9.9_p2-r0",
+        "openssh-client-common": "9.9_p2-r0",
     ]
 
     /// Absent key means on: the feature ships enabled and only an explicit
@@ -193,7 +203,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/lib/ld-musl-aarch64.so.1 (musl libc)",
             summary: String(localized: "The C library underneath every dynamically linked program: git, curl, apk, python3, node and most other commands."),
             package: "musl",
-            repairVersion: "1.2.5-r8",
+            repairVersion: AOJITAcceleration.imageVersions["musl"] ?? "",
             probe: "apk info -e musl >/dev/null 2>&1",
             warmup: "/bin/ls / >/dev/null 2>&1; /bin/cat /etc/hostname >/dev/null 2>&1; /bin/sh -c 'true'",
             timeout: 15
@@ -204,7 +214,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/bin/busybox，/bin/sh",
             summary: String(localized: "Shell and base tools: sh scripts and loops, plus ls, cat, grep, sed, awk, find, sort, xargs, tar and gzip."),
             package: "busybox",
-            repairVersion: "1.37.0-r8",
+            repairVersion: AOJITAcceleration.imageVersions["busybox"] ?? "",
             probe: "apk info -e busybox >/dev/null 2>&1",
             warmup: "for c in ls cat grep sed awk find sort xargs tar gzip; do command -v $c >/dev/null 2>&1 && $c --help >/dev/null 2>&1; done",
             timeout: 20
@@ -215,10 +225,17 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/bin/python3，/usr/bin/pip",
             summary: String(localized: "python3 and pip: Python scripts, python3 -c one-liners and pip commands."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "apk info -e python3 >/dev/null 2>&1",
             warmup: "python3 -c \"import json, re, os, sys, math, collections, itertools\"",
             timeout: 25
+        ),
+        AOJITLibrary(
+            id: "nodejs", name: "Node.js", paths: "/usr/bin/node",
+            summary: String(localized: "JavaScript scripts and Node-based CLI tools (node, npm and npx)."),
+            package: "nodejs", repairVersion: AOJITRecordingTargets.version(for: "nodejs"),
+            probe: "apk info -e nodejs >/dev/null 2>&1",
+            warmup: "node -e 'JSON.parse(JSON.stringify({a:[1,2,3]}))'", timeout: 120
         ),
         AOJITLibrary(
             id: "pillow",
@@ -226,7 +243,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "PIL._imaging (python3 -c \"from PIL import Image\")",
             summary: String(localized: "Image work with Pillow: opening and decoding images, resizing, blurring and sharpening filters, and colour conversion."),
             package: "py3-pillow",
-            repairVersion: "11.0.0-r0",
+            repairVersion: AOJITAcceleration.imageVersions["py3-pillow"] ?? "",
             probe: "python3 -c \"import PIL\" >/dev/null 2>&1",
             warmup: "python3 -c \"from PIL import Image; Image.new('RGB', (8, 8))\"",
             timeout: 25
@@ -237,7 +254,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libwebp.so.7 (Pillow's WebP support)",
             summary: String(localized: "Saving and opening WebP images with Pillow. libwebp leans on vector instructions, which are still emulated, so the gain is small."),
             package: "libwebp",
-            repairVersion: "1.4.0-r0",
+            repairVersion: AOJITAcceleration.imageVersions["libwebp"] ?? "",
             probe: "apk info -e libwebp >/dev/null 2>&1",
             warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libwebp.so.7')\"",
             timeout: 20
@@ -248,7 +265,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libjpeg.so.8 (Pillow's JPEG support)",
             summary: String(localized: "Saving and opening JPEG images with Pillow. libjpeg-turbo leans on vector instructions, which are still emulated, so the gain is small."),
             package: "libjpeg-turbo",
-            repairVersion: "3.0.4-r0",
+            repairVersion: AOJITAcceleration.imageVersions["libjpeg-turbo"] ?? "",
             probe: "apk info -e libjpeg-turbo >/dev/null 2>&1",
             warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libjpeg.so.8')\"",
             timeout: 20
@@ -259,7 +276,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "numpy._core._multiarray_umath (python3 -c \"import numpy\")",
             summary: String(localized: "NumPy array work in Python: array arithmetic, reductions such as sum and mean, sorting and indexing (also underneath pandas and matplotlib). Linear algebra runs in OpenBLAS, which has no image."),
             package: "py3-numpy",
-            repairVersion: "2.1.3-r0",
+            repairVersion: AOJITAcceleration.imageVersions["py3-numpy"] ?? "",
             probe: "python3 -c \"import numpy\" >/dev/null 2>&1",
             warmup: "python3 -c \"import numpy as np; np.arange(1000).sum()\"",
             timeout: 30
@@ -270,19 +287,23 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libz.so.1",
             summary: String(localized: "Compression and decompression: PNG images, Python's zlib and gzip modules, pip unpacking wheels, and any other program using zlib."),
             package: "zlib",
-            repairVersion: "1.3.1-r2",
+            repairVersion: AOJITAcceleration.imageVersions["zlib"] ?? "",
             probe: "apk info -e zlib >/dev/null 2>&1",
             warmup: "python3 -c \"import zlib; zlib.compress(b'x' * 4096)\"",
             timeout: 20
         ),
         AOJITLibrary(
             id: "sqlite",
-            name: "SQLite",
-            paths: "/usr/lib/libsqlite3.so.0 (python3 sqlite3, node:sqlite)",
-            summary: String(localized: "SQLite databases in Python (sqlite3), Node (node:sqlite) and other programs: inserts, indexed and range queries, full-text search and JSON functions."),
-            package: "sqlite-libs",
-            repairVersion: "3.48.0-r4",
-            probe: "apk info -e sqlite-libs >/dev/null 2>&1",
+            name: AOJITModuleProbe.hasLegacySQLiteImage ? "Python SQLite binding" : "SQLite",
+            paths: AOJITModuleProbe.hasLegacySQLiteImage
+                ? "/usr/lib/python3.12/lib-dynload/_sqlite3.cpython-312-aarch64-linux-musl.so"
+                : "/usr/lib/libsqlite3.so.0",
+            summary: String(localized: "SQLite database operations. The row describes the module actually linked into this app."),
+            package: AOJITModuleProbe.hasLegacySQLiteImage ? "python3" : "sqlite-libs",
+            repairVersion: AOJITModuleProbe.hasLegacySQLiteImage
+                ? (AOJITAcceleration.imageVersions["python3"] ?? "")
+                : AOJITRecordingTargets.version(for: "sqlite"),
+            probe: "apk info -e python3 >/dev/null 2>&1",
             warmup: "python3 -c \"import sqlite3; sqlite3.connect(':memory:').execute('create table t(a)')\"",
             timeout: 25
         ),
@@ -292,7 +313,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libcrypto.so.3 (python3 ssl/hashlib, curl, git, node)",
             summary: String(localized: "HTTPS and cryptography: TLS handshakes, certificate checks and hashing (Python hashlib and ssl, curl, git, pip, node https). Bulk AES-GCM encrypt/decrypt gains little."),
             package: "libcrypto3",
-            repairVersion: "3.3.2-r4",
+            repairVersion: AOJITAcceleration.imageVersions["libcrypto3"] ?? "",
             probe: "apk info -e libcrypto3 >/dev/null 2>&1",
             warmup: "python3 -c \"import hashlib; hashlib.sha256(b'x').hexdigest()\"",
             timeout: 25
@@ -303,7 +324,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libssl.so.3",
             summary: String(localized: "The TLS protocol layer behind HTTPS, used together with libcrypto; most of the HTTPS gain comes from libcrypto."),
             package: "libssl3",
-            repairVersion: "3.3.2-r4",
+            repairVersion: AOJITAcceleration.imageVersions["libssl3"] ?? "",
             probe: "apk info -e libssl3 >/dev/null 2>&1",
             warmup: "python3 -c \"import ssl\"",
             timeout: 20
@@ -314,7 +335,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/lib/libpcre2-8.so.0 (git grep -P, grep -P, rg -P)",
             summary: String(localized: "Only searches that explicitly use PCRE regexes benefit: git grep -P, GNU grep -P and rg -P / --pcre2. ripgrep's default search does not use PCRE2, and jq uses another regex library, so neither benefits."),
             package: "pcre2",
-            repairVersion: "10.43-r0",
+            repairVersion: AOJITAcceleration.imageVersions["pcre2"] ?? "",
             probe: "apk info -e pcre2 >/dev/null 2>&1",
             warmup: "python3 -c \"import ctypes; ctypes.CDLL('/usr/lib/libpcre2-8.so.0')\"",
             timeout: 20
@@ -325,7 +346,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/bin/ssh (also under scp, sftp, rsync and git over SSH)",
             summary: String(localized: "ssh logins and remote commands, plus every tool that connects through ssh: scp, sftp, rsync and git over SSH. Each new connection's handshake gets faster; the data itself is encrypted in libcrypto."),
             package: "openssh-client-default",
-            repairVersion: "9.9_p2-r0",
+            repairVersion: AOJITAcceleration.imageVersions["openssh-client-default"] ?? "",
             probe: "apk info -e openssh-client-default >/dev/null 2>&1",
             warmup: "/usr/bin/ssh -V",
             timeout: 20
@@ -336,7 +357,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "/usr/bin/scp",
             summary: String(localized: "Copying files with scp. Most of the gain comes from the ssh connection scp opens, and ssh has its own image."),
             package: "openssh-client-common",
-            repairVersion: "9.9_p2-r0",
+            repairVersion: AOJITAcceleration.imageVersions["openssh-client-common"] ?? "",
             probe: "apk info -e openssh-client-common >/dev/null 2>&1",
             warmup: "/usr/bin/ssh -V",
             timeout: 20
@@ -347,7 +368,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_json (import json)",
             summary: String(localized: "json.loads and json.dumps in Python scripts and python3 -c one-liners."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import json\" >/dev/null 2>&1",
             warmup: "python3 -c \"import json; json.loads('{\\\"a\\\": 1}')\"",
             timeout: 20
@@ -358,7 +379,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_hashlib (import hashlib)",
             summary: String(localized: "Python hashlib digests such as sha256 and md5; the hashing itself runs in libcrypto."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import hashlib\" >/dev/null 2>&1",
             warmup: "python3 -c \"import hashlib; hashlib.sha256(b'x').digest()\"",
             timeout: 20
@@ -369,7 +390,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_blake2 (hashlib.blake2b / blake2s)",
             summary: String(localized: "hashlib.blake2b and hashlib.blake2s in Python."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import _blake2\" >/dev/null 2>&1",
             warmup: "python3 -c \"import hashlib; hashlib.blake2b(b'x').digest()\"",
             timeout: 20
@@ -380,7 +401,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_struct (import struct)",
             summary: String(localized: "struct.pack and struct.unpack: reading and writing binary data in Python."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import struct\" >/dev/null 2>&1",
             warmup: "python3 -c \"import struct; struct.pack('i', 1)\"",
             timeout: 20
@@ -391,7 +412,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_datetime (import datetime)",
             summary: String(localized: "Parsing, formatting and calculating dates and times with Python's datetime."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import datetime\" >/dev/null 2>&1",
             warmup: "python3 -c \"import datetime; datetime.datetime.now()\"",
             timeout: 20
@@ -402,7 +423,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "binascii (import base64, binascii)",
             summary: String(localized: "Base64, hex and CRC conversions in Python (base64 and binascii)."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import binascii\" >/dev/null 2>&1",
             warmup: "python3 -c \"import base64, binascii; base64.b64encode(b'x')\"",
             timeout: 20
@@ -413,7 +434,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "math (import math)",
             summary: String(localized: "Python's math module."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import math\" >/dev/null 2>&1",
             warmup: "python3 -c \"import math; math.sqrt(2)\"",
             timeout: 20
@@ -424,7 +445,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "zlib (import zlib, gzip, zipfile)",
             summary: String(localized: "Compression in Python (zlib, gzip, zipfile); the compression itself runs in libz."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import zlib\" >/dev/null 2>&1",
             warmup: "python3 -c \"import zlib; zlib.compress(b'x' * 4096)\"",
             timeout: 20
@@ -435,7 +456,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "_socket (import socket)",
             summary: String(localized: "Networking from Python: socket, urllib, http.client and requests."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import socket\" >/dev/null 2>&1",
             warmup: "python3 -c \"import socket; s = socket.socket(); s.close()\"",
             timeout: 20
@@ -446,7 +467,7 @@ final class AOJITAcceleration: ObservableObject {
             paths: "select (import select)",
             summary: String(localized: "Waiting on sockets and pipes from Python: subprocess, selectors and asyncio."),
             package: "python3",
-            repairVersion: "3.12.15-r0",
+            repairVersion: AOJITAcceleration.imageVersions["python3"] ?? "",
             probe: "python3 -c \"import select\" >/dev/null 2>&1",
             warmup: "python3 -c \"import select\"",
             timeout: 20
@@ -468,12 +489,12 @@ final class AOJITAcceleration: ObservableObject {
 
     @Published private(set) var states: [AOJITLibraryState] = []
     @Published private(set) var isRefreshing = false
-    @Published private(set) var isRecording = false
     @Published private(set) var busyLibraryId: String?
     /// Last install failure per library, shown under its row. Silent failures
     /// made the repair button look dead: `executeCommandSync` returns nil when
     /// the kernel has not booted, and apk's own errors were only logged.
     @Published private(set) var repairError: [String: String] = [:]
+    @Published private(set) var repairNotice: [String: String] = [:]
     /// False when the guest kernel has not booted yet, so the section can say
     /// so instead of spinning forever.
     @Published private(set) var isContainerReady = false
@@ -497,7 +518,7 @@ final class AOJITAcceleration: ObservableObject {
     @Published private(set) var jitAbi: UInt32 = 0
     /// [T-aojit-v2] Blocks served by an image of another version of the file.
     @Published private(set) var familyHitCount: UInt64 = 0
-    /// Blocks installed from an image, and blocks the JIT translated instead.
+    /// Blocks installed from an image, and total lookup/translation attempts (including those installs).
     @Published private(set) var aotHitCount: UInt64 = 0
     @Published private(set) var translatedBlockCount: UInt64 = 0
 
@@ -517,12 +538,11 @@ final class AOJITAcceleration: ObservableObject {
 
     private var recordings: [String: Recording] = [:]
     private var lastProbe: Probe?
-    private var failedRecording: Set<String> = []
     private var didPrepareThisLaunch = false
     private let queue = DispatchQueue(label: "com.ze.aojit.record", qos: .utility)
     private let logger = AppLogger(category: "AOJIT")
 
-    private static let probeScript = #"for p in musl busybox python3 py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(v=$(apk info -e -v "$p" 2>/dev/null | head -n 1); v=${v#"$p"-}; if [ -z "$v" ]; then v=$(apk list --installed "$p" 2>/dev/null | head -n 1 | cut -d' ' -f1); v=${v#"$p"-}; fi; printf '%s' "$v")"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
+    private static let probeScript = #"for p in musl busybox python3 nodejs py3-pillow libwebp libjpeg-turbo py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do if apk info -e "$p" >/dev/null 2>&1; then printf 'pkg\t%s\t%s\n' "$p" "$(v=$(apk info -e -v "$p" 2>/dev/null | head -n 1); v=${v#"$p"-}; if [ -z "$v" ]; then v=$(apk list --installed "$p" 2>/dev/null | head -n 1 | cut -d' ' -f1); v=${v#"$p"-}; fi; printf '%s' "$v")"; else printf 'pkg\t%s\t\n' "$p"; fi; done; python3 -c "import PIL" >/dev/null 2>&1 && printf 'mod\tpillow\tok\n' || printf 'mod\tpillow\t\n'; python3 -c "import numpy" >/dev/null 2>&1 && printf 'mod\tnumpy\tok\n' || printf 'mod\tnumpy\t\n'; python3 -c "import json" >/dev/null 2>&1 && printf 'mod\tpyjson\tok\n' || printf 'mod\tpyjson\t\n'; python3 -c "import hashlib" >/dev/null 2>&1 && printf 'mod\tpyhashlib\tok\n' || printf 'mod\tpyhashlib\t\n'; python3 -c "import _blake2" >/dev/null 2>&1 && printf 'mod\tpyblake2\tok\n' || printf 'mod\tpyblake2\t\n'; python3 -c "import struct" >/dev/null 2>&1 && printf 'mod\tpystruct\tok\n' || printf 'mod\tpystruct\t\n'; python3 -c "import datetime" >/dev/null 2>&1 && printf 'mod\tpydatetime\tok\n' || printf 'mod\tpydatetime\t\n'; python3 -c "import binascii" >/dev/null 2>&1 && printf 'mod\tpybinascii\tok\n' || printf 'mod\tpybinascii\t\n'; python3 -c "import math" >/dev/null 2>&1 && printf 'mod\tpymath\tok\n' || printf 'mod\tpymath\t\n'; python3 -c "import zlib" >/dev/null 2>&1 && printf 'mod\tpyzlib\tok\n' || printf 'mod\tpyzlib\t\n'; python3 -c "import socket" >/dev/null 2>&1 && printf 'mod\tpysocket\tok\n' || printf 'mod\tpysocket\t\n'; python3 -c "import select" >/dev/null 2>&1 && printf 'mod\tpyselect\tok\n' || printf 'mod\tpyselect\t\n'"#
 
     private init() {
         let defaults = UserDefaults.standard
@@ -536,15 +556,14 @@ final class AOJITAcceleration: ObservableObject {
         // the moment it opens. Without this the rows only appeared after a
         // fresh detection, which is why every relaunch started blank.
         loadCachedProbe()
+        applyRuntimeSwitch()
         rebuildStates()
     }
 
     // MARK: Public API
 
-    /// Detect what is installed, then record any image that is missing or was
-    /// recorded from a different version. Safe to call repeatedly.
+    /// Refresh installed modules and compare their ELF identity to linked images.
     func prepareIfNeeded() {
-        guard ISHKernel.shared.isBooted else { return }
         refresh()
     }
 
@@ -587,6 +606,7 @@ final class AOJITAcceleration: ObservableObject {
         guard !isRefreshing else { return }
         guard ISHKernel.shared.isBooted else {
             isContainerReady = false
+            rebuildStates()
             // Keep the cached rows: clearing them turned every relaunch into
             // "wait for a probe" instead of showing the last known state.
             return
@@ -613,7 +633,7 @@ final class AOJITAcceleration: ObservableObject {
                 self.jitRuntimeEnabled = ish_jit_is_enabled()
                 self.linkedImageCount = Self.linkedImagePaths().count
                 self.refreshEngineStats()
-                self.recordMissingImages()
+                // Host recording is required for new images; no automatic guest warm-up.
             }
         }
     }
@@ -627,7 +647,7 @@ final class AOJITAcceleration: ObservableObject {
     /// button looked dead. Booting first is still required: the kernel is only
     /// started when the terminal opens.
     func repair(_ state: AOJITLibraryState) {
-        guard busyLibraryId == nil else { return }
+        guard busyLibraryId == nil, state.library.offersOnlineFix else { return }
         busyLibraryId = state.id
         repairError[state.id] = nil
 
@@ -646,14 +666,15 @@ final class AOJITAcceleration: ObservableObject {
         if ! command -v apk >/dev/null 2>&1; then echo "AOJIT-ERROR=apk-missing"; exit 0; fi
         if [ ! -s /etc/apk/repositories ]; then echo "AOJIT-ERROR=no-repositories"; exit 0; fi
         apk update 2>&1 | tail -6
-        apk add --no-cache '\(spec)' 2>&1 || apk add --no-cache '\(package)' 2>&1
-        if apk info -e '\(package)' >/dev/null 2>&1; then echo "AOJIT-INSTALLED=1"; else echo "AOJIT-INSTALLED=0"; fi
+        apk add --no-cache '\(spec)' 2>&1 || { echo "AOJIT-INSTALLED=0"; exit 1; }
+        actual=$(apk info -e -v '\(package)' 2>/dev/null | head -n 1)
+        if [ "$actual" = '\(package)-\(state.library.targetVersion)' ]; then echo "AOJIT-INSTALLED=1"; else echo "AOJIT-INSTALLED=0 expected=\(spec) actual=$actual"; exit 1; fi
         """
 
         Task { @MainActor in
-            guard ensureBooted() else {
+            guard ISHKernel.shared.isBooted else {
                 busyLibraryId = nil
-                repairError[state.id] = String(localized: "The container could not be started.")
+                repairError[state.id] = String(localized: "Open the terminal once before installing a package.")
                 return
             }
             isContainerReady = true
@@ -677,7 +698,6 @@ final class AOJITAcceleration: ObservableObject {
             busyLibraryId = nil
             let installed = output.contains("AOJIT-INSTALLED=1")
             if installed {
-                failedRecording.remove(state.id)
                 refresh()
             } else {
                 logger.warning("AOJIT repair failed for \(state.id)")
@@ -699,6 +719,30 @@ final class AOJITAcceleration: ObservableObject {
                     ? String(localized: "Install failed.")
                     : parts.joined(separator: "\n")
             }
+        }
+    }
+
+    func restore(_ state: AOJITLibraryState) {
+        guard busyLibraryId == nil, !AOJITRestore.packages(for: state.library).isEmpty else { return }
+        guard ISHKernel.shared.isBooted else {
+            repairError[state.id] = String(localized: "Open the terminal once before restoring core packages.")
+            return
+        }
+        busyLibraryId = state.id
+        repairError[state.id] = nil
+        repairNotice[state.id] = nil
+        ensureRepositories()
+        Task { @MainActor in
+            do {
+                let result = try await AOJITRestore.run(for: state.library)
+                let message = AOJITRestore.message(code: result.code, output: result.output)
+                if result.code == 0 || result.code == 1 { repairNotice[state.id] = message }
+                else { repairError[state.id] = message }
+            } catch {
+                repairError[state.id] = error.localizedDescription
+            }
+            busyLibraryId = nil
+            refresh()
         }
     }
 
@@ -756,28 +800,9 @@ final class AOJITAcceleration: ObservableObject {
         return digits.isEmpty ? nil : String(digits)
     }
 
-    /// Boots the guest kernel when the terminal has not done it yet.
-    /// Mirrors `ISHTerminalView.startShell`, including the rootfs install step.
-    private func ensureBooted() -> Bool {
-        if ISHKernel.shared.isBooted { return true }
-        do {
-            try RootfsManager.shared.installIfNeeded()
-        } catch {
-            logger.warning("AOJIT rootfs install failed: \(error.localizedDescription)")
-            return false
-        }
-        let status = ISHKernel.shared.boot(withRootPath: RootfsManager.shared.rootfsPath.path)
-        guard status >= 0 else {
-            logger.warning("AOJIT kernel boot failed: \(status)")
-            return false
-        }
-        return true
-    }
-
-    /// Force a fresh recording for every installed library (Settings row).
+    /// Clear legacy warm-up history and refresh; this does not generate an image.
     func rebuild() {
         recordings = [:]
-        failedRecording = []
         saveRecordings()
         refresh()
     }
@@ -785,10 +810,7 @@ final class AOJITAcceleration: ObservableObject {
     // MARK: State building
 
     private func rebuildStates() {
-        guard let probe = lastProbe else {
-            states = []
-            return
-        }
+        let probe = lastProbe ?? Probe()
 
         states = Self.catalog.map { library in
             let installed = installedVersion(of: library, in: probe)
@@ -811,23 +833,19 @@ final class AOJITAcceleration: ObservableObject {
             // recorded from. The warm-up record only knows the installed
             // version, so using it marked every library "full speed" even
             // when the image predated the install.
-            let recorded = Self.imageVersions[library.package] ?? recording?.version
-            if installed == nil {
-                status = .notInstalled
-            } else if let runtime, runtime.match == 1 {
-                // Same build (build-id or path): every recorded block applies.
-                status = .available
-            } else if hasImage && (recorded == nil || recorded == installed) {
-                // [T-aojit-status] The build has a real AOT image for this
-                // module linked in — that is what makes it fast, not the
-                // warm-up record.
-                status = .available
-            } else if hasImage {
-                status = .partial
-            } else if recording == nil {
-                status = .recording
+            let recorded = Self.imageVersions[library.package]
+            // Host ELF identity is authoritative, even with the kernel idle.
+            // Warm-up timestamps and equal package versions prove no identity.
+            let evidence = AOJITModuleProbe.state(for: library)
+            if rejectedPaths.contains(where: { path in library.imageMatch.contains { path.contains($0) } }) {
+                status = .rejected
             } else {
-                status = .partial
+                switch evidence {
+                case .notInstalled: status = .notInstalled
+                case .matched: status = hasImage ? .available : .noImage
+                case .family: status = hasImage ? .partial : .noImage
+                case .mismatch: status = hasImage ? .mismatch : .noImage
+                }
             }
 
             return AOJITLibraryState(
@@ -851,8 +869,11 @@ final class AOJITAcceleration: ObservableObject {
         switch status {
         case .available:    return 0
         case .partial:      return 1
-        case .recording:    return 2
-        case .notInstalled: return 3
+        case .checking:    return 2
+        case .notInstalled: return 6
+        case .rejected:     return 3
+        case .mismatch:     return 4
+        case .noImage:      return 5
         }
     }
 
@@ -903,65 +924,9 @@ final class AOJITAcceleration: ObservableObject {
             guard probe.moduleAvailable[library.id] == true else { return nil }
         }
         guard let raw = probe.packageVersions[library.package], !raw.isEmpty else { return nil }
-        // apk prints "musl-1.2.5-r8"; keep the version half.
+        // apk prefixes its version with the package name; keep the version half.
         let prefix = library.package + "-"
         return raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
-    }
-
-    // MARK: Recording
-
-    private func recordMissingImages() {
-        guard isEnabled, !isRecording else { return }
-
-        let pending = states.filter { state in
-            // The warm-up only measures time; it cannot write an image. Run
-            // it once per library, not on every launch, or a version that
-            // differs from the recorded image re-warms forever.
-            state.status != .notInstalled
-                && state.recordedAt == nil
-                && !failedRecording.contains(state.id)
-        }
-        guard !pending.isEmpty else { return }
-
-        isRecording = true
-        queue.async { [weak self] in
-            var fresh: [Recording] = []
-            var failed: Set<String> = []
-
-            for state in pending {
-                let start = Date()
-                let result: ISHShellExecutionResult? = ISHShellExecutor.executeCommandSync(
-                    state.library.warmup,
-                    timeout: state.library.timeout,
-                    lineCallback: nil
-                )
-                let elapsed = Int(Date().timeIntervalSince(start) * 1000)
-
-                guard let version = state.installedVersion else {
-                    failed.insert(state.id)
-                    continue
-                }
-                if result?.exitCode != 0 {
-                    // Best-effort: a missing helper (python3 for the C
-                    // libraries) must not leave an installed library stuck on
-                    // "preparing" forever.
-                    self?.logger.info("AOJIT warm-up \(state.id) exited \(result?.exitCode ?? -1)")
-                }
-                fresh.append(Recording(id: state.id,
-                                       version: version,
-                                       recordedAt: Date(),
-                                       durationMs: elapsed))
-            }
-
-            DispatchQueue.main.async {
-                guard let self else { return }
-                for recording in fresh { self.recordings[recording.id] = recording }
-                self.failedRecording.formUnion(failed)
-                self.isRecording = false
-                if !fresh.isEmpty { self.saveRecordings() }
-                self.rebuildStates()
-            }
-        }
     }
 
     // MARK: Probe parsing

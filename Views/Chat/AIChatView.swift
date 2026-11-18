@@ -503,6 +503,7 @@ struct AIChatView: View {
     /// A model may only prepare non-secret server metadata. This store drives
     /// the native review form where the user controls every persisted field.
     @ObservedObject private var remoteServerAIDraftStore = RemoteServerAIDraftStore.shared
+    @ObservedObject private var remoteDiskAIDraftStore = RemoteDiskAIDraftStore.shared
     /// Opacity for the fallback capsule highlight (animated 3× pulse on model switch).
     @State private var fallbackPulseOpacity: Double = 0
     /// [T-chat-auto-compact-warning] Opacity for the composer's red mist.
@@ -526,7 +527,7 @@ struct AIChatView: View {
     private var hasOverlayPresented: Bool {
         showFileBrowser || showBrowserSheet || showTerminal || showCamera
             || showPhotoPicker || showDocumentPicker || showRemoteDiskPicker || showModelPicker || showSoulSettings
-            || remoteServerAIDraftStore.pending != nil
+            || remoteServerAIDraftStore.pending != nil || remoteDiskAIDraftStore.pending != nil
     }
 
     /// Tracks whether this ChatView is the currently visible screen.
@@ -1028,6 +1029,7 @@ struct AIChatView: View {
             }
         }
         .modifier(RemoteServerAIDraftPresentationModifier())
+        .modifier(RemoteDiskAIDraftPresentationModifier())
         // [T-ios-json-open-provider-import-prompt] Shared/opened Provider-export
         // JSON: let the user choose import-as-provider vs add-as-attachment.
         // Extracted into a single modifier so the body's type-check stays cheap.

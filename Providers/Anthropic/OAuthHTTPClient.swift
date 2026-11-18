@@ -136,15 +136,18 @@ final class CapturedAPIRequest {
     /// purpose of out-of-band LLM calls in debug.llmRequests output.
     var tag: String?
     private let maxResponseBodySize = 65_536 // 64KB cap for accumulated SSE
+    private let suppressBodyCapture: Bool
 
-    init(provider: String, timestamp: Date, requestBody: String) {
+    init(provider: String, timestamp: Date, requestBody: String, suppressBodyCapture: Bool = false) {
         self.provider = provider
         self.timestamp = timestamp
-        self.requestBody = requestBody
+        self.suppressBodyCapture = suppressBodyCapture
+        self.requestBody = suppressBodyCapture ? "[Body omitted: write-only credential tools are available]" : requestBody
     }
 
     /// Append a chunk of response data (SSE events arrive incrementally).
     func appendResponseBody(_ chunk: String) {
+        guard !suppressBodyCapture else { return }
         if let existing = responseBody {
             guard existing.count < maxResponseBodySize else { return }
             responseBody = existing + chunk
@@ -279,12 +282,13 @@ final class LastAPIRequestBody: @unchecked Sendable {
     @discardableResult
     func set(_ body: String?, provider: String = "Anthropic", tag: String? = nil) -> CapturedAPIRequest? {
         guard var body else { return nil }
+        let suppressBodyCapture = body.contains("remote_disk_configure_credentials")
         if body.utf8.count > Self.maxStoredBodySize {
             body = String(body.prefix(Self.maxStoredBodySize))
                 + "\n... [truncated: \(body.utf8.count) bytes total]"
         }
         lock.lock()
-        let entry = CapturedAPIRequest(provider: provider, timestamp: Date(), requestBody: body)
+        let entry = CapturedAPIRequest(provider: provider, timestamp: Date(), requestBody: body, suppressBodyCapture: suppressBodyCapture)
         entry.tag = tag
         _entries.append(entry)
         if _entries.count > maxEntries {
@@ -500,6 +504,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
     /// entry, so response/usage updates target it and not `_entries.last`.
     private var captureToken: CapturedAPIRequest?
     #endif
+    private var suppressCredentialBodies = false
     private var isStopped = false
     private let stateLock = NSLock()
 
@@ -597,6 +602,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
         AgentRequestTrace.shared.step("urlprotocol.intercept", detail: "httpBody=\(mutable.httpBody?.count ?? -1) httpBodyStream=\(mutable.httpBodyStream != nil)")
         #endif
         RequestBodyPatcher.materializeBodyStream(mutable)
+        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
         #if DEBUG
         AgentRequestTrace.shared.step("urlprotocol.afterMaterialize", detail: "httpBody=\(mutable.httpBody?.count ?? -1) httpBodyStream=\(mutable.httpBodyStream != nil)")
         #endif
@@ -676,7 +682,9 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
                 // debug.llmRequests still shows the request head + true size.
                 let prettyCap = 256 * 1024
                 let formatted: String
-                if capturedBody.count > prettyCap {
+                if suppressCredentialBodies {
+                    formatted = "[Body omitted: remote_disk_configure_credentials]"
+                } else if capturedBody.count > prettyCap {
                     // The cut may land mid-way through a UTF-8 multi-byte
                     // character; back off a few bytes until decoding succeeds.
                     var head: String?
@@ -758,7 +766,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         if let http = dataTask.response as? HTTPURLResponse {
-            if http.statusCode >= 400 {
+            if http.statusCode >= 400 && !suppressCredentialBodies {
                 // Log and capture error response bodies for UI display
                 if let body = String(data: data, encoding: .utf8) {
                     #if DEBUG
@@ -775,7 +783,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
                 }
             }
             #if DEBUG
-            if let body = String(data: data, encoding: .utf8), !body.isEmpty {
+            if !suppressCredentialBodies, let body = String(data: data, encoding: .utf8), !body.isEmpty {
                 LastAPIRequestBody.shared.appendResponseBody(body, on: captureToken)
                 if http.statusCode < 400 {
                     let preview = String(body.prefix(300))
@@ -1334,6 +1342,7 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
     /// entry, so response/usage updates target it and not `_entries.last`.
     private var captureToken: CapturedAPIRequest?
     #endif
+    private var suppressCredentialBodies = false
 
     // Do NOT invalidate innerSession in deinit — same reason as OAuthURLProtocol.
 
@@ -1348,6 +1357,7 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
         let mutable = (request as NSURLRequest).mutableCopy() as! NSMutableURLRequest
         URLProtocol.setProperty(true, forKey: "EagerHandled", in: mutable)
         RequestBodyPatcher.materializeBodyStream(mutable)
+        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
         RequestBodyPatcher.normalizeKeyOrder(in: mutable)
         RequestBodyPatcher.injectToolsCacheControl(into: mutable)
         RequestBodyPatcher.injectEagerInputStreaming(into: mutable)
@@ -1406,7 +1416,7 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
+        if !suppressCredentialBodies, let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
             if let body = String(data: data, encoding: .utf8) {
                 LastAPIErrorBody.shared.set(body)
             }
@@ -1518,6 +1528,7 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
     /// entry, so response/usage updates target it and not `_entries.last`.
     private var captureToken: CapturedAPIRequest?
     #endif
+    private var suppressCredentialBodies = false
 
     override class func canInit(with request: URLRequest) -> Bool {
         return URLProtocol.property(forKey: "DualAuthHandled", in: request) == nil
@@ -1538,6 +1549,7 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
 
         // Apply same patching as EagerStreamingURLProtocol
         RequestBodyPatcher.materializeBodyStream(mutable)
+        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
         RequestBodyPatcher.normalizeKeyOrder(in: mutable)
         RequestBodyPatcher.injectToolsCacheControl(into: mutable)
         RequestBodyPatcher.injectEagerInputStreaming(into: mutable)
@@ -1593,7 +1605,7 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
+        if !suppressCredentialBodies, let http = dataTask.response as? HTTPURLResponse, http.statusCode >= 400 {
             if let body = String(data: data, encoding: .utf8) {
                 LastAPIErrorBody.shared.set(body)
             }

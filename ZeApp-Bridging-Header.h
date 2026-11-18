@@ -21,6 +21,8 @@
 #include <stdbool.h>
 void ish_jit_set_enabled(bool on);
 bool ish_jit_is_enabled(void);
+#include <stddef.h>
+size_t jit_describe(char *buf, size_t size);
 
 // Additional headers not in umbrella
 #include "fs/devices.h"

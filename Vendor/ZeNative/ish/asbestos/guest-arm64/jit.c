@@ -2229,6 +2229,10 @@ unsigned ish_aot_image_count(void) {
     return aot_nregistered;
 }
 
+const struct aot_module *ish_aot_image_metadata(unsigned i) {
+    return i < aot_nregistered ? aot_registered[i] : NULL;
+}
+
 const char *ish_aot_image_path(unsigned i) {
     if (i >= aot_nregistered || aot_registered[i] == NULL)
         return NULL;
@@ -3518,6 +3522,8 @@ static void jit_segment_installed(struct fiber_block *b, const struct jit_units 
 // with nothing to run, so that case is refused and reported.
 void ish_jit_set_enabled(bool on) {
     pthread_once(&init_once, jit_init);
+    // Keep OpenMinis AOT admission and Ze translator readback in sync.
+    jit_control(on ? "on" : "off", on ? 2 : 3);
     if (on && !region && aot_nregistered == 0) {
         jit_on = false;
         fprintf(stderr, "\U0001F9E9 JIT: no code region and no AOT images, staying off\n");

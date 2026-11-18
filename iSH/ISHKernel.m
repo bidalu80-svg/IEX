@@ -7,6 +7,7 @@
 
 #import "ISHKernel.h"
 #import "CurrentRoot.h"
+extern void ish_jit_set_enabled(bool on);
 #include "ish/kernel/init.h"
 #include "ish/kernel/task.h"
 #include "ish/kernel/calls.h"
@@ -699,6 +700,12 @@ static void handle_process_exit(struct task *task, int code) {
     }
 
     // 2. Become init process (PID 1)
+    // Apply both saved values synchronously, including an explicit OFF.
+    NSUserDefaults *aojitDefaults = NSUserDefaults.standardUserDefaults;
+    BOOL aojitEnabled = [aojitDefaults objectForKey:@"aojit.enabled"] == nil
+        ? YES : [aojitDefaults boolForKey:@"aojit.enabled"];
+    ish_jit_set_enabled(aojitEnabled);
+
     err = become_first_process();
     if (err < 0) {
         NSLog(@"ISHKernel: become_first_process failed: %d", err);

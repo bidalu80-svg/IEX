@@ -152,6 +152,17 @@ final class RemoteDiskStore: ObservableObject {
         return result
     }
 
+    /// Fail closed before a write-only credential change, without reading the
+    /// old Keychain value. In-flight results retain the old revision and fail.
+    func invalidateCredentialVerification(diskID: UUID) throws {
+        guard loadError == nil, let index = disks.firstIndex(where: { $0.id == diskID }) else {
+            throw RemoteDiskError.missingDisk
+        }
+        disks[index].configurationRevision = UUID()
+        verification.removeValue(forKey: diskID)
+        try persist()
+    }
+
     func clearSSHVerification(serverID: UUID) throws {
         guard loadError == nil else { throw RemoteDiskError.invalidConfiguration(loadError!) }
         for disk in disks where disk.profile.proto == .sftp && disk.sshServerID == serverID {

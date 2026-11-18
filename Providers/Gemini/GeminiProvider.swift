@@ -696,6 +696,8 @@ final class GeminiProvider: LLMProvider {
 
     /// Log the full outgoing URLRequest (URL, headers, body as pretty JSON).
     private func logFullRequest(_ request: URLRequest) {
+        if let body = request.httpBody,
+           String(decoding: body, as: UTF8.self).contains("remote_disk_configure_credentials") { return }
         var parts: [String] = ["📤 Gemini HTTP Request"]
         // Mask `key=` query parameter to avoid logging API keys
         let urlDisplay: String = {
@@ -747,15 +749,41 @@ final class GeminiProvider: LLMProvider {
         logger.debug("\(parts.joined(separator: "\n"))")
     }
 
+    /// Write-only credential tools whose arguments must never reach logs.
+    private static let credentialToolNames: Set<String> = [
+        "remote_disk_configure_credentials",
+        "remote_server_configure_credentials",
+    ]
+
+    private static func containsCredentialToolName(_ text: String) -> Bool {
+        credentialToolNames.contains { text.contains($0) }
+    }
+
     /// Log an incoming SSE chunk (raw JSON + parsed events).
     private func logStreamChunk(_ json: [String: Any], events: [GeminiStreamEvent]) {
         var parts: [String] = ["📥 Gemini SSE Chunk"]
 
+        let hasCredentialCall = events.contains { event in
+            if case .functionCall(let name, _, _) = event {
+                return Self.credentialToolNames.contains(name)
+            }
+            return false
+        }
+        let rawJSONContainsCredentialTool: Bool = {
+            guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+                  let text = String(data: data, encoding: .utf8) else { return false }
+            return Self.containsCredentialToolName(text)
+        }()
+        let redactCredentialPayload = hasCredentialCall || rawJSONContainsCredentialTool
+
         // Compact JSON preview
-        if let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+        if !redactCredentialPayload,
+           let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
            let str = String(data: data, encoding: .utf8) {
             let preview = String(str.prefix(500))
             parts.append("  raw: \(preview)" + (str.count > 500 ? "..." : ""))
+        } else if redactCredentialPayload {
+            parts.append("  raw: <redacted: credential tool payload>")
         }
 
         // Parsed events
@@ -765,6 +793,14 @@ final class GeminiProvider: LLMProvider {
                 let preview = String(text.prefix(100))
                 parts.append("  → textDelta(\(text.count) chars): \"\(preview)\"" + (text.count > 100 ? "..." : ""))
             case .functionCall(let name, let args, let thoughtSig):
+                if Self.credentialToolNames.contains(name) {
+                    var line = "  → functionCall(\(name)): <redacted>"
+                    if let sig = thoughtSig {
+                        line += " [thoughtSig: \(sig.prefix(20))...]"
+                    }
+                    parts.append(line)
+                    continue
+                }
                 let argsStr = (try? JSONSerialization.data(withJSONObject: args))
                     .flatMap { String(data: $0, encoding: .utf8) } ?? "\(args)"
                 var line = "  → functionCall(\(name)): \(String(argsStr.prefix(200)))"

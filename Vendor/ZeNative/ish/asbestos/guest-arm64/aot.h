@@ -72,6 +72,7 @@ void ish_aot_register(const struct aot_module *m);
 // [T-aojit-status] What this build actually has linked in. Without -Djit all
 // three return 0/NULL: the host shows "not recorded" rather than guessing.
 unsigned ish_aot_image_count(void);
+const struct aot_module *ish_aot_image_metadata(unsigned i);
 const char *ish_aot_image_path(unsigned i);
 unsigned long long ish_aot_image_size(unsigned i);
 

@@ -72,7 +72,7 @@ struct AOJITSection: View {
     }
 
     /// Two paragraphs shared by both states.
-    private static let explanation = String(localized: "AOJIT runs pre-recorded, pre-compiled JIT code for the libraries below instead of emulating every instruction. Shell pipelines are usually 2–4× faster. A switch takes effect for commands started afterwards.\n\nEach library has a single image recorded from the version listed: that version runs at full speed. For other versions of the same library, unchanged code still runs from the image and the rest is emulated, which still gives a partial speed-up.")
+    private static let explanation = String(localized: "AOJIT runs pre-recorded, pre-compiled JIT code for the libraries below instead of emulating every instruction. Coverage depends on the host recording workload. A switch takes effect for commands started afterwards.\n\nRows describe the images actually linked into this app. A matching ELF build-id identifies the recorded input build; coverage depends on its training workload. Other builds in the same family may use unchanged recorded blocks. No Image requires host recording and a new app build.")
 
     /// The catalog itself, so the off-state copy can never drift from the rows.
     private static let includedNames = AOJITAcceleration.catalog
@@ -101,7 +101,7 @@ struct AOJITSection: View {
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(String(localized: "Recorded from") + " " + state.recordedLine)
+            Text((state.hasRecordedImage ? String(localized: "Recorded from") : String(localized: "Recording target")) + " " + state.recordedLine)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
 
@@ -114,8 +114,14 @@ struct AOJITSection: View {
 
             // [T-aojit-repair] Partial rows need the button too: that is the
             // case where the installed version differs from the recorded one.
-            if state.status == .partial || state.status == .notInstalled {
+            if state.library.offersOnlineFix && (state.status == .partial || state.status == .notInstalled || state.status == .mismatch) {
                 repairButton(state)
+            }
+            if !AOJITRestore.packages(for: state.library).isEmpty && state.status == .partial {
+                restoreButton(state)
+            }
+            if let notice = aojit.repairNotice[state.id] {
+                Text(notice).font(.system(size: 12)).foregroundStyle(.secondary)
             }
 
             if let error = aojit.repairError[state.id] {
@@ -134,8 +140,10 @@ struct AOJITSection: View {
         switch state.status {
         case .available:    tint = .green
         case .partial:      tint = .orange
-        case .recording:    tint = .blue
+        case .checking:    tint = .blue
         case .notInstalled: tint = .secondary
+        case .rejected, .mismatch: tint = .red
+        case .noImage: tint = .secondary
         }
 
         return Text(state.statusTitle)
@@ -171,7 +179,7 @@ struct AOJITSection: View {
                 .foregroundStyle(.secondary)
             // [T-aojit-stats] Blocks, not images, are what the speed comes
             // from: 22 images with 0 hits is the "fake AOJIT" case.
-            Text(String(localized: "AOT hits") + ": \(aojit.aotHitCount) / \(aojit.aotHitCount + aojit.translatedBlockCount) "
+            Text(String(localized: "AOT hits") + ": \(aojit.aotHitCount) / \(aojit.translatedBlockCount) "
                  + String(localized: "blocks"))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -192,13 +200,13 @@ struct AOJITSection: View {
         .accessibilityIdentifier("settings.aojit.diagnostics")
     }
 
+    private func restoreButton(_ state: AOJITLibraryState) -> some View {
+        AOJITRestoreButton(state: state, busy: aojit.busyLibraryId != nil) { aojit.restore(state) }
+    }
+
     private func repairButton(_ state: AOJITLibraryState) -> some View {
         Button {
-            if state.status == .partial {
-                pendingOverwrite = state
-            } else {
-                aojit.repair(state)
-            }
+            pendingOverwrite = state
         } label: {
             HStack(spacing: 6) {
                 if aojit.busyLibraryId == state.id {
@@ -231,9 +239,10 @@ struct AOJITSection: View {
             }
         } message: {
             if let state = pendingOverwrite {
-                Text(String(format: String(localized: "This installs the recorded version %@ over the current %@."),
-                            state.library.repairSpec,
-                            state.installedVersion ?? "?"))
+                let message = state.hasRecordedImage
+                    ? String(localized: "This installs the recorded version %@ over the current %@.")
+                    : String(localized: "This installs the recording target %@ over the current %@. No AOJIT image has been recorded for this target.")
+                Text(String(format: message, state.library.repairSpec, state.installedVersion ?? "?"))
             }
         }
     }

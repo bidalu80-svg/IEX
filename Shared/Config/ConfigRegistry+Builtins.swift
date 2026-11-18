@@ -910,8 +910,11 @@ extension ConfigRegistry {
         switch status {
         case .available:    return "available"
         case .partial:      return "partial"
-        case .recording:    return "recording"
+        case .checking:     return "checking"
         case .notInstalled: return "not_installed"
+        case .rejected: return "rejected"
+        case .mismatch: return "mismatch"
+        case .noImage: return "no_image"
         }
     }
 

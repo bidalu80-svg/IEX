@@ -67,7 +67,7 @@ struct RemoteDiskSettingsView: View {
     }
 }
 
-private struct RemoteDiskEditorView: View {
+struct RemoteDiskEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var servers = RemoteServerStore.shared
     @State private var profile: RemoteStorageProfile

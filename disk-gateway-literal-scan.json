@@ -1,0 +1,803 @@
+{
+  "base": "f3eb356424bd754d26512f8f53bcc9307d7253a5",
+  "scope": [
+    "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+    "Agent/Chat/AIChatViewModel+SSEStream.swift",
+    "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+    "Agent/Chat/AIChatViewModel+ToolDefinitions.swift",
+    "Agent/Chat/AIChatViewModel.swift",
+    "Agent/Session/SoulStore.swift",
+    "Providers/Anthropic/AnthropicAgentProvider.swift",
+    "Providers/Anthropic/AnthropicProvider.swift",
+    "Providers/Anthropic/OAuthHTTPClient.swift",
+    "Providers/Gemini/GeminiProvider.swift",
+    "Providers/OpenAI/OpenAIAgentProvider.swift",
+    "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+    "Shared/RemoteServers/RemoteDiskStore.swift",
+    "Shared/RemoteServers/RemoteServerAIToolGateway.swift",
+    "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+    "Views/Chat/AIChatView.swift",
+    "Views/ContentView.swift",
+    "Views/Servers/RemoteDiskAIDraftPresentationModifier.swift",
+    "Views/Servers/RemoteDiskSettingsView.swift",
+    "Ze.xcodeproj/project.pbxproj"
+  ],
+  "literal_count": 4786,
+  "changes": [
+    {
+      "file": "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+      "literal": "remote_disk_draft",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+      "literal": "remote_disk_delete",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+SSEStream.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+SSEStream.swift",
+      "literal": "RemoteDiskAICredentialInbox.stage(rawArgs)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+SSEStream.swift",
+      "literal": "if name == \"",
+      "before": 2,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+SSEStream.swift",
+      "literal": "\" { continue }",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+      "literal": "latestMessages.contains",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+      "literal": "remoteDiskCredentialSessions.insert(sessionId)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+      "literal": "tool.name == \"remote_disk_configure_credentials\"",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+TitleGeneration.swift",
+      "literal": "self?.remoteDiskCredentialSessions.contains(sessionId) != true",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+ToolDefinitions.swift",
+      "literal": "RemoteDiskAIToolGateway.definitions()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel.swift",
+      "literal": "RemoteDiskAIToolGateway.statusFragment",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Session/SoulStore.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Session/SoulStore.swift",
+      "literal": "remote_disk_draft",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Session/SoulStore.swift",
+      "literal": "remote_disk_delete",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Session/SoulStore.swift",
+      "literal": "remote_disk_list",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Agent/Session/SoulStore.swift",
+      "literal": "case \"remote_disk_list\":",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/AnthropicAgentProvider.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/AnthropicAgentProvider.swift",
+      "literal": "args.isEmpty && toolName != \"",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/AnthropicProvider.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/OAuthHTTPClient.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 5,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/OAuthHTTPClient.swift",
+      "literal": "let suppressBodyCapture = body.contains(\"remote_disk_configure_credentials\")",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/OAuthHTTPClient.swift",
+      "literal": "guard !suppressBodyCapture else { return }",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Anthropic/OAuthHTTPClient.swift",
+      "literal": "suppressCredentialBodies = String(decoding: mutable.httpBody",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/Gemini/GeminiProvider.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/OpenAI/OpenAIAgentProvider.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/OpenAI/OpenAIAgentProvider.swift",
+      "literal": "!tools.contains(where: { $0.name == \"remote_disk_configure_credentials\" })",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Providers/OpenAI/OpenAIAgentProvider.swift",
+      "literal": "guard toolName != \"",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "\"tool_title\":",
+      "before": 0,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserRequestTakeoverTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "private static let ",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserUserAgentPerTabTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "    static func ",
+      "before": 0,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "func dismiss()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-floating-window.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "RemoteServerAIConfirmationGate.shared.request",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-github-connector.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "remote_disk_configure_credentials",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "remote_disk_draft",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "remote_disk_delete",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "private static func configureCredentials(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "private static func deleteDisk(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "static func stage(_ arguments:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "remote_disk_list",
+      "before": 0,
+      "after": 5,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "try RemoteServerCredentialChange.perform(for: disk)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "try store.remove(disk)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "RemoteDiskAIDraftStore.shared.stage",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "Set(args.keys).isSubset(of: allowed)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "safe[\"disk_id\"] = id.uuidString",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "pending.removeValue(forKey: token)",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "await RemoteServerAIConfirmationGate.shared.request",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "guard approved, !Task.isCancelled",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "(try? store.disk(id: disk.id)) == disk",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "private static func stageDraft(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "], required:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "RemoteServerSecretStore.save",
+      "before": 0,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "parameters: [",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskAIToolGateway.swift",
+      "literal": "try RemoteServerCredentialChange.perform(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "configurationRevision",
+      "before": 6,
+      "after": 7,
+      "direction": "added",
+      "scripts": [
+        "scripts/RemoteDiskWireChecks.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "func invalidateCredentialVerification(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "invalidateCredentialVerification(diskID:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "verification.removeValue",
+      "before": 2,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "configurationRevision = UUID()",
+      "before": 2,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "try persist()",
+      "before": 4,
+      "after": 5,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py",
+        "scripts/verify-netdisk.py",
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "guard loadError == nil",
+      "before": 2,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "    static func ",
+      "before": 1,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "static func perform(for disk: RemoteDisk",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "try perform(for: id, write)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "invalidateCredentialVerification(diskID:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/Chat/AIChatView.swift",
+      "literal": "RemoteDiskAIDraftPresentationModifier()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/Chat/AIChatView.swift",
+      "literal": "remoteDiskAIDraftStore.pending != nil",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/ContentView.swift",
+      "literal": "externaldrive.fill",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/ContentView.swift",
+      "literal": ".foregroundStyle(.white)",
+      "before": 27,
+      "after": 28,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/ContentView.swift",
+      "literal": ".frame(width: 21, height: 21)",
+      "before": 20,
+      "after": 21,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/ContentView.swift",
+      "literal": ".background(.teal, in: Circle())",
+      "before": 2,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskAIDraftPresentationModifier.swift",
+      "literal": "RemoteDiskEditorView(disk: draft.disk)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskAIToolGateway.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskAIDraftPresentationModifier.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": " in Sources */",
+      "before": 1006,
+      "after": 1010,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk-gateway.py",
+        "scripts/verify-netdisk.py",
+        "scripts/verify-scheduled-tasks.py",
+        "scripts/verify-tool-collapse.py"
+      ]
+    }
+  ]
+}

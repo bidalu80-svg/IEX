@@ -344,6 +344,9 @@ final class AnthropicProvider: LLMProvider {
 
     #if DEBUG
     func logRequestParameter(_ parameter: MessageParameter) {
+        // Do not preview user text or request JSON on credential-capable turns.
+        if let data = try? JSONEncoder().encode(parameter),
+           String(decoding: data, as: UTF8.self).contains("remote_disk_configure_credentials") { return }
         var parts: [String] = []
         parts.append("📤 Anthropic Request")
         parts.append("  model: \(parameter.model)")

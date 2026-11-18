@@ -6,6 +6,19 @@ import Foundation
 /// reader cannot start between invalidation and the credential writes.
 @MainActor
 enum RemoteServerCredentialChange {
+    /// Disk-only protocols have no persistent connection pool; advancing the
+    /// configuration revision rejects in-flight readers and clears verification.
+    /// SFTP must use the same SSH invalidation transaction as every other writer.
+    static func perform(for disk: RemoteDisk, _ write: () throws -> Void) throws {
+        if disk.profile.proto == .sftp {
+            guard let id = disk.sshServerID else { throw RemoteDiskError.missingDisk }
+            try perform(for: id, write)
+        } else {
+            try RemoteDiskStore.shared.invalidateCredentialVerification(diskID: disk.id)
+            try write()
+        }
+    }
+
     static func perform(for serverID: UUID, _ write: () throws -> Void) throws {
         RemoteSSHConnectionService.shared.invalidateCredentialConnection(serverID: serverID)
         RemoteServerSessionCredentials.shared.clear(for: serverID)
