@@ -276,6 +276,13 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     // MARK: - OpenAI Models
 
     // Catalog snapshot refreshed from models.dev on 2026-11-06.
+    // GPT-6.2 Sol — added 2026-11-18 from models.dev.
+    static let gpt62Sol = LLMModel(
+        id: "gpt-6.2-sol", displayName: "GPT-6.2 Sol", provider: "OpenAI",
+        modalityOverride: .vision, contextWindow: 1_050_000,
+        maxOutputTokens: 128_000, supportsReasoning: true
+    )
+
     static let gpt61Sol = LLMModel(
         id: "gpt-6.1-sol", displayName: "GPT-6.1 Sol", provider: "OpenAI",
         modalityOverride: .vision, contextWindow: 1_050_000,
@@ -435,7 +442,7 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
     )
 
     static let allOpenAI: [LLMModel] = [
-        .gpt61Sol, .gpt61Terra,
+        .gpt62Sol, .gpt61Sol, .gpt61Terra,
         .gpt54, .gpt52, .gpt5, .gpt41,
         .gpt4o, .gpt4oMini,
         .o3, .o4Mini,

@@ -476,7 +476,13 @@ final class OpenAIAgentProvider: AgentProvider {
             body["max_output_tokens"] = maxTokens
         }
         if let sys = systemPrompt, !sys.isEmpty {
-            body["instructions"] = sys
+            if Self.isGPT62Family(model.id) {
+                // GPT-6.2 appends top-level instructions after the input,
+                // so stable instructions must lead the input instead.
+                body["input"] = [["role": "developer", "content": sys] as [String: Any]] + inputMessages
+            } else {
+                body["instructions"] = sys
+            }
         }
         if !responsesTools.isEmpty {
             body["tools"] = responsesTools
@@ -821,6 +827,9 @@ final class OpenAIAgentProvider: AgentProvider {
     /// is exactly the pre-fix behavior.
     static func explicitOffEffort(for provider: OpenAIProvider, model: LLMModel, level: ThinkingLevel) -> String? {
         guard !level.isEnabled else { return nil }
+        // GPT-6.2 rejects "none"/"minimal" for reasoning effort; its
+        // disabled tier is "low" for both official and custom bases.
+        if Self.isGPT62Family(model.id) { return "low" }
         if provider.customBaseURL == nil && !provider.isAzure { return "none" }
         let base = provider.customBaseURL?.lowercased() ?? ""
         let lid = model.id.lowercased()
@@ -838,6 +847,13 @@ final class OpenAIAgentProvider: AgentProvider {
     static func isGPT6Family(_ modelId: String) -> Bool {
         let id = LLMModel.modelIdentifierWithoutNamespace(modelId)
         return id.hasPrefix("gpt-6") || id.hasPrefix("gpt6")
+    }
+
+    /// Whether the model belongs to the GPT-6.2 family. A namespace
+    /// prefix is ignored, matching the other model-family helpers.
+    static func isGPT62Family(_ modelId: String) -> Bool {
+        let id = LLMModel.modelIdentifierWithoutNamespace(modelId)
+        return id.hasPrefix("gpt-6.2") || id.hasPrefix("gpt6.2")
     }
 
     static func reasoningEffort(for model: LLMModel, level: ThinkingLevel = .medium, allowUnknownGPT6: Bool = false) -> String? {

@@ -16,10 +16,23 @@ types = (ROOT / "Providers/LLMTypes.swift").read_text(encoding="utf-8")
 levels = types[types.index("enum ThinkingLevel:"):types.index("extension LLMModel", types.index("enum ThinkingLevel:"))]
 start = types.index("    static func modelIdentifierWithoutNamespace")
 namespace = types[start:types.index("    /// Compatibility", start)]
-model = "struct LLMModel { let id: String; let supportsReasoning: Bool?\n" + namespace + "}\n"
+model = (
+    "struct LLMModel { let id: String; let supportsReasoning: Bool?\n" + namespace + "}\n"
+    "final class OpenAIProvider {\n"
+    "    let customBaseURL: String?\n"
+    "    let isAzure: Bool\n"
+    "    init(customBaseURL: String? = nil, isAzure: Bool = false) {\n"
+    "        self.customBaseURL = customBaseURL\n"
+    "        self.isAzure = isAzure\n"
+    "    }\n"
+    "}\n"
+)
 agent = (ROOT / "Providers/OpenAI/OpenAIAgentProvider.swift").read_text(encoding="utf-8")
+off_start = agent.index("    static func explicitOffEffort")
+off_end = agent.index("    /// Returns the reasoning effort level string", off_start)
+explicit_off = agent[off_start:off_end]
 start = agent.index("    static func isGPT6Family")
-wire = "enum OpenAIContract {\n" + agent[start:agent.index("    // MARK: - DashScope Cache Control", start)] + "}\n"
+wire = "enum OpenAIContract {\n" + explicit_off + agent[start:agent.index("    // MARK: - DashScope Cache Control", start)] + "}\n"
 # Exercise the same production helper that streamResponsesAPI calls, not a copied
 # if/else in the fixture. Pin the call-site relation so dead helper tests fail.
 responses = agent[agent.index("    private func streamResponsesAPI("):agent.index("    static func isGPT6Family")]
@@ -27,6 +40,11 @@ assert "Self.injectResponsesThinkingParams(" in responses
 assert "into: &body, model: model, level: thinkingLevel, isCodexOAuth: isCodexOAuth" in responses
 assert "Self.explicitOffEffort(for: provider, model: model, level: thinkingLevel)" in responses
 assert "Self.injectThinkingParams(" in agent[:agent.index("    private func streamResponsesAPI(")]
+# Pin the GPT-6.2 system-prompt and routing branches to their production builders.
+assert 'body["input"] = [["role": "developer", "content": sys] as [String: Any]] + inputMessages' in responses
+openai_provider = (ROOT / "Providers/OpenAI/OpenAIProvider.swift").read_text(encoding="utf-8")
+assert 'body["input"] = [["role": "developer", "content": sys] as [String: Any]] + messages' in openai_provider
+assert "if OpenAIAgentProvider.isGPT62Family(model.id) { return false }" in openai_provider
 rules = (ROOT / "Providers/ThinkingRules.swift").read_text(encoding="utf-8")
 pattern_declaration = re.search(r'let openAIModels = (\[[^\n]+\])', rules).group(1)
 start = rules.index("    @MainActor\n    static func builtInRulesForDisplay")
@@ -91,6 +109,22 @@ for id in ids {
     OpenAIContract.injectResponsesThinkingParams(into: &codex, model: positive, level: .off, isCodexOAuth: true, offEffort: nil)
     check((codex["reasoning"] as? [String:String])?["effort"] == "low")
 }
+// GPT-6.2's OFF tier is "low" on every base; legacy models keep their exact
+// historical values ("none" official, "minimal" Ark, omit elsewhere).
+for id in ids {
+    check(OpenAIContract.isGPT62Family(id))
+    let model = LLMModel(id: id, supportsReasoning: true)
+    check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(), model: model, level: .off) == "low")
+    check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(customBaseURL: "https://ark.cn-beijing.volces.com/api/v3"), model: model, level: .off) == "low")
+    check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(isAzure: true), model: model, level: .off) == "low")
+    check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(), model: model, level: .high) == nil)
+}
+let legacy = LLMModel(id: "gpt-5.5", supportsReasoning: true)
+check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(), model: legacy, level: .off) == "none")
+check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(customBaseURL: "https://ark.cn-beijing.volces.com/api/v3"), model: legacy, level: .off) == "minimal")
+check(OpenAIContract.explicitOffEffort(for: OpenAIProvider(customBaseURL: "https://openrouter.ai/api/v1"), model: legacy, level: .off) == nil)
+check(!OpenAIContract.isGPT62Family("gpt-6.1-sol"))
+check(!OpenAIContract.isGPT62Family("openai/gpt-6.1-sol"))
 // The UI catalog expands supported patterns; user-authored glob semantics remain
 // anchored to the full model ID. An exact/bare pattern must not gain a namespace.
 let uiPatterns: [String] = __UI_PATTERNS__

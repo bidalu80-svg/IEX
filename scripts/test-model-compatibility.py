@@ -10,7 +10,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 catalog = json.loads((ROOT / "Resources/models-dev-api.json").read_text(encoding="utf-8"))
 expected = {
-    "openai": {"gpt-6.1-sol": (1_050_000, 128_000), "gpt-6.1-terra": (1_050_000, 128_000)},
+    "openai": {"gpt-6.1-sol": (1_050_000, 128_000), "gpt-6.1-terra": (1_050_000, 128_000), "gpt-6.2-astra": (1_050_000, 128_000), "gpt-6.2-sol": (1_050_000, 128_000)},
     "anthropic": {name: (1_000_000, 128_000) for name in
                   ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]},
     "google": {"gemini-4-argon": (1_048_576, 32_768)},

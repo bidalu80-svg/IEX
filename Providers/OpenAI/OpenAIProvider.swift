@@ -612,6 +612,9 @@ final class OpenAIProvider: LLMProvider {
     /// unless `forceResponsesAPI` is set (Responses API provider type).
     var usesChatCompletionsAPI: Bool {
         if forceResponsesAPI { return false }
+        // GPT-6.2 tool calls are only supported by the Responses API.
+        // Route the family there even for API-key / proxy providers.
+        if OpenAIAgentProvider.isGPT62Family(model.id) { return false }
         if !isOAuth { return true }
         // Manual OAuth with custom base URL uses Chat Completions API
         if customBaseURL != nil { return true }
@@ -802,7 +805,13 @@ final class OpenAIProvider: LLMProvider {
             body["service_tier"] = "priority"
         }
         if let sys = systemPrompt, !sys.isEmpty {
-            body["instructions"] = sys
+            if OpenAIAgentProvider.isGPT62Family(model.id) {
+                // GPT-6.2 appends top-level instructions after the input,
+                // so stable instructions must lead the input instead.
+                body["input"] = [["role": "developer", "content": sys] as [String: Any]] + messages
+            } else {
+                body["instructions"] = sys
+            }
         }
         if let tools, !tools.isEmpty {
             body["tools"] = tools
