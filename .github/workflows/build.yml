@@ -142,6 +142,11 @@ jobs:
         with:
           xcode-version: '26'
 
+      - name: Verify remote disk configuration boundaries
+        run: |
+          python3 scripts/verify-netdisk-gateway.py
+          python3 scripts/verify-ssh-credential-invalidation.py
+
       - name: Show Xcode version
         run: |
           xcode-select -p
@@ -971,109 +976,21 @@ jobs:
             test -f "$UP2/deps/frameworks/$fw.framework/Info.plist"
           done
 
-      - name: Build macOS ish and record AOT images
+      - name: Require committed AOT objects
         id: aot
-        continue-on-error: true
         shell: bash
         run: |
-          set -uo pipefail
-          # [T-aot-committed] The 22 images recorded by the manual "Record AOT
-          # images" workflow live in aot/ as .o, so a normal build only links
-          # them: no ish build, no rootfs download, no recording. The fallback
-          # below stays for a tree that has none (fresh clone, or after gen.c
-          # changed and the images must be re-recorded).
+          set -euo pipefail
+          # Build only links committed images. Recording is restricted to the
+          # dedicated workflow's reference staging, exact preflight and recorder.
           if compgen -G "aot/*.o" > /dev/null; then
             count=$(ls aot/*.o | wc -l | tr -d ' ')
             echo "── using $count committed images ($(du -sh aot | cut -f1))"
             echo "AOT_OBJECTS=$(ls "$PWD"/aot/*.o | tr '\n' ' ')" >> "$GITHUB_ENV"
             exit 0
           fi
-          export PATH="$PWD/.venv-aot/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
-          python3 -m venv .venv-aot
-          .venv-aot/bin/pip install --quiet meson
-          meson setup build-macos Vendor/ZeNative/ish \
-            --buildtype=release -Dlog='' -Dkernel=ish -Dengine=asbestos \
-            -Dguest_arch=arm64 -Djit=true
-          ninja -C build-macos ish tools/fakefsify
-          # Rootfs for the recorder: same Alpine the app ships.
-          curl -fsSL --retry 3 -o /tmp/alpine.tar.gz \
-            https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz
-          # record.sh invokes `ish -r <rootfs>`, and -r is the REALFS path
-          # (-f is fakefs). Hand it an unpacked Alpine tree, not fakefsify's
-          # data/ + meta.db layout, or the guest cannot find /bin/sh.
-          mkdir -p /tmp/aot-rootfs
-          tar -xzf /tmp/alpine.tar.gz -C /tmp/aot-rootfs
-          mkdir -p aot /tmp/aot-rootfs/tmp
-
-          SUMMARY="$RUNNER_TEMP/aot-summary.txt"
-          : > "$SUMMARY"
-          record() {
-            name=$1
-            shift
-            echo "── record.sh $*"
-            # A guest workload can hang (V8 startup under emulation does), and
-            # record.sh has no deadline of its own: one bad entry held the whole
-            # step for over an hour. macOS has no coreutils `timeout`, so perl's
-            # alarm+exec does the same job.
-            if perl -e 'alarm shift; exec @ARGV' "${AOT_TIMEOUT:-240}" Vendor/ZeNative/ish/tools/jit_aot/record.sh "$@" ; then
-              size=$(wc -c < "$4" 2>/dev/null || echo 0)
-              printf '%-12s %8s bytes\n' "$name" "$size" >> "$SUMMARY"
-              ls -l "$4" 2>/dev/null || true
-            else
-              printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
-              echo "❌ record.sh failed for $4"
-            fi
-          }
-
-          # [T-aot-full-set] The default build records only the two modules that
-          # are already in the minirootfs: ~10 s, and enough for the shell and
-          # libc paths that dominate. The other 23 need ~120 MB of packages
-          # installed *inside the emulator*, which took over an hour and made
-          # every IPA build wait for it. They belong in the manual
-          # "Record AOT images" workflow, whose artifacts get committed and
-          # linked from here. AOT_FULL=1 still runs the whole set inline for
-          # anyone who wants it.
-          if [ "${AOT_FULL:-0}" = "1" ]; then
-            rel="$(cut -d. -f1,2 /tmp/aot-rootfs/etc/alpine-release)"
-            mkdir -p /tmp/aot-rootfs/etc/apk
-            printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
-              "$rel" "$rel" > /tmp/aot-rootfs/etc/apk/repositories
-            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/aot-rootfs/etc/resolv.conf
-            [ -s /tmp/aot-rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/aot-rootfs/etc/hosts
-            PACKAGES="python3 nodejs py3-pillow py3-numpy git openssh-client-default pcre2-tools bzip2"
-            echo "── apk add $PACKAGES"
-            build-macos/ish -r /tmp/aot-rootfs /bin/sh -c "apk add --no-cache $PACKAGES" \
-              || echo "⚠️  apk add failed; only libraries already present will record"
-            while IFS='|' read -r name module workload timeout; do
-              [ -n "${name:-}" ] || continue
-              case "$name" in '#'*) continue ;; esac
-              case "$workload" in
-                @*) cp "${workload#@}" "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
-                *)  printf '%s\n' "$workload" > "/tmp/aot-rootfs/tmp/wl-$name.sh" ;;
-              esac
-              AOT_TIMEOUT="$timeout" record "$name" build-macos/ish /tmp/aot-rootfs "/tmp/wl-$name.sh" "aot/aot_$name.S" "$module"
-            done < scripts/aot-manifest.txt
-          else
-            printf 'for i in $(seq 300); do /bin/true; done\n' > /tmp/aot-rootfs/tmp/wl-musl.sh
-            printf 'for i in $(seq 50); do ls / >/dev/null; cat /etc/hostname >/dev/null; done\n' > /tmp/aot-rootfs/tmp/wl-busybox.sh
-            record musl build-macos/ish /tmp/aot-rootfs /tmp/wl-musl.sh aot/aot_musl.S ld-musl
-            record busybox build-macos/ish /tmp/aot-rootfs /tmp/wl-busybox.sh aot/aot_busybox.S busybox
-          fi
-
-          echo "── recorded images"
-          cat "$SUMMARY"
-          { echo '### AOT images'; echo '```'; cat "$SUMMARY"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          OBJS=""
-          for f in aot/*.S; do
-            [ -f "$f" ] || continue
-            o="${f%.S}.o"
-            xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "$o" && OBJS="$OBJS $PWD/$o"
-          done
-          echo "AOT_OBJECTS=$OBJS" >> "$GITHUB_ENV"
-          echo "── $(ls aot/*.S 2>/dev/null | wc -l | tr -d ' ') images, $(du -sh aot 2>/dev/null | cut -f1) on disk"
-          ls -lh aot/ || true
+          echo "::error::No committed AOT objects. Inline recording is disabled, including AOT_FULL=1. Run .github/workflows/aot-record.yml and import its validated artifact."
+          exit 1
 
       - name: Resolve SPM dependencies
         run: |

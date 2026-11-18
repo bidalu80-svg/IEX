@@ -40,9 +40,20 @@ jobs:
     # _Atomic(function pointer) initialisers, and the images should be
     # produced by the toolchain that links them.
     runs-on: macos-15
-    timeout-minutes: 180
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        image: ["musl", "busybox", "python3", "nodejs", "pillow", "libwebp", "libjpeg", "numpy", "zlib", "sqlite", "libcrypto", "libssl", "pcre2", "ssh", "scp", "pyjson", "pyhashlib", "pyblake2", "pystruct", "pydatetime", "pybinascii", "pymath", "pyzlib", "pysocket", "pyselect"]
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch the pinned OpenMinis training suite
+        uses: actions/checkout@v4
+        with:
+          repository: OpenMinis/ish-arm64
+          ref: 0fd17a135e78b7a0cf08a4f5831217bbb76ed22f
+          path: .aot-upstream
 
       - name: Install build tools
         run: |
@@ -112,96 +123,116 @@ jobs:
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
-          PKGS="python3 nodejs py3-pillow py3-numpy git openssh-client-default pcre2-tools bzip2"
+          # Exact pins; an archive/snapshot repository may be needed for old APKs.
+          PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2"
           echo "── apk add --no-cache $PKGS"
           build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
-            || echo "⚠️  apk add failed; only libraries already present can record"
+            || { echo "Exact training packages unavailable; stop without recording"; exit 1; }
           echo "── installed:"
           ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
           ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
 
-      # [T-aot-current] A fresh minirootfs pins whatever musl/busybox the
-      # release tarball shipped (3.21: musl 1.2.5-r8), while a device that ran
-      # `apk upgrade` has the repo's current one (1.2.5-r12). Record from the
-      # current versions: family matching covers the rest, this removes the gap
-      # for the devices that are up to date.
-      - name: Upgrade musl and busybox to the repository's current versions
+      - name: Stage reference workloads and validate all exact identities
         run: |
-          set -uo pipefail
-          build-macos/ish -r /tmp/rootfs /bin/sh -c 'apk upgrade --no-cache musl busybox 2>&1 | tail -8' \
-            || echo "⚠️  apk upgrade failed; recording the versions the rootfs shipped with"
-          build-macos/ish -r /tmp/rootfs /bin/sh -c 'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' || true
+          bash scripts/prepare-aot-workloads.sh build-macos/ish /tmp/rootfs .aot-upstream
 
-      - name: Record the package versions the images are made from
+      - name: Record one image with strict workload gates
         run: |
-          set -uo pipefail
-          mkdir -p aot
-          build-macos/ish -r /tmp/rootfs /bin/sh -c '
-            for p in musl busybox python3 nodejs py3-pillow py3-numpy zlib sqlite-libs libcrypto3 libssl3 pcre2 openssh-client-default openssh-client-common; do
-              apk info -e -v "$p" 2>/dev/null
-            done' | sort > aot/VERSIONS.txt
-          cat aot/VERSIONS.txt
-          { echo '### Package versions'; echo '```'; cat aot/VERSIONS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Record AOT images
-        run: |
-          set -uo pipefail
-          mkdir -p aot
-          SUMMARY="$RUNNER_TEMP/aot-summary.txt"
-          : > "$SUMMARY"
-          while IFS='|' read -r name module workload timeout; do
-            case "$name" in ''|'#'*) continue ;; esac
-            case "$workload" in
-              @*) cp "${workload#@}" "/tmp/rootfs/tmp/wl-$name.sh" ;;
-              *)  printf '%s\n' "$workload" > "/tmp/rootfs/tmp/wl-$name.sh" ;;
-            esac
-            limit="${timeout:-240}"
-            echo "=== $name ($module, ${limit}s) ==="
-            # A guest workload can hang (V8 startup under emulation does), and
-            # record.sh has no deadline of its own. macOS has no coreutils
-            # `timeout`, so perl's alarm+exec does the same job.
-            #
-            # Absolute paths, one line: a folded continuation here once turned
-            # the argument list into a command of its own and every library
-            # "recorded" a missing file in 30 ms.
-            perl -e 'alarm shift; exec @ARGV' "$limit" /bin/sh "$PWD/Vendor/ZeNative/ish/tools/jit_aot/record.sh" "$PWD/build-macos/ish" /tmp/rootfs "/tmp/wl-$name.sh" "$PWD/aot/aot_$name.S" "$module"
-            rc=$?
-            echo "record.sh rc=$rc"
-            if [ "$rc" -eq 0 ] && [ -s "aot/aot_$name.S" ]; then
-              size=$(wc -c < "aot/aot_$name.S")
-              printf '%-12s %10s bytes\n' "$name" "$size" >> "$SUMMARY"
-            else
-              printf '%-12s %s\n' "$name" "NO IMAGE" >> "$SUMMARY"
-              echo "❌ record failed for $name (rc=$rc)"
-            fi
-          done < scripts/aot-manifest.txt
-
-          if grep -q 'NO IMAGE' "$SUMMARY"; then
-            cat "$SUMMARY"
-            echo "❌ some images were not recorded"
-            exit 1
-          fi
-
-          echo "── summary"
-          cat "$SUMMARY"
-          { echo '### AOT images'; echo '```'; cat "$SUMMARY"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
+          set -euo pipefail
+          python3 scripts/record-aot.py --ish build-macos/ish --root /tmp/rootfs --only "${{ matrix.image }}"
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          for f in aot/*.S; do
-            [ -f "$f" ] || continue
-            xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "${f%.S}.o" || true
+          for f in .aot-new/recorded/*.S; do
+            xcrun clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" -c "$f" -o "${f%.S}.o"
           done
-          ls -lh aot/ || true
 
       - name: Upload images
         uses: actions/upload-artifact@v4
         with:
-          name: aot-images
+          name: aot-image-${{ matrix.image }}
           path: |
-            aot/*.S
-            aot/*.o
-            aot/VERSIONS.txt
-          if-no-files-found: warn
+            .aot-new/recorded/*.S
+            .aot-new/recorded/*.o
+            .aot-new/recorded/VERSIONS.txt
+            .aot-new/recorded/TARGETS.json
+            .aot-new/recorded/RECORDED-*.json
+            .aot-new/recorded/*.log
+          if-no-files-found: error
+
+
+  assemble:
+    needs: record
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aot-image-*
+          merge-multiple: true
+          path: .aot-new/recorded
+      - name: Require the complete, exact 25-image recording set
+        run: python3 scripts/check-aot-artifact.py .aot-new/recorded
+      - name: Install build tools
+        run: |
+          # lld is required: meson links the guest vdso with -fuse-ld=lld.
+          for p in ninja libarchive pkg-config llvm lld; do
+            brew list "$p" >/dev/null 2>&1 || brew install "$p"
+          done
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet meson
+
+      - name: Build macOS ish with the JIT
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
+          meson setup build-macos Vendor/ZeNative/ish \
+            --buildtype=release \
+            -Dlog='' \
+            -Dkernel=ish \
+            -Dengine=asbestos \
+            -Dguest_arch=arm64 \
+            -Djit=true
+          ninja -C build-macos ish tools/fakefsify
+
+      - name: Prepare rootfs
+        run: |
+          set -uo pipefail
+          v="${{ github.event.inputs.alpine_version || '3.21' }}"
+          url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
+          echo "alpine=$v"
+          echo "url=$url"
+          rm -f /tmp/alpine.tar.gz
+          if ! curl -fSL --retry 3 --retry-delay 2 -o /tmp/alpine.tar.gz "$url"; then
+            rc=$?
+            echo "curl failed rc=$rc"
+            ls -l /tmp/alpine.tar.gz 2>/dev/null || true
+            exit 1
+          fi
+          ls -l /tmp/alpine.tar.gz
+          rm -rf /tmp/rootfs
+          mkdir -p /tmp/rootfs/tmp
+          if ! tar -xzf /tmp/alpine.tar.gz -C /tmp/rootfs; then
+            echo "tar failed"
+            exit 1
+          fi
+          # /bin/sh is a symlink to the absolute path /bin/busybox, so testing
+          # it from the host dereferences the RUNNER's /bin/busybox and fails.
+          # The real file is what matters.
+          ls -l /tmp/rootfs/bin/sh || true
+          test -x /tmp/rootfs/bin/busybox || { echo "no executable busybox"; exit 1; }
+
+      - name: Verify core rootfs module identities
+        run: |
+          python3 - <<'PYCODE'
+          import importlib.util, json
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('recorder', 'scripts/record-aot.py')
+          recorder = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(recorder)
+          for target in recorder.TARGETS['images']:
+              if target['id'] in ('musl', 'busybox'):
+                  assert recorder.build_id(recorder.guest_file(Path('/tmp/rootfs'), target['path'])) == target['build_id'], target['id']
+          PYCODE
 
       - name: Verify the images attach and hit
         # [T-aot-verify] Recording only proves gen.py ran. This links two of
@@ -217,7 +248,7 @@ jobs:
           set -uo pipefail
           export PATH="$PWD/.venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix libarchive)/bin:$PATH"
           meson configure build-macos \
-            -Dcli_aot="$PWD/aot/aot_musl.S,$PWD/aot/aot_busybox.S"
+            -Dcli_aot="$PWD/.aot-new/recorded/aot_musl.S,$PWD/.aot-new/recorded/aot_busybox.S"
           ninja -C build-macos ish
           out=$(ISH_JIT_AOT_ONLY=1 ISH_JIT_STATS=1 build-macos/ish -r /tmp/rootfs \
                   /bin/sh -c 'for i in $(seq 200); do /bin/true; done; echo workload-ok' 2>&1)
@@ -245,7 +276,7 @@ jobs:
           # hits below cannot come from IMG_SAME, only from IMG_FAMILY.
           # llvm-readelf comes with the llvm that meson already needs.
           bid() { llvm-readelf -n "$1" | sed -n 's/.*Build ID: //p' | head -1; }
-          echo "── recorded against: $(grep -E '^(musl|busybox)-' aot/VERSIONS.txt | tr '\n' ' ')"
+          echo "── recorded against: $(grep -E '^(musl|busybox)-' .aot-new/recorded/VERSIONS.txt | tr '\n' ' ')"
           echo "── running on:      $(build-macos/ish -r /tmp/rootfs-cross /bin/sh -c 'apk info -v musl busybox 2>/dev/null | grep -E "^(musl|busybox)-"' | tr '\n' ' ')"
           echo "── musl build-id recorded: $(bid /tmp/rootfs/lib/ld-musl-aarch64.so.1)"
           echo "── musl build-id cross:    $(bid /tmp/rootfs-cross/lib/ld-musl-aarch64.so.1)"
@@ -257,3 +288,9 @@ jobs:
           echo "$out" | grep -Eq 'AOT [1-9][0-9]* \(2 images\)' \
             || { echo "❌ a different rootfs version got no hits at all: family matching is not working"; exit 1; }
           { echo '### Cross-version (family) self-check'; echo '```'; echo "$out" | tail -6; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aot-images
+          path: .aot-new/recorded/
+          if-no-files-found: error
