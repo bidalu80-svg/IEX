@@ -11,17 +11,17 @@ name: Record AOT images
 # Download the `aot-images` artifact, drop the .o files into `aot/`, commit, and
 # the normal build links them (see ZE_AOT_OBJECTS in build.yml).
 
+env:
+  ALPINE_BRANCH: v3.21
+  ALPINE_RELEASE: "3.21.0"
+
 on:
   workflow_dispatch:
     inputs:
-      alpine_version:
-        description: 'Alpine minirootfs version'
-        default: '3.21'
-        required: false
-      # [T-aot-family] Record from `alpine_version`, then run the same workload
-      # in a rootfs of this version. musl and busybox differ between releases,
-      # so any hit here can only come from family + by_hash matching — which is
-      # exactly what a device on a newer rootfs needs.
+      # [T-aot-family] Record from v3.21, then run the same workload in a rootfs
+      # of this version. musl and busybox differ between releases, so any hit
+      # here can only come from family + by_hash matching — which is exactly
+      # what a device on a newer rootfs needs.
       cross_version:
         description: 'Alpine version to test the images against (family matching)'
         default: '3.19'
@@ -48,6 +48,52 @@ jobs:
         image: ["musl", "busybox", "python3", "nodejs", "pillow", "libwebp", "libjpeg", "numpy", "zlib", "sqlite", "libcrypto", "libssl", "pcre2", "ssh", "scp", "pyjson", "pyhashlib", "pyblake2", "pystruct", "pydatetime", "pybinascii", "pymath", "pyzlib", "pysocket", "pyselect"]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Preflight every pinned package against the live Alpine v3.21 indexes
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/aot-apkindex
+          mkdir -p /tmp/aot-apkindex
+          for repo in main community; do
+            url="https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/${repo}/aarch64/APKINDEX.tar.gz"
+            echo "fetch $url"
+            curl -fSL --retry 3 --retry-delay 2 -o "/tmp/aot-apkindex/$repo.tar.gz" "$url"
+          done
+          python3 - <<'PY'
+          import json
+          import os
+          import tarfile
+          from pathlib import Path
+
+          targets = json.loads(Path("scripts/aot-targets.json").read_text())["images"]
+          pins = sorted({(target["package"], target["version"]) for target in targets})
+          available = {}
+          for repo in ("main", "community"):
+              path = Path(f"/tmp/aot-apkindex/{repo}.tar.gz")
+              with tarfile.open(path, mode="r:gz") as archive:
+                  index = archive.extractfile("APKINDEX").read().decode("utf-8")
+              for stanza in index.split("\n\n"):
+                  fields = {}
+                  for line in stanza.splitlines():
+                      if len(line) > 2 and line[1] == ":":
+                          fields[line[0]] = line[2:]
+                  if fields.get("P") and fields.get("V"):
+                      available.setdefault(fields["P"], set()).add(fields["V"])
+
+          missing = []
+          for package, version in pins:
+              versions = available.get(package, set())
+              if version not in versions:
+                  shown = ", ".join(sorted(versions)) or "no versions"
+                  missing.append(f"{package}={version} (index has: {shown})")
+          if missing:
+              print("::error::Pinned Alpine v3.21 packages are missing from the live indexes")
+              for item in missing:
+                  print(f"MISSING {item}")
+              raise SystemExit(1)
+          print(f"All {len(pins)} pinned package versions are present in {os.environ['ALPINE_BRANCH']}")
+          PY
+
       - name: Fetch the pinned OpenMinis training suite
         uses: actions/checkout@v4
         with:
@@ -80,9 +126,8 @@ jobs:
       - name: Prepare rootfs
         run: |
           set -uo pipefail
-          v="${{ github.event.inputs.alpine_version || '3.21' }}"
-          url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
-          echo "alpine=$v"
+          url="https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/aarch64/alpine-minirootfs-${ALPINE_RELEASE}-aarch64.tar.gz"
+          echo "alpine=${ALPINE_BRANCH#v}"
           echo "url=$url"
           rm -f /tmp/alpine.tar.gz
           if ! curl -fSL --retry 3 --retry-delay 2 -o /tmp/alpine.tar.gz "$url"; then
@@ -115,15 +160,16 @@ jobs:
         run: |
           set -uo pipefail
           rel="$(cut -d. -f1,2 /tmp/rootfs/etc/alpine-release)"
+          [ "$rel" = "${ALPINE_BRANCH#v}" ] || { echo "rootfs is Alpine $rel, expected ${ALPINE_BRANCH#v}"; exit 1; }
           mkdir -p /tmp/rootfs/etc/apk
-          printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/v%s/community\n' \
-            "$rel" "$rel" > /tmp/rootfs/etc/apk/repositories
+          printf 'https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n' \
+            "$ALPINE_BRANCH" "$ALPINE_BRANCH" > /tmp/rootfs/etc/apk/repositories
           # A fresh minirootfs has no resolver either; without one apk resolves
           # nothing and every fetch fails with "temporary error".
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
-          # Exact pins; an archive/snapshot repository may be needed for old APKs.
+          # Exact pins from the recording target table, all from the live v3.21 index.
           PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2"
           echo "── apk add --no-cache $PKGS"
           build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
@@ -131,6 +177,35 @@ jobs:
           echo "── installed:"
           ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
           ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
+
+      - name: Verify every installed target module against its pinned build-id
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import json
+          from pathlib import Path
+
+          spec = importlib.util.spec_from_file_location("recorder", "scripts/record-aot.py")
+          recorder = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(recorder)
+          targets = json.loads(Path("scripts/aot-targets.json").read_text())["images"]
+          failures = []
+          for target in targets:
+              label = f"{target['id']} ({target['package']}={target['version']})"
+              try:
+                  actual = recorder.build_id(recorder.guest_file(Path("/tmp/rootfs"), target["path"]))
+              except Exception as error:
+                  failures.append(f"{label}: {error}")
+                  continue
+              if actual != target["build_id"]:
+                  failures.append(f"{label}: expected {target['build_id']}, got {actual}")
+          if failures:
+              print("::error::Installed module identities do not match the pinned recording targets")
+              for failure in failures:
+                  print(f"MISMATCH {failure}")
+              raise SystemExit(1)
+          print(f"Verified all {len(targets)} target modules against their pinned build-ids")
+          PY
 
       - name: Stage reference workloads and validate all exact identities
         run: |
@@ -197,9 +272,8 @@ jobs:
       - name: Prepare rootfs
         run: |
           set -uo pipefail
-          v="${{ github.event.inputs.alpine_version || '3.21' }}"
-          url="https://dl-cdn.alpinelinux.org/alpine/v${v}/releases/aarch64/alpine-minirootfs-${v}.0-aarch64.tar.gz"
-          echo "alpine=$v"
+          url="https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/aarch64/alpine-minirootfs-${ALPINE_RELEASE}-aarch64.tar.gz"
+          echo "alpine=${ALPINE_BRANCH#v}"
           echo "url=$url"
           rm -f /tmp/alpine.tar.gz
           if ! curl -fSL --retry 3 --retry-delay 2 -o /tmp/alpine.tar.gz "$url"; then
@@ -258,8 +332,8 @@ jobs:
           { echo '### AOT self-check'; echo '```'; echo "$out" | tail -6; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify a different rootfs still hits (family matching)
-        # [T-aot-family] The images were recorded from alpine_version. This runs
-        # them against cross_version: different musl, different busybox, no
+        # [T-aot-family] The images were recorded from v3.21. This runs them
+        # against cross_version: different musl, different busybox, no
         # build-id match anywhere. Blocks that still come from the images are
         # the proof that by_hash serves another version of the same file.
         run: |
