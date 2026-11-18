@@ -471,20 +471,20 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             }
             switch event.kind {
             case .takeover:
-                self.appendBrowserControlInfo("用户已接管浏览器\(page)。交还前模型不会操作浏览器。",
-                                              icon: "hand.raised.fill")
+                self.appendSystemInfo("用户已接管浏览器\(page)。交还前模型不会操作浏览器。",
+                                              icon: "hand.raised.fill", browserControl: true)
             case .requestedTakeover:
                 let reason = event.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let detail = reason.isEmpty ? "" : "：\(reason)"
-                self.appendBrowserControlInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
-                                              icon: "hand.raised.fill")
+                self.appendSystemInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
+                                              icon: "hand.raised.fill", browserControl: true)
             case .handBack:
                 if event.requested {
-                    self.appendBrowserControlInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
-                                                  icon: "checkmark.circle.fill")
+                    self.appendSystemInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
+                                                  icon: "checkmark.circle.fill", browserControl: true)
                 } else {
-                    self.appendBrowserControlInfo("用户已交还浏览器控制权\(page)。",
-                                                  icon: "hand.wave.fill")
+                    self.appendSystemInfo("用户已交还浏览器控制权\(page)。",
+                                                  icon: "hand.wave.fill", browserControl: true)
                 }
             }
         }
@@ -6193,17 +6193,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     }
 
     /// Append an ephemeral system info message (not sent to LLM).
-    func appendSystemInfo(_ text: String, icon: String) {
+    func appendSystemInfo(_ text: String, icon: String, browserControl: Bool = false) {
         let msg = ChatMessage(role: .systemInfo, content: text)
         msg.systemIcon = icon
-        messages.append(msg)
-    }
-
-    /// Append a browser-control system-info row rendered as a dismissible capsule.
-    private func appendBrowserControlInfo(_ text: String, icon: String) {
-        let msg = ChatMessage(role: .systemInfo, content: text)
-        msg.systemIcon = icon
-        msg.browserControlInfo = true
+        if browserControl {
+            msg.browserControlInfo = true
+        }
         messages.append(msg)
     }
 
