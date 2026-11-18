@@ -203,7 +203,7 @@ struct RemoteServerEditorSheet: View {
                 }
 
                 Section("AI 访问") {
-                    Picker("访问范围", selection: $aiAccess) {
+                    Picker("访问范围", selection: aiAccessBinding) {
                         ForEach(RemoteServerAIAccessLevel.allCases) { level in
                             if level == .fullAccess {
                                 Label(level.title, systemImage: "shield.fill").tag(level)
@@ -272,7 +272,15 @@ struct RemoteServerEditorSheet: View {
             } message: {
                 Text("开启后，AI 可以直接读取、写入文件并执行命令，不再每次向你确认。请只对可信的服务器开启。")
             }
-            .onChange(of: aiAccess) { oldValue, newValue in
+        }
+    }
+
+    private var aiAccessBinding: Binding<RemoteServerAIAccessLevel> {
+        Binding(
+            get: { aiAccess },
+            set: { newValue in
+                let oldValue = aiAccess
+                aiAccess = newValue
                 guard newValue == .fullAccess, oldValue != .fullAccess else { return }
                 previousAIAccess = oldValue
                 fullAccessConfirmationReady = false
@@ -284,7 +292,7 @@ struct RemoteServerEditorSheet: View {
                     fullAccessConfirmationReady = true
                 }
             }
-        }
+        )
     }
 
     private func importPrivateKey(_ result: Result<[URL], Error>) {
