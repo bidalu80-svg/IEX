@@ -334,34 +334,36 @@ struct RemoteServerEditorSheet: View {
             )
             try store.save(profile)
 
-            switch authentication {
-            case .password:
-                RemoteServerSessionCredentials.shared.clear(for: id)
-                RemoteServerSecretStore.delete(kind: .privateKey, for: id)
-                RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: id)
-                if !sessionPassword.isEmpty {
-                    try RemoteServerSecretStore.save(sessionPassword, kind: .password, for: id)
-                    RemoteServerSessionCredentials.shared.setPassword(sessionPassword, for: id)
-                }
-            case .privateKey:
-                RemoteServerSessionCredentials.shared.clear(for: id)
-                RemoteServerSecretStore.delete(kind: .password, for: id)
-                if !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    _ = try SSHKeyDetection.detectPrivateKeyType(from: privateKey)
-                    try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: id)
-                    if passphrase.isEmpty {
-                        RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: id)
-                    } else {
-                        try RemoteServerSecretStore.save(passphrase, kind: .privateKeyPassphrase, for: id)
+            try RemoteServerCredentialChange.perform(for: id) {
+                switch authentication {
+                case .password:
+                    RemoteServerSessionCredentials.shared.clear(for: id)
+                    RemoteServerSecretStore.delete(kind: .privateKey, for: id)
+                    RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: id)
+                    if !sessionPassword.isEmpty {
+                        try RemoteServerSecretStore.save(sessionPassword, kind: .password, for: id)
+                        RemoteServerSessionCredentials.shared.setPassword(sessionPassword, for: id)
                     }
-                } else if try RemoteServerSecretStore.value(kind: .privateKey, for: id) == nil {
-                    throw RemoteServerError.secretMissing
+                case .privateKey:
+                    RemoteServerSessionCredentials.shared.clear(for: id)
+                    RemoteServerSecretStore.delete(kind: .password, for: id)
+                    if !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        _ = try SSHKeyDetection.detectPrivateKeyType(from: privateKey)
+                        try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: id)
+                        if passphrase.isEmpty {
+                            RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: id)
+                        } else {
+                            try RemoteServerSecretStore.save(passphrase, kind: .privateKeyPassphrase, for: id)
+                        }
+                    } else if try RemoteServerSecretStore.value(kind: .privateKey, for: id) == nil {
+                        throw RemoteServerError.secretMissing
+                    }
+                case .none:
+                    // The none method carries no secret; clear anything left over
+                    // from a previous authentication choice.
+                    RemoteServerSessionCredentials.shared.clear(for: id)
+                    RemoteServerSecretStore.deleteAll(for: id)
                 }
-            case .none:
-                // The none method carries no secret; clear anything left over
-                // from a previous authentication choice.
-                RemoteServerSessionCredentials.shared.clear(for: id)
-                RemoteServerSecretStore.deleteAll(for: id)
             }
             dismiss()
         } catch {
@@ -485,9 +487,13 @@ private struct RemoteServerDetailView: View {
                     SecureField("密码", text: $password)
                     Button("连接") {
                         guard !password.isEmpty else { return }
-                        RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
-                        try? RemoteServerSecretStore.save(password, kind: .password, for: server.id)
-                        beginConnection(for: server)
+                        do {
+                            try RemoteServerCredentialChange.perform(for: server.id) {
+                                try RemoteServerSecretStore.save(password, kind: .password, for: server.id)
+                                RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
+                            }
+                            if let updated = store.server(id: server.id) { beginConnection(for: updated) }
+                        } catch { errorMessage = error.localizedDescription }
                     }
                     Button("取消", role: .cancel) { password = "" }
                 } message: {

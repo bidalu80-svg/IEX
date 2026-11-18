@@ -1,0 +1,330 @@
+{
+  "base": "18b116f",
+  "scope": [
+    "Shared/RemoteServers/RemoteDiskStore.swift",
+    "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+    "Shared/RemoteServers/RemoteServerAIToolGateway.swift",
+    "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+    "Shared/RemoteServers/RemoteServerStore.swift",
+    "Views/Backup/ICloudBackupView.swift",
+    "Views/Servers/RemoteServersView.swift",
+    "Ze.xcodeproj/project.pbxproj"
+  ],
+  "literal_count": 4610,
+  "changes": [
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "try persist()",
+      "before": 3,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py",
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "clearSSHVerification(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "func clearSSHVerification(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "guard loadError == nil",
+      "before": 1,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "disk.profile.proto == .sftp && disk.sshServerID == serverID",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "verification.removeValue(forKey: disk.id)",
+      "before": 1,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "invalidateCredentialConnection(serverID:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "func invalidateCredentialConnection(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "clients.removeValue",
+      "before": 2,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "connectedProfiles.removeValue",
+      "before": 1,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "client.close()",
+      "before": 1,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "server(id: server.id)?.updatedAt == server.updatedAt",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerAIToolGateway.swift",
+      "literal": "try RemoteServerCredentialChange.perform(",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "    static func ",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "invalidateCredentialConnection(serverID:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "markCredentialsChanged(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerCredentialChange.swift",
+      "literal": "clearSSHVerification(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "try persist()",
+      "before": 5,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py",
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "markCredentialsChanged(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "func markCredentialsChanged(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "updatedAt = max(.now, servers[index].updatedAt.addingTimeInterval(1))",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "lastConnectedAt = nil",
+      "before": 1,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "existing.updatedAt.addingTimeInterval(1)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteServerStore.swift",
+      "literal": "servers[index].updatedAt.addingTimeInterval(1)",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Views/Backup/ICloudBackupView.swift",
+      "literal": "try RemoteServerCredentialChange.perform(",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteServersView.swift",
+      "literal": "errorMessage = error.localizedDescription",
+      "before": 6,
+      "after": 7,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-media-favorites.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteServersView.swift",
+      "literal": "try RemoteServerCredentialChange.perform(",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteServersView.swift",
+      "literal": "if let updated = store.server(id: server.id) { beginConnection(for: updated) }",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": " in Sources */",
+      "before": 1004,
+      "after": 1006,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py",
+        "scripts/verify-scheduled-tasks.py",
+        "scripts/verify-tool-collapse.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "D8D170000000000000000001 /* RemoteServerCredentialChange.swift in Sources */",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "D8D180000000000000000001 /* RemoteServerCredentialChange.swift */",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-ssh-credential-invalidation.py"
+      ]
+    }
+  ]
+}

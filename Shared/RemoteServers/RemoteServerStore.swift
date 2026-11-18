@@ -76,7 +76,19 @@ final class RemoteServerStore: ObservableObject {
     func setKnownHost(_ knownHost: RemoteKnownHost, for serverID: UUID) throws {
         guard let index = servers.firstIndex(where: { $0.id == serverID }) else { return }
         servers[index].knownHost = knownHost
-        servers[index].updatedAt = .now
+        servers[index].updatedAt = max(.now, servers[index].updatedAt.addingTimeInterval(1))
+        try persist()
+    }
+
+    /// Advance even for two credential changes in the same clock tick. The
+    /// JSON encoder stores whole seconds, so reserve at least one second.
+    func markCredentialsChanged(_ serverID: UUID) throws {
+        guard let index = servers.firstIndex(where: { $0.id == serverID }) else {
+            throw RemoteServerError.invalidProfile("服务器不存在")
+        }
+        servers[index].updatedAt = max(.now, servers[index].updatedAt.addingTimeInterval(1))
+        servers[index].lastConnectedAt = nil
+        // Keep the in-memory revision invalidated even if persistence fails.
         try persist()
     }
 
@@ -105,7 +117,9 @@ final class RemoteServerStore: ObservableObject {
             .filter { !$0.isEmpty }))
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         server.note = server.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        server.updatedAt = .now
+        if let existing = self.server(id: server.id) {
+            server.updatedAt = max(.now, existing.updatedAt.addingTimeInterval(1))
+        } else { server.updatedAt = .now }
         return server
     }
 

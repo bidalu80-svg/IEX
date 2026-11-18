@@ -1,0 +1,738 @@
+{
+  "base": "42339dfa9a68dff11dd856ab6c6867657b851841",
+  "scope": [
+    "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+    "Agent/Chat/AIChatViewModel+FileTools.swift",
+    "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+    "Agent/Chat/AIChatViewModel+ToolDefinitions.swift",
+    "Shared/RemoteServers/RemoteDiskService.swift",
+    "Shared/RemoteServers/RemoteDiskStore.swift",
+    "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+    "Shared/RemoteServers/RemoteStorageClients.swift",
+    "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+    "Views/Backup/ICloudBackupView.swift",
+    "Views/Chat/AIChatView.swift",
+    "Views/ContentView.swift",
+    "Views/Rootfs/FileBrowserView.swift",
+    "Views/Servers/RemoteDiskBrowserView.swift",
+    "Views/Servers/RemoteDiskSettingsView.swift",
+    "Ze.xcodeproj/project.pbxproj"
+  ],
+  "literal_count": 4556,
+  "changes": [
+    {
+      "file": "Agent/Chat/AIChatViewModel+ConcurrentTools.swift",
+      "literal": "case \"remote_disk_list\":",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+FileTools.swift",
+      "literal": "prepareRemoteDiskFile(path)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+FileTools.swift",
+      "literal": "Self.isRemoteDiskPath(path)",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+FileTools.swift",
+      "literal": "RemoteDiskError.readOnly",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "    static func ",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "extension AIChatViewModel {",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-voice-call-chat-bridge.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "], required:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "remoteDiskToolDefinitions()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "addFileAttachment(from: url)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+RemoteDisks.swift",
+      "literal": "parameters: [",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Agent/Chat/AIChatViewModel+ToolDefinitions.swift",
+      "literal": "remoteDiskToolDefinitions()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "    private func ",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/extract-provider-chat-chrome.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "testConnection",
+      "before": 0,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "64 * 1024 * 1024",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "maximumBytes: limit",
+      "before": 0,
+      "after": 5,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "downloadFile(at: confined, on: id, maximumBytes: limit)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskService.swift",
+      "literal": "protocol RemoteDiskReading {",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "configurationRevision",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/RemoteDiskWireChecks.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "normalization",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/build-thinking-cube-atlas.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "    private func ",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/extract-provider-chat-chrome.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "    static func ",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "struct RemoteDisk:",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "disk.configurationRevision = UUID()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "result.sshUpdatedAt == sshRevision(for: disk)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "RemoteServerSecretStore.save",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteDiskStore.swift",
+      "literal": "try persist()",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "try Task.checkCancellation()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserCLITimeoutReclaimTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteSSHConnectionService.swift",
+      "literal": "        try Task.checkCancellation()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-kernel-runtime.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "try Task.checkCancellation()",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserCLITimeoutReclaimTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "withTaskCancellationHandler",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserRequestTakeoverTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "    private func ",
+      "before": 24,
+      "after": 25,
+      "direction": "added",
+      "scripts": [
+        "scripts/extract-provider-chat-chrome.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "    static func ",
+      "before": 1,
+      "after": 0,
+      "direction": "removed",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "        defer {",
+      "before": 1,
+      "after": 4,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-kernel-runtime.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "        try Task.checkCancellation()",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-kernel-runtime.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "encoding: .utf8",
+      "before": 2,
+      "after": 1,
+      "direction": "removed",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageClients.swift",
+      "literal": "receiveAll(from: dataConnection, maximumBytes: maximumBytes)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "try Task.checkCancellation()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserCLITimeoutReclaimTests.swift"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "    static func ",
+      "before": 0,
+      "after": 9,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-image-wire.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "enum RemoteStorageEndpoint",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "enum RemoteStorageHTTP",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "/// NSLock protects",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-netdisk.py"
+      ]
+    },
+    {
+      "file": "Shared/RemoteServers/RemoteStorageWireSupport.swift",
+      "literal": "session.bytes(for: request)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Backup/ICloudBackupView.swift",
+      "literal": "RemoteStorageConfigurationFields(profile: configurationBinding",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Chat/AIChatView.swift",
+      "literal": "showRemoteDiskPicker",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Chat/AIChatView.swift",
+      "literal": "try vm.addRemoteDiskAttachment(from: url)",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/ContentView.swift",
+      "literal": "RemoteDiskSettingsView()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Rootfs/FileBrowserView.swift",
+      "literal": "RemoteDiskPickerView()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "QLPreviewController",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserDownloadToastTests.swift",
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "    private func ",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/extract-provider-chat-chrome.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "        defer {",
+      "before": 0,
+      "after": 3,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-kernel-runtime.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "ProgressView",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-model-picker-header.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "VStack(alignment: .leading",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-model-picker-header.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "RemoteDiskSettingsView()",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": "self.error = error.localizedDescription",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskBrowserView.swift",
+      "literal": ".confirmationDialog",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-scheduled-activity.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "Button(\"取消\")",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/browser/BrowserRequestTakeoverTests.swift"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "    private func ",
+      "before": 0,
+      "after": 2,
+      "direction": "added",
+      "scripts": [
+        "scripts/extract-provider-chat-chrome.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "        defer {",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/test-kernel-runtime.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "VStack(alignment: .leading",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-model-picker-header.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "testConnection",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "hostKeyUntrusted",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "setKnownHost",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": "self.error = error.localizedDescription",
+      "before": 0,
+      "after": 5,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Views/Servers/RemoteDiskSettingsView.swift",
+      "literal": ".swipeActions",
+      "before": 0,
+      "after": 1,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py",
+        "scripts/verify-scheduled-activity.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteStorageWireSupport.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskStore.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskService.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskSettingsView.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "AIChatViewModel+RemoteDisks.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": "RemoteDiskBrowserView.swift",
+      "before": 0,
+      "after": 6,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py"
+      ]
+    },
+    {
+      "file": "Ze.xcodeproj/project.pbxproj",
+      "literal": " in Sources */",
+      "before": 992,
+      "after": 1004,
+      "direction": "added",
+      "scripts": [
+        "scripts/verify-netdisk.py",
+        "scripts/verify-scheduled-tasks.py",
+        "scripts/verify-tool-collapse.py"
+      ]
+    }
+  ]
+}

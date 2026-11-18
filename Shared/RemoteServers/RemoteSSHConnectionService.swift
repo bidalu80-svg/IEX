@@ -15,6 +15,7 @@ final class RemoteSSHConnectionService: ObservableObject {
     @Published private(set) var diagnostics: [UUID: [RemoteServerConnectionDiagnostic]] = [:]
 
     private var clients: [UUID: SSHClient] = [:]
+    private var connectedProfiles: [UUID: RemoteServerProfile] = [:]
     private var didAttemptConnectionRestore = false
     private let logger = AppLogger(category: "RemoteServers")
 
@@ -65,7 +66,17 @@ final class RemoteSSHConnectionService: ObservableObject {
                 hostKeyValidator: .custom(keyValidator),
                 reconnect: .never
             )
+            guard RemoteServerStore.shared.server(id: server.id)?.updatedAt == server.updatedAt else {
+                try? await client.close()
+                throw RemoteServerError.connectionFailed("服务器凭据或配置已变化，请重新连接")
+            }
+            if let previous = clients.removeValue(forKey: server.id) { try? await previous.close() }
+            guard RemoteServerStore.shared.server(id: server.id)?.updatedAt == server.updatedAt else {
+                try? await client.close()
+                throw RemoteServerError.connectionFailed("服务器凭据或配置已变化，请重新连接")
+            }
             clients[server.id] = client
+            connectedProfiles[server.id] = server
             try RemoteServerStore.shared.markConnected(server.id)
             await append(.init(phase: .ready, title: "SSH 连接已建立"), for: server.id)
         } catch {
@@ -75,8 +86,9 @@ final class RemoteSSHConnectionService: ObservableObject {
         }
     }
 
-    func disconnect(serverID: UUID) async {
+    func disconnect(serverID: UUID, preserveSessionCredentials: Bool = false) async {
         let client = clients.removeValue(forKey: serverID)
+        connectedProfiles.removeValue(forKey: serverID)
         do {
             try RemoteServerStore.shared.markDisconnected(serverID)
         } catch {
@@ -92,11 +104,33 @@ final class RemoteSSHConnectionService: ObservableObject {
                 // transport-close error cannot resurrect it and is safe to ignore.
             }
         }
-        RemoteServerSessionCredentials.shared.clear(for: serverID)
+        if !preserveSessionCredentials { RemoteServerSessionCredentials.shared.clear(for: serverID) }
+    }
+
+    /// Detach synchronously before a credential writer changes the Keychain.
+    /// Closing the detached transport may suspend; it cannot be reused meanwhile.
+    func invalidateCredentialConnection(serverID: UUID) {
+        let client = clients.removeValue(forKey: serverID)
+        connectedProfiles.removeValue(forKey: serverID)
+        if let client { Task { try? await client.close() } }
     }
 
     func isConnected(to serverID: UUID) -> Bool {
         clients[serverID] != nil
+    }
+
+    /// Disk reads revalidate the configuration behind an existing transport.
+    /// Metadata edits (including changed host trust/credentials) force a fresh
+    /// handshake instead of silently reading the previously connected server.
+    func ensureReadOnlyConnection(to server: RemoteServerProfile) async throws {
+        if let connected = connectedProfiles[server.id], clients[server.id] != nil,
+           connected.host == server.host, connected.port == server.port,
+           connected.username == server.username, connected.authentication == server.authentication,
+           connected.knownHost == server.knownHost, connected.updatedAt == server.updatedAt {
+            return
+        }
+        if clients[server.id] != nil { await disconnect(serverID: server.id, preserveSessionCredentials: true) }
+        try await connect(to: server)
     }
 
     /// Executes a user-approved command. The caller must enforce AI policy and
@@ -143,22 +177,35 @@ final class RemoteSSHConnectionService: ObservableObject {
         }
     }
 
+    /// Canonicalize both paths on the server before a disk read. Symlinks
+    /// outside the configured disk root are rejected.
+    func readOnlyPath(_ path: String, root: String, on serverID: UUID) async throws -> String {
+        try await withSFTP(on: serverID) { sftp in
+            let base = try await sftp.getRealPath(atPath: root)
+            let target = try await sftp.getRealPath(atPath: path)
+            let prefix = base == "/" ? "/" : base + "/"
+            guard target == base || target.hasPrefix(prefix) else { throw RemoteDiskError.invalidAddress }
+            return target
+        }
+    }
+
     /// A bounded download avoids turning a malicious or malformed SFTP size
     /// response into an unbounded in-memory allocation on the phone.
     func downloadFile(at remotePath: String, on serverID: UUID, maximumBytes: Int = 256 * 1_024 * 1_024) async throws -> Data {
         try await withSFTP(on: serverID) { sftp in
             let attributes = try await sftp.getAttributes(at: remotePath)
             if let size = attributes.size, size > UInt64(maximumBytes) {
-                throw RemoteServerError.connectionFailed("文件超过本次下载上限（256 MB）")
+                throw RemoteServerError.connectionFailed("文件超过本次下载上限（\(maximumBytes) 字节）")
             }
             return try await sftp.withFile(filePath: remotePath, flags: .read) { file in
                 var data = Data()
                 var offset: UInt64 = 0
                 while true {
+                    try Task.checkCancellation()
                     let chunk = try await file.read(from: offset, length: 32_000)
                     guard chunk.readableBytes > 0 else { break }
                     guard data.count <= maximumBytes - chunk.readableBytes else {
-                        throw RemoteServerError.connectionFailed("文件超过本次下载上限（256 MB）")
+                        throw RemoteServerError.connectionFailed("文件超过本次下载上限（\(maximumBytes) 字节）")
                     }
                     data.append(contentsOf: chunk.readableBytesView)
                     offset += UInt64(chunk.readableBytes)

@@ -72,6 +72,7 @@ final class ChatKeyboardViewportController: UIViewController {
     private static let keyboardTransitionSettleDelay: TimeInterval = 0.12
     static let keyboardTransitionFallbackDelay: TimeInterval = 0.6
     static let keyboardTransitionDidEndNotification = Notification.Name("ChatKeyboardViewportTransitionDidEnd")
+    // Only list content waits for settle; composer display state stays live.
     private var pendingUpdate: (() -> Void)?
 
     // [T-keyboard-hang-1253] Render-key gates for the two hosting roots.
@@ -93,7 +94,6 @@ final class ChatKeyboardViewportController: UIViewController {
     private var hostLayoutNeedsUpdate = true
     private var composerLayoutNeedsUpdate = true
     private var pendingHostSettleLayout = false
-    private var pendingComposerSettleLayout = false
 
     private var appliedFadeCompleteY: CGFloat?
     private var appliedUsesWindowHeaderFade: Bool?
@@ -203,17 +203,15 @@ final class ChatKeyboardViewportController: UIViewController {
             // out synchronously; that preserves fe75410's in-transaction
             // bottom alignment (and the keyboard's intermediate positions)
             // without re-entering a hosting tree on a keyplane-only pass whose
-            // bounds did not move. Root replacements and other owed work are
-            // authored once by the post-transaction settle pass.
+            // bounds did not move. List root replacements wait for settle;
+            // composer display changes must enter layout immediately.
             if hostSizeChanged {
                 performHostLayout()
             } else if hostLayoutNeedsUpdate {
                 pendingHostSettleLayout = true
             }
-            if composerSizeChanged {
+            if composerSizeChanged || composerLayoutNeedsUpdate {
                 performComposerLayout()
-            } else if composerLayoutNeedsUpdate {
-                pendingComposerSettleLayout = true
             }
             return
         }
@@ -221,7 +219,6 @@ final class ChatKeyboardViewportController: UIViewController {
         if hostLayoutNeedsUpdate || hostSizeChanged { performHostLayout() }
         if composerLayoutNeedsUpdate || composerSizeChanged { performComposerLayout() }
         if pendingHostSettleLayout { performHostLayout() }
-        if pendingComposerSettleLayout { performComposerLayout() }
     }
 
     private static func sizeChanged(_ current: CGSize, from previous: CGSize) -> Bool {
@@ -248,7 +245,6 @@ final class ChatKeyboardViewportController: UIViewController {
         composerHost.view.layoutIfNeeded()
         lastComposerLaidOutSize = composerHost.view.bounds.size
         composerLayoutNeedsUpdate = false
-        pendingComposerSettleLayout = false
     }
 
     @objc private func keyboardWillChangeFrame() { beginKeyboardTransition() }
@@ -294,8 +290,20 @@ final class ChatKeyboardViewportController: UIViewController {
         keyboardTransitionEndWork?.cancel()
         keyboardTransitionEndWork = nil
         guard isKeyboardTransitioning else { return }
+        // Resolve the parent's latest keyboard constraints and the live
+        // composer's target geometry while width/height publication is gated.
+        // Laying out only composerHost can still use its old parent bounds.
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        if composerLayoutNeedsUpdate
+            || Self.sizeChanged(composerHost.view.bounds.size, from: lastComposerLaidOutSize) {
+            performComposerLayout()
+        }
+        // The single end signal now commits width/height from that geometry,
+        // before draining list content and doing its final layout.
+        NotificationCenter.default.post(name: Self.keyboardTransitionDidEndNotification, object: self)
         isKeyboardTransitioning = false
-        // Apply only the newest update, with the keyboard transaction closed.
+        // Apply only the newest list update, with the transaction closed.
         let update = pendingUpdate
         pendingUpdate = nil
         update?()
@@ -308,8 +316,6 @@ final class ChatKeyboardViewportController: UIViewController {
         // hosting trees; resolve any owed work now, outside the keyboard's
         // UIKit transaction.
         if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
-        if pendingComposerSettleLayout || composerLayoutNeedsUpdate { performComposerLayout() }
-        NotificationCenter.default.post(name: Self.keyboardTransitionDidEndNotification, object: self)
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {
@@ -339,17 +345,6 @@ final class ChatKeyboardViewportController: UIViewController {
         #if DEBUG
         KeyboardHangProbe.recordViewportUpdate()
         #endif
-        if isKeyboardTransitioning {
-            // Root assignment itself can synchronously enter SwiftUI layout.
-            // Coalesce the entire hosted update until the same settle pass.
-            pendingUpdate = { [weak self] in
-                self?.applyUpdate(content: content, composer: composer,
-                                  contentRenderKey: contentRenderKey, composerRenderKey: composerRenderKey,
-                                  avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fadeCompleteY,
-                                  usesWindowHeaderFade: usesWindowHeaderFade)
-            }
-            return
-        }
         applyUpdate(content: content, composer: composer,
                     contentRenderKey: contentRenderKey, composerRenderKey: composerRenderKey,
                     avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fadeCompleteY,
@@ -374,22 +369,16 @@ final class ChatKeyboardViewportController: UIViewController {
         // (`latestInputBarFrameH`) never rebuilds either hosting tree; the
         // settled `inputBarHeight` only appears in the caller's keys because
         // the popup/message inset consumes it, once per transition.
-        var rootsChanged = false
-        // A nil key means the host is driven by a standalone harness that has
-        // no content-version model: keep the old replace-every-update path.
-        let replaceContent = contentRenderKey == nil
-            || !hasRenderedContentRoot
-            || lastContentRenderKey != contentRenderKey
-        if replaceContent {
-            lastContentRenderKey = contentRenderKey
-            hasRenderedContentRoot = true
-            host.rootView = Self.root(content)
-            hostLayoutNeedsUpdate = true
-            rootsChanged = true
-            #if DEBUG
-            KeyboardHangProbe.recordContentRootReplacement()
-            #endif
+        if isKeyboardTransitioning {
+            // Coalesce list content only. Keyboard visibility/focus changes in
+            // the composer key must reach its root at transition start.
+            pendingUpdate = { [weak self] in
+                self?.applyContentUpdate(content: content, contentRenderKey: contentRenderKey)
+            }
+        } else {
+            applyContentUpdate(content: content, contentRenderKey: contentRenderKey)
         }
+        var rootsChanged = false
         let replaceComposer = composerRenderKey == nil
             || !hasRenderedComposerRoot
             || lastComposerRenderKey != composerRenderKey
@@ -403,10 +392,6 @@ final class ChatKeyboardViewportController: UIViewController {
             KeyboardHangProbe.recordComposerRootReplacement()
             #endif
         }
-        // A rootView replacement can mount a fresh collection view while the
-        // keyboard is still moving. Carry the frozen-measurement window over
-        // to it until the deferred settle pass runs.
-        if rootsChanged, isKeyboardTransitioning { applyKeyboardTransitionFlag(true) }
         if rootsChanged, isViewLoaded { view.setNeedsLayout() }
         guard self.avoidsKeyboard != avoidsKeyboard else { return }
         self.avoidsKeyboard = avoidsKeyboard
@@ -420,6 +405,23 @@ final class ChatKeyboardViewportController: UIViewController {
         (avoidsKeyboard ? keyboardBottom : restingBottom).isActive = true
         (avoidsKeyboard ? composerKeyboardBottom : composerRestingBottom).isActive = true
         view.setNeedsLayout()
+    }
+
+    private func applyContentUpdate(content: AnyView, contentRenderKey: AnyHashable?) {
+        // A nil key keeps the standalone harness's replace-every-update path.
+        let replaceContent = contentRenderKey == nil
+            || !hasRenderedContentRoot
+            || lastContentRenderKey != contentRenderKey
+        guard replaceContent else { return }
+        lastContentRenderKey = contentRenderKey
+        hasRenderedContentRoot = true
+        host.rootView = Self.root(content)
+        hostLayoutNeedsUpdate = true
+        #if DEBUG
+        KeyboardHangProbe.recordContentRootReplacement()
+        #endif
+        if isKeyboardTransitioning { applyKeyboardTransitionFlag(true) }
+        if isViewLoaded { view.setNeedsLayout() }
     }
 }
 

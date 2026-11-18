@@ -840,6 +840,14 @@ extension AIChatViewModel {
                 messages[msgIdx].blocks[blockIdx].content = toolOutput
             }
 
+        case "remote_disk_list":
+            let diskResult = await executeRemoteDiskList(toolArgs)
+            toolOutput = diskResult.output
+            toolSuccess = diskResult.success
+            if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
+                messages[msgIdx].blocks[blockIdx].content = toolOutput
+            }
+
         case "remote_server_draft", "remote_server_list", "remote_server_command", "remote_sftp_list", "remote_sftp_read", "remote_sftp_write", "remote_server_configure_credentials", "remote_server_delete":
             let remoteResult = await RemoteServerAIToolGateway.execute(name: tu.name, arguments: toolArgs)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

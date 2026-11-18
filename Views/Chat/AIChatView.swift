@@ -402,6 +402,7 @@ struct AIChatView: View {
     @State private var showCamera = false
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
+    @State private var showRemoteDiskPicker = false
     @State private var showMoveToSheet = false
     @State private var showClearChatConfirm = false
     /// [T-new-chat-menu-entry] Confirmation gate for "New Chat" from the "…"
@@ -524,7 +525,7 @@ struct AIChatView: View {
     /// True when any sheet or fullScreenCover is presented (suppress auto-focus to avoid keyboard bugs).
     private var hasOverlayPresented: Bool {
         showFileBrowser || showBrowserSheet || showTerminal || showCamera
-            || showPhotoPicker || showDocumentPicker || showModelPicker || showSoulSettings
+            || showPhotoPicker || showDocumentPicker || showRemoteDiskPicker || showModelPicker || showSoulSettings
             || remoteServerAIDraftStore.pending != nil
     }
 
@@ -608,11 +609,12 @@ struct AIChatView: View {
             errorMessage: vm.errorMessage,
             transientNotice: vm.transientNotice,
             isNearBottom: vm.isNearBottom,
-            isAtFirstTurn: vm.isAtFirstTurn,
             inputBarHeight: inputBarHeight,
             standaloneAttachmentTrayHeight: standaloneAttachmentTrayHeight,
             floatingBarHeight: floatingBarHeight,
             hasFloatingPreview: hasFloatingPreview,
+            toolStatusBarEnabled: toolStatusBarEnabled,
+            toolPreviewEnabled: toolPreviewEnabled,
             maxContentWidth: maxContentWidth,
             headerOverflowInset: headerOverflowInset,
             voiceCallActive: voiceCallPresentation.isActive,
@@ -628,6 +630,10 @@ struct AIChatView: View {
 
     private var chatComposerRenderKey: ChatComposerRenderKey {
         ChatComposerRenderKey(
+            messageCount: vm.messages.count,
+            isNearBottom: vm.isNearBottom,
+            floatingBarHeight: floatingBarHeight,
+            standaloneAttachmentTrayHeight: standaloneAttachmentTrayHeight,
             inputText: vm.inputText,
             pendingQuote: vm.pendingQuote,
             pendingCaret: vm.pendingCaret,
@@ -667,6 +673,9 @@ struct AIChatView: View {
             inputBarHeight: inputBarHeight,
             maxContentWidth: maxContentWidth,
             attachmentGridHeight: attachmentGridHeight,
+            hasFloatingPreview: hasFloatingPreview,
+            toolStatusBarEnabled: toolStatusBarEnabled,
+            toolPreviewEnabled: toolPreviewEnabled,
             inputFontSize: FontSettings.shared.scaledChatInput(16.5),
             isDark: chatRenderColorScheme == .dark)
     }
@@ -688,29 +697,50 @@ struct AIChatView: View {
                         else { vm.dismissMentionMenu() }
                     }
             }
+            // Structural anchoring follows even the first accessory layout,
+            // before its geometry callback has published a measured height.
             VStack(spacing: 0) {
-                // With tools visible, the tray shares their accessory layout.
-                // Counting it as a preceding row lifts it by the preview height.
-                if !hasFloatingPreview { attachmentPreviewTray }
-                floatingToolPreview
-                    .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
-                #if DEBUG
-                if isReadOnly {
-                    forkBanner
-                } else {
-                    inputBar
+                // Own the button's hit bounds; its overlay anchors to the visible
+                // shapes below, excluding transparent composer/attachment gutters.
+                if !vm.messages.isEmpty && !vm.isNearBottom {
+                    Color.clear.frame(height: 36 + 12).allowsHitTesting(false)
                 }
-                #else
-                inputBar
-                #endif
+                VStack(spacing: 0) {
+                    // With tools visible, the tray shares their accessory layout.
+                    // Counting it as a preceding row lifts it by the preview height.
+                    if !hasFloatingPreview { attachmentPreviewTray }
+                    floatingToolPreview
+                        .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
+                    #if DEBUG
+                    if isReadOnly {
+                        forkBanner.chatScrollArrowAnchor()
+                    } else {
+                        inputBar
+                    }
+                    #else
+                    inputBar
+                    #endif
+                }
+                // Register the composer (tool preview + input bar) as a
+                // region the global speech capsule must not cover.
+                .capsuleProtectedFrame("inputBar")
+                .disabled(voiceCallPresentation.isActive)
+                .opacity(showChatSearch ? 0 : 1)
+                .allowsHitTesting(!showChatSearch)
+                .accessibilityHidden(showChatSearch)
             }
-            // Register the composer (tool preview + input bar) as a
-            // region the global speech capsule must not cover.
-            .capsuleProtectedFrame("inputBar")
-            .disabled(voiceCallPresentation.isActive)
-            .opacity(showChatSearch ? 0 : 1)
-            .allowsHitTesting(!showChatSearch)
-            .accessibilityHidden(showChatSearch)
+            .overlayPreferenceValue(ChatScrollArrowAnchorKey.self) { regions in
+                GeometryReader { geometry in
+                    if let visibleTop = regions.compactMap({ region -> CGFloat? in
+                        let bounds = geometry[region.bounds]
+                        let visible = region.clip.map { bounds.intersection(geometry[$0]) } ?? bounds
+                        return visible.isNull || visible.isEmpty ? nil : visible.minY
+                    }).min() {
+                        scrollToBottomControl
+                            .position(x: geometry.size.width / 2, y: visibleTop - (36 + 12) / 2)
+                    }
+                }
+            }
             // [T-keyboard-hang P0-1.3] Deliberately retained: the current
             // ZStack(alignment: .bottom) implementation puts the popup's
             // bottom edge at the composer's bottom minus this padding. The
@@ -1469,6 +1499,12 @@ struct AIChatView: View {
                         }
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showRemoteDiskPicker) {
+            RemoteDiskPickerView { url in
+                try vm.addRemoteDiskAttachment(from: url)
+                showRemoteDiskPicker = false
             }
         }
         .sheet(isPresented: $showDocumentPicker) {
@@ -2691,52 +2727,8 @@ struct AIChatView: View {
                     .padding(.horizontal, 24)
             }
         }
-        .overlay(alignment: .bottom) {
-            // Open the overlay only when at least one button will actually
-            // render — i.e. the gate is the OR of the two buttons' own
-            // conditions. Otherwise an in-between state (e.g. far from top but
-            // within one screen of the bottom, at rest) would mount an empty
-            // VStack.
-            if !vm.messages.isEmpty && !vm.isNearBottom {
-                VStack(spacing: 10) {
-                    // Up-button: walk back one user turn at a time. Visible when
-                    // off the bottom AND there's still an earlier turn to jump to
-                    // (isAtFirstTurn == false). Once the user has walked all the
-                    // way up to the first turn, it hides — nothing further up.
-                    if !vm.isAtFirstTurn {
-                        Button {
-                            vm.forceScrollToTop.send()
-                        } label: {
-                            scrollFloatingButtonLabel("chevron.up")
-                        }
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    }
-                    // Scroll to bottom — ORIGINAL behavior: shown whenever not
-                    // near the bottom (within the 20pt nearBottom threshold), so
-                    // it appears as soon as you leave the bottom.
-                    Button {
-                        vm.forceScrollToBottom.send()
-                    } label: {
-                        scrollFloatingButtonLabel("chevron.down")
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                }
-                .padding(.trailing, 4)
-                .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .trailing)
-                .padding(.horizontal, 12)
-                .padding(.bottom, inputBarHeight + standaloneAttachmentTrayHeight + (hasFloatingPreview ? max(floatingBarHeight, 80) : 12))
-                .animation(.easeInOut(duration: 0.2), value: vm.isNearBottom)
-                .animation(.easeInOut(duration: 0.2), value: vm.isAtFirstTurn)
-                .animation(.easeInOut(duration: 0.2), value: hasFloatingPreview)
-                // The capsule must not cover these floating scroll-jump buttons.
-                .capsuleProtectedFrame("scrollButtons")
-            }
-        }
-        // [T-browser-download-ux-v2] Floating download button — same visual
-        // family as the scroll buttons, stacked ABOVE their slot (the scroll
-        // group can show up to two 36pt buttons + spacing, so offset by 92pt)
-        // so the two never overlap regardless of scroll state. Hidden while
-        // the session has no download records.
+        // [T-browser-download-ux-v2] Keep the download control in its existing
+        // trailing lane; the scroll-to-bottom control now occupies the center.
         .overlay(alignment: .bottom) {
             BrowserDownloadFloatingButton(sessionId: vm.sessionId ?? "") {
                 showDownloadsPanel = true
@@ -2750,17 +2742,31 @@ struct AIChatView: View {
         }
     }
 
-    /// Shared label style for the floating scroll buttons (up / down), matching
-    /// the original scroll-to-bottom button look.
-    private func scrollFloatingButtonLabel(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.secondary)
+    /// The composer stack owns the control's hit bounds. Same-pass anchors on
+    /// visible shapes place its bottom edge 12pt above the highest visible
+    /// accessory, including attachment remove buttons, without cached geometry.
+    @ViewBuilder
+    private var scrollToBottomControl: some View {
+        if !vm.messages.isEmpty && !vm.isNearBottom {
+            Button {
+                vm.forceScrollToBottom.send()
+            } label: {
+                scrollToBottomButtonLabel
+            }
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            .frame(maxWidth: maxContentWidth ?? .infinity, alignment: .center)
+            .padding(.bottom, 12)
+            .animation(.easeInOut(duration: 0.2), value: vm.isNearBottom)
+            .capsuleProtectedFrame("scrollButtons")
+        }
+    }
+
+    private var scrollToBottomButtonLabel: some View {
+        Image(systemName: "arrow.down")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.primary)
             .frame(width: 36, height: 36)
             .background { ScrollToBottomBackground().clipShape(Circle()) }
-            // Border + shadow give the near-opaque disc its edge on a white
-            // page — at 0.25/0.12 the button had no readable outline over
-            // plain reply text. [T-ios-scrollbtn-invisible-lightmode]
             .overlay(Circle().stroke(Color.gray.opacity(0.35), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
     }
@@ -2831,21 +2837,6 @@ struct AIChatView: View {
     // in ZeApp beside AudioPiPCapsule) so it persists across chat → home. No
     // per-session copy is rendered here anymore.
     private var floatingSpeechButton: some View { EmptyView() }
-
-    /// Height the floating scroll-jump button stack occupies right now (0 when
-    /// hidden), used to lift the speech control so the two never overlap. Mirrors
-    /// the visibility conditions of the jump-button overlay above.
-    private var scrollJumpButtonsHeight: CGFloat {
-        guard !vm.messages.isEmpty else { return 0 }
-        // Up and down buttons now share one condition (!isNearBottom): both are
-        // present together or both hidden.
-        guard !vm.isNearBottom else { return 0 }
-        // Sized for the TALLEST case (both buttons: 2×36 + 10 spacing = 82pt). The
-        // control already rests +48pt above the buttons' baseline, so lift the
-        // excess over that head start, plus a 10pt gap.
-        let maxStack: CGFloat = 2 * 36 + 10
-        return max(0, maxStack + 10 - 48)
-    }
 
     // MARK: - Fork Banner (Read-Only Mode)
 
@@ -3203,6 +3194,7 @@ struct AIChatView: View {
                 Button { showCamera = true } label: { Label("拍摄照片", systemImage: "camera") }
                 Button { showPhotoPicker = true } label: { Label("选择照片或视频", systemImage: "photo.on.rectangle") }
                 Button { showDocumentPicker = true } label: { Label("添加文件", systemImage: "doc") }
+                Button { showRemoteDiskPicker = true } label: { Label("网络磁盘", systemImage: "externaldrive") }
             } label: {
                 icon
             }
@@ -3214,6 +3206,7 @@ struct AIChatView: View {
                 Button { showCamera = true } label: { Label("拍摄照片", systemImage: "camera") }
                 Button { showPhotoPicker = true } label: { Label("选择照片或视频", systemImage: "photo.on.rectangle") }
                 Button { showDocumentPicker = true } label: { Label("添加文件", systemImage: "doc") }
+                Button { showRemoteDiskPicker = true } label: { Label("网络磁盘", systemImage: "externaldrive") }
             }
         }
     }
@@ -3843,9 +3836,11 @@ struct AIChatView: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
                 .background(Color.yellow.opacity(0.08))
+                .chatScrollArrowAnchor()
             }
 
             inputComposerChrome
+            .chatScrollArrowAnchor()
             .background(ChatCallLayoutMarker(identifier: "chat.verify.input"))
             // [T-chat-auto-compact-warning] Red mist around the composer,
             // matching the provider-switch breathing highlight. The opacity
@@ -4614,6 +4609,10 @@ struct AIChatView: View {
             .frame(height: attachmentTrayHeight)
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
             .padding(.horizontal, hasFloatingPreview ? 0 : 12)
+            // Only visible parts of scrolled chips may anchor the arrow.
+            .transformAnchorPreference(key: ChatScrollArrowAnchorKey.self, value: .bounds) { regions, clip in
+                for index in regions.indices { regions[index].clip = clip }
+            }
             .background(ChatCallLayoutMarker(identifier: "chat.verify.attachments"))
         }
     }
@@ -6313,11 +6312,12 @@ private struct ChatViewportContentRenderKey: Hashable {
     let errorMessage: String?
     let transientNotice: String?
     let isNearBottom: Bool
-    let isAtFirstTurn: Bool
     let inputBarHeight: CGFloat
     let standaloneAttachmentTrayHeight: CGFloat
     let floatingBarHeight: CGFloat
     let hasFloatingPreview: Bool
+    let toolStatusBarEnabled: Bool
+    let toolPreviewEnabled: Bool
     let maxContentWidth: CGFloat?
     let headerOverflowInset: CGFloat
     let voiceCallActive: Bool
@@ -6337,6 +6337,10 @@ private struct ChatViewportContentRenderKey: Hashable {
 /// `composerRowWidth` is likewise the settled one-line column basis, published
 /// once per composer transition, never the per-frame width sample.
 private struct ChatComposerRenderKey: Hashable {
+    let messageCount: Int
+    let isNearBottom: Bool
+    let floatingBarHeight: CGFloat
+    let standaloneAttachmentTrayHeight: CGFloat
     let inputText: String
     let pendingQuote: MessageQuote?
     let pendingCaret: Int?
@@ -6376,6 +6380,9 @@ private struct ChatComposerRenderKey: Hashable {
     let inputBarHeight: CGFloat
     let maxContentWidth: CGFloat?
     let attachmentGridHeight: CGFloat
+    let hasFloatingPreview: Bool
+    let toolStatusBarEnabled: Bool
+    let toolPreviewEnabled: Bool
     let inputFontSize: CGFloat
     let isDark: Bool
 }

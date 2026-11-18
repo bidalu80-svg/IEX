@@ -177,6 +177,7 @@ struct InputAttachmentGridView: View {
                 AttachmentChip(attachment: attachment) {
                     onRemove(attachment)
                 }
+                .chatScrollArrowAnchor()
                 .opacity(draggingID == attachment.id ? 0.4 : 1)
                 .onDrag {
                     draggingID = attachment.id
@@ -190,6 +191,7 @@ struct InputAttachmentGridView: View {
             }
             ForEach(0..<loadingVideoCount, id: \.self) { _ in
                 VideoLoadingChip()
+                    .chatScrollArrowAnchor()
             }
         }
         .padding(.horizontal, 16)
@@ -333,6 +335,7 @@ private struct AttachmentChip: View {
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.5), radius: 2)
             }
+            .chatScrollArrowAnchor()
             .offset(x: 4, y: -4)
         }
         .fixedSize()
@@ -371,6 +374,7 @@ private struct AttachmentChip: View {
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.5), radius: 2)
                 }
+                .chatScrollArrowAnchor()
                 .offset(x: 4, y: -4)
             }
             .fixedSize()
@@ -468,6 +472,7 @@ private struct AttachmentChip: View {
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.4), radius: 2)
             }
+            .chatScrollArrowAnchor()
             .offset(x: 4, y: -4)
         }
         .fixedSize()
@@ -1705,5 +1710,27 @@ private extension UIView {
             responder = r.next
         }
         return nil
+    }
+}
+
+/// Same-pass anchors for the scroll arrow. A tray supplies a clipping region
+/// so offscreen attachment rows never affect the visible upper edge.
+struct ChatScrollArrowAnchorKey: PreferenceKey {
+    struct Region {
+        let bounds: Anchor<CGRect>
+        var clip: Anchor<CGRect>? = nil
+    }
+    static var defaultValue: [Region] = []
+    static func reduce(value: inout [Region], nextValue: () -> [Region]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+extension View {
+    func chatScrollArrowAnchor() -> some View {
+        // Preserve child anchors, especially the chip's overhanging remove button.
+        transformAnchorPreference(key: ChatScrollArrowAnchorKey.self, value: .bounds) { regions, bounds in
+            regions.append(ChatScrollArrowAnchorKey.Region(bounds: bounds))
+        }
     }
 }

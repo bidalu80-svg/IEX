@@ -133,7 +133,7 @@ struct SpeechPlayerControl: View {
         // resting corner moves with the layout, but a dragged offset that was
         // valid in the old size may now push the capsule outside the window —
         // re-clamp it into the new bounds (after the base frame re-measures),
-        // like the scroll-to-bottom/top buttons that are layout-constrained.
+        // like the scroll-to-bottom button that is layout-constrained.
         .background(
             GeometryReader { geo in
                 Color.clear.onChange(of: geo.size) { _ in scheduleReclamp() }
@@ -369,7 +369,7 @@ struct SpeechPlayerControl: View {
     /// Debounced re-clamp of the current drag offset into the CURRENT window
     /// bounds — runs after rotation / Stage Manager resize (and after restore),
     /// once the base frame has re-measured. Keeps the capsule inside the window
-    /// the same way the scroll-to-bottom/top buttons stay layout-constrained.
+    /// the same way the scroll-to-bottom button stays layout-constrained.
     @State private var reclampTask: Task<Void, Never>?
     private func scheduleReclamp() {
         reclampTask?.cancel()

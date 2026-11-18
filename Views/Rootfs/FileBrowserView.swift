@@ -44,6 +44,7 @@ struct FileBrowserView: View {
     @State private var showExportSheet = false
     @State private var previewingFile: FileItem?
     @State private var editingFile: FileItem?
+    @State private var showNetworkDisks = false
     @State private var showImportPicker = false
     @State private var itemToDelete: FileItem?
     @State private var moveOrCopyItem: FileItem?
@@ -167,7 +168,14 @@ struct FileBrowserView: View {
             }
         }
         .animation(.spring(response: 0.3), value: copiedToast)
+        .sheet(isPresented: $showNetworkDisks) { RemoteDiskPickerView() }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Menu {
+                    Button("本地文件") {}
+                    Button("网络磁盘") { showNetworkDisks = true }
+                } label: { Label("文件来源", systemImage: "externaldrive") }
+            }
             ToolbarItem(placement: .navigationBarLeading) {
                 Button("Close") {
                     dismiss()

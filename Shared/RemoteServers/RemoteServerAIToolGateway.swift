@@ -428,10 +428,12 @@ enum RemoteServerAIToolGateway {
             )
             guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
             do {
-                try RemoteServerSecretStore.save(password, kind: .password, for: server.id)
-                RemoteServerSecretStore.delete(kind: .privateKey, for: server.id)
-                RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
-                RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
+                try RemoteServerCredentialChange.perform(for: server.id) {
+                    try RemoteServerSecretStore.save(password, kind: .password, for: server.id)
+                    RemoteServerSecretStore.delete(kind: .privateKey, for: server.id)
+                    RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
+                    RemoteServerSessionCredentials.shared.setPassword(password, for: server.id)
+                }
                 return .init(output: "Success: Saved the password for '\(server.name)' to the device Keychain. The value was not returned or logged.", success: true)
             } catch {
                 return .init(output: "Error: Could not save the server password: \(error.localizedDescription)", success: false)
@@ -456,14 +458,16 @@ enum RemoteServerAIToolGateway {
             )
             guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
             do {
-                try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: server.id)
-                if let passphrase {
-                    try RemoteServerSecretStore.save(passphrase, kind: .privateKeyPassphrase, for: server.id)
-                } else {
-                    RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
+                try RemoteServerCredentialChange.perform(for: server.id) {
+                    try RemoteServerSecretStore.save(privateKey, kind: .privateKey, for: server.id)
+                    if let passphrase {
+                        try RemoteServerSecretStore.save(passphrase, kind: .privateKeyPassphrase, for: server.id)
+                    } else {
+                        RemoteServerSecretStore.delete(kind: .privateKeyPassphrase, for: server.id)
+                    }
+                    RemoteServerSecretStore.delete(kind: .password, for: server.id)
+                    RemoteServerSessionCredentials.shared.clear(for: server.id)
                 }
-                RemoteServerSecretStore.delete(kind: .password, for: server.id)
-                RemoteServerSessionCredentials.shared.clear(for: server.id)
                 return .init(output: "Success: Saved the private key\(passphrase == nil ? "" : " and passphrase") for '\(server.name)' to the device Keychain. The values were not returned or logged.", success: true)
             } catch {
                 return .init(output: "Error: Could not save the server private key: \(error.localizedDescription)", success: false)

@@ -5587,6 +5587,11 @@ private struct SettingsSheet: View {
 
                 Section("服务器与连接") {
                     NavigationLink {
+                        RemoteDiskSettingsView()
+                    } label: {
+                        Label("网络磁盘", systemImage: "externaldrive.connected.to.line.below")
+                    }
+                    NavigationLink {
                         RemoteServersView()
                     } label: {
                         Label {

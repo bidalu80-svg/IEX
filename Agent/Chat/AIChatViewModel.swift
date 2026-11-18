@@ -808,10 +808,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Establish follow intent before inserting a composer message, without
     /// starting a scroll animation towards the pre-send content size.
     let composerWillSend = PassthroughSubject<Void, Never>()
-    /// Force scroll-to-top (first message). Used by the floating "scroll to
-    /// first message" button — a counterpart to forceScrollToBottom that does
-    /// NOT change auto-scroll mode (jumping to the top is always a browse action).
-    let forceScrollToTop = PassthroughSubject<Void, Never>()
     /// Signal sent when a text block transitions from empty to non-empty content.
     /// The coordinator reconfigures the affected cell so UIHostingConfiguration
     /// re-measures its height (UIKit doesn't always trigger preferredLayoutAttributesFitting
@@ -830,26 +826,6 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     let retrySnapshotReloadSignal = PassthroughSubject<Void, Never>()
     /// Whether the message list is scrolled near the bottom. Updated by CollectionViewMessageList.
     @Published var isNearBottom: Bool = true
-
-    /// Whether the viewport is already at the very first user turn's top — i.e.
-    /// the up-button ("scroll to previous turn") has nowhere further up to go.
-    /// Drives ONLY the up-button's visibility (the down-button still keys off
-    /// isNearBottom): once the user has walked all the way up, the up-button
-    /// hides. Updated by CollectionViewMessageList on scroll/jump.
-    @Published var isAtFirstTurn: Bool = false
-
-    /// [ScrollDiag] View-layer record of a scroll-jump button's actual SwiftUI
-    /// mount/unmount, so a ring dump (debug.scrollMetrics) can be diffed against
-    /// the VM-side buttonsVisible. `up` picks which button; `visible` is true on
-    /// appear, false on disappear. DEBUG-only; compiled out in Release.
-    func recordScrollButtonRender(up: Bool, visible: Bool) {
-        #if DEBUG
-        ScrollMetricsRecorder.shared.record(
-            kind: "btnRender",
-            a: visible ? 1 : 0,
-            pos: "\(up ? "up" : "down")-\(visible ? "appear" : "disappear") vmNearBottom=\(isNearBottom)")
-        #endif
-    }
 
     // Note: Stream throttle timestamps (lastTextDeltaFlush, lastFileWriteStreamUpdate,
     // lastToolInputStreamUpdate) are now local vars inside processStreamEvents().

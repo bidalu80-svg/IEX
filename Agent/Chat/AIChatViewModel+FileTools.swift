@@ -227,12 +227,24 @@ extension AIChatViewModel {
             return FileToolResult(output: "Error: Missing required 'path' parameter", success: false)
         }
 
-        guard let hostURL = await resolvePathForDirectRead(path) else {
-            return FileToolResult(output: "Error: Invalid path: \(path)", success: false)
+        let hostURL: URL
+        var remoteLocalPath: String?
+        if Self.isRemoteDiskPath(path) {
+            do {
+                let cached = try await prepareRemoteDiskFile(path)
+                hostURL = cached.url; remoteLocalPath = cached.linuxPath
+            } catch {
+                return FileToolResult(output: "网络磁盘读取失败：" + error.localizedDescription, success: false)
+            }
+        } else {
+            guard let localURL = await resolvePathForDirectRead(path) else {
+                return FileToolResult(output: "Error: Invalid path: \(path)", success: false)
+            }
+            hostURL = localURL
         }
 
         let offset = max(1, (dict["offset"] as? Int) ?? 1)
-        let maxLines = dict["lines"] as? Int  // nil means no line limit
+        let maxLines = (dict["lines"] as? Int).map { max(0, $0) }  // nil means no line limit
         // T-FILEREAD-CAP: hard upper bound on returned content length.
         // Pre-cap, the agent could ask for `max_length=1_000_000` and we'd
         // happily inline a 400 KB base64 image into a tool_result —
@@ -242,7 +254,7 @@ extension AIChatViewModel {
         // the same oversized reads regardless of the agent-supplied value.
         let kMaxFileReadChars = 80_000
         let requested = (dict["max_length"] as? Int) ?? Self.kMaxToolResultChars
-        let maxLength = min(requested, kMaxFileReadChars)
+        let maxLength = max(0, min(requested, kMaxFileReadChars))
         let direction = (dict["direction"] as? String)?.lowercased() ?? "head"
 
         guard FileManager.default.fileExists(atPath: hostURL.path) else {
@@ -257,12 +269,18 @@ extension AIChatViewModel {
             return FileToolResult(output: "Error reading \(path): \(error.localizedDescription)", success: false)
         }
 
+        let remoteNotice = remoteLocalPath.map { "\nlocal_path: \($0)\nUse this local path with read_image / media tools; this is a downloaded copy." } ?? ""
+        let mediaExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tiff", "mp4", "mov", "m4v", "avi", "mkv", "mp3", "m4a", "wav", "aac", "flac", "ogg", "pdf"]
+        if remoteLocalPath != nil && mediaExtensions.contains(hostURL.pathExtension.lowercased()) {
+            return FileToolResult(output: "[\(path) | \(fileData.count) bytes | downloaded media]" + remoteNotice, success: true)
+        }
+
         let sampleSize = min(fileData.count, 512)
         let sample = fileData.prefix(sampleSize)
         if sample.contains(0) {
             let hexPreview = fileData.prefix(64).map { String(format: "%02x", $0) }.joined(separator: " ")
             return FileToolResult(
-                output: "[\(path) | \(fileData.count) bytes | binary file]\nHex preview: \(hexPreview)",
+                output: "[\(path) | \(fileData.count) bytes | binary file]\nHex preview: \(hexPreview)" + remoteNotice,
                 success: true
             )
         }
@@ -288,7 +306,7 @@ extension AIChatViewModel {
         } else {
             let startIdx = min(offset - 1, allLines.count)
             let lineLimit = maxLines ?? (allLines.count - startIdx)
-            let endIdx = min(startIdx + lineLimit, allLines.count)
+            let endIdx = startIdx + min(lineLimit, allLines.count - startIdx)
             selectedLines = allLines[startIdx..<endIdx]
             displayStart = startIdx + 1
             displayEnd = endIdx
@@ -309,7 +327,7 @@ extension AIChatViewModel {
         }
         header += "]"
 
-        var output = "\(header)\n\(content)"
+        var output = "\(header)\n\(content)" + remoteNotice
         if let zeURL = linuxPathToZeURL(path) {
             output += "\nze_url: \(zeURL)"
         }
@@ -323,6 +341,10 @@ extension AIChatViewModel {
               let path = dict["path"] as? String,
               let content = dict["content"] as? String else {
             return FileToolResult(output: "Error: Missing required 'path' and/or 'content' parameters", success: false)
+        }
+
+        if Self.isRemoteDiskPath(path) {
+            return FileToolResult(output: RemoteDiskError.readOnly.localizedDescription, success: false)
         }
 
         #if DEBUG
@@ -524,6 +546,10 @@ extension AIChatViewModel {
               let oldString = dict["old_string"] as? String,
               let newString = dict["new_string"] as? String else {
             return FileToolResult(output: "Error: Missing required parameters (path, old_string, new_string)", success: false)
+        }
+
+        if Self.isRemoteDiskPath(path) {
+            return FileToolResult(output: RemoteDiskError.readOnly.localizedDescription, success: false)
         }
 
         // Pre-reject edits to read-only mounts via Linux path first — immune

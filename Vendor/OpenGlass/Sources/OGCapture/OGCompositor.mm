@@ -73,8 +73,8 @@ struct GradientLUTEntry {
 static const uint32_t kBitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
 static const int kFrameBufferCount = 3;
 static const int kMaxMaskNesting = 4;
-static const size_t kMaxCacheBytes = 32 * 1024 * 1024;
-static const size_t kEvictTargetBytes = 24 * 1024 * 1024;
+static const size_t kMaxCacheBytes = 8 * 1024 * 1024; // [T-glass-cache] 32MB→8MB：Ze 仅顶栏一处玻璃，缓存吃不满 8MB
+static const size_t kEvictTargetBytes = 6 * 1024 * 1024; // [T-glass-cache] 24MB→6MB：与上限保持原 75% 比例，否则淘汰循环只删一条就停
 
 static void drawShapeLayer(CAShapeLayer *layer, CGContextRef ctx) {
     CGPathRef path = layer.path;
@@ -938,6 +938,11 @@ static void flushDrawBatch(uint32_t &batchStart,
 
 - (nullable id<MTLTexture>)_fallbackTextureForLayer:(CALayer *)layer scale:(CGFloat)scale renderSubtree:(BOOL)renderSubtree {
     CGSize size = layer.bounds.size;
+    if (!isfinite(size.width) || size.width <= 0 ||
+        !isfinite(size.height) || size.height <= 0 ||
+        !isfinite(scale) || scale <= 0) return nil;
+    // Skip oversized fallbacks before integer conversion or bitmap allocation.
+    if (ceil(size.width * scale) > 16384 || ceil(size.height * scale) > 16384) return nil;
     int pw = (int)ceil(size.width * scale);
     int ph = (int)ceil(size.height * scale);
     if (pw <= 0 || ph <= 0) return nil;

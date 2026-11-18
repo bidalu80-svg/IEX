@@ -34,7 +34,7 @@
 | 1811–1993 | sessionExportHeader 标题/模型/日期/头像快照；trailingMenu 所有动作与toggle；open/closeChatSearch；新建时运行任务确认；runForceSync 和 runForcePull 及异步刷新/结果toast。 |
 | 1994–2432 | 标题相关计算：chatNavPrincipalContent、chatToolbarKey、compact布局、Fast mode能力、navTitleKey、titleView、状态胶囊、锁定标题；refreshTitlePillSession 等待actor再MainActor核对sid写状态。 |
 | 2433–2665 | 内核启动/失败覆盖、错误横幅长按复制、messagesArea：所有消息操作callback、截图与分享入口、scrollMemoryKey；新用户欢迎条件，跳转/下载按钮与底部安全高度；ScrollToBottomBackground。 |
-| 2666–2772 | 浮动工具预览、hasAnyToolBlocks；浮动语音本地为EmptyView，实际全局胶囊在app root；scrollJumpButtonsHeight；DEBUG remote read-only fork banner。 |
+| 2666–2772 | 浮动工具预览、hasAnyToolBlocks；浮动语音本地为EmptyView，实际全局胶囊在app root；DEBUG remote read-only fork banner。 |
 | 2773–3070 | 所有全屏关闭；Markdown图片扫描、跨消息gallery身份、canonical/fingerprint缓存与加载；http/ze路由；外部拖放分fileURL/image/file representation并在callback内staging安全作用域副本。 |
 | 3071–3351 | 附件菜单版本分支、inputBottomRow leaf擦除、三态朗读toggle、slash/edit/language按钮、voice模式切换、send/queue/stop图标；inputFieldOrWaveform三路径与文本修正异步记录。 |
 | 3352–3433 | Return/Arrow/Tab/Caret键盘分派；composer展开条件与padding；updateSoftwareKeyboardVisibility 用窗口坐标判断软键盘并沿系统duration动画。 |
@@ -176,13 +176,13 @@
 2436: private var kernelBootOverlay: some View {
 2478: private func errorBanner(_ error: String) -> some View {
 2507: private var messagesArea: some View {
-2638: private func scrollFloatingButtonLabel(_ systemName: String) -> some View {
+2742: private var scrollToBottomControl: some View {
+2757: private var scrollToBottomButtonLabel: some View {
 2659: private struct ScrollToBottomBackground: View {
 2661: var body: some View {
 2669: private var floatingToolPreview: some View {
 2701: private var hasAnyToolBlocks: Bool {
 2715: private var floatingSpeechButton: some View { EmptyView() }
-2720: private var scrollJumpButtonsHeight: CGFloat {
 2735: private var forkBanner: some View {
 2793: private func dismissAllOwnedImmersiveCovers() {
 2802: private func handleMarkdownImageTap(_ note: Notification) {

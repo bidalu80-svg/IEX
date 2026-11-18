@@ -792,20 +792,7 @@ private struct RemoteStorageBackupEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(String(localized: "基本信息")) {
-                    TextField(String(localized: "名称"), text: $name)
-                    TextField(proto == .webdav ? String(localized: "服务器 URL 或主机") : String(localized: "主机"), text: $host)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    TextField(String(localized: "端口"), text: $port).keyboardType(.numberPad)
-                    Toggle(String(localized: "使用 TLS / HTTPS"), isOn: $tls)
-                }
-                Section(String(localized: "认证信息")) {
-                    TextField(String(localized: "用户名 / Access Key"), text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    SecureField(proto == .s3 ? String(localized: "Secret Key") : String(localized: "密码"), text: $password)
-                }
-                if proto == .smb { Section(String(localized: "SMB 共享")) { TextField(String(localized: "共享名称"), text: $share) } }
-                if proto == .s3 { Section(String(localized: "S3 设置")) { TextField(String(localized: "存储桶"), text: $bucket); TextField(String(localized: "区域"), text: $region) } }
-                Section(String(localized: "远程路径")) { TextField(String(localized: "文件夹路径"), text: $path).textInputAutocapitalization(.never).autocorrectionDisabled() }
+                RemoteStorageConfigurationFields(profile: configurationBinding, secret: $password)
                 if let errorMessage { Section { Text(errorMessage).foregroundStyle(.red) } }
                 Section { Button { testConnection() } label: { if testing { ProgressView() } else { Label(String(localized: "测试连接"), systemImage: "checkmark.circle") } }.disabled(testing) }
             }
@@ -817,8 +804,20 @@ private struct RemoteStorageBackupEditor: View {
         }
     }
 
+    private var configurationBinding: Binding<RemoteStorageProfile> {
+        Binding(get: {
+            RemoteStorageProfile(name: name, proto: proto, host: host,
+                port: Int(port) ?? (proto == .smb ? 445 : proto == .ftp ? (tls ? 990 : 21) : (tls ? 443 : 80)),
+                username: username, path: path, share: share, bucket: bucket, region: region, useTLS: tls)
+        }, set: { value in
+            name = value.name; host = value.host; port = String(value.port)
+            username = value.username; path = value.path; share = value.share ?? ""
+            bucket = value.bucket ?? ""; region = value.region ?? ""; tls = value.useTLS
+        })
+    }
+
     private func makeProfile() throws -> RemoteStorageProfile {
-        let defaultPort: Int = proto == .smb ? 445 : (proto == .ftp ? 21 : (proto == .s3 ? 443 : (tls ? 443 : 80)))
+        let defaultPort: Int = proto == .smb ? 445 : (proto == .ftp ? (tls ? 990 : 21) : (tls ? 443 : 80))
         let value = Int(port) ?? defaultPort
         guard (1...65535).contains(value) else { throw RemoteStorageClientError.invalidConfiguration(String(localized: "端口必须是 1 到 65535 之间的数字")) }
         return RemoteStorageProfile(name: name.trimmingCharacters(in: .whitespacesAndNewlines), proto: proto,
@@ -941,8 +940,10 @@ private struct SFTPBackupServerEditor: View {
             let profile = RemoteServerProfile(id: id, name: cleanName, host: cleanHost, port: portValue,
                                               username: cleanUser, authentication: .password)
             try RemoteServerStore.shared.save(profile)
-            try RemoteServerSecretStore.save(password, kind: .password, for: id)
-            RemoteServerSessionCredentials.shared.setPassword(password, for: id)
+            try RemoteServerCredentialChange.perform(for: id) {
+                try RemoteServerSecretStore.save(password, kind: .password, for: id)
+                RemoteServerSessionCredentials.shared.setPassword(password, for: id)
+            }
             let path = remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
             onSave(.init(name: cleanName, kind: .sftpServer, serverID: id, remotePath: path.isEmpty ? "/" : path))
         } catch {

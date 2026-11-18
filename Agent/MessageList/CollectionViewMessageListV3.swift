@@ -2108,7 +2108,6 @@ extension CollectionViewMessageListV3 {
                     self.isAnimatingScrollToBottom = false
                     self.vm?.setStreamingUIUpdatesSuspended(false)
                     self.scrollMode = .autoScrolling
-                    self.lastJumpedUserId = nil
                 }
                 .store(in: &subscriptions)
 
@@ -2133,19 +2132,7 @@ extension CollectionViewMessageListV3 {
                     AppLogger(category: "ScrollDiag").info("[ScrollDiag][forceScrollToBottom] window=\(cv?.window != nil) contentSize=\(String(format: "%.0f", cv?.contentSize.height ?? 0)) bounds=\(String(format: "%.0f", cv?.bounds.height ?? 0)) adjInsetBot=\(String(format: "%.0f", cv?.adjustedContentInset.bottom ?? 0)) heightCache=\(cachedCount) precalc=\(precalcCount) visibleCells=\(cv?.visibleCells.count ?? 0)")
                     self.vm?.setStreamingUIUpdatesSuspended(false)
                     self.scrollMode = .autoScrolling
-                    // Jumping to the bottom resets the up-button's turn-walk.
-                    self.lastJumpedUserId = nil
                     self.scrollToBottomNow(animated: true)
-                }
-                .store(in: &subscriptions)
-
-            // 2c. Up-button: walk back one user turn at a time. Browse action —
-            // do NOT re-enable auto-scroll (leave scrollMode as-is so streaming
-            // doesn't yank the user back down after they jump up).
-            vm.forceScrollToTop
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] in
-                    self?.scrollToPreviousUserTurn(animated: true)
                 }
                 .store(in: &subscriptions)
 
@@ -2168,8 +2155,6 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] isLoading in
                     guard let self, !isLoading else { return }
-                    // Switching into a session resets the up-button turn-walk.
-                    self.lastJumpedUserId = nil
                     let isFirstLoad = self.previousSnapshotIds.isEmpty
                     // Only clear caches when items will actually change — prevents
                     // a duplicate dispatch from clearing caches that won't be rebuilt.
@@ -2985,10 +2970,6 @@ extension CollectionViewMessageListV3 {
             let messages = rawMessages.contains(where: { $0.isInternalBridge })
                 ? rawMessages.filter { !$0.isInternalBridge }
                 : rawMessages
-
-            // Content changed (new/removed messages) — the up-button's turn-walk
-            // anchor may no longer line up, so restart it on the next tap.
-            lastJumpedUserId = nil
 
             // Subscribe to thinking block toggle notifications (once)
             if attachmentSizeChangedSub == nil {
@@ -4260,16 +4241,6 @@ extension CollectionViewMessageListV3 {
             return isWithinBottom(nearBottomThreshold)
         }
 
-        /// True when the viewport is at (or within `threshold` of) the very top
-        /// of the content — the first message's top is showing. Drives the
-        /// up-button's hide: once the user has walked all the way up, there's
-        /// nowhere further to jump. The top resting offset is
-        /// -adjustedContentInset.top (content pinned under the nav bar).
-        func isAtContentTop(_ threshold: CGFloat = 8) -> Bool {
-            guard let cv = viewController?.collectionView else { return false }
-            return cv.contentOffset.y <= -cv.adjustedContentInset.top + threshold
-        }
-
         /// True when the content offset is within `threshold` pt of the
         /// maximum (bottom) offset.
         func isWithinBottom(_ threshold: CGFloat) -> Bool {
@@ -4304,7 +4275,6 @@ extension CollectionViewMessageListV3 {
             guard let vm, let cv = viewController?.collectionView, let ds = dataSource,
                   let message = vm.messages.first(where: { $0.id == hit.messageId }) else { return }
             scrollMode = .userBrowsing
-            lastJumpedUserId = nil
             if message.role == .user, !message.isUserTextExpanded {
                 toggleUserMessageExpansion(messageId: message.id)
             }
@@ -4357,13 +4327,6 @@ extension CollectionViewMessageListV3 {
             (view as? SelectableMarkdownTextView).map { [$0] } ?? view.subviews.flatMap { searchTextViews(in: $0) }
         }
 
-        /// The user-message id the up-button last jumped to, so a repeated tap
-        /// walks one turn further back. Reset (nil) whenever the anchoring
-        /// context changes — manual drag, jump-to-bottom, snapshot change, or
-        /// session load — so the next tap re-anchors to the current viewport
-        /// instead of continuing from a stale turn.
-        var lastJumpedUserId: UUID?
-
         /// [T-chat-search] The transient ring drawn around the row a search hit
         /// landed on. Held so a second jump replaces it instead of stacking.
         private var searchHighlightView: UIView?
@@ -4384,112 +4347,6 @@ extension CollectionViewMessageListV3 {
             let topMsgIdx = topItemMsgId.flatMap { id in msgs.firstIndex(where: { $0.id == id }) } ?? 0
             let anchor = msgs[...topMsgIdx].reversed().first(where: { $0.role == .user })?.id ?? userIds.first!
             return (userIds.firstIndex(of: anchor) ?? -1, userIds.count)
-        }
-
-        /// Up-button action: walk backwards through the conversation one user
-        /// turn at a time. Replaces the old "jump to the very first message":
-        ///   - First tap: scroll to the user message of the turn the viewport is
-        ///     currently in (nearest role==.user at or above the top visible item).
-        ///   - Repeated taps (no intervening drag / new message / etc): each tap
-        ///     goes to the PREVIOUS turn's user message.
-        ///   - At the first turn already: stay put, no overscroll.
-        /// A browse action — must NOT touch scrollMode (same rationale as the old
-        /// scrollToTopNow: leave auto-scroll as-is so streaming doesn't yank the
-        /// user back down after they jump up).
-        func scrollToPreviousUserTurn(animated: Bool = true) {
-            guard let cv = viewController?.collectionView,
-                  let vm, let ds = dataSource else { return }
-            let msgs = vm.messages
-            guard !msgs.isEmpty else { return }
-
-            // Ordered list of user-message ids as they appear in the conversation.
-            let userIds = msgs.compactMap { $0.role == .user ? $0.id : nil }
-            guard !userIds.isEmpty else {
-                // No user turns (rare) — fall back to the top of the list.
-                if cv.numberOfSections > 0, cv.numberOfItems(inSection: 0) > 0 {
-                    cv.scrollToItem(at: IndexPath(item: 0, section: 0), at: .top, animated: animated)
-                }
-                return
-            }
-
-            // Resolve the message id at the top of the viewport → its message
-            // index → the nearest user message at or above it (the current turn's
-            // anchor).
-            let topItemMsgId: UUID? = cv.indexPathsForVisibleItems.min()
-                .flatMap { ds.itemIdentifier(for: $0) }
-                .flatMap { Self.messageId(of: $0) }
-            let topMsgIdx = topItemMsgId.flatMap { id in msgs.firstIndex(where: { $0.id == id }) } ?? 0
-            let currentAnchor = msgs[...topMsgIdx].reversed().first(where: { $0.role == .user })?.id ?? userIds.first!
-
-            // Decide the target: if the viewport is already at the anchor we last
-            // jumped to (user has seen this turn's start), step to the previous
-            // turn; otherwise land on the current turn's anchor first.
-            let target: UUID
-            if lastJumpedUserId == currentAnchor,
-               let pos = userIds.firstIndex(of: currentAnchor), pos > 0 {
-                target = userIds[pos - 1]
-            } else {
-                target = currentAnchor
-            }
-
-            guard let targetItem = ds.snapshot().itemIdentifiers.first(where: {
-                if case .wholeMessage(let id) = $0, id == target { return true }
-                return false
-            }), let ip = ds.indexPath(for: targetItem) else {
-                AppLogger(category: "ScrollDiag").info("[ScrollDiag][prevUserTurn] ABORT target item not found target=\(target.uuidString.prefix(8))")
-                return
-            }
-
-            lastJumpedUserId = target
-            let curTurn = userIds.firstIndex(of: currentAnchor) ?? -1
-            let tgtTurn = userIds.firstIndex(of: target) ?? -1
-            AppLogger(category: "ScrollDiag").info("[ScrollDiag][prevUserTurn][CALL] curTurn=\(curTurn) targetTurn=\(tgtTurn)/\(userIds.count) topMsgIdx=\(topMsgIdx) currentAnchor=\(currentAnchor.uuidString.prefix(8)) target=\(target.uuidString.prefix(8)) ip=\(ip.section).\(ip.item) \(Self.nbDump(cv))")
-            // Also record to the in-memory ring (debug.scrollMetrics) — the
-            // on-device FILE log pipeline can stall, but the ring is live.
-            // idx=target user-turn index, a=current viewport turn, b=total turns,
-            // pos encodes the resulting button visibility for this frame.
-            #if DEBUG
-            let nbNow = isNearBottom()
-            ScrollMetricsRecorder.shared.record(kind: "prevUserTurn", idx: tgtTurn,
-                a: Double(curTurn), b: Double(userIds.count),
-                pos: "call buttonsVisible=\(!msgs.isEmpty && !nbNow)",
-                offset: Double(cv.contentOffset.y), note: Self.nbDump(cv))
-            #endif
-            cv.scrollToItem(at: ip, at: .top, animated: animated)
-            // Re-sync isNearBottom so the up/down buttons reflect the new
-            // position. Two syncs on purpose:
-            //  - the immediate main.async catches the common case;
-            //  - the delayed one covers UIKit's animated scrollToItem, whose
-            //    internal animation may not fire a terminal scrollViewDidScroll
-            //    at the settled offset. 0.4s covers the default scroll animation.
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                let cv2 = self.viewController?.collectionView
-                let nb = self.isNearBottom()
-                #if DEBUG
-                ScrollMetricsRecorder.shared.record(kind: "prevUserTurn",
-                    a: nb ? 1 : 0, b: (self.vm?.isNearBottom == true) ? 1 : 0,
-                    pos: "sync-immediate", offset: Double(cv2?.contentOffset.y ?? -9999),
-                    note: Self.nbDump(cv2))
-                #endif
-                _ = nb
-                self.syncScrollFlags()
-            }
-            if animated {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                    guard let self else { return }
-                    let cv2 = self.viewController?.collectionView
-                    let nb = self.isNearBottom()
-                    #if DEBUG
-                    ScrollMetricsRecorder.shared.record(kind: "prevUserTurn",
-                        a: nb ? 1 : 0, b: (self.vm?.isNearBottom == true) ? 1 : 0,
-                        pos: "sync-0.4s", offset: Double(cv2?.contentOffset.y ?? -9999),
-                        note: Self.nbDump(cv2))
-                    #endif
-                    _ = nb
-                    self.syncScrollFlags()
-                }
-            }
         }
 
         /// Compact dump of the isWithinBottom inputs for ScrollDiag logs.
@@ -4650,15 +4507,8 @@ extension CollectionViewMessageListV3 {
             }
         }
 
-        /// Push the current near-bottom / far-from-top readings to the view
-        /// model (change-gated to avoid @Published churn). Call after any
-        /// programmatic scroll whose terminal scrollViewDidScroll may not fire
-        /// or may land just outside a threshold.
-        /// Re-sync isNearBottom after a programmatic jump (up-turn walk /
-        /// jump-to-bottom) so the floating up/down buttons — both gated on
-        /// !isNearBottom — reflect the settled position even when the terminal
-        /// scrollViewDidScroll lands just outside the threshold. Called on the
-        /// main thread after a jump settles.
+        /// Re-sync the scroll-to-bottom button after a programmatic jump,
+        /// whose terminal scrollViewDidScroll may not fire at the settled offset.
         func syncScrollFlags() {
             guard let vm else { return }
             let nb = isNearBottom()
@@ -4666,8 +4516,6 @@ extension CollectionViewMessageListV3 {
                 AppLogger(category: "ScrollDiag").info("[ScrollDiag][syncScrollFlags] isNearBottom \(vm.isNearBottom)→\(nb) \(Self.nbDump(viewController?.collectionView))")
                 vm.isNearBottom = nb
             }
-            let atTop = isAtContentTop()
-            if vm.isAtFirstTurn != atTop { vm.isAtFirstTurn = atTop }
         }
 
         // MARK: - Scrolling Screenshot Capture
@@ -5323,10 +5171,6 @@ extension CollectionViewMessageListV3 {
             scrollMode = .userBrowsing
             // Cancel session-load clamp immediately — user has started interacting.
             clampAfterSessionLoad = false
-            // A manual drag breaks the up-button's turn-walk chain: the next tap
-            // should re-anchor to wherever the user landed, not continue the old
-            // sequence.
-            lastJumpedUserId = nil
             viewController?.messageListLayout?.deferSelfSizing = true
             vm?.setStreamingUIUpdatesSuspended(true)
         }
@@ -5515,7 +5359,7 @@ extension CollectionViewMessageListV3 {
                     #if DEBUG
                     // Diagnostics: record every isNearBottom TRANSITION with the
                     // scroll position and the user-turn the viewport is in, plus
-                    // the resulting up/down-button visibility (!messages.empty &&
+                    // the resulting scroll-to-bottom visibility (!messages.empty &&
                     // !isNearBottom). Only fires on change, so it stays off the
                     // per-frame hot path. ScrollMetricsRecorder is DEBUG-only.
                     let turn = currentViewportUserTurn()
@@ -5527,8 +5371,6 @@ extension CollectionViewMessageListV3 {
                     #endif
                     vm.isNearBottom = nb
                 }
-                let atTop = isAtContentTop()
-                if vm.isAtFirstTurn != atTop { vm.isAtFirstTurn = atTop }
                 vm.contentOffsetYSignal.send(scrollView.contentOffset.y)
             }
             // Detect offset jumps right after settle

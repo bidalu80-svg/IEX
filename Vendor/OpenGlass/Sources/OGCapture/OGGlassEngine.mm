@@ -543,7 +543,10 @@ struct LumUniforms {
     if (!commandBuffer) return;
     [_captureEngine advanceFrame];
 
-    CGFloat scale = _screenScale;
+    // [T-glass-capture] Cap background capture at 2x: the background is blurred
+    // and refracted, so a full-resolution 3x capture is wasted. The drawable
+    // stays at native resolution, so the glass outline is unaffected.
+    CGFloat scale = MIN(_screenScale, (CGFloat)2.0);
     id<CAMetalDrawable> pendingDrawables[32];
     int drawableCount = 0;
 
@@ -602,7 +605,7 @@ struct LumUniforms {
             [_scratchGlassLayers addObject:exclusion];
 
             CGFloat blur = (CGFloat)group.configs[i]->config.blurRadius;
-            CGFloat extra = blur + 30;
+            CGFloat extra = blur + 14;
             CGRect cr = CGRectInset(group.cachedRects[i], -extra, -extra);
             cr = CGRectIntersection(cr, source.bounds);
             if (cr.size.width > 0 && cr.size.height > 0) {
@@ -680,7 +683,7 @@ struct LumUniforms {
 
                 CGRect logicalRect = group.cachedRects[j];
                 CGFloat blur = (CGFloat)c.blurRadius;
-                CGRect captureRect = CGRectInset(logicalRect, -(blur + 30), -(blur + 30));
+                CGRect captureRect = CGRectInset(logicalRect, -(blur + 14), -(blur + 14));
                 captureRect = CGRectIntersection(captureRect, source.bounds);
                 if (captureRect.size.width <= 0 || captureRect.size.height <= 0) continue;
 

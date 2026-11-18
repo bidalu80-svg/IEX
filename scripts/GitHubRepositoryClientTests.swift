@@ -213,6 +213,101 @@ private final class FixtureProtocol: URLProtocol {
         precondition(stored == "new-metadata" && credential == "new-token")
         done("account transaction reports failure and retains old credential/metadata until success")
         precondition(GitHubAPI.scopes("repo, read:org workflow") == ["read:org", "repo", "workflow"])
+        let target = GitHubScopePolicy.requestedScopes
+        precondition(GitHubScopePolicy.state(for: target) == .satisfied)
+        precondition(GitHubScopePolicy.state(for: Array(target.reversed()) + target + ["extra:scope"]) == .satisfied)
+        for missingScope in target {
+            precondition(GitHubScopePolicy.state(for: target.filter { $0 != missingScope }) == .missing([missingScope]))
+            precondition(GitHubScopePolicy.missingDescription([missingScope]).contains(missingScope))
+        }
+        precondition(GitHubScopePolicy.state(for: nil) == .unknown)
+        precondition(GitHubScopePolicy.state(for: []) == .missing(target))
+        let inherited = GitHubScopePolicy.effectiveScopes([
+            "repo", "admin:org", "user", "admin:public_key", "admin:gpg_key",
+            "admin:ssh_signing_key", "write:packages", "project", "admin:enterprise",
+            "audit_log", "write:network_configurations"
+        ])
+        for child in ["public_repo", "repo:status", "repo_deployment", "repo:invite", "security_events",
+                      "admin:repo_hook", "write:repo_hook", "read:repo_hook", "write:org", "read:org",
+                      "read:user", "user:email", "user:follow", "write:public_key", "read:public_key",
+                      "write:gpg_key", "read:gpg_key", "write:ssh_signing_key", "read:ssh_signing_key",
+                      "read:packages", "read:project", "manage_runners:enterprise", "manage_billing:enterprise",
+                      "read:enterprise", "scim:enterprise", "read:audit_log", "read:network_configurations"] {
+            precondition(inherited.contains(child), "Missing inherited scope: \(child)")
+        }
+        precondition(!GitHubScopePolicy.effectiveScopes(["read:org", "read:user", "read:packages", "read:project"]).contains("admin:org"))
+        precondition(!inherited.contains("delete_repo") && !inherited.contains("admin:org_hook"))
+        precondition(!inherited.contains("workflow") && !inherited.contains("codespace:secrets"))
+        done("scope policy handles parents, transitive children, separate grants, duplicates, order, nil and empty")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: [
+            "id": UUID().uuidString, "login": "legacy", "displayName": "", "createdAt": "2026-01-01T00:00:00Z"
+        ])
+        let metadataDecoder = JSONDecoder()
+        metadataDecoder.dateDecodingStrategy = .iso8601
+        let legacyAccount = try metadataDecoder.decode(GitHubAccount.self, from: legacyData)
+        precondition(legacyAccount.grantedScopes == nil && legacyAccount.loginMethod == nil)
+        precondition(legacyAccount.scopeState == .unknown)
+        let rawScopes = ["user", "repo", "repo"]
+        let metadataEncoder = JSONEncoder()
+        metadataEncoder.dateEncodingStrategy = .iso8601
+        let manualAccount = GitHubAccount(id: legacyAccount.id, login: "legacy", displayName: "", avatarURL: nil,
+            createdAt: legacyAccount.createdAt, grantedScopes: rawScopes, loginMethod: .manualToken)
+        let roundTrip = try metadataDecoder.decode(GitHubAccount.self, from: metadataEncoder.encode(manualAccount))
+        precondition(roundTrip.grantedScopes == rawScopes && roundTrip.loginMethod == .manualToken)
+        done("legacy metadata decodes as unknown; raw grants and login method survive round trip")
+
+        try GitHubScopePolicy.validateLogin(login: "Example", expectedLogin: "example", grantedScopes: target, method: .deviceAuthorization)
+        let required = GitHubScopePolicy.requiredScopes
+        let pending = GitHubScopePolicy.pendingScopes
+        precondition(required.count == 16 && pending.count == 4 && Set(required).isDisjoint(with: pending))
+        for pendingScope in pending {
+            let grants = target.filter { $0 != pendingScope }
+            try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: "example", grantedScopes: grants, method: .deviceAuthorization)
+            let account = GitHubAccount(id: UUID(), login: "example", displayName: "", avatarURL: nil,
+                createdAt: .now, grantedScopes: grants, loginMethod: .deviceAuthorization)
+            let saved = try metadataDecoder.decode(GitHubAccount.self, from: metadataEncoder.encode(account))
+            precondition(saved.grantedScopes == grants && saved.scopeState == .missing([pendingScope]))
+            precondition(saved.permissionSummary.contains(pendingScope) && saved.permissionSummary.contains("待核验专项"))
+        }
+        try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: "example", grantedScopes: required, method: .deviceAuthorization)
+        let restrictedAccount = GitHubAccount(id: UUID(), login: "example", displayName: "", avatarURL: nil,
+            createdAt: .now, grantedScopes: required, loginMethod: .deviceAuthorization)
+        let savedRestricted = try metadataDecoder.decode(GitHubAccount.self, from: metadataEncoder.encode(restrictedAccount))
+        precondition(savedRestricted.grantedScopes == required && savedRestricted.scopeState == .missing(pending))
+        for pendingScope in pending { precondition(savedRestricted.permissionSummary.contains(pendingScope)) }
+        for missingRequired in required {
+            for grants in [target.filter { $0 != missingRequired }, required.filter { $0 != missingRequired }] {
+                do {
+                    try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: "example", grantedScopes: grants, method: .deviceAuthorization)
+                    fatalError("Expected missing mandatory scope rejection")
+                } catch GitHubConnectorError.permissionDenied(let detail) {
+                    precondition(detail.contains(missingRequired))
+                    for pendingScope in pending { precondition(!detail.contains(pendingScope)) }
+                }
+            }
+        }
+        done("pending scopes never block login; one or all missing stay in saved metadata/UI; all mandatory scopes remain enforced")
+        try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: nil, grantedScopes: nil, method: .manualToken)
+        try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: "example", grantedScopes: [], method: .manualToken)
+        let insufficientGrants: [[String]?] = [nil, [], target.filter { $0 != "delete_repo" }]
+        for grants in insufficientGrants {
+            do {
+                try GitHubScopePolicy.validateLogin(login: "example", expectedLogin: "example", grantedScopes: grants, method: .deviceAuthorization)
+                fatalError("Expected unverified or insufficient device grant rejection")
+            } catch GitHubConnectorError.permissionDenied(let detail) {
+                precondition(!detail.isEmpty)
+            }
+        }
+        for method in [GitHubLoginMethod.deviceAuthorization, .manualToken] {
+            do {
+                try GitHubScopePolicy.validateLogin(login: "other", expectedLogin: "example", grantedScopes: target, method: method)
+                fatalError("Expected target account mismatch rejection")
+            } catch GitHubConnectorError.accountMismatch(let expected, let actual) {
+                precondition(expected == "example" && actual == "other")
+            }
+        }
+        done("login policy rejects wrong accounts and unverified device grants, permits restricted manual tokens")
         precondition(GitHubAPI.encode("feature/a&ref=b") == "feature%2Fa%26ref%3Db")
         print("GitHub client runtime fixtures passed: \(passed)")
     }

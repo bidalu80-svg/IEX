@@ -2,8 +2,8 @@ import SwiftUI
 
 struct GitHubConnectorView: View {
     @StateObject private var store = GitHubAccountStore.shared
-    @State private var showingLogin = false
-    @State private var showingTokenLogin = false
+    @State private var deviceLoginRequest: GitHubLoginRequest?
+    @State private var tokenLoginRequest: GitHubLoginRequest?
 
     var body: some View {
         List {
@@ -21,13 +21,13 @@ struct GitHubConnectorView: View {
                 .padding(.vertical, 6)
 
                 Button {
-                    showingLogin = true
+                    deviceLoginRequest = GitHubLoginRequest(expectedLogin: nil)
                 } label: {
                     Label("登录 GitHub", systemImage: "person.crop.circle.badge.plus")
                 }
 
                 Button {
-                    showingTokenLogin = true
+                    tokenLoginRequest = GitHubLoginRequest(expectedLogin: nil)
                 } label: {
                     Label("使用访问令牌登录", systemImage: "key.fill")
                 }
@@ -62,14 +62,33 @@ struct GitHubConnectorView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                                Text(account.repositoryAccessSummary)
+                                Text(account.permissionSummary)
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if account.loginMethod == .manualToken {
+                                    Text("手工令牌：请在 GitHub 调整或重新生成权限后，再粘贴更新。")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if account.scopeState != .satisfied {
+                                    Button("补全账号权限") {
+                                        deviceLoginRequest = GitHubLoginRequest(expectedLogin: account.login)
+                                    }
+                                    .font(.caption)
+                                    .buttonStyle(.borderless)
+                                }
+                                if account.loginMethod == .manualToken || account.scopeState != .satisfied {
+                                    Button("更新访问令牌") {
+                                        tokenLoginRequest = GitHubLoginRequest(expectedLogin: account.login)
+                                    }
+                                    .font(.caption)
+                                    .buttonStyle(.borderless)
+                                }
                             }
                             Spacer()
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .accessibilityLabel("已连接")
+                            Image(systemName: account.scopeState == .satisfied ? "checkmark.circle.fill" : "exclamationmark.circle")
+                                .foregroundStyle(account.scopeState == .satisfied ? Color.green : Color.orange)
+                                .accessibilityLabel(account.permissionSummary)
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
@@ -79,7 +98,9 @@ struct GitHubConnectorView: View {
                             }
                         }
                         .contextMenu {
-                            Button("重新授权仓库权限") { showingLogin = true }
+                            Button("补全账号权限") {
+                                deviceLoginRequest = GitHubLoginRequest(expectedLogin: account.login)
+                            }
                             Button(role: .destructive) {
                                 store.delete(account)
                             } label: {
@@ -97,17 +118,23 @@ struct GitHubConnectorView: View {
             } message: { Text(store.persistenceError ?? "") }
         .navigationTitle("GitHub连接器")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showingLogin) {
-            GitHubAccountLoginSheet(store: store)
+        .sheet(item: $deviceLoginRequest) { request in
+            GitHubAccountLoginSheet(store: store, expectedLogin: request.expectedLogin)
         }
-        .sheet(isPresented: $showingTokenLogin) {
-            GitHubTokenLoginSheet(store: store)
+        .sheet(item: $tokenLoginRequest) { request in
+            GitHubTokenLoginSheet(store: store, expectedLogin: request.expectedLogin)
         }
     }
 }
 
+private struct GitHubLoginRequest: Identifiable {
+    let id = UUID()
+    let expectedLogin: String?
+}
+
 private struct GitHubAccountLoginSheet: View {
     @ObservedObject var store: GitHubAccountStore
+    let expectedLogin: String?
     @Environment(\.dismiss) private var dismiss
     @State private var authorization: GitHubDeviceAuthorization?
     @State private var isStarting = true
@@ -118,8 +145,14 @@ private struct GitHubAccountLoginSheet: View {
 
     var body: some View {
         NavigationStack {
+            ScrollView {
             VStack(spacing: 20) {
                 GitHubMark(size: 64)
+                if let expectedLogin {
+                    Text("正在为 \(expectedLogin) 补全权限，请在浏览器登录此账号。")
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                }
                 if isStarting {
                     ProgressView()
                     Text("正在准备 GitHub 登录…")
@@ -153,8 +186,16 @@ private struct GitHubAccountLoginSheet: View {
                             .controlSize(.small)
                     }
                     Text(store.oauthClientID == "178c6fc778ccc68e1d6a"
-                        ? "授权页显示 GitHub CLI。允许仓库、组织与工作流权限后返回此处；实际可写范围仍受仓库角色和组织策略约束。"
-                        : "授权完成后返回此处，页面会自动继续。")
+                        ? "授权页显示 GitHub CLI；撤销此应用授权也可能影响其他 GitHub CLI 使用。授权后返回此处核验。"
+                        : "授权页显示配置的 OAuth 应用名称。授权完成后返回此处核验。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("本次请求仓库及删除、组织、账号资料、密钥、包、Projects、Codespaces，以及企业、审计、Copilot 席位与网络配置权限。不会绕过账号角色、组织审批、SSO 或产品限制；也不代表已实现对应管理工具。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Text("这是一组有限的 OAuth scope，不等于所有账号能力；企业及产品专项的实际授权兼容性仍待验证。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -171,6 +212,7 @@ private struct GitHubAccountLoginSheet: View {
             }
             .padding()
             .frame(maxWidth: .infinity)
+            }
             .navigationTitle("登录 GitHub")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -188,6 +230,8 @@ private struct GitHubAccountLoginSheet: View {
         task?.cancel()
         isStarting = true
         isPolling = false
+        authorization = nil
+        copied = false
         errorMessage = nil
         task = Task { @MainActor in
             do {
@@ -195,11 +239,12 @@ private struct GitHubAccountLoginSheet: View {
                 authorization = next
                 isStarting = false
                 isPolling = true
-                _ = try await store.finishDeviceLogin(next)
+                _ = try await store.finishDeviceLogin(next, expectedLogin: expectedLogin)
                 finish()
             } catch is CancellationError {
                 // 用户关闭页面或系统取消了当前轮询。
             } catch {
+                guard !Task.isCancelled else { return }
                 isStarting = false
                 isPolling = false
                 errorMessage = error.localizedDescription
@@ -215,10 +260,12 @@ private struct GitHubAccountLoginSheet: View {
 
 private struct GitHubTokenLoginSheet: View {
     @ObservedObject var store: GitHubAccountStore
+    let expectedLogin: String?
     @Environment(\.dismiss) private var dismiss
     @State private var token = ""
     @State private var isLoggingIn = false
     @State private var errorMessage: String?
+    @State private var task: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -230,6 +277,13 @@ private struct GitHubTokenLoginSheet: View {
                     Text("令牌只用于验证账号和调用 GitHub API，保存后不会显示给模型。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Text("允许受限令牌登录，实际权限取决于所提供令牌。细粒度令牌不能仅凭 OAuth scope 判断权限；请在 GitHub 调整或重新生成后粘贴更新。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if let expectedLogin {
+                        Text("更新账号：\(expectedLogin)。其他账号的令牌不会替换原账号。")
+                            .font(.footnote)
+                    }
                 }
                 Section {
                     Button {
@@ -251,20 +305,26 @@ private struct GitHubTokenLoginSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button("取消") {
+                        task?.cancel()
+                        dismiss()
+                    }
                 }
             }
         }
+        .interactiveDismissDisabled(isLoggingIn)
+        .onDisappear { task?.cancel() }
     }
 
     private func login() {
         isLoggingIn = true
         errorMessage = nil
-        Task { @MainActor in
+        task = Task { @MainActor in
             do {
-                _ = try await store.loginWithToken(token)
+                _ = try await store.loginWithToken(token, expectedLogin: expectedLogin)
                 dismiss()
             } catch {
+                guard !Task.isCancelled else { return }
                 isLoggingIn = false
                 errorMessage = error.localizedDescription
             }

@@ -47,7 +47,7 @@ extension AIChatViewModel {
             ),
             AgentToolDefinition(
                 name: "file_read",
-                description: "Read a file from the Linux filesystem. Faster than shell_execute for reading files — no shell overhead. Returns file content with metadata. Rejects binary files.",
+                description: "Read a local file or a read-only remote-disk:// address returned by remote_disk_list. Media downloads return a local path for read_image. Faster than shell_execute for reading files — no shell overhead. Returns file content with metadata. Rejects binary files.",
                 parameters: [
                     "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Read Python script contents', 'Check system configuration file'). Use the same language as the user."),
                     "path": AgentToolParam(type: .string, description: "Absolute Linux path to read (e.g. /var/ze/workspace/data.csv)"),
@@ -247,6 +247,7 @@ extension AIChatViewModel {
         // never exposes credentials or Keychain material to the model.
         tools.append(contentsOf: sessionAgentToolDefinitions())
         tools.append(contentsOf: scheduledTaskAgentToolDefinitions())
+        tools.append(contentsOf: remoteDiskToolDefinitions())
         tools.append(contentsOf: RemoteServerAIToolGateway.definitions())
         tools.append(contentsOf: GitHubAIToolGateway.definitions())
         tools.append(contentsOf: mediaFavoriteToolDefinitions())

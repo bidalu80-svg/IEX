@@ -510,6 +510,7 @@
 		D7A900000000000000000001 /* RemoteServerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000011 /* RemoteServerModels.swift */; };
 		D7A900000000000000000002 /* RemoteServerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000012 /* RemoteServerStore.swift */; };
 		D7A900000000000000000003 /* RemoteServerSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000013 /* RemoteServerSecretStore.swift */; };
+		D8D170000000000000000001 /* RemoteServerCredentialChange.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D180000000000000000001 /* RemoteServerCredentialChange.swift */; };
 		D7A900000000000000000008 /* RemoteSSHConnectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000014 /* RemoteSSHConnectionService.swift */; };
 		D7A900000000000000000009 /* RemoteServersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000015 /* RemoteServersView.swift */; };
 		D7A90000000000000000000A /* RemoteSFTPBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */; };
@@ -560,6 +561,12 @@
 		0F1053B9DCB9B6161524CBF2 /* VoiceCallPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */; };
 		F7FD1BDF79751FD9D9179828 /* AIChatViewModel+VoiceCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */; };
 		4842985E9CA4FF04C81872D5 /* VoiceCallVerification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6253B005328ED088E433D78C /* VoiceCallVerification.swift */; };
+		D8D150000000000000000001 /* RemoteStorageWireSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000001 /* RemoteStorageWireSupport.swift */; };
+		D8D150000000000000000002 /* RemoteDiskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000002 /* RemoteDiskStore.swift */; };
+		D8D150000000000000000003 /* RemoteDiskService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000003 /* RemoteDiskService.swift */; };
+		D8D150000000000000000004 /* RemoteDiskSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000004 /* RemoteDiskSettingsView.swift */; };
+		D8D150000000000000000005 /* AIChatViewModel+RemoteDisks.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000005 /* AIChatViewModel+RemoteDisks.swift */; };
+		D8D150000000000000000006 /* RemoteDiskBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D160000000000000000006 /* RemoteDiskBrowserView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1210,6 +1217,7 @@
 		D7A900000000000000000011 /* RemoteServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerModels.swift; sourceTree = "<group>"; };
 		D7A900000000000000000012 /* RemoteServerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerStore.swift; sourceTree = "<group>"; };
 		D7A900000000000000000013 /* RemoteServerSecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerSecretStore.swift; sourceTree = "<group>"; };
+		D8D180000000000000000001 /* RemoteServerCredentialChange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServerCredentialChange.swift; sourceTree = "<group>"; };
 		D7A900000000000000000014 /* RemoteSSHConnectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSSHConnectionService.swift; sourceTree = "<group>"; };
 		D7A900000000000000000015 /* RemoteServersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteServersView.swift; sourceTree = "<group>"; };
 		D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSFTPBrowserView.swift; sourceTree = "<group>"; };
@@ -1259,6 +1267,12 @@
 		02B5AA0A7E7D04CFB8AA3DD6 /* VoiceCallPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Chat/Voice/VoiceCallPanel.swift"; sourceTree = SOURCE_ROOT; };
 		1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Agent/Chat/AIChatViewModel+VoiceCall.swift"; sourceTree = SOURCE_ROOT; };
 		6253B005328ED088E433D78C /* VoiceCallVerification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Debug/VoiceCallVerification.swift"; sourceTree = SOURCE_ROOT; };
+		D8D160000000000000000001 /* RemoteStorageWireSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteStorageWireSupport.swift; sourceTree = "<group>"; };
+		D8D160000000000000000002 /* RemoteDiskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskStore.swift; sourceTree = "<group>"; };
+		D8D160000000000000000003 /* RemoteDiskService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskService.swift; sourceTree = "<group>"; };
+		D8D160000000000000000004 /* RemoteDiskSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskSettingsView.swift; sourceTree = "<group>"; };
+		D8D160000000000000000005 /* AIChatViewModel+RemoteDisks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+RemoteDisks.swift"; sourceTree = "<group>"; };
+		D8D160000000000000000006 /* RemoteDiskBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDiskBrowserView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1878,9 +1892,13 @@
 				D7A900000000000000000011 /* RemoteServerModels.swift */,
 				D7A900000000000000000012 /* RemoteServerStore.swift */,
 				D7A900000000000000000013 /* RemoteServerSecretStore.swift */,
+				D8D180000000000000000001 /* RemoteServerCredentialChange.swift */,
 				D7A900000000000000000014 /* RemoteSSHConnectionService.swift */,
 				D7A900000000000000000018 /* RemoteServerAIToolGateway.swift */,
 				D7A900000000000000000019 /* RemoteStorageClients.swift */,
+				D8D160000000000000000003 /* RemoteDiskService.swift */,
+				D8D160000000000000000002 /* RemoteDiskStore.swift */,
+				D8D160000000000000000001 /* RemoteStorageWireSupport.swift */,
 			);
 			path = RemoteServers;
 			sourceTree = "<group>";
@@ -2111,6 +2129,7 @@
 				B10900000000000000000011 /* ScheduledTaskModels.swift */,
 				E5VMC0011 /* AIChatViewModel+ISHCommand.swift */,
 				E5VMC0012 /* AIChatViewModel+FileTools.swift */,
+				D8D160000000000000000005 /* AIChatViewModel+RemoteDisks.swift */,
 				E5VMD0011 /* ZeURLPathDecoding.swift */,
 				E5VMC0013 /* AIChatViewModel+Offloading.swift */,
 				1CDDCF627181232584E13066 /* AIChatViewModel+VoiceCall.swift */,
@@ -2353,6 +2372,8 @@
 			isa = PBXGroup;
 			children = (
 				D7A900000000000000000015 /* RemoteServersView.swift */,
+				D8D160000000000000000006 /* RemoteDiskBrowserView.swift */,
+				D8D160000000000000000004 /* RemoteDiskSettingsView.swift */,
 				D7A900000000000000000016 /* RemoteSFTPBrowserView.swift */,
 				D7A900000000000000000017 /* RemoteCommandConsoleView.swift */,
 			);
@@ -3143,12 +3164,19 @@
 				D7A900000000000000000001 /* RemoteServerModels.swift in Sources */,
 				D7A900000000000000000002 /* RemoteServerStore.swift in Sources */,
 				D7A900000000000000000003 /* RemoteServerSecretStore.swift in Sources */,
+				D8D170000000000000000001 /* RemoteServerCredentialChange.swift in Sources */,
 				D7A900000000000000000008 /* RemoteSSHConnectionService.swift in Sources */,
 				D7A900000000000000000009 /* RemoteServersView.swift in Sources */,
 				D7A90000000000000000000A /* RemoteSFTPBrowserView.swift in Sources */,
 				D7A90000000000000000000B /* RemoteCommandConsoleView.swift in Sources */,
 				D7A90000000000000000000C /* RemoteServerAIToolGateway.swift in Sources */,
 				D7A90000000000000000000F /* RemoteStorageClients.swift in Sources */,
+				D8D150000000000000000006 /* RemoteDiskBrowserView.swift in Sources */,
+				D8D150000000000000000005 /* AIChatViewModel+RemoteDisks.swift in Sources */,
+				D8D150000000000000000004 /* RemoteDiskSettingsView.swift in Sources */,
+				D8D150000000000000000003 /* RemoteDiskService.swift in Sources */,
+				D8D150000000000000000002 /* RemoteDiskStore.swift in Sources */,
+				D8D150000000000000000001 /* RemoteStorageWireSupport.swift in Sources */,
 				F9GH00000000000000000001 /* GitHubModels.swift in Sources */,
 				F9GH00000000000000000002 /* GitHubAccountStore.swift in Sources */,
 				F9GH00000000000000000003 /* GitHubAIToolGateway.swift in Sources */,

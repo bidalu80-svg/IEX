@@ -45,7 +45,7 @@ final class GitHubAccountStore: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = form(["client_id": clientID, "scope": "repo read:org workflow read:user user:email"])
+        request.httpBody = form(["client_id": clientID, "scope": GitHubScopePolicy.requestValue])
         let (data, response) = try await session.data(for: request)
         try validate(response, data: data)
         let value = try decoder.decode(DeviceResponse.self, from: data)
@@ -54,7 +54,7 @@ final class GitHubAccountStore: ObservableObject {
             verificationURL: verification, expiresIn: TimeInterval(value.expiresIn), pollingInterval: TimeInterval(value.interval ?? 5))
     }
 
-    func finishDeviceLogin(_ authorization: GitHubDeviceAuthorization) async throws -> GitHubAccount {
+    func finishDeviceLogin(_ authorization: GitHubDeviceAuthorization, expectedLogin: String? = nil) async throws -> GitHubAccount {
         guard let clientID = oauthClientID else { throw GitHubConnectorError.clientIDMissing }
         let deadline = Date().addingTimeInterval(authorization.expiresIn)
         var interval = authorization.pollingInterval
@@ -79,13 +79,15 @@ final class GitHubAccountStore: ObservableObject {
                 }
             }
             guard let token = tokenResponse?.accessToken else { throw GitHubConnectorError.malformedResponse }
-            return try await addAccount(token: token, grantedScopes: tokenResponse?.scope.map(GitHubAPI.scopes))
+            return try await addAccount(token: token, grantedScopes: tokenResponse?.scope.map(GitHubAPI.scopes),
+                                        method: .deviceAuthorization, expectedLogin: expectedLogin)
         }
         throw GitHubConnectorError.expiredDeviceCode
     }
 
-    func loginWithToken(_ token: String) async throws -> GitHubAccount {
-        try await addAccount(token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+    func loginWithToken(_ token: String, expectedLogin: String? = nil) async throws -> GitHubAccount {
+        try await addAccount(token: token.trimmingCharacters(in: .whitespacesAndNewlines),
+                             method: .manualToken, expectedLogin: expectedLogin)
     }
 
     func token(for accountID: UUID) -> String? {
@@ -108,15 +110,19 @@ final class GitHubAccountStore: ObservableObject {
         } catch { persistenceError = error.localizedDescription }
     }
 
-    private func addAccount(token: String, grantedScopes: [String]? = nil) async throws -> GitHubAccount {
+    private func addAccount(token: String, grantedScopes: [String]? = nil,
+                            method: GitHubLoginMethod, expectedLogin: String?) async throws -> GitHubAccount {
         guard !token.isEmpty else { throw GitHubConnectorError.invalidToken }
         let (data, response) = try await GitHubAPI(session: session).raw(path: "/user", token: token)
         let profile = try JSONDecoder().decode(GitHubUserProfile.self, from: data)
         let existing = accounts.first { $0.login.caseInsensitiveCompare(profile.login) == .orderedSame }
         let scopes = response.value(forHTTPHeaderField: "X-OAuth-Scopes").map(GitHubAPI.scopes) ?? grantedScopes
+        try GitHubScopePolicy.validateLogin(login: profile.login, expectedLogin: expectedLogin,
+                                            grantedScopes: scopes, method: method)
+        try Task.checkCancellation()
         let account = GitHubAccount(id: existing?.id ?? UUID(), login: profile.login,
             displayName: profile.name ?? "", avatarURL: profile.avatarURL,
-            createdAt: existing?.createdAt ?? .now, grantedScopes: scopes)
+            createdAt: existing?.createdAt ?? .now, grantedScopes: scopes, loginMethod: method)
         let original = accounts
         var updated = accounts
         if let index = updated.firstIndex(where: { $0.id == account.id }) { updated[index] = account }
