@@ -131,39 +131,71 @@ private struct RemoteDiskDetailView: View {
     @State private var pendingHost: RemoteKnownHost?
     @State private var pendingServerID: UUID?
     var body: some View {
+        diskContent
+            .alert("确认 SSH 主机指纹", isPresented: hostTrustPresented) {
+                Button("信任并重试") { trustHostAndRetry() }
+                Button("取消", role: .cancel) { pendingHost = nil }
+            } message: {
+                Text(hostTrustMessage)
+            }
+    }
+
+    @ViewBuilder private var diskContent: some View {
         Group {
             if let disk = try? store.disk(id: diskID) {
-                List {
-                    Section("验证结果") {
-                        let status = store.status(for: disk)
-                        LabeledContent("连接", value: status.connection)
-                        LabeledContent("列目录", value: status.listing)
-                        LabeledContent("读取", value: status.reading)
-                        if let date = status.checkedAt { Text(date.formatted()).font(.caption).foregroundStyle(.secondary) }
-                        Button(busy ? "验证中…" : "重新验证") { verify(disk) }.disabled(busy)
-                    }
-                    Section {
-                        NavigationLink("浏览只读磁盘 / 选择文件验证") { RemoteDiskBrowserView(diskID: diskID) }
-                        Text((try? RemoteDiskAddress(diskID: diskID).string) ?? "").font(.caption).textSelection(.enabled)
-                        Button("编辑配置") { editing = true }.disabled(busy)
-                    }
-                    if let error { Text(error).foregroundStyle(.red) }
-                }
-                .navigationTitle(disk.profile.name)
-                .sheet(isPresented: $editing) { RemoteDiskEditorView(disk: disk) }
+                diskDetails(disk)
             } else { Text("网络磁盘已删除") }
         }
-        .alert("确认 SSH 主机指纹", isPresented: Binding(get: { pendingHost != nil }, set: { if !$0 { pendingHost = nil } })) {
-            Button("信任并重试") {
-                do {
-                    guard let host = pendingHost, let id = pendingServerID else { return }
-                    try RemoteServerStore.shared.setKnownHost(host, for: id)
-                    pendingHost = nil
-                    if let disk = try? store.disk(id: diskID) { verify(disk) }
-                } catch { self.error = error.localizedDescription }
+    }
+
+    private func diskDetails(_ disk: RemoteDisk) -> some View {
+        List {
+            verificationSection(for: disk)
+            Section {
+                NavigationLink("浏览只读磁盘 / 选择文件验证") { RemoteDiskBrowserView(diskID: diskID) }
+                Text((try? RemoteDiskAddress(diskID: diskID).string) ?? "").font(.caption).textSelection(.enabled)
+                Button("编辑配置") { editing = true }.disabled(busy)
             }
-            Button("取消", role: .cancel) { pendingHost = nil }
-        } message: { Text("请与服务器管理员核对：\n" + (pendingHost?.algorithm ?? "") + "\n" + (pendingHost?.fingerprint ?? "")) }
+            if let error { Text(error).foregroundStyle(.red) }
+        }
+        .navigationTitle(disk.profile.name)
+        .sheet(isPresented: $editing) { RemoteDiskEditorView(disk: disk) }
+    }
+
+    private func verificationSection(for disk: RemoteDisk) -> some View {
+        Section("验证结果") {
+            let status = store.status(for: disk)
+            LabeledContent("连接", value: status.connection)
+            LabeledContent("列目录", value: status.listing)
+            LabeledContent("读取", value: status.reading)
+            if let date = status.checkedAt { Text(date.formatted()).font(.caption).foregroundStyle(.secondary) }
+            Button(busy ? "验证中…" : "重新验证") { verify(disk) }.disabled(busy)
+        }
+    }
+
+    private var hostTrustPresented: Binding<Bool> {
+        Binding<Bool>(
+            get: { pendingHost != nil },
+            set: { presented in
+                if !presented { pendingHost = nil }
+            }
+        )
+    }
+
+    private var hostTrustMessage: String {
+        let algorithm: String = pendingHost?.algorithm ?? ""
+        let fingerprint: String = pendingHost?.fingerprint ?? ""
+        let heading: String = "请与服务器管理员核对：\n"
+        return heading + algorithm + "\n" + fingerprint
+    }
+
+    private func trustHostAndRetry() {
+        do {
+            guard let host = pendingHost, let id = pendingServerID else { return }
+            try RemoteServerStore.shared.setKnownHost(host, for: id)
+            pendingHost = nil
+            if let disk = try? store.disk(id: diskID) { verify(disk) }
+        } catch { self.error = error.localizedDescription }
     }
     private func verify(_ disk: RemoteDisk) {
         busy = true; error = nil
