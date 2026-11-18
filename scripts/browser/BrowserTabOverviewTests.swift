@@ -59,14 +59,14 @@ check("a completed load asks the pool for a fresh thumbnail",
       manager.contains("self.onPageLoadFinished?()"))
 
 print("\n2. Snapshot cache (red line §4.3)")
-let store = block(pool, "    func storeTabSnapshot(")
+let store = block(pool, "    private func storeTabSnapshot(")
 check("the cap is exactly maxTabs", pool.contains("static let maxTabSnapshots = BrowserTabPool.maxTabs"))
 check("old entries are evicted above the cap",
       store.contains("while tabSnapshotOrder.count > Self.maxTabSnapshots")
       && store.contains("tabSnapshots.removeValue"))
 check("the cache never touches disk",
       !store.contains("FileManager") && !store.contains("write(to:"))
-let idleEviction = block(pool, "    func evictIdleTabs() {")
+let idleEviction = block(pool, "    private func evictIdleTabs() {")
 check("idle eviction keeps the tab's last snapshot", !idleEviction.contains("discardTabSnapshot"))
 check("closing a tab does discard its snapshot",
       block(pool, "    func closeTab(id: Int) -> BrowserActionResult {").contains("discardTabSnapshot(forTabId: id)"))

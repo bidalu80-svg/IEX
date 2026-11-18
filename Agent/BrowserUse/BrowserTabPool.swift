@@ -5,6 +5,188 @@ import Combine
 import os.log
 
 private let logger = AppLogger(category: "BrowserTabPool")
+private let registryLogger = AppLogger(category: "BrowserTabPoolRegistry")
+
+/// Process-wide cap on live `WKWebView` tabs across all `BrowserTabPool`s.
+///
+/// Each tab keeps an out-of-process WebContent (~30-80 MB resident) plus
+/// shared JS heap; under multi-session concurrency the per-pool `maxTabs=3`
+/// cap doesn't bound total footprint, so heavy use trips iOS VM exhaustion
+/// (`mach_vm_allocate_kernel failed` / `pmap_enter resource shortage`) which
+/// surfaces as null-deref crashes inside WebCore. The registry coordinates
+/// across pools so creating a tab in one session can reclaim an idle tab in
+/// another.
+@MainActor
+final class BrowserTabPoolRegistry {
+    static let shared = BrowserTabPoolRegistry()
+
+    /// Hard cap on live tabs across the whole process. Roughly 3 concurrent
+    /// sessions × ~2-3 active tabs each. Tunable here if profiling says
+    /// otherwise.
+    static let globalTabCap = 8
+
+    private struct WeakPool {
+        weak var pool: BrowserTabPool?
+    }
+    private var pools: [ObjectIdentifier: WeakPool] = [:]
+    private var memoryWarningObserver: NSObjectProtocol?
+
+    private init() {
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                BrowserTabPoolRegistry.shared.handleMemoryWarning()
+            }
+        }
+        installLivenessProbe()
+    }
+
+    func register(_ pool: BrowserTabPool) {
+        pools[ObjectIdentifier(pool)] = WeakPool(pool: pool)
+    }
+
+    func unregister(_ pool: BrowserTabPool) {
+        pools.removeValue(forKey: ObjectIdentifier(pool))
+    }
+
+    /// Total live tabs across all registered pools (drops stale weak refs).
+    func totalLiveTabs() -> Int {
+        compactPools()
+        return pools.values.reduce(0) { $0 + ($1.pool?.tabs.count ?? 0) }
+    }
+
+    /// Try to make room for one more tab in `requester`. Prefers an idle
+    /// (non-`inUse`) sibling tab; if none exist, preempts the oldest
+    /// `inUse` sibling tab — the agent driving that tab will see a single
+    /// "tab was reclaimed, please retry" error on its next action and the
+    /// tab's URL is saved for restoration. The caller itself is excluded
+    /// from eviction. Returns false only when there are zero candidate
+    /// tabs in OTHER pools (e.g. only one pool exists and it's at cap).
+    @discardableResult
+    func requestSlot(for requester: BrowserTabPool) -> Bool {
+        compactPools()
+        if totalLiveTabs() < Self.globalTabCap { return true }
+
+        let requesterId = ObjectIdentifier(requester)
+
+        // Pass 1: prefer the oldest non-inUse tab in any sibling pool.
+        var idleVictim: (pool: BrowserTabPool, tabId: Int, idle: TimeInterval)? = nil
+        // Pass 2 (fallback): oldest inUse tab in any sibling pool. Tracked
+        // in the same loop so we don't re-scan.
+        var busyVictim: (pool: BrowserTabPool, tabId: Int, idle: TimeInterval)? = nil
+        let now = Date()
+        for (id, weak) in pools where id != requesterId {
+            guard let pool = weak.pool else { continue }
+            for tab in pool.tabs {
+                let idle = now.timeIntervalSince(tab.lastActivityDate)
+                if !tab.inUse {
+                    if idleVictim == nil || idle > idleVictim!.idle {
+                        idleVictim = (pool, tab.id, idle)
+                    }
+                } else {
+                    if busyVictim == nil || idle > busyVictim!.idle {
+                        busyVictim = (pool, tab.id, idle)
+                    }
+                }
+            }
+        }
+        if let v = idleVictim {
+            registryLogger.info("Global cap (\(Self.globalTabCap)) reached — evicting idle tab \(v.tabId) from sibling pool (idle \(String(format: "%.0f", v.idle))s) for requester")
+            v.pool.evictTabForRegistry(id: v.tabId)
+            return true
+        }
+        if let v = busyVictim {
+            registryLogger.info("Global cap (\(Self.globalTabCap)) reached and no idle siblings — preempting in-use tab \(v.tabId) (idle \(String(format: "%.0f", v.idle))s) for requester")
+            v.pool.preemptTabForRegistry(id: v.tabId)
+            return true
+        }
+        registryLogger.info("Global cap (\(Self.globalTabCap)) reached and no sibling tabs to evict — denying slot")
+        return false
+    }
+
+    /// On memory warning, evict every non-inUse tab across all pools. Tabs
+    /// the agent is actively driving stay alive so in-flight actions don't
+    /// fail mid-step.
+    private func handleMemoryWarning() {
+        compactPools()
+        var evicted = 0
+        for weak in pools.values {
+            guard let pool = weak.pool else { continue }
+            evicted += pool.evictAllIdleForMemoryWarning()
+        }
+        if evicted > 0 {
+            registryLogger.info("Memory warning — evicted \(evicted) idle tab(s) across \(self.pools.count) pool(s)")
+        }
+    }
+
+    struct TabSnapshot {
+        let sessionId: String
+        let tabId: Int
+        let url: String
+        let title: String
+        let isLoading: Bool
+        let inUse: Bool
+        let lastActivityAgo: TimeInterval
+    }
+
+    func allTabSnapshots() -> [TabSnapshot] {
+        compactPools()
+        let now = Date()
+        var result: [TabSnapshot] = []
+        for weak in pools.values {
+            guard let pool = weak.pool else { continue }
+            let sid = String((pool.sessionId ?? "unknown").prefix(8))
+            for tab in pool.tabs {
+                result.append(TabSnapshot(
+                    sessionId: sid,
+                    tabId: tab.id,
+                    url: String(tab.manager.currentURL.prefix(100)),
+                    title: String(tab.manager.pageTitle.prefix(100)),
+                    isLoading: tab.manager.isLoading,
+                    inUse: tab.inUse,
+                    lastActivityAgo: now.timeIntervalSince(tab.lastActivityDate)
+                ))
+            }
+        }
+        return result
+    }
+
+    private func compactPools() {
+        pools = pools.filter { $0.value.pool != nil }
+    }
+
+    /// [BrowserToolDiag] Teach BrowserResourceMonitor how to tell whether a tab's
+    /// WebContent process is still alive, without it having to reach into the
+    /// browser layer. Installed on the registry (a single instance spanning every
+    /// pool) rather than per-pool, since a per-pool closure would just overwrite
+    /// its predecessor on the shared monitor.
+    ///
+    /// A killed WebContent leaves its WKWebView blank — url nil, title empty — so
+    /// a blank view under a still-pending action is our only in-app evidence that
+    /// the process died silently (its termination callback is documented as
+    /// unreliable when it dies mid-render). We read the live WKWebView, not the
+    /// manager's cached `currentURL`, because that cache keeps the last known
+    /// value and would mask the very blanking we're testing for.
+    private func installLivenessProbe() {
+        BrowserResourceMonitor.shared.livenessProbe = { [weak self] tabId in
+            guard let self else { return nil }
+            self.compactPools()
+            for weak in self.pools.values {
+                guard let pool = weak.pool,
+                      let tab = pool.tabs.first(where: { $0.id == tabId }) else { continue }
+                let webView = tab.manager.webView
+                return BrowserResourceMonitor.WebContentLiveness(
+                    hasURL: webView.url != nil,
+                    hasTitle: !(webView.title ?? "").isEmpty
+                )
+            }
+            return nil
+        }
+    }
+}
 
 @MainActor
 final class BrowserTabPool: ObservableObject {
@@ -24,7 +206,7 @@ final class BrowserTabPool: ObservableObject {
     static let idleTimeout: TimeInterval = 15 * 60  // 15 minutes
 
     /// How often to check for idle tabs (seconds).
-    static let idleCheckInterval: TimeInterval = 60
+    private static let idleCheckInterval: TimeInterval = 60
 
     struct Tab: Identifiable {
         let id: Int
@@ -52,13 +234,13 @@ final class BrowserTabPool: ObservableObject {
     static let postActionGraceSeconds: TimeInterval = 15
 
     /// URLs saved from evicted tabs, keyed by tab ID, for restoration on next use.
-    var savedURLs: [Int: String] = [:]
+    private var savedURLs: [Int: String] = [:]
 
     /// Tab IDs that the registry preempted while still inUse. Each entry
     /// fires one "tab was reclaimed, please retry" error on the next
     /// `execute(action:)` for that tab and is then cleared. The agent's
     /// retry will go through `acquireTab` again, restoring the URL.
-    var preemptedTabIds: Set<Int> = []
+    private var preemptedTabIds: Set<Int> = []
 
     // MARK: - Per-tab serialization (T-browser-use-per-tab-serial-ios)
 
@@ -102,10 +284,10 @@ final class BrowserTabPool: ObservableObject {
     /// stored on `Tab` so a tab whose WKWebView is torn down (idle eviction)
     /// keeps its final picture for as long as the bounded cache allows.
     /// Memory only — never persisted. [P2-tab-overview]
-    @Published var tabSnapshots: [Int: UIImage] = [:]
+    @Published private(set) var tabSnapshots: [Int: UIImage] = [:]
     /// Oldest-first tab ids backing `tabSnapshots`, used to enforce
     /// `maxTabSnapshots`.
-    var tabSnapshotOrder: [Int] = []
+    private var tabSnapshotOrder: [Int] = []
 
     // [T-p2-shared-workspace] One pool can now serve a parent agent and its
     // helpers. Each agent (`owner` = its session id) keeps its own default
@@ -212,8 +394,8 @@ final class BrowserTabPool: ObservableObject {
     /// When both > 0 these shadow the global custom viewport. Persisted in
     /// the session tabs file, not UserDefaults, and cleared by
     /// `set_viewport --reset`.
-    @Published var sessionViewportWidth: Int = 0
-    @Published var sessionViewportHeight: Int = 0
+    @Published private(set) var sessionViewportWidth: Int = 0
+    @Published private(set) var sessionViewportHeight: Int = 0
 
     // MARK: - UA Defaults Keys
     private static let uaProfileKey = "BrowserUserAgentProfile"
@@ -238,7 +420,7 @@ final class BrowserTabPool: ObservableObject {
     }
 
     /// Timer that periodically evicts idle tabs.
-    var idleTimer: Timer?
+    private var idleTimer: Timer?
     private var loadingObservation: AnyCancellable?
 
     /// Whether the active tab's webview is currently loading a page.
@@ -1659,7 +1841,33 @@ final class BrowserTabPool: ObservableObject {
 
     // MARK: - Tab Overview Snapshots
 
-    func storeTabSnapshot(_ image: UIImage, forTabId id: Int) {
+    /// Last overview thumbnail captured for `id`, or nil when the card should
+    /// fall back to favicon + title.
+    func tabSnapshot(forTabId id: Int) -> UIImage? {
+        tabSnapshots[id]
+    }
+
+    /// Capture a thumbnail of `tabId`'s visible page. Called from the
+    /// `selectedTabId` setter (the outgoing tab is still the visible one —
+    /// SwiftUI only swaps the web view on its next update) and by the overview
+    /// opener for the tab currently on screen. The capture itself never
+    /// changes the webView frame/viewport (see `captureThumbnail`).
+    func captureTabSnapshot(tabId: Int) {
+        guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
+        let manager = tab.manager
+        manager.captureThumbnail { [weak self] image in
+            guard let image else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Ignore a late capture from a tab that was closed or whose
+                // WKWebView was rebuilt before the snapshot finished.
+                guard self.tabs.contains(where: { $0.id == tabId && $0.manager === manager }) else { return }
+                self.storeTabSnapshot(image, forTabId: tabId)
+            }
+        }
+    }
+
+    private func storeTabSnapshot(_ image: UIImage, forTabId id: Int) {
         tabSnapshots[id] = image
         tabSnapshotOrder.removeAll { $0 == id }
         tabSnapshotOrder.append(id)
@@ -1669,11 +1877,38 @@ final class BrowserTabPool: ObservableObject {
         }
     }
 
+    private func discardTabSnapshot(forTabId id: Int) {
+        guard tabSnapshots[id] != nil || tabSnapshotOrder.contains(id) else { return }
+        tabSnapshots.removeValue(forKey: id)
+        tabSnapshotOrder.removeAll { $0 == id }
+    }
+
+    /// Called after `didFinish`. A short delay lets the first frame paint and
+    /// keeps the capture clear of the sheet's presentation/resize animation;
+    /// the capture itself is frame-preserving either way.
+    private func scheduleTabSnapshotAfterLoad(manager: BrowserUseManager) {
+        guard let tabId = tabs.first(where: { $0.manager === manager })?.id else { return }
+        Task { @MainActor [weak self, weak manager] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, let self, let manager else { return }
+            guard self.tabs.contains(where: { $0.id == tabId && $0.manager === manager }) else { return }
+            self.captureTabSnapshot(tabId: tabId)
+        }
+    }
+
     // MARK: - Idle Eviction
+
+    private func startIdleTimer() {
+        idleTimer = Timer.scheduledTimer(withTimeInterval: Self.idleCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.evictIdleTabs()
+            }
+        }
+    }
 
     /// Remove tabs that have been idle (not in use) for longer than `idleTimeout`.
     /// Saves their URLs so they can be restored on next use.
-    func evictIdleTabs() {
+    private func evictIdleTabs() {
         let now = Date()
         var evicted = 0
         tabs.removeAll { tab in
@@ -1699,6 +1934,73 @@ final class BrowserTabPool: ObservableObject {
             persistURLs()
             logger.info("Evicted \(evicted) idle tab(s), \(self.tabs.count) remaining")
         }
+    }
+
+    // MARK: - Registry-driven Eviction
+
+    /// Evict a specific tab on behalf of the registry (cross-pool reclaim).
+    /// Saves the URL like the idle timer does so it restores on next use.
+    /// Caller has already confirmed the tab is non-inUse.
+    func evictTabForRegistry(id: Int) {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let tab = tabs[idx]
+        guard !tab.inUse else { return } // safety net
+        let url = tab.manager.currentURL
+        if !url.isEmpty {
+            savedURLs[id] = url
+        }
+        tabs.remove(at: idx)
+        if selectedTabId == id {
+            selectedTabId = tabs.first?.id ?? 0
+        }
+        persistURLs()
+        logger.info("Evicted tab \(id) at registry request (url=\(url.prefix(60)))")
+    }
+
+    /// Preempt an in-use tab on behalf of the registry. Saves the URL,
+    /// stops any ongoing load, and tears the WKWebView down. The agent
+    /// driving this tab is currently `await`ing inside execute() — it
+    /// will throw or return whatever WebKit produces when its webView is
+    /// dropped. The tab id is added to `preemptedTabIds` so the agent's
+    /// next call into `execute(action:)` returns a friendly retry hint
+    /// instead of silently re-creating the tab.
+    func preemptTabForRegistry(id: Int) {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let tab = tabs[idx]
+        let url = tab.manager.currentURL
+        if !url.isEmpty {
+            savedURLs[id] = url
+        }
+        tab.manager.stopLoading()
+        tabs.remove(at: idx)
+        preemptedTabIds.insert(id)
+        if selectedTabId == id {
+            selectedTabId = tabs.first?.id ?? 0
+        }
+        persistURLs()
+        logger.info("Preempted in-use tab \(id) at registry request (url=\(url.prefix(60)))")
+    }
+
+    /// Evict all non-inUse tabs in response to a memory warning. Returns
+    /// the number evicted so the registry can log a single summary line.
+    func evictAllIdleForMemoryWarning() -> Int {
+        var evicted = 0
+        tabs.removeAll { tab in
+            guard !tab.inUse else { return false }
+            let url = tab.manager.currentURL
+            if !url.isEmpty {
+                savedURLs[tab.id] = url
+            }
+            evicted += 1
+            return true
+        }
+        if evicted > 0 {
+            if !tabs.contains(where: { $0.id == selectedTabId }) {
+                selectedTabId = tabs.first?.id ?? 0
+            }
+            persistURLs()
+        }
+        return evicted
     }
 
     // MARK: - Private
@@ -1793,6 +2095,12 @@ final class BrowserTabPool: ObservableObject {
         if customViewportHeight != height { customViewportHeight = height }
     }
 
+    /// Whether a custom viewport (global or session) is currently active.
+    func hasCustomViewport() -> Bool {
+        return (sessionViewportWidth > 0 && sessionViewportHeight > 0)
+            || (customViewportWidth > 0 && customViewportHeight > 0)
+    }
+
     /// Set the global custom viewport (Browser Settings). Persists to
     /// UserDefaults as the default for tabs opened from now on, in every chat.
     /// Tabs that are already open keep the size they have. Pass
@@ -1827,7 +2135,7 @@ final class BrowserTabPool: ObservableObject {
     /// Each tab keeps its OWN profile and UA string; only its size changes, and
     /// with no session override it falls back to the global custom viewport as
     /// it stands now, then to its own profile's default.
-    func applyViewportToAllTabs() {
+    private func applyViewportToAllTabs() {
         syncGlobalDefaultsFromStore()
         for tab in tabs {
             let profile = tab.manager.currentProfile
@@ -1900,5 +2208,95 @@ final class BrowserTabPool: ObservableObject {
             return 0
         }
         return acquireTab()
+    }
+
+    // MARK: - Disk Persistence
+
+    /// On-disk model for saved tab URLs.
+    private struct PersistedTabs: Codable {
+        var tabURLs: [Int: String]    // tab ID → URL (live + evicted)
+        var selectedTabId: Int
+        /// Session-scoped viewport override. nil = no override, fall back to global.
+        var sessionViewportWidth: Int?
+        var sessionViewportHeight: Int?
+    }
+
+    nonisolated private static func storeURL(for sessionId: String) -> URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ZeChat/browser_tabs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(sessionId).json")
+    }
+
+    /// Collect all known URLs (live tabs + savedURLs) and write to disk.
+    private func persistURLs() {
+        guard let sessionId else { return }
+        var allURLs = savedURLs
+        for tab in tabs {
+            let url = tab.manager.currentURL
+            if !url.isEmpty {
+                allURLs[tab.id] = url
+            }
+        }
+        // A session viewport override is worth persisting even when there are
+        // no tabs yet, so set_viewport survives an empty-session reopen.
+        let hasSessionViewport = sessionViewportWidth > 0 && sessionViewportHeight > 0
+        guard !allURLs.isEmpty || hasSessionViewport else {
+            // Nothing to persist — remove file if it exists
+            let url = Self.storeURL(for: sessionId)
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let data = PersistedTabs(
+            tabURLs: allURLs,
+            selectedTabId: selectedTabId,
+            sessionViewportWidth: hasSessionViewport ? sessionViewportWidth : nil,
+            sessionViewportHeight: hasSessionViewport ? sessionViewportHeight : nil
+        )
+        do {
+            let encoded = try JSONEncoder().encode(data)
+            try encoded.write(to: Self.storeURL(for: sessionId), options: .atomic)
+            logger.info("Persisted \(allURLs.count) tab URL(s) for session \(sessionId.prefix(8))")
+        } catch {
+            logger.error("Failed to persist tab URLs: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load persisted tab URLs into savedURLs for lazy restoration.
+    private func loadPersistedURLs() {
+        guard let sessionId else { return }
+        let url = Self.storeURL(for: sessionId)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let persisted = try JSONDecoder().decode(PersistedTabs.self, from: data)
+            // Merge persisted URLs into savedURLs (don't overwrite already-live tabs)
+            let liveIds = Set(tabs.map(\.id))
+            for (tabId, tabURL) in persisted.tabURLs where !liveIds.contains(tabId) {
+                savedURLs[tabId] = tabURL
+            }
+            if !tabs.contains(where: { $0.id == persisted.selectedTabId }) {
+                selectedTabId = persisted.selectedTabId
+            }
+            if let w = persisted.sessionViewportWidth, let h = persisted.sessionViewportHeight,
+               w > 0, h > 0 {
+                sessionViewportWidth = w
+                sessionViewportHeight = h
+                // Re-apply to any live tabs that predate load (rare: usually
+                // sessionId is set before tabs exist, but be safe).
+                if !tabs.isEmpty {
+                    applyViewportToAllTabs()
+                }
+            }
+            logger.info("Loaded \(persisted.tabURLs.count) persisted tab URL(s) for session \(sessionId.prefix(8))")
+        } catch {
+            logger.error("Failed to load persisted tab URLs: \(error.localizedDescription)")
+        }
+    }
+
+    /// Delete persisted tab data for a session (called on session delete).
+    nonisolated static func deletePersistedData(for sessionId: String) {
+        let url = storeURL(for: sessionId)
+        try? FileManager.default.removeItem(at: url)
     }
 }

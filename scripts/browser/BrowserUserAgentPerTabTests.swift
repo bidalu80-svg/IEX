@@ -77,7 +77,7 @@ let liftedFromPool = [
     "    func setGlobalViewport(width: Int, height: Int) {",
     "    func setSessionViewport(width: Int, height: Int) {",
     "    func resetSessionViewport() {",
-    "    func applyViewportToAllTabs() {",
+    "    private func applyViewportToAllTabs() {",
     "    func setUserAgentProfile(_ profile: UserAgentProfile) {",
     "    private func setUserAgent(_ profile: UserAgentProfile, onTab tabId: Int,",
 ].map { block(pool, $0) }.joined(separator: "\n\n")
