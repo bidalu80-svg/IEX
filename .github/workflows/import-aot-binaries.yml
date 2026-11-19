@@ -21,7 +21,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/${{ github.repository }}/actions/artifacts/14508758013/zip > /tmp/aot-images.zip
+          gh api repos/${{ github.repository }}/actions/artifacts/14508588785/zip > /tmp/aot-images.zip
           mkdir -p /tmp/aot-images
           unzip -q /tmp/aot-images.zip -d /tmp/aot-images
           ls /tmp/aot-images/*.o | wc -l
