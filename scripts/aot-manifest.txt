@@ -5,9 +5,8 @@
 musl|ld-musl|@scripts/aot-workloads/musl.sh|600
 busybox|/bin/busybox|@scripts/aot-workloads/busybox.sh|3600
 python3|libpython3.12|@scripts/aot-workloads/python3.sh|3600
-# Node is not in the catalog: recording /usr/bin/node exceeds the job budget.
-# Not recorded for now.
-# nodejs|/usr/bin/node|@scripts/aot-workloads/nodejs.sh|18000
+# Record Node separately with an 18000-second limit after the workload exceeded 10800 seconds.
+nodejs|/usr/bin/node|@scripts/aot-workloads/nodejs.sh|18000
 pillow|PIL/_imaging.cpython|@scripts/aot-workloads/pillow.sh|3600
 libwebp|libwebp.so|@scripts/aot-workloads/libwebp.sh|3600
 libjpeg|libjpeg.so|@scripts/aot-workloads/libjpeg.sh|3600
