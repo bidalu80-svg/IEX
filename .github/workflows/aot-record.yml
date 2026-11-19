@@ -169,11 +169,19 @@ jobs:
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
-          # Exact pins from the recording target table, all from the live v3.21 index.
-          PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2"
+          # Exact pins from the recording target table, all from the live v3.21
+          # index. openssh-server is the same 9.9_p2-r1 release as the pinned
+          # openssh-client-default/common and provides the guest sshd.
+          PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2 openssh-server=9.9_p2-r1"
           echo "── apk add --no-cache $PKGS"
           build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
             || { echo "Exact training packages unavailable; stop without recording"; exit 1; }
+          # realfs reports host ownership. sshd requires uid 0 on its privsep
+          # directory, which an unprivileged macOS runner cannot set in-guest.
+          if [ '${{ matrix.image }}' = ssh ] || [ '${{ matrix.image }}' = scp ]; then
+            sudo install -d -o 0 -g 0 -m 755 /tmp/rootfs/var/empty \
+              || { echo "Cannot prepare root-owned sshd privilege-separation directory"; exit 1; }
+          fi
           echo "── installed:"
           ls -l /tmp/rootfs/usr/bin/python3 /tmp/rootfs/usr/bin/node 2>/dev/null || true
           ls /tmp/rootfs/usr/lib/python3*/site-packages 2>/dev/null | head -5 || true
