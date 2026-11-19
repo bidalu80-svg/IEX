@@ -169,10 +169,12 @@ jobs:
           printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /tmp/rootfs/etc/resolv.conf
           [ -s /tmp/rootfs/etc/hosts ] || printf '127.0.0.1 localhost\n' > /tmp/rootfs/etc/hosts
 
-          # Exact pins from the recording target table, all from the live v3.21
-          # index. openssh-server is the same 9.9_p2-r1 release as the pinned
-          # openssh-client-default/common and provides the guest sshd.
-          PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2 openssh-server=9.9_p2-r1"
+          # Exact pins plus the original workload dependencies. Only ssh/scp
+          # need the server, at the same release as their pinned clients.
+          PKGS="$(python3 -c 'import json; d=json.load(open("scripts/aot-targets.json")); print(" ".join(sorted({x["package"]+"="+x["version"] for x in d["images"]})))') py3-requests git ripgrep pcre2-tools bzip2"
+          if [ '${{ matrix.image }}' = ssh ] || [ '${{ matrix.image }}' = scp ]; then
+            PKGS="$PKGS openssh-server=9.9_p2-r1"
+          fi
           echo "── apk add --no-cache $PKGS"
           build-macos/ish -r /tmp/rootfs /bin/sh -c "apk add --no-cache $PKGS" \
             || { echo "Exact training packages unavailable; stop without recording"; exit 1; }
@@ -219,6 +221,16 @@ jobs:
         run: |
           bash scripts/prepare-aot-workloads.sh build-macos/ish /tmp/rootfs .aot-upstream
 
+      - name: Prepare SSH keys outside recording
+        if: matrix.image == 'ssh' || matrix.image == 'scp'
+        run: |
+          set -euo pipefail
+          cp scripts/aot-reference-workloads/ssh_keys.sh /tmp/rootfs/tmp/aojit/ssh/
+          # record-aot.py enables ISH_JIT_RECORD only for its later run_guest
+          # call. This separate ish process must never inherit that setting.
+          env -u ISH_JIT_RECORD -u ISH_JIT_RECORD_MOD \
+            build-macos/ish -r /tmp/rootfs /bin/sh /tmp/aojit/ssh/ssh_keys.sh
+
       - name: Record one image with strict workload gates
         run: |
           set -euo pipefail
@@ -240,6 +252,18 @@ jobs:
             .aot-new/recorded/RECORDED-*.json
             .aot-new/recorded/*.log
           if-no-files-found: error
+
+      # Failure diagnostics only: a failed job keeps its recording logs under a
+      # name the assemble job's aot-image-* download pattern cannot pick up, so
+      # partial images from a failed job can never enter the assembled set.
+      - name: Upload recording logs on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aot-log-${{ matrix.image }}
+          path: |
+            .aot-new/recorded/*.log
+          if-no-files-found: ignore
 
 
   assemble:
