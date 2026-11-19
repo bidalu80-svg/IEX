@@ -26,3 +26,7 @@ chmod 600 /root/.ssh/id_* /root/.ssh/authorized_keys
 # Alpine locks root with '*'; sshd rejects public keys for a locked account.
 # The workload's private sshd config keeps password authentication disabled.
 passwd -d root
+
+# keys.sh also prepares the input consumed by SSH streaming and both SCP modes.
+mkdir -p /tmp/aojit/ssh
+[ -f /tmp/aojit/ssh/blob1m ] || head -c 1048576 /dev/urandom > /tmp/aojit/ssh/blob1m

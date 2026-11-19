@@ -106,6 +106,13 @@ struct fd *realfs_open(struct mount *mount, const char *path, int flags, int mod
     struct fd *fd = fd_create(&realfs_fdops);
     fd->real_fd = fd_no;
     fd->dir = NULL;
+    // Preserve the random-device identity through fstat: generic_openat uses
+    // fstat (not stat(path)) to select dev_open. A plain placeholder otherwise
+    // stays a regular file, so Git/SSH cannot read random bytes from it.
+    if (strcmp(path, "/dev/urandom") == 0) {
+        fd->stat.mode = S_IFCHR | 0666;
+        fd->stat.rdev = dev_make(MEM_MAJOR, DEV_URANDOM_MINOR);
+    }
 
     /* Bind-mount change tracker: any open that may modify the file fires an
      * upsert event. The hook is intentionally agnostic about path layout —
@@ -173,6 +180,11 @@ int realfs_fstat(struct fd *fd, struct statbuf *fake_stat) {
     if (fstat(fd->real_fd, &real_stat) < 0)
         return errno_map();
     copy_stat(fake_stat, &real_stat);
+    if (fd->stat.rdev == dev_make(MEM_MAJOR, DEV_URANDOM_MINOR) &&
+            S_ISCHR(fd->stat.mode)) {
+        fake_stat->mode = fd->stat.mode;
+        fake_stat->rdev = fd->stat.rdev;
+    }
     return 0;
 }
 

@@ -86,12 +86,11 @@ class ReviewFixTests(unittest.TestCase):
         actual = dict(re.findall(r'"([^"]+)": "([^"]+)"', image_table))
         catalog = source.split('static let catalog:', 1)[1].split('// MARK: Published', 1)[0]
         entries = catalog.split('        AOJITLibrary(')[1:]
-        self.assertEqual(len(entries), 25)
+        self.assertEqual(len(entries), 24)
+        self.assertNotIn('id: "nodejs"', catalog)
         for row in entries:
             image_id = re.search(r'id: "([^"]+)"', row)[1]
-            if image_id == 'nodejs':
-                self.assertIn('repairVersion: AOJITRecordingTargets.version(for: "nodejs")', row)
-            elif image_id == 'sqlite':
+            if image_id == 'sqlite':
                 self.assertIn('repairVersion: AOJITModuleProbe.hasLegacySQLiteImage', row)
                 self.assertIn('(AOJITAcceleration.imageVersions["python3"] ?? "")', row)
                 self.assertIn(': AOJITRecordingTargets.version(for: "sqlite")', row)

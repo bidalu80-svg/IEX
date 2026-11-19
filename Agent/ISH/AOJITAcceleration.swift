@@ -231,13 +231,6 @@ final class AOJITAcceleration: ObservableObject {
             timeout: 25
         ),
         AOJITLibrary(
-            id: "nodejs", name: "Node.js", paths: "/usr/bin/node",
-            summary: String(localized: "JavaScript scripts and Node-based CLI tools (node, npm and npx)."),
-            package: "nodejs", repairVersion: AOJITRecordingTargets.version(for: "nodejs"),
-            probe: "apk info -e nodejs >/dev/null 2>&1",
-            warmup: "node -e 'JSON.parse(JSON.stringify({a:[1,2,3]}))'", timeout: 120
-        ),
-        AOJITLibrary(
             id: "pillow",
             name: "Pillow",
             paths: "PIL._imaging (python3 -c \"from PIL import Image\")",

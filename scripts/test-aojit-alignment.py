@@ -69,12 +69,20 @@ class RecordingTests(unittest.TestCase):
 
     def test_reference_table_and_effective_manifest(self):
         entries = rec.manifest()
-        self.assertEqual(len(entries), 25)
+        self.assertEqual(len(entries), 24)
         self.assertEqual(entries['sqlite'][0], 'libsqlite3.so')
-        self.assertEqual(entries['nodejs'][0], '/usr/bin/node')
-        self.assertGreaterEqual(entries['nodejs'][2], 10800)
+        self.assertNotIn('nodejs', entries)
+        self.assertEqual(entries['musl'][2], 600)
         for t in rec.TARGETS['images']:
-            self.assertIn('exec /bin/sh ' + t['workload'], entries[t['id']][1].read_text())
+            workload = entries[t['id']][1].read_text()
+            if t['id'] == 'musl':
+                self.assertNotIn('/tmp/aojit', workload)
+                self.assertIn('W=/tmp/aotw-musl', workload)
+            elif t['id'] in ('ssh', 'scp'):
+                self.assertIn('. /tmp/aojit/ssh/sshd_setup.sh', workload)
+                self.assertIn('/bin/sh ' + t['workload'], workload)
+            else:
+                self.assertIn('exec /bin/sh ' + t['workload'], workload)
         source = ROOT / 'openminis-ref/src/ios/Views/Rootfs/AOJITSettingsView.swift'
         if source.exists():
             text = source.read_text()
@@ -82,7 +90,7 @@ class RecordingTests(unittest.TestCase):
                 self.assertIn('buildId: "' + t['build_id'] + '"', text)
                 self.assertIn('package: "' + t['package'] + ' ' + t['version'] + '"', text)
 
-    def test_all_25_identities_pass_preflight(self):
+    def test_all_24_identities_pass_preflight(self):
         self.stage()
         with patch.object(rec, 'run_guest', self.guest):
             self.assertGreater(len(rec.preflight(Path('/fake-ish'), self.root)), 10)

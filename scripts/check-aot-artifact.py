@@ -23,7 +23,7 @@ def check(directory):
     versions = {f"{t['package']}-{t['version']}" for t in targets['images']}
     if set((directory / 'VERSIONS.txt').read_text().splitlines()) != versions:
         raise ValueError('package provenance does not match the exact target set')
-    print('Complete 25-image artifact and identity ledgers verified (native code still requires runtime validation)')
+    print(f"Complete {len(names)}-image artifact and identity ledgers verified (native code still requires runtime validation)")
 
 
 if __name__ == '__main__':

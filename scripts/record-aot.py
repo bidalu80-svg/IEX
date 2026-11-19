@@ -132,7 +132,7 @@ def check_output(result, target, phase):
 
 
 def preflight(ish, root):
-    # Both existence and exact identity are checked for all 25 inputs, before
+    # Both existence and exact identity are checked for all declared inputs, before
     # any recording starts. Package versions alone are insufficient evidence.
     specs = sorted({(t['package'], t['version']) for t in TARGETS['images']})
     for package, version in specs:
@@ -173,7 +173,7 @@ def manifest():
             raise ValueError(f'invalid/duplicate manifest entry: {name}')
         rows[name] = (selector, REPO / workload[1:], int(timeout))
     if set(rows) != {t['id'] for t in TARGETS['images']}:
-        raise ValueError('effective manifest must contain exactly the 25 reference targets')
+        raise ValueError('effective manifest must contain exactly the declared recording targets')
     for t in TARGETS['images']:
         selector, wrapper, _ = rows[t['id']]
         if selector != t['selector'] or not wrapper.is_file():
@@ -193,7 +193,7 @@ def main():
     entries = manifest()
     specs = preflight(ish, root)
     if args.check_only:
-        print('All 25 exact package/module identities and workload files checked')
+        print(f"All {len(TARGETS['images'])} exact package/module identities and workload files checked")
         return
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
