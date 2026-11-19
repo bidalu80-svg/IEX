@@ -5,14 +5,18 @@ Requires the emitting Ze CLI and the pinned benchmark suite staged by
 prepare-aot-workloads.sh. Output is isolated from the committed .o directory.
 """
 import argparse
+import codecs
+import io
 import json
 import os
 from pathlib import Path
 import re
+import selectors
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 REPO = Path(__file__).resolve().parents[1]
 TARGETS = json.loads((REPO / 'scripts/aot-targets.json').read_text())
@@ -57,12 +61,68 @@ def build_id(path):
     return None
 
 
-def run_guest(ish, root, command, **kwargs):
+def run_guest(ish, root, command, log_path=None, **kwargs):
     env = kwargs.pop('env', dict(os.environ))
     env['ISH_JIT_PIC'] = '1'
     env.pop('ISH_NODE_MODE', None)  # Reference recording uses the default Node mode.
-    return subprocess.run([str(ish), '-r', str(root), '/bin/sh', '-c', command],
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, **kwargs)
+    args = [str(ish), '-r', str(root), '/bin/sh', '-c', command]
+    if log_path is None:
+        return subprocess.run(args, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, env=env, **kwargs)
+
+    timeout = kwargs.pop('timeout', None)
+    with log_path.open('w') as log, subprocess.Popen(
+            args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=env, **kwargs) as process:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        # Match subprocess's text decoding, including split multibyte characters
+        # and universal newlines, without waiting for a newline to forward output.
+        text_decoder = codecs.getincrementaldecoder(process.stdout.encoding)(process.stdout.errors)
+        decoder = io.IncrementalNewlineDecoder(text_decoder, True)
+        chunks = []
+        raw = bytearray()
+
+        def forward(data, final=False):
+            raw.extend(data)
+            text = decoder.decode(data, final=final)
+            chunks.append(text)
+            log.write(text)
+            log.flush()
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        def remaining():
+            return None if deadline is None else max(0, deadline - time.monotonic())
+
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while selector.get_map():
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    if not selector.select(remaining()):
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    data = os.read(process.stdout.fileno(), 65536)
+                    forward(data, final=not data)
+                    if not data:
+                        selector.unregister(process.stdout)
+                process.wait(timeout=remaining())
+        except subprocess.TimeoutExpired as error:
+            process.kill()
+            # As with subprocess.run, drain after killing so the timeout also
+            # retains the output already in the pipe. The log is flushed live.
+            # Killing can truncate a character; preserve TimeoutExpired and its
+            # raw output, showing a replacement only in the diagnostic streams.
+            text_decoder.errors = 'replace'
+            forward(process.stdout.buffer.read(), final=True)
+            process.wait()
+            error.output = bytes(raw)
+            raise
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        return subprocess.CompletedProcess(args, process.returncode, ''.join(chunks))
 
 
 def check_output(result, target, phase):
@@ -149,13 +209,13 @@ def main():
         # OpenMinis dry-runs its three locally recorded workloads. Other
         # suite images run once under the recorder (Node can take hours).
         if t['ok_markers']:
-            dry = run_guest(ish, root, command, timeout=limit)
-            (out / f"{t['id']}.dry.log").write_text(dry.stdout)
+            dry = run_guest(ish, root, command, timeout=limit,
+                            log_path=out / f"{t['id']}.dry.log")
             check_output(dry, t, 'dry run')
         rec = out / f"{t['id']}.jsonl"
         env = dict(os.environ, ISH_JIT_PIC='1', ISH_JIT_RECORD=str(rec), ISH_JIT_RECORD_MOD=t['selector'])
-        result = run_guest(ish, root, command, env=env, timeout=limit)
-        (out / f"{t['id']}.record.log").write_text(result.stdout)
+        result = run_guest(ish, root, command, env=env, timeout=limit,
+                           log_path=out / f"{t['id']}.record.log")
         check_output(result, t, 'recording')
         sys.path.insert(0, str(REPO / 'Vendor/ZeNative/ish/tools/jit_aot'))
         from gen import load_recording

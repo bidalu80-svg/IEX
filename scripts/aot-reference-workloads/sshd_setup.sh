@@ -23,29 +23,13 @@ if ! grep -q '^sshd:' /etc/passwd; then
     adduser -S -D -H -h /var/empty -s /sbin/nologin -G sshd -g sshd sshd
 fi
 
-# Generate the host keys on first use.
-ssh-keygen -A
-
-# The training client uses root's standard identities, including id_rsa.
-# Keep existing keys and authorize the corresponding public keys locally.
-umask 077
-mkdir -p /root/.ssh
-for kind in rsa ecdsa ed25519; do
-    key="/root/.ssh/id_$kind"
-    if [ ! -s "$key" ]; then
-        ssh-keygen -q -t "$kind" -N '' -f "$key"
-    fi
-    public_key=$(ssh-keygen -y -f "$key")
-    touch /root/.ssh/authorized_keys
-    if ! grep -qxF "$public_key" /root/.ssh/authorized_keys; then
-        printf '%s\n' "$public_key" >> /root/.ssh/authorized_keys
-    fi
+# Key generation must finish in the unrecorded workflow step. Never repair
+# missing keys here: the ssh selector would also record ssh-keygen's module.
+for key in /etc/ssh/ssh_host_rsa_key /etc/ssh/ssh_host_ecdsa_key \
+    /etc/ssh/ssh_host_ed25519_key /root/.ssh/id_rsa /root/.ssh/id_ecdsa \
+    /root/.ssh/id_ed25519 /root/.ssh/authorized_keys; do
+    [ -s "$key" ] || { echo "FAIL ssh: missing prepared key $key" >&2; exit 1; }
 done
-chmod 700 /root/.ssh
-chmod 600 /root/.ssh/id_* /root/.ssh/authorized_keys
-# Alpine's minirootfs locks root with '*'; sshd rejects even public keys for
-# a locked account. Password login remains disabled in this private config.
-passwd -d root
 
 cat > /tmp/aojit/ssh/sshd_config <<'CONFIG'
 Port 2222
