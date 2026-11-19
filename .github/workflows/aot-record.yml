@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        image: ["musl", "pcre2", "ssh", "scp"]
+        image: ["nodejs"]
     steps:
       - uses: actions/checkout@v4
 
@@ -284,10 +284,9 @@ jobs:
       - name: Reuse the successful recordings from run 28
         uses: actions/download-artifact@v4
         with:
-          run-id: 44454527800
+          run-id: 44481085849
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: aot-image-*
-          merge-multiple: true
+          name: aot-images
           path: .aot-new/recorded
       - uses: actions/download-artifact@v4
         with:
