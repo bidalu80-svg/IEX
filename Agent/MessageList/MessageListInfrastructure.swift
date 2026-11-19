@@ -298,22 +298,16 @@ class SelfSizingCell: UICollectionViewCell {
             return copy
         }
 
-        // [T-keyboard-hang] Same-width cache BEFORE super. This is the broad
-        // window the old code checked only AFTER `super` had already re-entered
-        // UIHostingConfiguration/TextKit. During a keyboard transition UIKit
-        // re-asks every visible cell on each bounds-height change; returning
-        // the last measured height for the same content width is an O(1)
-        // answer and never enters SwiftUI. Content/config changes clear this
-        // cache in applyContentConfiguration/clearCachedHeight, so a genuine
-        // width/content change still measures through the normal path below.
-        if let cached = lastComputedHeight,
+        // Reuse same-width heights only while the keyboard is moving.
+        // Outside that transaction, in-place SwiftUI changes must be allowed
+        // to measure even when no contentConfiguration was replaced.
+        if let cv = superview as? UICollectionView,
+           (cv.collectionViewLayout as? MessageListLayout)?.isKeyboardTransitioning == true,
+           let cached = lastComputedHeight,
            let cachedW = lastComputedWidth,
            abs(layoutAttributes.size.width - cachedW) < 1 {
             #if DEBUG
-            if let cv = superview as? UICollectionView,
-               (cv.collectionViewLayout as? MessageListLayout)?.isKeyboardTransitioning == true {
-                KeyboardHangProbe.recordKeyboardCacheHit()
-            }
+            KeyboardHangProbe.recordKeyboardCacheHit()
             #endif
             let copy = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
             copy.size.width = cachedW
@@ -371,23 +365,6 @@ class SelfSizingCell: UICollectionViewCell {
             return layoutAttributes
         }
         let attrs = superAttrs
-
-        // Same-width cache hit (no time bound). Same rationale as the
-        // dedup-window above but covers the broader "width never changed"
-        // case across longer scroll runs.
-        if let cached = lastComputedHeight,
-           abs(layoutAttributes.size.width - attrs.size.width) < 1 {
-            attrs.size.height = cached
-            // [ScrollStall] Count broad cache hits; flush summary 1Hz.
-            Self.broadHits &+= 1
-            let now = CACurrentMediaTime()
-            if now - Self.broadLastFlush > 1.0 {
-                AppLogger(category: "ScrollStall").debug("[CACHE-BROAD] last1s hits=\(Self.broadHits)")
-                Self.broadHits = 0
-                Self.broadLastFlush = now
-            }
-            return attrs
-        }
 
         let gen = configGeneration
         let targetSize = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)
@@ -555,6 +532,8 @@ class SelfSizingCell: UICollectionViewCell {
         lastComputedHeight = nil
         lastComputedWidth = nil
         lastMeasureMediaTime = nil
+        seededHeight = nil
+        seededWidth = nil
     }
 
     override func prepareForReuse() {

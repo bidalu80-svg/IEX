@@ -600,6 +600,7 @@ struct AIChatView: View {
     // keyboard transition), not the interrupted per-frame sample.
     private var chatViewportContentRenderKey: ChatViewportContentRenderKey {
         ChatViewportContentRenderKey(
+            viewModelID: ObjectIdentifier(vm),
             messageCount: vm.messages.count,
             firstMessageID: vm.messages.first?.id,
             lastMessageID: vm.messages.last?.id,
@@ -702,7 +703,7 @@ struct AIChatView: View {
             // before its geometry callback has published a measured height.
             VStack(spacing: 0) {
                 // Own the button's hit bounds; its overlay anchors to the visible
-                // shapes below, excluding transparent composer/attachment gutters.
+                // status bar, or the input bar when no status bar is mounted.
                 if !vm.messages.isEmpty && !vm.isNearBottom {
                     Color.clear.frame(height: 36 + 12).allowsHitTesting(false)
                 }
@@ -714,7 +715,7 @@ struct AIChatView: View {
                         .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.25) : UIColor(white: 0, alpha: 0) }), radius: 6, x: 0, y: 4)
                     #if DEBUG
                     if isReadOnly {
-                        forkBanner.chatScrollArrowAnchor()
+                        forkBanner.chatScrollArrowAnchor(.inputBar)
                     } else {
                         inputBar
                     }
@@ -732,11 +733,13 @@ struct AIChatView: View {
             }
             .overlayPreferenceValue(ChatScrollArrowAnchorKey.self) { regions in
                 GeometryReader { geometry in
-                    if let visibleTop = regions.compactMap({ region -> CGFloat? in
+                    let visibleRegions = regions.filter { region in
                         let bounds = geometry[region.bounds]
-                        let visible = region.clip.map { bounds.intersection(geometry[$0]) } ?? bounds
-                        return visible.isNull || visible.isEmpty ? nil : visible.minY
-                    }).min() {
+                        return !bounds.isNull && !bounds.isEmpty
+                    }
+                    if let anchor = visibleRegions.first(where: { $0.target == .toolStatusBar })
+                        ?? visibleRegions.first(where: { $0.target == .inputBar }) {
+                        let visibleTop = geometry[anchor.bounds].minY
                         scrollToBottomControl
                             .position(x: geometry.size.width / 2, y: visibleTop - (36 + 12) / 2)
                     }
@@ -2317,7 +2320,8 @@ struct AIChatView: View {
             viewportWidth: chatViewportWidth,
             celebration: avatarCelebration,
             fallbackPulse: fallbackPulseOpacity,
-            colorScheme: chatRenderColorScheme)
+            colorScheme: chatRenderColorScheme,
+            scenePhase: scenePhase)
     }
 
     private var chatNavPrincipalContent: some View {
@@ -2745,8 +2749,8 @@ struct AIChatView: View {
     }
 
     /// The composer stack owns the control's hit bounds. Same-pass anchors on
-    /// visible shapes place its bottom edge 12pt above the highest visible
-    /// accessory, including attachment remove buttons, without cached geometry.
+    /// the visible status bar place its bottom edge 12pt above that bar, falling
+    /// back to the input bar when absent, without cached geometry.
     @ViewBuilder
     private var scrollToBottomControl: some View {
         if !vm.messages.isEmpty && !vm.isNearBottom {
@@ -3838,11 +3842,10 @@ struct AIChatView: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
                 .background(Color.yellow.opacity(0.08))
-                .chatScrollArrowAnchor()
             }
 
             inputComposerChrome
-            .chatScrollArrowAnchor()
+            .chatScrollArrowAnchor(.inputBar)
             .background(ChatCallLayoutMarker(identifier: "chat.verify.input"))
             // [T-chat-auto-compact-warning] Red mist around the composer,
             // matching the provider-switch breathing highlight. The opacity
@@ -4611,10 +4614,6 @@ struct AIChatView: View {
             .frame(height: attachmentTrayHeight)
             .onPreferenceChange(AttachmentGridHeightKey.self) { attachmentGridHeight = $0 }
             .padding(.horizontal, hasFloatingPreview ? 0 : 12)
-            // Only visible parts of scrolled chips may anchor the arrow.
-            .transformAnchorPreference(key: ChatScrollArrowAnchorKey.self, value: .bounds) { regions, clip in
-                for index in regions.indices { regions[index].clip = clip }
-            }
             .background(ChatCallLayoutMarker(identifier: "chat.verify.attachments"))
         }
     }
@@ -5742,6 +5741,9 @@ private struct ChatNavigationHeaderKey: Equatable {
     /// the current theme. Without it a light/dark switch leaves the gated
     /// host on the previous appearance until the page is rebuilt.
     let colorScheme: ColorScheme
+    // The badge host captures EnvironmentValues; active must reach its avatar
+    // and activity capsule even when every display field stayed unchanged.
+    let scenePhase: ScenePhase
 }
 
 private struct NavBarStyleModifier: ViewModifier {
@@ -6304,6 +6306,7 @@ private struct ChatVoiceCallPanelHost: View {
 /// CollectionViewMessageListV3; this key only versions the view-level
 /// inputs that require re-rooting the SwiftUI host.
 private struct ChatViewportContentRenderKey: Hashable {
+    let viewModelID: ObjectIdentifier
     let messageCount: Int
     let firstMessageID: UUID?
     let lastMessageID: UUID?

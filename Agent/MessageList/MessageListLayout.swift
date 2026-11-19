@@ -725,6 +725,26 @@ final class MessageListLayout: UICollectionViewLayout {
         }
     }
 
+    /// Content changed in place: a previous precalc is stale too. Merely
+    /// invalidating heightCache lets streaming cells return that old precalc.
+    func invalidateContentHeight(at index: Int) {
+        invalidateHeight(at: index)
+        precalcHeights.removeValue(forKey: index)
+        deferredHeights.removeValue(forKey: index)
+    }
+
+    /// Release keyboard-only measurements once, after the animation settles.
+    func finishKeyboardTransition() {
+        isKeyboardTransitioning = false
+        if let cv = collectionView {
+            for indexPath in cv.indexPathsForVisibleItems {
+                (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+                invalidateContentHeight(at: indexPath.item)
+            }
+        }
+        invalidateLayout()
+    }
+
     /// Directly set the cached height for a specific item index.
     /// Used when the SwiftUI GeometryReader reports a height that differs
     /// from what `preferredLayoutAttributesFitting` returned, bypassing

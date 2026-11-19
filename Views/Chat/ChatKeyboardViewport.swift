@@ -7,6 +7,18 @@ import UIKit
 struct ChatKeyboardViewport: UIViewControllerRepresentable {
     let content: AnyView
     let composer: AnyView
+    @Environment(\.scenePhase) private var scenePhase
+
+    // The roots explicitly capture EnvironmentValues. A display key match
+    // must not retain an inactive/background environment on foreground return.
+    private struct EnvironmentRenderKey: Hashable {
+        let display: AnyHashable
+        let phase: ScenePhase
+    }
+
+    private func environmentRenderKey(_ key: AnyHashable?) -> AnyHashable? {
+        key.map { AnyHashable(EnvironmentRenderKey(display: $0, phase: scenePhase)) }
+    }
     /// [T-keyboard-hang-1253] Changes only when the content host's actual
     /// display inputs change (messages/overlays/committed composer inset).
     /// Pure geometry-only body passes (latestInputBarFrameH and friends) must
@@ -45,8 +57,8 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
         controller.update(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
-            contentRenderKey: contentRenderKey,
-            composerRenderKey: composerRenderKey,
+            contentRenderKey: environmentRenderKey(contentRenderKey),
+            composerRenderKey: environmentRenderKey(composerRenderKey),
             avoidsKeyboard: avoidsKeyboard,
             fadeCompleteY: fadeCompleteY,
             usesWindowHeaderFade: usesWindowHeaderFade)
@@ -172,6 +184,8 @@ final class ChatKeyboardViewportController: UIViewController {
                            name: UIResponder.keyboardDidShowNotification, object: nil)
         center.addObserver(self, selector: #selector(keyboardDidHide),
                            name: UIResponder.keyboardDidHideNotification, object: nil)
+        center.addObserver(self, selector: #selector(applicationDidBecomeActive),
+                           name: UIApplication.didBecomeActiveNotification, object: nil)
         // [T-keyboard-hang-1253] A keyplane/input-method swap can drive a
         // window layout without any keyboard frame/visibility notification.
         // Treat it as the same keyboard transaction so the hosted-tree layout
@@ -247,6 +261,12 @@ final class ChatKeyboardViewportController: UIViewController {
         composerLayoutNeedsUpdate = false
     }
 
+    @objc private func applicationDidBecomeActive() {
+        // An interrupted keyboard transaction must not strand pending content
+        // until another keyboard notification or a postponed fallback arrives.
+        endKeyboardTransition()
+    }
+
     @objc private func keyboardWillChangeFrame() { beginKeyboardTransition() }
     @objc private func inputModeDidChange() { beginKeyboardTransition() }
     @objc private func keyboardWillHide() { beginKeyboardTransition() }
@@ -283,9 +303,8 @@ final class ChatKeyboardViewportController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyboardTransitionSettleDelay, execute: work)
     }
 
-    /// One authoritative post-transition pass. Cached cells keep returning
-    /// their same-width heights, so this settles frames/contentSize without
-    /// asking any visible cell to re-enter SwiftUI/TextKit.
+    /// One authoritative post-transition pass. Keyboard-only cached heights
+    /// are released here so content that grew during the animation can size.
     private func endKeyboardTransition() {
         keyboardTransitionEndWork?.cancel()
         keyboardTransitionEndWork = nil
@@ -308,8 +327,7 @@ final class ChatKeyboardViewportController: UIViewController {
         pendingUpdate = nil
         update?()
         for layout in messageListLayouts(in: host.view) {
-            layout.isKeyboardTransitioning = false
-            layout.invalidateLayout()
+            layout.finishKeyboardTransition()
         }
         // [T-keyboard-hang-1253] One authoritative post-transaction pass.
         // During the animation we deliberately skipped re-entering the

@@ -6804,6 +6804,9 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             cell.clearCachedHeight()
         }
 
+        if let cell = findCell(), let cv = cvOpt, let indexPath = cv.indexPath(for: cell) {
+            layout?.invalidateContentHeight(at: indexPath.item)
+        }
         cvOpt?.collectionViewLayout.invalidateLayout()
     }
 
@@ -7103,7 +7106,13 @@ struct SelectableMarkdownView: UIViewRepresentable {
         if _curW > 1 {
             context.coordinator.lastRenderedWidth = _curW
         }
-        guard markdown != context.coordinator.lastMarkdown || fontChanged else {
+        if UIApplication.shared.applicationState == .active {
+            // A live update supersedes any older frame saved in background.
+            context.coordinator.cancelDeferredRender()
+        }
+        let missingRenderedText = !markdown.isEmpty && (textView.attributedText?.length ?? 0) == 0
+        let forceRender = missingRenderedText || context.coordinator.forceNextRender
+        guard markdown != context.coordinator.lastMarkdown || fontChanged || forceRender else {
             let shouldRecover = textView.window != nil
                 && textView.needsAttachmentRecovery
                 && !textView.hasScheduledRecoveryForCurrentContent
@@ -7168,8 +7177,12 @@ struct SelectableMarkdownView: UIViewRepresentable {
             }
             return
         }
+        context.coordinator.forceNextRender = false
         let oldMarkdown = context.coordinator.lastMarkdown
         context.coordinator.lastMarkdown = markdown
+        // Real content changes (including same-length replacements) invalidate
+        // width-bucket sizes; a character count alone is not a content version.
+        context.coordinator.cachedSizes.removeAll(keepingCapacity: true)
 
         if fontChanged {
             context.coordinator.renderer.updateFontSize(currentFontSize)
@@ -7261,7 +7274,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         hasher.combine(cachedContent != nil ? cachedContent!.blocks.hashValue : markdown.hashValue)
         hasher.combine(FontSettings.shared.scaledMessage(16.5))
         let contentHash: Int = hasher.finalize()
-        if contentHash == context.coordinator.lastRenderedContentHash {
+        if contentHash == context.coordinator.lastRenderedContentHash && !forceRender {
             // [DIAG-RENDER-3] Content hash matches — skip re-render.
             // If text was already set correctly, this is fine. But if
             // attributedText is empty despite matching hash, we have a bug.
@@ -8262,6 +8275,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         /// otherwise the last streaming frame stays blank until SwiftUI
         /// happens to re-evaluate the view body.
         var pendingMarkdown: String? = nil
+        var forceNextRender = false
         /// Re-invokes the live `updateUIView` render path for the deferred
         /// markdown. Captured fresh on every skip so it always closes over the
         /// current textView + render inputs (cachedAttributedString etc.).
@@ -8307,14 +8321,23 @@ struct SelectableMarkdownView: UIViewRepresentable {
             }
         }
 
+        func cancelDeferredRender() {
+            pendingMarkdown = nil
+            replayDeferredRender = nil
+        }
+
         private func applyDeferredRenderIfNeeded() {
             // Only render once the app is genuinely `.active`. didBecomeActive
             // fires after the watchdog-sensitive scene-update transition has
             // settled, so the expensive layout pass is safe here.
             guard UIApplication.shared.applicationState == .active else { return }
-            guard let pending = pendingMarkdown, let replay = replayDeferredRender else { return }
-            pendingMarkdown = nil
-            replayDeferredRender = nil
+            guard pendingMarkdown != nil, let replay = replayDeferredRender else { return }
+            cancelDeferredRender()
+            // The replay must pass both gates, including an empty frame
+            // that has to clear previously rendered text.
+            forceNextRender = true
+            lastRenderedContentHash = nil
+            cachedSizes.removeAll(keepingCapacity: true)
             replay()
         }
 

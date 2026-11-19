@@ -136,6 +136,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         }
 
         coord.applySubViewportCompensation(caller: "updateUIVC")
+        coord.refreshAfterForegroundIfNeeded()
 
         // [T-message-list-empty-on-foreground] Backstop: if a snapshot was
         // deferred during a load (bind1) but binding 3's true→false edge was
@@ -1099,10 +1100,8 @@ extension CollectionViewMessageListV3 {
         // bottom of content gets clipped until the chat is re-entered.
         private var attachmentSizeChangedSub: AnyCancellable?
 
-        // === Foreground/Background Content Tracking ===
-        /// Total character count of the last assistant message's blocks when the app entered background.
-        /// Used to decide whether layout invalidation is needed on foreground return.
-        private var contentLengthAtBackground: Int?
+        // A foreground refresh may have to wait for an in-flight session load.
+        private var needsForegroundRefresh = false
 
         // === Streaming ===
         private var lastMessageId: UUID?
@@ -2180,6 +2179,7 @@ extension CollectionViewMessageListV3 {
                         self.clampDeadline = Date().addingTimeInterval(8.0)
                         self.scrollToLastItem()
                     }
+                    self.refreshAfterForegroundIfNeeded()
                     // Sync reload: keep current scroll position, just update data
                 }
                 .store(in: &subscriptions)
@@ -2281,43 +2281,14 @@ extension CollectionViewMessageListV3 {
                 }
                 .store(in: &subscriptions)
 
-            // 8a. Background entry — snapshot content length so we can detect
-            //     whether significant content accumulated while backgrounded.
-            NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            // 8. Recover after the app is active, not willEnterForeground:
+            // deferred model text must be released before rebuilding cells.
+            NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     guard let self else { return }
-                    let len = self.lastAssistantContentLength()
-                    self.contentLengthAtBackground = len
-                    AppLogger(category: "FGLayout").info("[FGLayout] → background, snapshotLen=\(len)")
-                }
-                .store(in: &subscriptions)
-
-            // 8b. Foreground return — only invalidate layout if ≥200 characters
-            //     accumulated while backgrounded, avoiding unnecessary layout passes
-            //     when the content didn't change meaningfully.
-            NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    guard let self else { return }
-                    let currentLen = self.lastAssistantContentLength()
-                    let bgLen = self.contentLengthAtBackground ?? currentLen
-                    self.contentLengthAtBackground = nil
-                    let accumulated = currentLen - bgLen
-                    AppLogger(category: "FGLayout").info("[FGLayout] → foreground, bgLen=\(bgLen) currentLen=\(currentLen) accumulated=\(accumulated)")
-                    guard accumulated >= 200 else {
-                        AppLogger(category: "FGLayout").info("[FGLayout] skip layout (accumulated \(accumulated) < 200)")
-                        return
-                    }
-                    AppLogger(category: "FGLayout").info("[FGLayout] invalidating layout for \(self.viewController?.collectionView.indexPathsForVisibleItems.count ?? 0) visible cells")
-                    if let cv = self.viewController?.collectionView,
-                       let layout = self.viewController?.messageListLayout {
-                        for indexPath in cv.indexPathsForVisibleItems {
-                            layout.invalidateHeight(at: indexPath.item)
-                        }
-                        layout.invalidateLayout()
-                    }
-                    self.reconfigureVisibleCells()
+                    self.needsForegroundRefresh = true
+                    self.refreshAfterForegroundIfNeeded()
                 }
                 .store(in: &subscriptions)
 
@@ -2785,12 +2756,50 @@ extension CollectionViewMessageListV3 {
             isFlushing = false
         }
 
-        // MARK: - Content Length Helper
+        // MARK: - Foreground Presentation Recovery
 
-        /// Total character count across all blocks of the last assistant message.
-        private func lastAssistantContentLength() -> Int {
-            guard let msg = vm?.messages.last(where: { $0.role == .assistant }) else { return 0 }
-            return msg.blocks.reduce(0) { $0 + $1.content.count }
+        fileprivate func refreshAfterForegroundIfNeeded() {
+            guard needsForegroundRefresh,
+                  UIApplication.shared.applicationState == .active,
+                  let vm, !vm.isLoadingSession, !vm.transitionSuspended,
+                  let cv = viewController?.collectionView, cv.window != nil,
+                  let layout = viewController?.messageListLayout else { return }
+            needsForegroundRefresh = false
+            pendingStreamingLayout?.cancel()
+            pendingStreamingLayout = nil
+            // The mounted VM is authoritative, including an uncached draft.
+            // Clear a scroll defer left behind when background interrupted it.
+            layout.deferSelfSizing = false
+            layout.applyDeferredHeights()
+            vm.setStreamingUIUpdatesSuspended(false)
+            lastMessageId = nil
+            subscribeToLastMessage(vm.messages.last(where: { $0.role == .assistant }))
+            hasPendingSnapshot = false
+            layout.clearHeightCache()
+            attrStringHeightCache.removeAll()
+            userBubbleHeightCache.removeAll()
+            for cell in cv.visibleCells { (cell as? SelfSizingCell)?.clearCachedHeight() }
+            applySnapshot(messages: vm.messages, caller: "foreground")
+            // IDs can be unchanged while text, tools, footer or observed
+            // objects changed. A snapshot no-op must not skip reconfiguration.
+            reconfigureVisibleCells()
+            // UIHostingConfiguration commits asynchronously. Drop provisional
+            // sizes again after the new bodies have had a runloop to update.
+            DispatchQueue.main.async { [weak self, weak vm] in
+                guard let self, let vm, self.vm === vm,
+                      UIApplication.shared.applicationState == .active,
+                      !vm.isLoadingSession, !vm.transitionSuspended,
+                      let cv = self.viewController?.collectionView, cv.window != nil,
+                      let layout = self.viewController?.messageListLayout else { return }
+                for indexPath in cv.indexPathsForVisibleItems {
+                    (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+                    layout.invalidateContentHeight(at: indexPath.item)
+                }
+                layout.invalidateLayout()
+                cv.setNeedsLayout()
+                if self.scrollMode == .autoScrolling { self.scheduleCoalescedScroll() }
+            }
+            AppLogger(category: "FGLayout").info("[FGLayout] recovered current VM: messages=\(vm.messages.count) items=\(dataSource.snapshot().numberOfItems)")
         }
 
         // MARK: - Streaming Subscription
@@ -2881,7 +2890,9 @@ extension CollectionViewMessageListV3 {
         // fileprivate so updateUIViewController (struct, same file) can use it as
         // a backstop flush. [T-message-list-empty-on-foreground]
         fileprivate func flushPendingSnapshotIfNeeded(caller: String = "?") {
-            guard hasPendingSnapshot else { return }
+            guard hasPendingSnapshot,
+                  let currentVM = vm, !currentVM.isLoadingSession,
+                  !currentVM.streamingUIUpdatesSuspended else { return }
             hasPendingSnapshot = false
             let blocks = vm?.messages.last(where: { $0.role == .assistant })?.blocks.count ?? -1
             // [T-ios-scroll-suspend-leak] Include blockCount + isProcessing so a

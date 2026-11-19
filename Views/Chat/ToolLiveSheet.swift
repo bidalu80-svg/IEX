@@ -344,11 +344,10 @@ struct FloatingToolBar: View {
                 selectedIdx: $selectedIdx,
                 trailingInset: toolPreviewEnabled ? Self.thumbnailWidth + 18 : 0
             )
-            .chatScrollArrowAnchor()
+            .chatScrollArrowAnchor(.toolStatusBar)
             .background(ChatAccessoryGeometryMarker(identifier: "chat.verify.status"))
         } preview: {
             previewThumbnail
-                .chatScrollArrowAnchor()
                 .background(ChatAccessoryGeometryMarker(identifier: "chat.verify.preview"))
                 .accessibilityIdentifier("chat.tool.preview")
         }
