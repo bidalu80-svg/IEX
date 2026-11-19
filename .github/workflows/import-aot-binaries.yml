@@ -1,6 +1,9 @@
 name: Import AOT binaries (one-shot)
 
 on:
+  push:
+    branches:
+      - codex/soul-header-status
   workflow_dispatch:
 
 permissions:
