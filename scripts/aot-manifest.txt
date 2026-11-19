@@ -2,10 +2,10 @@
 # name | module selector | staged reference workload wrapper | timeout seconds
 # Requires scripts/prepare-aot-workloads.sh and the pinned upstream benchmark suite.
 # No substitute workload is used if that suite or exact packages are missing.
-musl|ld-musl|@scripts/aot-workloads/musl.sh|3600
+musl|ld-musl|@scripts/aot-workloads/musl.sh|10800
 busybox|/bin/busybox|@scripts/aot-workloads/busybox.sh|3600
 python3|libpython3.12|@scripts/aot-workloads/python3.sh|3600
-nodejs|/usr/bin/node|@scripts/aot-workloads/nodejs.sh|10800
+nodejs|/usr/bin/node|@scripts/aot-workloads/nodejs.sh|18000
 pillow|PIL/_imaging.cpython|@scripts/aot-workloads/pillow.sh|3600
 libwebp|libwebp.so|@scripts/aot-workloads/libwebp.sh|3600
 libjpeg|libjpeg.so|@scripts/aot-workloads/libjpeg.sh|3600

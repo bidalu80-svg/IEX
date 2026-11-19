@@ -12,8 +12,9 @@ suite="$source_dir/benchmark/aojit"
 [ -f "$suite/install.sh" ] || { echo "Missing pinned suite: $suite/install.sh" >&2; exit 1; }
 # The suite installer copies its guest scripts and creates their input fixtures.
 bash "$suite/install.sh" "$ish" "$root"
-mkdir -p "$root/tmp/aojit/minis" "$root/tmp/aojit/net"
+mkdir -p "$root/tmp/aojit/minis" "$root/tmp/aojit/net" "$root/tmp/aojit/ssh"
 cp "$repo/scripts/aot-reference-workloads/pcre_train.sh" "$root/tmp/aojit/minis/"
+cp "$repo/scripts/aot-reference-workloads/sshd_setup.sh" "$root/tmp/aojit/ssh/"
 # Match record_local.sh: generate certificates on the HOST, not by installing
 # a guest openssl CLI which could upgrade the exact libcrypto/libssl packages.
 for kind in rsa ec; do

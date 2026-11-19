@@ -12,6 +12,7 @@ src=$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')
 ( cd "$src" && find . -name '*.py' ! -path './site-packages/*' ! -path './test/*' ! -path '*/tests/*' ! -path '*/__pycache__/*' |
     tar cf - -T - ) | tar xf -
 g() { git -c user.name=agent -c user.email=agent@example.invalid "$@"; }
+git config --global --add safe.directory '*'
 g init -q && g add -A && g commit -qm 'import stdlib' || { echo "FAIL pcre: sample repo"; exit 1; }
 for n in 1 2 3 4 5; do
     files=$(git ls-files '*.py' | awk -v n=$n 'NR % 53 == n * 7' | head -10)
