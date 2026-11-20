@@ -565,14 +565,14 @@ final class ChatKeyboardViewportController: UIViewController {
         let update = pendingUpdate
         pendingUpdate = nil
         update?()
-        for layout in messageListLayouts(in: host.view) {
-            layout.finishKeyboardTransition()
-        }
         // [T-keyboard-hang-1253] One authoritative post-transaction pass.
         // During the animation we deliberately skipped re-entering the
         // hosting trees; resolve any owed work now, outside the keyboard's
         // UIKit transaction.
         if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
+        for layout in messageListLayouts(in: host.view) {
+            layout.finishKeyboardTransition()
+        }
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {

@@ -1024,14 +1024,14 @@ extension CollectionViewMessageListV3 {
         private var geometryMountGeneration: UInt?
         private var viewportGeometryCommitDepth = 0
         private enum PositionReason: String, Hashable {
-            case geometry, resize, keyboardEnd, snapshot, snapshotShrink, measurement, contentSize
+            case geometry, resize, keyboardEnd, snapshot, snapshotShrink, measurement, contentSize, contentGrowth
             case signal, coalesced, foreground, attachment, disclosure, explicit, sendEnded
 
-            static let streamingGrowth: Set<PositionReason> = [.measurement, .contentSize, .signal]
-            static let keyboardSettlement: Set<PositionReason> = [
-                .keyboardEnd, .geometry, .resize, .snapshot, .snapshotShrink, .measurement, .contentSize, .signal
-            ]
-            static let passiveMeasurement: Set<PositionReason> = [.measurement, .contentSize]
+            static let passiveMeasurement: Set<PositionReason> = [.measurement, .contentSize, .contentGrowth]
+            static let streamingGrowth = passiveMeasurement.union([.signal])
+            static let keyboardSettlement = streamingGrowth.union([
+                .keyboardEnd, .geometry, .resize, .snapshot, .snapshotShrink
+            ])
         }
         private struct PositionStamp: Equatable {
             let view: ObjectIdentifier
@@ -1045,11 +1045,12 @@ extension CollectionViewMessageListV3 {
             let readingY: CGFloat
             let tailItem: MessageListItem?
             let tailGap: CGFloat
+            let wasNearBottom: Bool
         }
         private enum SendPosition {
             case inserting(acceptedUser: UUID?, anchor: PositionAnchor?)
-            case reveal(MessageListItem, PositionAnchor?)
-            case waiting(MessageListItem, minimumGap: CGFloat)
+            case reveal(MessageListItem)
+            case waiting(MessageListItem)
         }
         private var positionGeneration: UInt = 0
         private var positionOwnerGeneration: UInt = 0
@@ -1225,7 +1226,8 @@ extension CollectionViewMessageListV3 {
             return cv.collectionViewLayout.layoutAttributesForItem(at: index)?.frame
         }
 
-        private func capturePosition(in cv: UICollectionView, presented: Bool = false) -> PositionAnchor? {
+        private func capturePosition(in cv: UICollectionView, presented: Bool = false,
+                                     wasNearBottom: Bool? = nil) -> PositionAnchor? {
             guard let window = cv.window, cv.bounds.height > 0, didRestoreScroll else { return nil }
             let origin = cv.convert(cv.bounds, to: window).minY
             let top = cv.contentOffset.y + cv.adjustedContentInset.top
@@ -1243,7 +1245,8 @@ extension CollectionViewMessageListV3 {
             return PositionAnchor(readingItem: item,
                                   readingY: displayReadingY ?? readingY,
                                   tailItem: tail,
-                                  tailGap: cv.contentOffset.y + bottom - (itemFrame(tail, in: cv)?.maxY ?? cv.contentSize.height))
+                                  tailGap: cv.contentOffset.y + bottom - (itemFrame(tail, in: cv)?.maxY ?? cv.contentSize.height),
+                                  wasNearBottom: wasNearBottom ?? isNearBottom())
         }
 
         private func enqueuePosition(_ reason: PositionReason, anchor: PositionAnchor? = nil, scheduleLayout: Bool = true) {
@@ -1259,17 +1262,17 @@ extension CollectionViewMessageListV3 {
 
         private func keyboardPositionTransition(_ active: Bool) {
             let interrupting = keyboardInFlight && active
+            let previousNearBottom = keyboardAnchor?.wasNearBottom
             keyboardInFlight = active
             if active {
                 // Drop pre-keyboard anchors, including the deferred foreground
                 // pass. Keep the send and explicit-scroll ownership unchanged.
                 supersedeOrdinaryPositionRequests()
                 if let cv = viewController?.collectionView, positionIsAvailable(in: cv) {
-                    keyboardAnchor = capturePosition(in: cv, presented: interrupting)
+                    keyboardAnchor = capturePosition(in: cv, presented: interrupting, wasNearBottom: previousNearBottom)
                     positionAnchor = keyboardAnchor
                 }
             }
-            if !active { keyboardAnchor = nil }
         }
 
         private func beginPositionLayout() -> Bool {
@@ -1347,6 +1350,8 @@ extension CollectionViewMessageListV3 {
             let finalOffset = cv.contentOffset
             let reasons = positionReasons
             let anchor = positionAnchor
+            let keyboardFollowsBottom = scrollMode == .autoScrolling && keyboardAnchor?.wasNearBottom == true
+            let keyboardEnd = reasons.contains(.keyboardEnd)
             let grew = hasLaidOutGrowth(in: cv)
             let layoutAdjustedGrowth = layoutAdjustedStreamingGrowth
             positionReasons.removeAll()
@@ -1356,12 +1361,23 @@ extension CollectionViewMessageListV3 {
             guard !reasons.isEmpty || !didRestoreScroll else { return false }
 
             resolvingPosition = true
-            defer { resolvingPosition = false }
+            defer {
+                if keyboardEnd { keyboardAnchor = nil }
+                resolvingPosition = false
+            }
             if canUseKeyboardLayoutTarget(in: cv, reasons: reasons) {
+                let target = keyboardFollowsBottom ? scrollableBottom(in: cv) : finalOffset.y
                 lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
-                lastPositionTarget = finalOffset.y
+                lastPositionTarget = target
+                supersedeOrdinaryPositionRequests()
                 settledPlacementGeneration = positionGeneration
-                if reasons.contains(.contentSize) {
+                if target.isFinite, abs(target - finalOffset.y) > 0.5 {
+                    UIView.performWithoutAnimation {
+                        cv.setContentOffset(CGPoint(x: finalOffset.x, y: target), animated: false)
+                    }
+                    (cv as? NoAnimationCollectionView)?.materializePositionWithoutResolving = true
+                }
+                if reasons.contains(.contentSize) || reasons.contains(.contentGrowth) {
                     positionReasons.insert(.contentSize)
                     cv.setNeedsLayout()
                 }
@@ -1386,7 +1402,22 @@ extension CollectionViewMessageListV3 {
                                            forceRelax: reasons.contains(.snapshotShrink))
             }
             if inheritsKeyboard { prepare() } else { UIView.performWithoutAnimation(prepare) }
-            if maintainsSettledPlacement {
+            let followsMeasuredGrowth = didRestoreScroll && scrollMode == .autoScrolling && sendPosition == nil
+                && !keyboardInFlight && reasons.contains(.contentGrowth)
+                && reasons.isSubset(of: PositionReason.streamingGrowth)
+                && !previousSnapshotIds.isEmpty && positionIsAvailable(in: cv)
+            if followsMeasuredGrowth {
+                let target = scrollableBottom(in: cv)
+                lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
+                lastPositionTarget = target
+                if target.isFinite, target - cv.contentOffset.y > 0.5 {
+                    UIView.performWithoutAnimation {
+                        cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: target), animated: false)
+                    }
+                    (cv as? NoAnimationCollectionView)?.materializePositionWithoutResolving = true
+                }
+            }
+            if maintainsSettledPlacement || followsMeasuredGrowth {
                 syncScrollFlags()
                 return false
             }
@@ -1395,9 +1426,12 @@ extension CollectionViewMessageListV3 {
             let origin = cv.convert(cv.bounds, to: window).minY
             let bottom = cv.bounds.height - baseBottomInset - cv.safeAreaInsets.bottom
             let followsBottom = scrollMode == .autoScrolling
-            let geometryChanged = reasons.contains(.geometry) || reasons.contains(.resize) || reasons.contains(.keyboardEnd)
+            let geometryChanged = reasons.contains(.geometry) || reasons.contains(.resize) || keyboardEnd
+            let usesKeyboardAnchor = inheritsKeyboard && keyboardAnchor != nil
+                && reasons.isSubset(of: PositionReason.keyboardSettlement)
             var desired = cv.contentOffset.y
             var useVisualBottom = followsBottom
+            var sendCanHandOff = false
             let initial = !didRestoreScroll
             let settlesRecovery = sendPosition == nil && reasons.isDisjoint(with: [.explicit, .disclosure, .sendEnded])
                 && (initial || reasons.contains(.foreground))
@@ -1425,11 +1459,24 @@ extension CollectionViewMessageListV3 {
                 if useVisualBottom, sendPosition == nil {
                     clampAfterSessionLoad = true
                     clampDeadline = Date().addingTimeInterval(8)
+                    desired = scrollableBottom(in: cv)
+                    useVisualBottom = false
                 }
-            } else if !followsBottom {
+            } else if reasons.contains(.foreground), let anchor {
+                useVisualBottom = false
+                if anchor.wasNearBottom {
+                    desired = scrollableBottom(in: cv)
+                } else if let frame = itemFrame(anchor.readingItem, in: cv) {
+                    desired = origin + frame.minY - anchor.readingY
+                }
+            } else if usesKeyboardAnchor && keyboardFollowsBottom {
+                desired = scrollableBottom(in: cv)
+                useVisualBottom = false
+            } else if !followsBottom || usesKeyboardAnchor {
                 if let anchor, let frame = itemFrame(anchor.readingItem, in: cv) {
                     desired = origin + frame.minY - anchor.readingY
                 }
+                useVisualBottom = false
             } else if geometryChanged, let anchor, let tail = anchor.tailItem,
                       tail == previousSnapshotIds.last, abs(anchor.tailGap) <= 0.5,
                       let frame = itemFrame(tail, in: cv) {
@@ -1438,41 +1485,25 @@ extension CollectionViewMessageListV3 {
             }
 
             if scrollMode == .autoScrolling, let send = sendPosition {
-                let user: MessageListItem?
+                useVisualBottom = false
                 switch send {
-                case .inserting: user = nil
-                case .reveal(let item, _), .waiting(let item, _): user = item
-                }
-                let hasReply = user.flatMap { previousSnapshotIds.firstIndex(of: $0) }.map { index in
-                    previousSnapshotIds.dropFirst(index + 1).contains { item in
-                        isPresentableBlock(item) && (itemFrame(item, in: cv)?.height ?? 0) > 0.5
+                case .inserting(_, let before):
+                    if let before = before ?? anchor, let reading = itemFrame(before.readingItem, in: cv) {
+                        desired = origin + reading.minY - before.readingY
                     }
-                } ?? false
-                let queuedDuringReply = grew && user.flatMap { user in
-                    messageIndex[user.messageId].map { snapshotMessages[$0].isQueued }
-                } == true
-                if hasReply || queuedDuringReply {
-                    sendPosition = nil
-                    useVisualBottom = true
-                } else {
-                    useVisualBottom = false
-                    switch send {
-                    case .inserting(_, let before), .reveal(_, let before):
-                        if let before, let reading = itemFrame(before.readingItem, in: cv) {
-                            desired = origin + reading.minY - before.readingY
-                        } else if let anchor, let reading = itemFrame(anchor.readingItem, in: cv) {
-                            desired = origin + reading.minY - anchor.readingY
+                case .reveal(let user), .waiting(let user):
+                    desired = scrollableBottom(in: cv)
+                    sendPosition = .waiting(user)
+                    let hasAssistantContent = previousSnapshotIds.firstIndex(of: user).map { index in
+                        previousSnapshotIds.dropFirst(index + 1).contains { item in
+                            if case .assistantFooter = item {
+                                return item == previousSnapshotIds.last && (itemFrame(item, in: cv)?.height ?? 0) > 0.5
+                            }
+                            return isPresentableBlock(item) && (itemFrame(item, in: cv)?.height ?? 0) > 0.5
                         }
-                        if let user, let frame = itemFrame(user, in: cv) {
-                            let visibleTop = cv.adjustedContentInset.top
-                            let reveal = min(frame.minY - visibleTop, frame.maxY - bottom)
-                            desired = max(desired, reveal)
-                            let offset = boundedPosition(desired, followsBottom: false, in: cv)
-                            sendPosition = .waiting(user, minimumGap: offset + bottom - frame.maxY)
-                        }
-                    case .waiting(let item, let gap):
-                        if let frame = itemFrame(item, in: cv) { desired = frame.maxY - bottom + gap }
-                    }
+                    } ?? false
+                    let queuedDuringReply = grew && (messageIndex[user.messageId].map { snapshotMessages[$0].isQueued } == true)
+                    sendCanHandOff = !keyboardInFlight && (hasAssistantContent || queuedDuringReply)
                 }
             }
 
@@ -1484,9 +1515,13 @@ extension CollectionViewMessageListV3 {
                 supersedeOrdinaryPositionRequests()
                 settledPlacementGeneration = positionGeneration
             }
-            guard target.isFinite, abs(target - cv.contentOffset.y) > 0.5 else { return false }
+            guard target.isFinite else { return false }
+            let needsMove = abs(target - cv.contentOffset.y) > 0.5
+            if sendCanHandOff, !needsMove { sendPosition = nil }
+            guard needsMove else { return false }
             let update = { cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: target), animated: false) }
             if inheritsKeyboard, !initial { update() } else { UIView.performWithoutAnimation(update) }
+            if sendCanHandOff, abs(target - cv.contentOffset.y) <= 0.5 { sendPosition = nil }
             if settlesRecovery, let list = cv as? NoAnimationCollectionView {
                 list.materializePositionWithoutResolving = true
                 return false
@@ -1499,6 +1534,10 @@ extension CollectionViewMessageListV3 {
                 adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
                 baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
                 current: desired, followsBottom: followsBottom)
+        }
+
+        private func scrollableBottom(in cv: UICollectionView) -> CGFloat {
+            max(-cv.adjustedContentInset.top, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
         }
 
         // === [T-foldable-scroll] Reader's place, across a pane-layout change ===
@@ -1640,8 +1679,8 @@ extension CollectionViewMessageListV3 {
         private func rememberScrollAnchor() {
             guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing, !resolvingPosition else { return }
             guard let cv = viewController?.collectionView else { return }
-            if scrollMode == .autoScrolling && isNearBottom() {
-                if lastAnchorItem != nil { ChatScrollMemory.shared.clear(key) }
+            if isNearBottom() {
+                ChatScrollMemory.shared.clear(key)
                 lastAnchorItem = nil
                 lastAnchorOffset = .nan
                 return
@@ -1754,7 +1793,8 @@ extension CollectionViewMessageListV3 {
                     self.scheduleCoalescedScroll()
                 }
                 self.vm?.contentSizeDeltaSignal.send(delta)
-                self.enqueuePosition(.contentSize, scheduleLayout: (cv as? NoAnimationCollectionView)?.isInPositionLayout != true)
+                self.enqueuePosition(delta > 0 ? .contentGrowth : .contentSize,
+                                     scheduleLayout: (cv as? NoAnimationCollectionView)?.isInPositionLayout != true)
             }
 
             bindViewModel(vm)
@@ -2451,7 +2491,9 @@ extension CollectionViewMessageListV3 {
                 .sink { [weak self] in
                     guard let self else { return }
                     let anchor = (self.viewController?.collectionView).flatMap { self.capturePosition(in: $0) }
+                    let keyboardAnchor = self.keyboardAnchor
                     self.invalidatePositionRequests()
+                    self.keyboardAnchor = keyboardAnchor
                     self.clampAfterSessionLoad = false
                     self.clampDeadline = .distantPast
                     self.sendPosition = .inserting(acceptedUser: nil, anchor: anchor)
@@ -2646,6 +2688,7 @@ extension CollectionViewMessageListV3 {
             NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
                 .sink { [weak self] _ in
                     guard let self else { return }
+                    self.rememberScrollAnchor()
                     let anchor = (self.viewController?.collectionView).flatMap { self.capturePosition(in: $0) }
                     self.invalidatePositionRequests()
                     self.foregroundAnchor = anchor
@@ -3884,7 +3927,7 @@ extension CollectionViewMessageListV3 {
             // [T-ios-blocks-lost-render]
             snapshotMessages = messages
             switch sendPosition {
-            case .reveal(let item, _)?, .waiting(let item, _)? :
+            case .reveal(let item)?, .waiting(let item)?:
                 if !newItems.contains(item) { sendPosition = nil }
             default: break
             }
@@ -3897,9 +3940,9 @@ extension CollectionViewMessageListV3 {
             let oldSet = Set(previousSnapshotIds)
             let inserted = newItems.filter { !oldSet.contains($0) }
             enqueuePosition(newItems.count < oldCount ? .snapshotShrink : .snapshot, anchor: before)
-            if case .inserting(let acceptedID?, let anchor)? = sendPosition,
+            if case .inserting(let acceptedID?, _)? = sendPosition,
                inserted.contains(.wholeMessage(acceptedID)) {
-                sendPosition = .reveal(.wholeMessage(acceptedID), anchor)
+                sendPosition = .reveal(.wholeMessage(acceptedID))
             }
             previousSnapshotIds = newItems
 
