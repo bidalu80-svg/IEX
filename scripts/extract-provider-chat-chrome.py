@@ -25,6 +25,9 @@ chrome = chat.split("// BEGIN ProviderChatChrome", 1)[1].split("// END ProviderC
 # Keep its extraction limited to the production types it actually exercises;
 # Metal/native header rendering is tested in the complete app on iOS 18 and 26.
 chrome = chrome[chrome.index("private final class ChatProgressiveFrostView:"):]
+search_overlay = read("Views/Chat/ChatSearchOverlay.swift")
+focus_header = search_overlay[search_overlay.index("@MainActor final class ChatSearchFocusHeader {"):
+                              search_overlay.index("@MainActor private final class ChatSearchFieldFocus {")]
 
 picker = read("Views/Providers/SessionModelPicker.swift")
 resolution = picker[picker.index("struct SessionModelDisplay {"):]
@@ -50,7 +53,7 @@ for name in ["providerPickerLabel", "providerIcon", "providerColor"]:
     add_row += member(add, "    private func " + name + "(") + "\n"
 add_row += "}\n"
 output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text("import SwiftUI\nimport UIKit\nimport ObjectiveC\n" + palette + "\n" + copilot + "\n" + brand + "\n" + resolution + "\n" + chrome + "\n" + type_extensions + instance_row + add_row + harness, encoding="utf-8")
+output.write_text("import SwiftUI\nimport UIKit\nimport ObjectiveC\n" + palette + "\n" + copilot + "\n" + brand + "\n" + resolution + "\n" + focus_header + chrome + "\n" + type_extensions + instance_row + add_row + harness, encoding="utf-8")
 catalog.mkdir(parents=True, exist_ok=True)
 (catalog / "Contents.json").write_text('{"info":{"version":1,"author":"xcode"}}')
 assets = list((root / "Assets.xcassets").glob("ProviderBrand*.imageset"))

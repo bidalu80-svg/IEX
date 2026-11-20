@@ -808,6 +808,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     /// Establish follow intent before inserting a composer message, without
     /// starting a scroll animation towards the pre-send content size.
     let composerWillSend = PassthroughSubject<Void, Never>()
+    /// The synchronous composer attempt either commits this user item or returns without a send.
+    let composerDidResolveSend = PassthroughSubject<UUID?, Never>()
     /// Signal sent when a text block transitions from empty to non-empty content.
     /// The coordinator reconfigures the affected cell so UIHostingConfiguration
     /// re-measures its height (UIKit doesn't always trigger preferredLayoutAttributesFitting
@@ -2169,11 +2171,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     var voiceCallSessionID: String?
     var voiceCallMessageStart = 0
 
-    func send() {
+    func send(onAccepted: ((UUID) -> Void)? = nil) {
         if !isProcessing, voiceCallCoordinator?.isActive == true {
             voiceCallCoordinator?.pause(reason: "对话开始处理其他消息，语音通话已暂停。")
         }
-        send(voiceCallText: nil, voiceCallTurnID: nil)
+        send(voiceCallText: nil, voiceCallTurnID: nil, onAccepted: onAccepted)
     }
 
     /// [T-chat-quote-reply] Capture an immutable text snapshot of the target
@@ -2202,7 +2204,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         pendingQuote = nil
     }
 
-    func send(voiceCallText: String?, voiceCallTurnID callTurnID: UUID?) {
+    func send(voiceCallText: String?, voiceCallTurnID callTurnID: UUID?, onAccepted: ((UUID) -> Void)? = nil) {
         if let callTurnID {
             guard voiceCallTurnID == callTurnID, voiceCallText != nil else { return }
         }
@@ -2409,6 +2411,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         if voiceCallText == nil { pendingQuote = nil }
         let displayText = text.isEmpty && pendingAttachments.isEmpty ? "" : text
         let userMsg = ChatMessage(role: .user, content: displayText, quote: replyQuote)
+        onAccepted?(userMsg.id)
         messages.append(userMsg)
 
         // Snapshot and clear composer attachments only for a composer send.

@@ -945,9 +945,10 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
     // it. An unsolicited chain hand-off satisfies neither and is refused, so
     // the keyboard never rises and no bottom gap ever appears.
     var allowsFirstResponder = false
+    var mayTakeFocus: () -> Bool = { true }
 
     override var canBecomeFirstResponder: Bool {
-        allowsFirstResponder && super.canBecomeFirstResponder
+        allowsFirstResponder && mayTakeFocus() && super.canBecomeFirstResponder
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1325,6 +1326,7 @@ struct PastableTextView: UIViewRepresentable {
     /// Signal from the view model that the caret should programmatically move
     /// to this offset (used after inserting a mention). Nil = no pending move.
     var desiredCaret: Int?
+    var mayTakeFocus: () -> Bool = { true }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1432,6 +1434,7 @@ struct PastableTextView: UIViewRepresentable {
         // SwiftUI can reuse the UIKit composer when the visible session changes.
         // Delegate edits must reach the current session's bindings and callbacks.
         context.coordinator.parent = self
+        tv.mayTakeFocus = mayTakeFocus
         if tv.text != text, tv.markedTextRange == nil || text.isEmpty {
             // [T-ios-composer-residual-text-33549] Clearing the composer
             // post-send is the race-prone path: an in-flight IME
@@ -1536,7 +1539,7 @@ struct PastableTextView: UIViewRepresentable {
         }
 
         // Sync focus from SwiftUI → UIKit (guard to prevent feedback loops)
-        let wantsFocus = isFocused
+        let wantsFocus = isFocused && mayTakeFocus()
         let hasFocus = tv.isFirstResponder
         if wantsFocus != hasFocus {
             pasteLog.debug("[updateUIView] focus sync: wantsFocus=\(wantsFocus) hasFocus=\(hasFocus)")
@@ -1544,6 +1547,10 @@ struct PastableTextView: UIViewRepresentable {
             coordinator.isSyncingFocus = true
             if wantsFocus {
                 DispatchQueue.main.async {
+                    guard coordinator.parent.isFocused, coordinator.parent.mayTakeFocus() else {
+                        coordinator.isSyncingFocus = false
+                        return
+                    }
                     // Only become first responder when no sheet /
                     // fullScreenCover is presented above this view.
                     // SwiftUI sheets share the same window on iOS, so
@@ -1574,6 +1581,10 @@ struct PastableTextView: UIViewRepresentable {
                 }
             } else {
                 DispatchQueue.main.async {
+                    guard !coordinator.parent.isFocused || !coordinator.parent.mayTakeFocus() else {
+                        coordinator.isSyncingFocus = false
+                        return
+                    }
                     pasteLog.debug("[updateUIView] calling resignFirstResponder")
                     // [T-voice-text-switch-autofocus-race] Re-close the gate on
                     // resign so a later unsolicited chain hand-off (if UIKit

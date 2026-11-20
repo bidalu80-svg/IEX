@@ -25,7 +25,23 @@ struct FixtureMessages: UIViewRepresentable {
         list.contentInset.bottom = 70
         list.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "row")
         list.dataSource = context.coordinator
-        list.shouldFollowViewportBottom = { followsBottom }
+        // This shell exercises the keyboard host, not the production
+        // coordinator. Keep the fixture's basic bottom/browse behavior on resize.
+        var resizeOffset: CGFloat?
+        list.viewportWillResize = { [weak list] in resizeOffset = resizeOffset ?? list?.contentOffset.y }
+        list.beginPositionLayout = { resizeOffset != nil }
+        list.finishPositionLayout = { [weak list] in
+            guard let list, let before = resizeOffset else { return false }
+            resizeOffset = nil
+            guard !list.isTracking, !list.isDecelerating else { return false }
+            let target = ChatListScrollTarget.resolve(contentHeight: list.contentSize.height,
+                viewportHeight: list.bounds.height, adjustedTop: list.adjustedContentInset.top,
+                adjustedBottom: list.adjustedContentInset.bottom, baseBottom: list.contentInset.bottom,
+                safeAreaBottom: list.safeAreaInsets.bottom, current: before, followsBottom: followsBottom)
+            guard abs(target - list.contentOffset.y) > 0.5 else { return false }
+            list.setContentOffset(CGPoint(x: list.contentOffset.x, y: target), animated: false)
+            return true
+        }
         DispatchQueue.main.async {
             list.layoutIfNeeded()
             if count > 10 {

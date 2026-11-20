@@ -57,6 +57,11 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
+        context.coordinator.updateScrollMemoryKey(scrollMemoryKey)
+        if geometryContext == nil {
+            context.coordinator.fallbackBottomInset = inputBarHeight + floatingBarHeight + 8
+            context.coordinator.fallbackTopOverlayInset = max(0, topOverlayInset)
+        }
         context.coordinator.attach(to: vc, vm: vm)
         context.coordinator.bindGeometry(geometryContext)
         // Drops are handled exclusively by the SwiftUI `.onDrop` on the chat
@@ -84,6 +89,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         // floating ↑/↓ buttons never appeared again for the whole session
         // (device ring trace: coordinator vm read false at every sync while
         // the buttons stayed hidden at diff≈2700pt from the bottom).
+        coord.updateScrollMemoryKey(scrollMemoryKey)
         coord.rebindViewModelIfNeeded(vm)
         coord.onRetryMessage = onRetryMessage
         coord.onRetryLast = onRetryLast
@@ -108,8 +114,8 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
             coord.fallbackBottomInset = inputBarHeight + floatingBarHeight + 8
             coord.fallbackTopOverlayInset = max(0, topOverlayInset)
         }
-        coord.applyViewportGeometry()
         coord.refreshAfterForegroundIfNeeded()
+        coord.applyViewportGeometry()
 
         // [T-message-list-empty-on-foreground] Backstop: if a snapshot was
         // deferred during a load (bind1) but binding 3's true→false edge was
@@ -126,11 +132,6 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         if !vm.isLoadingSession && !vm.streamingUIUpdatesSuspended {
             coord.flushPendingSnapshotIfNeeded(caller: "updateUIVC-backstop")
         }
-
-        // [T-foldable-scroll] A rebuilt list starts at the bottom. Put the
-        // reader back where they were before the pane layout changed.
-        coord.updateScrollMemoryKey(scrollMemoryKey)
-        coord.scheduleScrollRestoreIfNeeded()
 
         // Viewport changes preserve the bottom or reading position in the
         // collection view's own layout pass. Focus is not a geometry clock;
@@ -1008,6 +1009,7 @@ extension CollectionViewMessageListV3 {
             didSet {
                 // Explicit browsing (including search/restoration/disclosure)
                 // supersedes the temporary session-load follow intent.
+                if scrollMode != oldValue { invalidatePositionRequests() }
                 if scrollMode == .userBrowsing { clampAfterSessionLoad = false }
                 // Mirror to the layout so its invalidationContext can glue the
                 // streaming cell's bottom to the viewport while pinned (smooth
@@ -1021,7 +1023,40 @@ extension CollectionViewMessageListV3 {
         private var geometryContext: ChatListGeometryContext?
         private var geometryMountGeneration: UInt?
         private var viewportGeometryCommitDepth = 0
-        private var pendingViewportPosition = false
+        private enum PositionReason: String, Hashable {
+            case geometry, resize, keyboardEnd, snapshot, snapshotShrink, measurement, contentSize
+            case signal, coalesced, foreground, attachment, disclosure, explicit, sendEnded
+        }
+        private struct PositionStamp: Equatable {
+            let view: ObjectIdentifier
+            let window: ObjectIdentifier
+            let vm: ObjectIdentifier
+            let mount: UInt?
+            let generation: UInt
+        }
+        private struct PositionAnchor {
+            let readingItem: MessageListItem?
+            let readingY: CGFloat
+            let tailItem: MessageListItem?
+            let tailGap: CGFloat
+        }
+        private enum SendPosition {
+            case inserting(acceptedUser: UUID?, anchor: PositionAnchor?)
+            case reveal(MessageListItem, PositionAnchor?)
+            case waiting(MessageListItem, minimumGap: CGFloat)
+        }
+        private var positionGeneration: UInt = 0
+        private var positionOwnerGeneration: UInt = 0
+        private var positionReasons: Set<PositionReason> = []
+        private var positionAnchor: PositionAnchor?
+        private var foregroundAnchor: PositionAnchor?
+        private var keyboardAnchor: PositionAnchor?
+        private var keyboardInFlight = false
+        private var sendPosition: SendPosition?
+        private var growingItems: Set<MessageListItem> = []
+        private var resolvingPosition = false
+        private var lastPositionSources = ""
+        private var lastPositionTarget: CGFloat?
         var fallbackBottomInset: CGFloat = 0
         var fallbackTopOverlayInset: CGFloat = 0
 
@@ -1032,8 +1067,9 @@ extension CollectionViewMessageListV3 {
             geometryMountGeneration = context?.mountGeneration
             guard let cv = viewController?.collectionView else { return }
             context?.registerList(cv, reconcile: { [weak self] in self?.applyViewportGeometry() },
-                                  commit: { [weak self] changes in
-                if let self { self.performViewportGeometryCommit(changes) } else { changes() }
+                                  keyboard: { [weak self] active in self?.keyboardPositionTransition(active) },
+                                   commit: { [weak self] finishing, changes in
+                if let self { self.performViewportGeometryCommit(finishing: finishing, changes) } else { changes() }
             })
         }
 
@@ -1041,27 +1077,28 @@ extension CollectionViewMessageListV3 {
             if let cv = viewController?.collectionView { geometryContext?.unregisterList(cv) }
             geometryContext = nil
             geometryMountGeneration = nil
-            pendingViewportPosition = false
-            pendingScrollWork?.cancel()
-            pendingScrollWork = nil
+            keyboardInFlight = false
+            invalidatePositionRequests()
         }
 
-        func performViewportGeometryCommit(_ changes: () -> Void) {
+        func performViewportGeometryCommit(finishing: Bool = true, _ changes: () -> Void) {
+            let layout = viewController?.messageListLayout
+            let cv = viewController?.collectionView
+            enqueuePosition(finishing ? .keyboardEnd : .geometry)
             viewportGeometryCommitDepth += 1
-            viewController?.messageListLayout?.viewportGeometryCommitDepth += 1
-            (viewController?.collectionView as? NoAnimationCollectionView)?.viewportGeometryCommitDepth += 1
-            pendingViewportPosition = true
+            layout?.viewportGeometryCommitDepth += 1
             defer {
+                layout?.viewportGeometryCommitDepth -= 1
                 viewportGeometryCommitDepth -= 1
-                viewController?.messageListLayout?.viewportGeometryCommitDepth -= 1
-                (viewController?.collectionView as? NoAnimationCollectionView)?.viewportGeometryCommitDepth -= 1
-                if viewportGeometryCommitDepth == 0, pendingViewportPosition {
-                    pendingViewportPosition = false
-                    applySubViewportCompensation(caller: "viewport-commit")
-                    syncScrollFlags()
+                if viewportGeometryCommitDepth == 0 {
+                    if !positionReasons.isEmpty {
+                        cv?.setNeedsLayout()
+                        cv?.layoutIfNeeded()
+                    }
+                    schedulePendingSearchPlacement()
                 }
             }
-            changes()
+            if finishing { UIView.performWithoutAnimation(changes) } else { changes() }
         }
 
         #if DEBUG
@@ -1091,17 +1128,294 @@ extension CollectionViewMessageListV3 {
             return ["effectiveInputHeight": geometryContext?.effectiveInputHeight ?? 0,
                     "reservedInputHeight": baseBottomInset - (configuration?.attachmentHeight ?? 0)
                         - (configuration?.floatingHeight ?? 0) - 8,
-                    "baseBottomInset": baseBottomInset, "commitDepth": viewportGeometryCommitDepth]
+                    "baseBottomInset": baseBottomInset, "commitDepth": viewportGeometryCommitDepth,
+                    "positionGeneration": positionGeneration, "positionSources": lastPositionSources,
+                    "positionTarget": lastPositionTarget.map { Double($0) } ?? 0,
+                    "hasPositionTarget": lastPositionTarget != nil, "auto": scrollMode == .autoScrolling,
+                    "keyboardInFlight": keyboardInFlight, "hasPlacedList": didRestoreScroll,
+                    "sessionID": vm?.sessionId ?? "", "sendPosition": sendPositionEvidence]
+        }
+
+        private var sendPositionEvidence: String {
+            switch sendPosition {
+            case .inserting?: return "inserting"
+            case .reveal?: return "reveal"
+            case .waiting?: return "waiting"
+            case nil: return "none"
+            }
         }
         #endif
 
         func applyViewportGeometry() {
             guard let cv = viewController?.collectionView else { return }
+            geometryContext?.reportSearchContentBounds()
+            defer { schedulePendingSearchPlacement() }
             let bottom = geometryContext?.baseBottomInset ?? fallbackBottomInset
             let top = geometryContext?.configuration.topOverlayInset ?? fallbackTopOverlayInset
-            guard abs(baseBottomInset - bottom) > 0.5 || abs(topOverlayInset - top) > 0.5
+            let topChanged = abs(topOverlayInset - top) > 0.5
+            guard abs(baseBottomInset - bottom) > 0.5 || topChanged
                 || abs(cv.contentInset.top - baseContentInsetTop) > 0.5 else { return }
-            applySubViewportCompensation(caller: "viewport-geometry")
+            enqueuePosition(.geometry)
+            if viewportGeometryCommitDepth == 0 { cv.layoutIfNeeded() }
+        }
+
+        private func positionStamp() -> PositionStamp? {
+            positionStamp(generation: positionGeneration)
+        }
+
+        private func positionStamp(generation: UInt) -> PositionStamp? {
+            guard let cv = viewController?.collectionView, let window = cv.window, let vm else { return nil }
+            return PositionStamp(view: ObjectIdentifier(cv), window: ObjectIdentifier(window),
+                                 vm: ObjectIdentifier(vm), mount: geometryMountGeneration,
+                                 generation: generation)
+        }
+
+        private func supersedeOrdinaryPositionRequests() {
+            positionGeneration &+= 1
+            positionReasons.removeAll()
+            positionAnchor = nil
+            foregroundAnchor = nil
+            keyboardAnchor = nil
+            growingItems.removeAll()
+            pendingScrollWork?.cancel()
+            pendingScrollWork = nil
+        }
+
+        private func invalidatePositionRequests() {
+            positionOwnerGeneration &+= 1
+            supersedeOrdinaryPositionRequests()
+            searchPositionOwner = nil
+            cancelSearchPlacement()
+            sendPosition = nil
+            isAnimatingScrollToBottom = false
+        }
+
+        private func beginDirectScroll() -> PositionStamp? {
+            invalidatePositionRequests()
+            return positionStamp(generation: positionOwnerGeneration)
+        }
+
+        private func ownsDirectScroll(_ stamp: PositionStamp) -> Bool {
+            stamp == positionStamp(generation: positionOwnerGeneration)
+        }
+
+        private func prepareDirectScroll(ownedBy stamp: PositionStamp) -> Bool {
+            guard ownsDirectScroll(stamp) else { return false }
+            // A retry can discard ordinary work, but cannot claim new ownership.
+            supersedeOrdinaryPositionRequests()
+            return true
+        }
+
+        private func positionIsAvailable(in cv: UICollectionView) -> Bool {
+            cv.window != nil && !cv.isTracking && !cv.isDragging && !cv.isDecelerating
+                && !isFlushing && !isAnimatingScrollToBottom && userMessageViewportAnchor == nil
+        }
+
+        private func itemFrame(_ item: MessageListItem?, in cv: UICollectionView) -> CGRect? {
+            guard let item, let index = dataSource?.indexPath(for: item) else { return nil }
+            return cv.collectionViewLayout.layoutAttributesForItem(at: index)?.frame
+        }
+
+        private func capturePosition(in cv: UICollectionView, presented: Bool = false) -> PositionAnchor? {
+            guard let window = cv.window, cv.bounds.height > 0, didRestoreScroll else { return nil }
+            let origin = cv.convert(cv.bounds, to: window).minY
+            let top = cv.contentOffset.y + cv.adjustedContentInset.top
+            let reading = cv.indexPathsForVisibleItems.sorted().first { index in
+                (cv.collectionViewLayout.layoutAttributesForItem(at: index)?.frame.maxY ?? -.infinity) > top
+            }
+            let item = reading.flatMap { dataSource?.itemIdentifier(for: $0) }
+            let bottom = cv.bounds.height - baseBottomInset - cv.safeAreaInsets.bottom
+            let tail = previousSnapshotIds.last
+            let readingY = origin + (itemFrame(item, in: cv)?.minY ?? cv.contentOffset.y) - cv.contentOffset.y
+            let displayReadingY = presented ? reading.flatMap { index -> CGFloat? in
+                guard let layer = cv.cellForItem(at: index)?.layer.presentation() else { return nil }
+                return layer.convert(layer.bounds, to: window.layer.presentation() ?? window.layer).minY
+            } : nil
+            return PositionAnchor(readingItem: item,
+                                  readingY: displayReadingY ?? readingY,
+                                  tailItem: tail,
+                                  tailGap: cv.contentOffset.y + bottom - (itemFrame(tail, in: cv)?.maxY ?? cv.contentSize.height))
+        }
+
+        private func enqueuePosition(_ reason: PositionReason, anchor: PositionAnchor? = nil, scheduleLayout: Bool = true) {
+            guard let cv = viewController?.collectionView, !resolvingPosition || reason == .explicit else { return }
+            if let anchor, reason == .foreground {
+                positionAnchor = anchor
+            } else if positionAnchor == nil, positionIsAvailable(in: cv) {
+                positionAnchor = anchor ?? keyboardAnchor ?? capturePosition(in: cv)
+            }
+            positionReasons.insert(reason)
+            if scheduleLayout { cv.setNeedsLayout() }
+        }
+
+        private func keyboardPositionTransition(_ active: Bool) {
+            let interrupting = keyboardInFlight && active
+            keyboardInFlight = active
+            if active {
+                // Drop pre-keyboard anchors, including the deferred foreground
+                // pass. Keep the send and explicit-scroll ownership unchanged.
+                supersedeOrdinaryPositionRequests()
+                if let cv = viewController?.collectionView, positionIsAvailable(in: cv) {
+                    keyboardAnchor = capturePosition(in: cv, presented: interrupting)
+                    positionAnchor = keyboardAnchor
+                }
+            }
+            if !active { keyboardAnchor = nil }
+        }
+
+        private func beginPositionLayout() -> Bool {
+            guard let cv = viewController?.collectionView else { return false }
+            if positionIsAvailable(in: cv), positionAnchor == nil {
+                positionAnchor = keyboardAnchor ?? capturePosition(in: cv)
+            }
+            return keyboardInFlight && didRestoreScroll
+                && !positionReasons.contains(.foreground) && !positionReasons.contains(.keyboardEnd)
+        }
+
+        private func isPresentableBlock(_ item: MessageListItem) -> Bool {
+            guard case .assistantBlock(let id, let blockID) = item,
+                  let index = messageIndex[id], snapshotMessages.indices.contains(index),
+                  let block = snapshotMessages[index].blocks.first(where: { $0.id == blockID }) else { return false }
+            switch block.kind {
+            case .text, .thinking: return !block.content.isEmpty
+            default: return true
+            }
+        }
+
+        private func positionForMeasuredHeight(index: Int, delta: CGFloat) -> Bool {
+            guard let cv = viewController?.collectionView, positionIsAvailable(in: cv) else { return false }
+            enqueuePosition(.measurement, scheduleLayout: (cv as? NoAnimationCollectionView)?.isInPositionLayout != true)
+            if delta > 0.5, viewController?.messageListLayout?.isStreamingCell(index) == true,
+               let item = dataSource?.itemIdentifier(for: IndexPath(item: index, section: 0)),
+               isPresentableBlock(item) { growingItems.insert(item) }
+            return true
+        }
+
+        private func finishPositionLayout() -> Bool {
+            guard viewportGeometryCommitDepth == 0, !isFlushing, !resolvingPosition,
+                  let cv = viewController?.collectionView, let window = cv.window else { return false }
+            let reasons = positionReasons
+            let anchor = positionAnchor
+            let grew = growingItems.contains { (itemFrame($0, in: cv)?.height ?? 0) > 0.5 }
+            positionReasons.removeAll()
+            positionAnchor = nil
+            growingItems.removeAll()
+            guard !reasons.isEmpty || !didRestoreScroll else { return false }
+
+            resolvingPosition = true
+            defer { resolvingPosition = false }
+            let inheritsKeyboard = keyboardInFlight && didRestoreScroll && !reasons.contains(.foreground)
+                && !reasons.contains(.keyboardEnd)
+            let prepare = {
+                self.prepareViewportInsets(caller: reasons.map(\.rawValue).sorted().joined(separator: "+"),
+                                           forceRelax: reasons.contains(.snapshotShrink))
+            }
+            if inheritsKeyboard { prepare() } else { UIView.performWithoutAnimation(prepare) }
+            guard !previousSnapshotIds.isEmpty, positionIsAvailable(in: cv) else { return false }
+
+            let origin = cv.convert(cv.bounds, to: window).minY
+            let bottom = cv.bounds.height - baseBottomInset - cv.safeAreaInsets.bottom
+            let followsBottom = scrollMode == .autoScrolling
+            let geometryChanged = reasons.contains(.geometry) || reasons.contains(.resize) || reasons.contains(.keyboardEnd)
+            var desired = cv.contentOffset.y
+            var useVisualBottom = followsBottom
+            let initial = !didRestoreScroll
+            if initial && reasons.contains(.explicit) {
+                didRestoreScroll = true
+                useVisualBottom = true
+            } else if initial {
+                didRestoreScroll = true
+                if let key = scrollMemoryKey, let saved = ChatScrollMemory.shared.anchor(for: key) {
+                    let item = itemFrame(saved.item, in: cv) != nil ? saved.item
+                        : previousSnapshotIds.first(where: { $0.messageId == saved.item.messageId })
+                    if let frame = itemFrame(item, in: cv) {
+                        scrollMode = .userBrowsing
+                        useVisualBottom = false
+                        desired = frame.minY - (saved.offset.isFinite ? saved.offset : 0)
+                    } else {
+                        ChatScrollMemory.shared.clear(key)
+                        scrollMode = .autoScrolling
+                        useVisualBottom = true
+                    }
+                } else {
+                    scrollMode = .autoScrolling
+                    useVisualBottom = true
+                }
+                if useVisualBottom, sendPosition == nil {
+                    clampAfterSessionLoad = true
+                    clampDeadline = Date().addingTimeInterval(8)
+                }
+            } else if !followsBottom {
+                if let anchor, let frame = itemFrame(anchor.readingItem, in: cv) {
+                    desired = origin + frame.minY - anchor.readingY
+                }
+            } else if geometryChanged, let anchor, let tail = anchor.tailItem,
+                      tail == previousSnapshotIds.last, abs(anchor.tailGap) <= 0.5,
+                      let frame = itemFrame(tail, in: cv) {
+                desired = frame.maxY - bottom + anchor.tailGap
+                useVisualBottom = false
+            }
+
+            if scrollMode == .autoScrolling, let send = sendPosition {
+                let user: MessageListItem?
+                switch send {
+                case .inserting: user = nil
+                case .reveal(let item, _), .waiting(let item, _): user = item
+                }
+                let hasReply = user.flatMap { previousSnapshotIds.firstIndex(of: $0) }.map { index in
+                    previousSnapshotIds.dropFirst(index + 1).contains { item in
+                        isPresentableBlock(item) && (itemFrame(item, in: cv)?.height ?? 0) > 0.5
+                    }
+                } ?? false
+                let queuedDuringReply = grew && user.flatMap { user in
+                    messageIndex[user.messageId].map { snapshotMessages[$0].isQueued }
+                } == true
+                if hasReply || queuedDuringReply {
+                    sendPosition = nil
+                    useVisualBottom = true
+                } else {
+                    useVisualBottom = false
+                    switch send {
+                    case .inserting(_, let before), .reveal(_, let before):
+                        if let before, let reading = itemFrame(before.readingItem, in: cv) {
+                            desired = origin + reading.minY - before.readingY
+                        } else if let anchor, let reading = itemFrame(anchor.readingItem, in: cv) {
+                            desired = origin + reading.minY - anchor.readingY
+                        }
+                        if let user, let frame = itemFrame(user, in: cv) {
+                            let visibleTop = cv.adjustedContentInset.top
+                            let reveal = min(frame.minY - visibleTop, frame.maxY - bottom)
+                            desired = max(desired, reveal)
+                            let offset = boundedPosition(desired, followsBottom: false, in: cv)
+                            sendPosition = .waiting(user, minimumGap: offset + bottom - frame.maxY)
+                        }
+                    case .waiting(let item, let gap):
+                        if let frame = itemFrame(item, in: cv) { desired = frame.maxY - bottom + gap }
+                    }
+                }
+            }
+
+            let target = boundedPosition(desired, followsBottom: useVisualBottom, in: cv)
+            lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
+            lastPositionTarget = target
+            defer { syncScrollFlags() }
+            guard target.isFinite, abs(target - cv.contentOffset.y) > 0.5 else { return false }
+            let update = { cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: target), animated: false) }
+            if inheritsKeyboard, !initial { update() }
+            else if grew, useVisualBottom, !initial, !geometryChanged, !reasons.contains(.foreground), !reasons.contains(.explicit),
+                    !keyboardInFlight, (cv as? NoAnimationCollectionView)?.streamingGrowAnimationEnabled == true,
+                    target > cv.contentOffset.y, target > -cv.adjustedContentInset.top + 1 {
+                UIView.animate(withDuration: 0.20, delay: 0,
+                               options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: update)
+            } else { UIView.performWithoutAnimation(update) }
+            return true
+        }
+
+        private func boundedPosition(_ desired: CGFloat, followsBottom: Bool, in cv: UICollectionView) -> CGFloat {
+            ChatListScrollTarget.resolve(contentHeight: cv.contentSize.height, viewportHeight: cv.bounds.height,
+                adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
+                baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
+                current: desired, followsBottom: followsBottom)
         }
 
         // === [T-foldable-scroll] Reader's place, across a pane-layout change ===
@@ -1110,7 +1424,7 @@ extension CollectionViewMessageListV3 {
         /// One restore per list instance — a second pass would fight the user.
         private var didRestoreScroll = false
         /// Throttle for the per-frame anchor write in `scrollViewDidScroll`.
-        private var lastAnchorMessageId: UUID?
+        private var lastAnchorItem: MessageListItem?
         private var lastAnchorOffset: CGFloat = .nan        /// True while an animated setContentOffset is in flight. KVO grow events must not
         /// directly mutate contentOffset during this window — UIKit animation interpolation
         /// can produce a corrupted final offset. Instead, defer via scheduleCoalescedScroll().
@@ -1228,80 +1542,35 @@ extension CollectionViewMessageListV3 {
         /// anchor, and this instance starts at the bottom again.
         func updateScrollMemoryKey(_ key: String?) {
             guard key != scrollMemoryKey else { return }
+            let promotingDraft = didRestoreScroll && vm?.sessionId == key && scrollMemoryKey == vm?.draftId && sendPosition != nil
+            let activeSend = sendPosition
+            invalidatePositionRequests()
             scrollMemoryKey = key
-            didRestoreScroll = false
-            lastAnchorMessageId = nil
+            didRestoreScroll = promotingDraft
+            if promotingDraft { sendPosition = activeSend }
+            lastAnchorItem = nil
             lastAnchorOffset = .nan
-        }
-
-        /// Restore once the rebuilt list has rows to scroll to. Called from
-        /// `updateUIViewController`, which runs right after the new view is
-        /// installed; the hop lets the first snapshot commit first.
-        func scheduleScrollRestoreIfNeeded() {
-            guard !didRestoreScroll, scrollMemoryKey != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.restoreScrollIfNeeded()
-            }
-        }
-
-        private func restoreScrollIfNeeded() {
-            guard !didRestoreScroll else { return }
-            guard let key = scrollMemoryKey,
-                  let cv = viewController?.collectionView,
-                  let dataSource = dataSource else { return }
-            // No anchor means the reader was parked at the bottom, or is new
-            // here. Leave the default pin-to-bottom behaviour alone.
-            guard let anchor = ChatScrollMemory.shared.anchor(for: key) else {
-                didRestoreScroll = true
-                return
-            }
-            let items = dataSource.snapshot().itemIdentifiers
-            guard !items.isEmpty else { return }   // retry on the next update
-            guard let index = items.firstIndex(where: { $0.messageId == anchor.messageId }) else {
-                // The message was deleted or compacted away since it was saved.
-                ChatScrollMemory.shared.clear(key)
-                didRestoreScroll = true
-                return
-            }
-            // Browse mode stops the contentSize KVO from re-pinning the list to
-            // the bottom while the rows above finish measuring.
-            scrollMode = .userBrowsing
-            cv.layoutIfNeeded()
-            cv.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
-            if anchor.offset.isFinite, abs(anchor.offset) > 0.5 {
-                let minY = -cv.adjustedContentInset.top
-                let maxY = max(minY, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
-                let y = min(maxY, max(minY, cv.contentOffset.y - anchor.offset))
-                cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: y), animated: false)
-            }
-            // Set last: the scroll calls above fire `scrollViewDidScroll`
-            // synchronously, and `rememberScrollAnchor` must not overwrite the
-            // saved anchor with an intermediate position while we move.
-            didRestoreScroll = true
-            AppLogger(category: "Foldable").debug("[ScrollRestore] key=\(key.prefix(8)) msg=\(anchor.messageId) offset=\(String(format: "%.1f", anchor.offset)) rows=\(items.count)")
         }
 
         /// Remember the top row while the reader browses. At the bottom the
         /// default behaviour is already correct, so the anchor is dropped.
         private func rememberScrollAnchor() {
-            guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing else { return }
+            guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing, !resolvingPosition else { return }
             guard let cv = viewController?.collectionView else { return }
-            if isNearBottom() {
-                if lastAnchorMessageId != nil {
-                    ChatScrollMemory.shared.clear(key)
-                    lastAnchorMessageId = nil
-                    lastAnchorOffset = .nan
-                }
+            if scrollMode == .autoScrolling && isNearBottom() {
+                if lastAnchorItem != nil { ChatScrollMemory.shared.clear(key) }
+                lastAnchorItem = nil
+                lastAnchorOffset = .nan
                 return
             }
             guard let indexPath = cv.indexPathsForVisibleItems.min(),
                   let item = dataSource?.itemIdentifier(for: indexPath),
                   let frame = cv.layoutAttributesForItem(at: indexPath)?.frame else { return }
             let offset = frame.minY - cv.contentOffset.y
-            if lastAnchorMessageId == item.messageId, abs(offset - lastAnchorOffset) < 8 { return }
-            lastAnchorMessageId = item.messageId
+            if lastAnchorItem == item, abs(offset - lastAnchorOffset) < 8 { return }
+            lastAnchorItem = item
             lastAnchorOffset = offset
-            ChatScrollMemory.shared.save(.init(messageId: item.messageId, offset: offset), for: key)
+            ChatScrollMemory.shared.save(.init(item: item, offset: offset), for: key)
         }
 
         func attach(to vc: MessageListViewController, vm: AIChatViewModel) {
@@ -1311,17 +1580,17 @@ extension CollectionViewMessageListV3 {
             guard let collectionView = vc.collectionView else { return }
             collectionView.delegate = self
             collectionView.prefetchDataSource = self
-            (collectionView as? NoAnimationCollectionView)?.shouldFollowViewportBottom = { [weak self] in
-                self?.scrollMode == .autoScrolling
+            (collectionView as? NoAnimationCollectionView)?.viewportWillResize = { [weak self] in
+                self?.enqueuePosition(.resize)
             }
-            (collectionView as? NoAnimationCollectionView)?.prepareViewportGeometry = { [weak self] in
-                self?.applySubViewportCompensation(caller: "viewport-anchor-prepare", position: false)
+            (collectionView as? NoAnimationCollectionView)?.beginPositionLayout = { [weak self] in
+                self?.beginPositionLayout() ?? false
             }
-            (collectionView as? NoAnimationCollectionView)?.viewportBottomInset = { [weak self, weak collectionView] in
-                // Compensation can inflate contentInset for short content. It
-                // is scrollable space, not the desired visual bottom anchor.
-                self?.applySubViewportCompensation(caller: "viewport-anchor", position: false)
-                return (self?.baseBottomInset ?? 0) + (collectionView?.safeAreaInsets.bottom ?? 0)
+            (collectionView as? NoAnimationCollectionView)?.finishPositionLayout = { [weak self] in
+                self?.finishPositionLayout() ?? false
+            }
+            vc.messageListLayout?.positionForMeasuredHeight = { [weak self] index, delta in
+                self?.positionForMeasuredHeight(index: index, delta: delta) ?? false
             }
             // Disable UIKit's main-thread cell prefetch. Profile (Time Profiler)
             // showed -[UICollectionView _prefetchItemsForPrefetchingContext:]
@@ -1398,36 +1667,11 @@ extension CollectionViewMessageListV3 {
                 guard newH != oldH else { return }
                 let delta = newH - oldH
 
-                if self.viewportGeometryCommitDepth > 0 {
-                    self.pendingViewportPosition = true
-                    self.vm?.contentSizeDeltaSignal.send(delta)
-                    return
-                }
                 if self.isAnimatingScrollToBottom {
                     self.scheduleCoalescedScroll()
                 }
-                // Forward contentSize changes to downstream observers.
                 self.vm?.contentSizeDeltaSignal.send(delta)
-
-                // Re-evaluate sub-viewport overflow compensation. When content
-                // overflows the visible area but UIKit thinks no scroll is
-                // needed, this inflates inset.top so we can pin past UIKit's
-                // default clamp.
-                self.applySubViewportCompensation(caller: "contentSizeKVO")
-
-                // Sync vm.isNearBottom on every contentSize change. UIKit only
-                // dispatches scrollViewDidScroll when contentOffset moves; in
-                // sub-viewport streaming (offset clamped at -insetTop while
-                // contentSize grows past the visible area), the published value
-                // would otherwise stay stuck at its prior reading and the
-                // scroll-to-bottom button never appears.
-                if let vm = self.vm {
-                    let nb = self.isNearBottom()
-                    if vm.isNearBottom != nb {
-                        vm.isNearBottom = nb
-                    }
-                }
-                self.syncScrollFlags()
+                self.enqueuePosition(.contentSize, scheduleLayout: (cv as? NoAnimationCollectionView)?.isInPositionLayout != true)
             }
 
             bindViewModel(vm)
@@ -1973,9 +2217,7 @@ extension CollectionViewMessageListV3 {
         func rebindViewModelIfNeeded(_ newVM: AIChatViewModel) {
             if let current = vm, current === newVM { return }
             let hadOld = vm != nil
-            pendingViewportPosition = false
-            pendingScrollWork?.cancel()
-            pendingScrollWork = nil
+            invalidatePositionRequests()
             #if DEBUG
             ScrollMetricsRecorder.shared.record(
                 kind: "rebind", a: hadOld ? 1 : 0,
@@ -2120,29 +2362,36 @@ extension CollectionViewMessageListV3 {
                 }
                 .store(in: &subscriptions)
 
-            // A send changes follow intent immediately, but does not animate
-            // towards the old bottom. The inserted message and viewport resize
-            // perform the actual geometry update in their layout transactions.
+            // Capture before keyboard dismissal; only a committed user item
+            // changes follow mode or survives the synchronous composer attempt.
             vm.composerWillSend
                 .sink { [weak self] in
                     guard let self else { return }
-                    self.pendingScrollWork?.cancel()
-                    self.pendingScrollWork = nil
-                    self.isAnimatingScrollToBottom = false
+                    let anchor = (self.viewController?.collectionView).flatMap { self.capturePosition(in: $0) }
+                    self.invalidatePositionRequests()
                     self.clampAfterSessionLoad = false
                     self.clampDeadline = .distantPast
-                    self.pendingViewportPosition = false
-                    self.vm?.setStreamingUIUpdatesSuspended(false)
+                    self.sendPosition = .inserting(acceptedUser: nil, anchor: anchor)
+                }
+                .store(in: &subscriptions)
+
+            vm.composerDidResolveSend
+                .sink { [weak self] acceptedID in
+                    guard let self, case .inserting(nil, let anchor)? = self.sendPosition else { return }
+                    guard let acceptedID else { self.sendPosition = nil; return }
                     self.scrollMode = .autoScrolling
+                    self.sendPosition = .inserting(acceptedUser: acceptedID, anchor: anchor)
+                    self.vm?.setStreamingUIUpdatesSuspended(false)
                 }
                 .store(in: &subscriptions)
 
             // 2. Scroll signals
             vm.scrollToBottomSignal
+                .map { [weak self] in self?.positionStamp() }
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] in
-                    guard let self, self.scrollMode == .autoScrolling else { return }
-                    self.scrollToBottomNow()
+                .sink { [weak self] stamp in
+                    guard let self, let stamp, stamp == self.positionStamp(), self.scrollMode == .autoScrolling else { return }
+                    self.enqueuePosition(.signal)
                 }
                 .store(in: &subscriptions)
 
@@ -2169,7 +2418,9 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] note in
                     guard let self, let vm = self.vm, note.object as AnyObject? === vm.chatSearch,
-                          let hit = note.userInfo?["hit"] as? ChatSearchHit else { return }
+                          let hit = note.userInfo?["hit"] as? ChatSearchHit,
+                          vm.chatSearch.isActive, vm.chatSearch.current?.match == hit.match,
+                          vm.chatSearch.current?.keyword == hit.keyword else { return }
                     self.revealSearchHit(hit)
                 }
                 .store(in: &subscriptions)
@@ -2181,7 +2432,6 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] isLoading in
                     guard let self, !isLoading else { return }
-                    let isFirstLoad = self.previousSnapshotIds.isEmpty
                     // Only clear caches when items will actually change — prevents
                     // a duplicate dispatch from clearing caches that won't be rebuilt.
                     if let msgs = self.vm?.messages {
@@ -2194,17 +2444,6 @@ extension CollectionViewMessageListV3 {
                         // [T-message-list-empty-on-foreground]
                         self.hasPendingSnapshot = false
                         self.applySnapshot(messages: msgs, caller: "bind3-sessionLoad")
-                    }
-                    if isFirstLoad {
-                        // First load: scroll to bottom and clamp.
-                        // 8s window (was 2s) so async video thumbnail
-                        // generation can complete and the cell-height
-                        // correction reaches the user before we release
-                        // the bottom pin.
-                        self.scrollMode = .autoScrolling
-                        self.clampAfterSessionLoad = true
-                        self.clampDeadline = Date().addingTimeInterval(8.0)
-                        self.scrollToLastItem()
                     }
                     self.refreshAfterForegroundIfNeeded()
                     // Sync reload: keep current scroll position, just update data
@@ -2265,6 +2504,10 @@ extension CollectionViewMessageListV3 {
                 // re-measures at the real content height. Runs once per turn
                 // end on the existing state-bridge path — never per token.
                 if wasProcessing, !state.0 {
+                    if self.vm?.isProcessing == false, self.sendPosition != nil {
+                        self.sendPosition = nil
+                        self.enqueuePosition(.sendEnded)
+                    }
                     self.invalidateAndReconfigureFooterHeights(caller: "isProcessing-end")
                 }
             }
@@ -2317,6 +2560,16 @@ extension CollectionViewMessageListV3 {
 
             // 8. Recover after the app is active, not willEnterForeground:
             // deferred model text must be released before rebuilding cells.
+            NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+                .sink { [weak self] _ in
+                    guard let self else { return }
+                    let anchor = (self.viewController?.collectionView).flatMap { self.capturePosition(in: $0) }
+                    self.invalidatePositionRequests()
+                    self.foregroundAnchor = anchor
+                    self.needsForegroundRefresh = true
+                }
+                .store(in: &subscriptions)
+
             NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
@@ -2673,7 +2926,7 @@ extension CollectionViewMessageListV3 {
                 userMessageViewportAnchor = nil
                 isFlushing = false
                 syncScrollFlags()
-                _ = applySubViewportCompensation(caller: "disclosureFinalize")
+                enqueuePosition(.disclosure)
             }
         }
 
@@ -2799,6 +3052,50 @@ extension CollectionViewMessageListV3 {
                   let cv = viewController?.collectionView, cv.window != nil,
                   let layout = viewController?.messageListLayout else { return }
             needsForegroundRefresh = false
+            let anchor = foregroundAnchor ?? capturePosition(in: cv)
+            foregroundAnchor = nil
+            let stamp = positionStamp()
+            // Rebuild and reconfigure before exposing the recovery target.
+            performPositionBatch {
+                self.enqueuePosition(.foreground, anchor: anchor)
+                self.rebuildForegroundPresentation(vm: vm, cv: cv, layout: layout)
+            }
+            // Hosting configuration publishes one more real measurement after
+            // the new bodies mount. Keep the same reading intent for that pass.
+            DispatchQueue.main.async { [weak self, weak vm, weak cv] in
+                guard let self, let vm, let cv, self.vm === vm,
+                      self.viewController?.collectionView === cv,
+                      UIApplication.shared.applicationState == .active,
+                      !vm.isLoadingSession, !vm.transitionSuspended, cv.window != nil,
+                      let layout = self.viewController?.messageListLayout else { return }
+                let stillOwnsPosition = stamp != nil && stamp == self.positionStamp()
+                if stillOwnsPosition { self.enqueuePosition(.foreground, anchor: anchor) }
+                for indexPath in cv.indexPathsForVisibleItems {
+                    (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+                    layout.invalidateContentHeight(at: indexPath.item)
+                }
+                UIView.performWithoutAnimation {
+                    layout.invalidateLayout()
+                    cv.setNeedsLayout()
+                    if stillOwnsPosition { cv.layoutIfNeeded() }
+                }
+            }
+            AppLogger(category: "FGLayout").info("[FGLayout] recovered current VM: messages=\(vm.messages.count) items=\(dataSource.snapshot().numberOfItems)")
+        }
+
+        private func performPositionBatch(_ changes: () -> Void) {
+            viewportGeometryCommitDepth += 1
+            defer {
+                viewportGeometryCommitDepth -= 1
+                if viewportGeometryCommitDepth == 0, let cv = viewController?.collectionView {
+                    cv.setNeedsLayout()
+                    cv.layoutIfNeeded()
+                }
+            }
+            UIView.performWithoutAnimation(changes)
+        }
+
+        private func rebuildForegroundPresentation(vm: AIChatViewModel, cv: UICollectionView, layout: MessageListLayout) {
             pendingStreamingLayout?.cancel()
             pendingStreamingLayout = nil
             // The mounted VM is authoritative, including an uncached draft.
@@ -2817,23 +3114,6 @@ extension CollectionViewMessageListV3 {
             // IDs can be unchanged while text, tools, footer or observed
             // objects changed. A snapshot no-op must not skip reconfiguration.
             reconfigureVisibleCells()
-            // UIHostingConfiguration commits asynchronously. Drop provisional
-            // sizes again after the new bodies have had a runloop to update.
-            DispatchQueue.main.async { [weak self, weak vm] in
-                guard let self, let vm, self.vm === vm,
-                      UIApplication.shared.applicationState == .active,
-                      !vm.isLoadingSession, !vm.transitionSuspended,
-                      let cv = self.viewController?.collectionView, cv.window != nil,
-                      let layout = self.viewController?.messageListLayout else { return }
-                for indexPath in cv.indexPathsForVisibleItems {
-                    (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
-                    layout.invalidateContentHeight(at: indexPath.item)
-                }
-                layout.invalidateLayout()
-                cv.setNeedsLayout()
-                if self.scrollMode == .autoScrolling { self.scheduleCoalescedScroll() }
-            }
-            AppLogger(category: "FGLayout").info("[FGLayout] recovered current VM: messages=\(vm.messages.count) items=\(dataSource.snapshot().numberOfItems)")
         }
 
         // MARK: - Streaming Subscription
@@ -2976,25 +3256,19 @@ extension CollectionViewMessageListV3 {
             // from empty to non-empty (via streaming bypass) to stay at ~0 height.
             layout.invalidateLayout()
 
-            if scrollMode == .autoScrolling {
-                scheduleCoalescedScroll()
-            }
+            enqueuePosition(.measurement)
         }
 
         /// Coalesce rapid scroll signals into a single scroll action.
         /// Uses a short 80ms delay — just enough to batch multiple near-simultaneous
         /// signals without noticeable visual lag during streaming.
         private func scheduleCoalescedScroll() {
-            if viewportGeometryCommitDepth > 0 {
-                pendingViewportPosition = true
-                return
-            }
+            guard let stamp = positionStamp(), scrollMode == .autoScrolling else { return }
             pendingScrollWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                let isTracking = self.viewController?.collectionView?.isTracking ?? false
-                if self.scrollMode != .autoScrolling || isTracking { return }
-                self.scrollToBottomNow()
+                guard let self, self.positionStamp() == stamp, self.scrollMode == .autoScrolling,
+                      let cv = self.viewController?.collectionView, self.positionIsAvailable(in: cv) else { return }
+                self.enqueuePosition(.coalesced)
             }
             pendingScrollWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
@@ -3008,6 +3282,7 @@ extension CollectionViewMessageListV3 {
 
         private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
             guard let vm, !vm.isLoadingSession else { return }
+            let before = (viewController?.collectionView).flatMap { capturePosition(in: $0) }
 
             // [T-bridge-message-ui-leak] Single UI-collection sink for EVERY
             // path that pushes messages to the list (loadSession, live inject,
@@ -3082,7 +3357,9 @@ extension CollectionViewMessageListV3 {
                         // when the user navigates back). Letting the runloop
                         // turn first ensures the new attributedString is
                         // mounted in the hosting view before we re-measure.
-                        DispatchQueue.main.async {
+                        let stamp = self.positionStamp()
+                        DispatchQueue.main.async { [weak self, weak cv, weak layout] in
+                            guard let self, let cv, let layout, self.viewController?.collectionView === cv else { return }
                             // Clear cell-side caches AGAIN after the
                             // reconfigure has propagated, then ask UIKit to
                             // re-measure.
@@ -3094,8 +3371,8 @@ extension CollectionViewMessageListV3 {
                             // window, re-pin to bottom — the corrected
                             // heights shift the content offset and otherwise
                             // leave the user looking at the wrong region.
-                            if self.consumeSessionLoadClamp() {
-                                self.scrollToLastItem()
+                            if let stamp, stamp == self.positionStamp(), self.consumeSessionLoadClamp() {
+                                self.enqueuePosition(.attachment)
                             }
                         }
                         alog.info("[AttachmentSize] url=\(urlStr) cleared=\(cleared)/\(visibleIPs.count) totalInvalidated=\(totalItems) clamp=\(self.clampAfterSessionLoad)")
@@ -3523,6 +3800,11 @@ extension CollectionViewMessageListV3 {
             // skip-return below so it stays in lockstep with messageIndex.
             // [T-ios-blocks-lost-render]
             snapshotMessages = messages
+            switch sendPosition {
+            case .reveal(let item, _)?, .waiting(let item, _)? :
+                if !newItems.contains(item) { sendPosition = nil }
+            default: break
+            }
             // Skip diffable-data-source apply when items haven't changed —
             // avoids expensive UIKit cell creation/layout on redundant snapshots.
             if newItems == previousSnapshotIds {
@@ -3531,6 +3813,11 @@ extension CollectionViewMessageListV3 {
             }
             let oldSet = Set(previousSnapshotIds)
             let inserted = newItems.filter { !oldSet.contains($0) }
+            enqueuePosition(newItems.count < oldCount ? .snapshotShrink : .snapshot, anchor: before)
+            if case .inserting(let acceptedID?, let anchor)? = sendPosition,
+               inserted.contains(.wholeMessage(acceptedID)) {
+                sendPosition = .reveal(.wholeMessage(acceptedID), anchor)
+            }
             previousSnapshotIds = newItems
 
             let snapLog = AppLogger(category: "SnapshotDiag")
@@ -3555,7 +3842,7 @@ extension CollectionViewMessageListV3 {
             isFlushing = true
             cellConfigCount = 0
             (viewController?.collectionView as? NoAnimationCollectionView)?.isApplyingSnapshot = true
-            dataSource.apply(snapshot, animatingDifferences: false)
+            UIView.performWithoutAnimation { dataSource.apply(snapshot, animatingDifferences: false) }
             (viewController?.collectionView as? NoAnimationCollectionView)?.isApplyingSnapshot = false
             // [ToolLifecycle] Stage 5: log newly-inserted tool blocks now in the
             // applied snapshot. Only fires for inserts, so volume stays proportional
@@ -3606,11 +3893,10 @@ extension CollectionViewMessageListV3 {
                     }
                 }
 
-                cv.layoutIfNeeded()
                 snapshotLayout?.suppressContentOffsetAdjustment = false
                 isFlushing = false
-                applySubViewportCompensation(caller: "snapshot", forceRelax: newItems.count < oldCount)
-                if scrollMode == .autoScrolling { scheduleCoalescedScroll() }
+                cv.setNeedsLayout()
+                if viewportGeometryCommitDepth == 0 { cv.layoutIfNeeded() }
                 // Sync isNearBottom after snapshot apply. applySnapshot runs
                 // under isFlushing=true, which suppresses the contentSize KVO
                 // observer — so the KVO-side sync we added doesn't run here.
@@ -4275,31 +4561,37 @@ extension CollectionViewMessageListV3 {
             return maxOffset - cv.contentOffset.y < threshold
         }
 
-        func scrollToLastItem(animated: Bool = false) {
-            guard let cv = viewController?.collectionView else { return }
-            let section = cv.numberOfSections - 1
-            guard section >= 0 else { return }
-            let item = cv.numberOfItems(inSection: section) - 1
-            guard item >= 0 else { return }
-            cv.scrollToItem(at: IndexPath(item: item, section: section), at: .bottom, animated: animated)
-        }
-
         // MARK: - Search
 
         private var searchViewportWidth: CGFloat = 0
+        private var searchPositionOwner: (hit: ChatSearchHit, stamp: PositionStamp)?
+        private struct SearchPlacement {
+            let stamp: PositionStamp
+            let model: ObjectIdentifier
+            let hit: ChatSearchHit
+            let item: MessageListItem
+            let readyAfter: CFTimeInterval
+        }
+
+        private var pendingSearchPlacement: SearchPlacement?
+        private var searchPlacementWork: DispatchWorkItem?
+
         func keepSearchAfterWidthChange(_ width: CGFloat) {
             let old = searchViewportWidth
             searchViewportWidth = width
-            guard old > 0, abs(old - width) > 1, let vm, vm.chatSearch.isActive, let hit = vm.chatSearch.current else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self, weak vm] in
-                guard let self, vm?.chatSearch.current?.match == hit.match, self.viewController?.collectionView.isTracking == false else { return }
-                self.revealSearchHit(hit)
-            }
+            guard old > 0, abs(old - width) > 1, let vm, vm.chatSearch.isActive,
+                  let hit = vm.chatSearch.current, let item = searchItem(for: hit),
+                  let owner = searchPositionOwner, owner.hit.match == hit.match, owner.hit.keyword == hit.keyword,
+                  ownsDirectScroll(owner.stamp) else { return }
+            queueSearchPlacement(hit, item: item, model: vm.chatSearch, ownedBy: owner.stamp)
         }
+
         func revealSearchHit(_ hit: ChatSearchHit) {
             guard let vm, let cv = viewController?.collectionView, let ds = dataSource,
                   let message = vm.messages.first(where: { $0.id == hit.messageId }) else { return }
             scrollMode = .userBrowsing
+            guard let owner = beginDirectScroll() else { return }
+            searchPositionOwner = (hit, owner)
             if message.role == .user, !message.isUserTextExpanded {
                 toggleUserMessageExpansion(messageId: message.id)
             }
@@ -4311,23 +4603,65 @@ extension CollectionViewMessageListV3 {
                 }
                 applySnapshot(messages: vm.messages, caller: "search-expand")
             }
-            let items = ds.snapshot().itemIdentifiers
-            let item: MessageListItem?
-            if hit.match.key.field == .footerError { item = items.first { $0 == .assistantFooter(message.id) } }
-            else if let bid = hit.blockId { item = items.first { $0 == .assistantBlock(message.id, bid) } }
-            else { item = items.first { $0.messageId == message.id } }
-            guard let item = item ?? items.first(where: { $0.messageId == message.id }), let ip = ds.indexPath(for: item) else { return }
-            if cv.cellForItem(at: ip) == nil { cv.scrollToItem(at: ip, at: .centeredVertically, animated: false); cv.layoutIfNeeded() }
-            placeSearchHit(hit, item: item)
-            for delay in [0.0, 0.25] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak vm] in
-                    guard let self, vm?.chatSearch.current?.match == hit.match, !cv.isTracking, !cv.isDecelerating else { return }
-                    self.placeSearchHit(hit, item: item)
-                }
+            guard let item = searchItem(for: hit), let ip = ds.indexPath(for: item) else { return }
+            if cv.cellForItem(at: ip) == nil {
+                guard prepareDirectScroll(ownedBy: owner) else { return }
+                cv.scrollToItem(at: ip, at: .centeredVertically, animated: false)
+                cv.layoutIfNeeded()
             }
+            placeSearchHit(hit, item: item, ownedBy: owner)
+            queueSearchPlacement(hit, item: item, model: vm.chatSearch, ownedBy: owner)
         }
-        private func placeSearchHit(_ hit: ChatSearchHit, item: MessageListItem) {
-            guard let cv = viewController?.collectionView, let ip = dataSource?.indexPath(for: item),
+
+        private func searchItem(for hit: ChatSearchHit) -> MessageListItem? {
+            guard let items = dataSource?.snapshot().itemIdentifiers else { return nil }
+            let preferred: MessageListItem?
+            if hit.match.key.field == .footerError { preferred = .assistantFooter(hit.messageId) }
+            else if let blockID = hit.blockId { preferred = .assistantBlock(hit.messageId, blockID) }
+            else { preferred = nil }
+            return items.first { $0 == preferred } ?? items.first { $0.messageId == hit.messageId }
+        }
+
+        private func cancelSearchPlacement() {
+            searchPlacementWork?.cancel()
+            searchPlacementWork = nil
+            pendingSearchPlacement = nil
+        }
+
+        private func queueSearchPlacement(_ hit: ChatSearchHit, item: MessageListItem, model: ChatSearchModel, ownedBy stamp: PositionStamp) {
+            guard ownsDirectScroll(stamp) else { return }
+            cancelSearchPlacement()
+            pendingSearchPlacement = SearchPlacement(stamp: stamp, model: ObjectIdentifier(model), hit: hit, item: item,
+                                                     readyAfter: CACurrentMediaTime() + 0.25)
+            schedulePendingSearchPlacement()
+        }
+
+        private var searchPlacementGeometryReady: Bool {
+            viewportGeometryCommitDepth == 0 && !keyboardInFlight
+                && viewController?.messageListLayout?.isKeyboardTransitioning != true
+                && (geometryContext?.onSearchContentBounds == nil || geometryContext?.configuration.searchTopIsMeasured == true)
+        }
+
+        private func schedulePendingSearchPlacement() {
+            guard let placement = pendingSearchPlacement, searchPlacementWork == nil, searchPlacementGeometryReady else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.searchPlacementWork = nil
+                guard self.searchPlacementGeometryReady else { return }
+                self.pendingSearchPlacement = nil
+                guard self.ownsDirectScroll(placement.stamp),
+                      let model = self.vm?.chatSearch, ObjectIdentifier(model) == placement.model, model.isActive,
+                      model.current?.match == placement.hit.match, model.current?.keyword == placement.hit.keyword,
+                      let cv = self.viewController?.collectionView, cv.window != nil,
+                      !cv.isTracking, !cv.isDragging, !cv.isDecelerating else { return }
+                self.placeSearchHit(placement.hit, item: placement.item, ownedBy: placement.stamp, onlyIfObscured: true)
+            }
+            searchPlacementWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, placement.readyAfter - CACurrentMediaTime()), execute: work)
+        }
+
+        private func placeSearchHit(_ hit: ChatSearchHit, item: MessageListItem, ownedBy owner: PositionStamp, onlyIfObscured: Bool = false) {
+            guard ownsDirectScroll(owner), let cv = viewController?.collectionView, let ip = dataSource?.indexPath(for: item),
                   let frame = cv.layoutAttributesForItem(at: ip)?.frame else { return }
             var rect = frame
             if let cell = cv.cellForItem(at: ip), let textView = Self.searchTextViews(in: cell.contentView).first(where: { $0.searchUnitKey == hit.match.key }),
@@ -4342,10 +4676,12 @@ extension CollectionViewMessageListV3 {
             let top = cv.contentOffset.y + cv.adjustedContentInset.top
             let height = cv.bounds.height - cv.adjustedContentInset.top - cv.adjustedContentInset.bottom
             guard height > 40 else { return }
-            if rect.minY >= top + 40 && rect.maxY <= top + height - 40 { return }
+            let margin: CGFloat = onlyIfObscured ? 0 : 40
+            if rect.minY >= top + margin && rect.maxY <= top + height - margin { return }
             let minimum = -cv.adjustedContentInset.top
             let maximum = max(minimum, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
             let target = rect.minY - cv.adjustedContentInset.top - height * 0.3
+            guard prepareDirectScroll(ownedBy: owner) else { return }
             cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: min(maximum, max(minimum, target))), animated: false)
         }
         private static func searchTextViews(in view: UIView) -> [SelectableMarkdownTextView] {
@@ -4392,7 +4728,7 @@ extension CollectionViewMessageListV3 {
         /// Base contentInset.bottom = inputBarHeight + floatingBarHeight + 8.
         /// Resolved from the instance geometry context (or standalone fallback);
         /// the actual inset adds the current sub-viewport compensation, if any.
-        /// `applySubViewportCompensation` is the only place that writes
+        /// `prepareViewportInsets` is the only place that writes
         /// contentInset.bottom — it reads this base and adds overflow.
         var baseBottomInset: CGFloat = 0
 
@@ -4407,16 +4743,13 @@ extension CollectionViewMessageListV3 {
         /// `contentInset.top` stays at `baseContentInsetTop` so the first row
         /// is always glued to the safe area — no blank above the user message.
         ///
-        /// `applySubViewportCompensation` is the only writer of
+        /// `prepareViewportInsets` is the only writer of
         /// `cv.contentInset.bottom`. It resolves the current shared geometry
         /// before applying
         /// `baseBottomInset + (needs ? overflow : 0)`.
-        ///
-        /// Returns true if compensation is currently active.
-        @discardableResult
-        func applySubViewportCompensation(caller: String = "?", forceRelax: Bool = false, position: Bool = true) -> Bool {
+        private func prepareViewportInsets(caller: String, forceRelax: Bool = false) {
             _ = consumeSessionLoadClamp()
-            guard let cv = viewController?.collectionView else { return false }
+            guard let cv = viewController?.collectionView else { return }
             let previousBase = baseBottomInset
             baseBottomInset = geometryContext?.baseBottomInset ?? fallbackBottomInset
             topOverlayInset = geometryContext?.configuration.topOverlayInset ?? fallbackTopOverlayInset
@@ -4481,32 +4814,19 @@ extension CollectionViewMessageListV3 {
                 AppLogger(category: "SubViewport").info("[CHANGE] from=\(caller) bottomInset \(String(format: "%.1f", prevBottomInset))→\(String(format: "%.1f", desiredBottomInset)) Δ\(String(format: "%+.1f", desiredBottomInset - prevBottomInset)) — \(reason)")
                 cv.contentInset.bottom = desiredBottomInset
             }
-            if viewportGeometryCommitDepth > 0 {
-                pendingViewportPosition = true
-            } else if position && !cv.isTracking && !cv.isDecelerating && !isFlushing
-                        && userMessageViewportAnchor == nil {
-                let target = ChatListScrollTarget.resolve(
-                    contentHeight: cv.contentSize.height, viewportHeight: cv.bounds.height,
-                    adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
-                    baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
-                    current: cv.contentOffset.y, followsBottom: scrollMode == .autoScrolling)
-                if abs(cv.contentOffset.y - target) > 0.5 { cv.contentOffset.y = target }
-            }
-            return needsCompensation
         }
 
-        func scrollToBottomNow(animated: Bool = false) {
+        private func scrollToBottomNow(animated: Bool = false) {
             guard let cv = viewController?.collectionView else { return }
+            invalidatePositionRequests()
             if viewportGeometryCommitDepth > 0 {
-                pendingViewportPosition = true
+                enqueuePosition(.explicit)
                 return
             }
-            applySubViewportCompensation(caller: "scrollToBottom", position: false)
-            let y = ChatListScrollTarget.resolve(
-                contentHeight: cv.contentSize.height, viewportHeight: cv.bounds.height,
-                adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
-                baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
-                current: cv.contentOffset.y, followsBottom: true)
+            UIView.performWithoutAnimation { prepareViewportInsets(caller: "explicit") }
+            if !previousSnapshotIds.isEmpty { didRestoreScroll = true }
+            let y = boundedPosition(cv.contentOffset.y, followsBottom: true, in: cv)
+            guard abs(y - cv.contentOffset.y) > 0.5 else { syncScrollFlags(); return }
             let target = CGPoint(x: cv.contentOffset.x, y: y)
             if animated {
                 isAnimatingScrollToBottom = true
@@ -5176,8 +5496,7 @@ extension CollectionViewMessageListV3 {
         // MARK: - UIScrollViewDelegate
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            pendingScrollWork?.cancel()
-            pendingScrollWork = nil
+            invalidatePositionRequests()
             AppLogger(category: "ScrollDiag").info("[ScrollDiag][willBeginDragging] offset=\(String(format: "%.0f", scrollView.contentOffset.y)) contentSize=\(String(format: "%.0f", scrollView.contentSize.height)) visibleCells=\(viewController?.collectionView?.visibleCells.count ?? -1)")
             #if DEBUG
             // [DecelDisplayLink] Safety: if the user grabs again mid-decel, stop
@@ -5434,14 +5753,14 @@ extension CollectionViewMessageListV3 {
         private let decelSlowFrameThreshold: CFTimeInterval = 0.032
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            guard isAnimatingScrollToBottom, let cv = viewController?.collectionView, scrollView === cv else { return }
             isAnimatingScrollToBottom = false
-            // Final clamp: ensure offset doesn't exceed actual content bounds
-            // after the animation completes (contentSize may have changed mid-flight).
-            guard let cv = viewController?.collectionView else { return }
-            let maxOff = max(0, cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom)
-            if cv.contentOffset.y > maxOff {
-                cv.contentOffset.y = maxOff
-            }
+            guard scrollMode == .autoScrolling, cv.window != nil,
+                  !cv.isTracking, !cv.isDragging, !cv.isDecelerating, userMessageViewportAnchor == nil else { return }
+            // The explicit follow remains owed until the animation ends, even
+            // if every height update and coalesced request arrived mid-flight.
+            enqueuePosition(.explicit)
+            if viewportGeometryCommitDepth == 0, !isFlushing, !resolvingPosition { cv.layoutIfNeeded() }
         }
 
         func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {

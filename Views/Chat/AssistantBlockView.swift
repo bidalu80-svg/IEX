@@ -803,6 +803,7 @@ struct ChatInputAppendListener: ViewModifier {
             // without it the keyboard occasionally pops first and the
             // text appears mid-animation.
             DispatchQueue.main.async {
+                guard !vm.chatSearch.isActive else { return }
                 inputFocused = true
             }
         }

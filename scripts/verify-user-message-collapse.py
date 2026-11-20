@@ -1,5 +1,6 @@
 """Static checks for the V3 long-user-message disclosure transaction."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 def source(path):
@@ -30,7 +31,14 @@ check("bridge.onToggleUserMessageExpansion = message.role == .user && !message.i
 finish_body = v3.split("private func finishUserMessageExpansionToggle", 1)[1].split("private func runUserMessageExpansionLayoutPass", 1)[0]
 check("setContentKey" in finish_body and "setPrecalcHeight" in finish_body, "toggle refreshes layout metadata for the post-toggle state")
 check("runUserMessageExpansionLayoutPass" in finish_body, "finish routes through the shared animated pass")
-check("disclosureAnimationInFlight" in infra and "else if disclosureAnimationInFlight" in infra, "collection view lets the scoped disclosure pass animate")
+layout = infra.split("override func layoutSubviews()", 1)[1].split("// MARK: - MessageListViewController", 1)[0]
+layout = re.sub(r"//[^\n]*", "", layout)
+animation_branch = re.search(
+    r"let inheritsAnimation\s*=\s*([^\n]+)\s+if inheritsAnimation\s*\{\s*super\.layoutSubviews\(\)\s*\}"
+    r"\s*else\s*\{\s*UIView\.performWithoutAnimation\s*\{\s*super\.layoutSubviews\(\)\s*\}\s*\}", layout)
+check(animation_branch is not None and "disclosureAnimationInFlight" in
+      {term.strip() for term in animation_branch[1].split("||")},
+      "scoped disclosure inherits animation; ordinary layout runs without animation")
 check("disclosureAnimationInFlight = true" in v3 and "UIView.animate" in v3, "coordinator animates the disclosure pass")
 check("scheduleUserMessageExpansionSettles" in v3, "settle probes re-anchor until the disclosure stabilizes")
 check(v3.count("solveDisclosureAnchor") >= 3, "one anchoring equation shared by pass and probes")

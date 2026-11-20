@@ -3,6 +3,105 @@ import UIKit
 import OpenGlass
 import Darwin
 
+@MainActor final class ChatSearchFocusTrace: NSObject {
+    static let shared = ChatSearchFocusTrace()
+    private static let enabled = ProcessInfo.processInfo.arguments.contains("--verify-chat-layout-only")
+    private static let interrupt = ProcessInfo.processInfo.arguments.contains("--verify-search-focus-interruption")
+
+    private(set) var events: [[String: Any]] = []
+    private weak var field: UITextField?
+    private var fieldID: UUID?
+    private var focusedID: UUID?
+    private var armInterruption = false
+    private(set) var holdFocus = false
+
+    private override init() {
+        super.init()
+        guard Self.enabled else { return }
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(keyboardEvent(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardEvent(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        center.addObserver(self, selector: #selector(interrupted(_:)), name: UIApplication.didEnterBackgroundNotification, object: nil)
+    }
+
+    func armNextOpening() { armInterruption = Self.interrupt }
+
+    func rowReady(_ field: UITextField, id: UUID, request: Int, frame: CGRect) {
+        guard Self.enabled else { return }
+        self.field = field
+        fieldID = id
+        if armInterruption {
+            armInterruption = false
+            holdFocus = true
+        }
+        append("rowReady", id: id, detail: ["request": request, "x": frame.minX, "y": frame.minY,
+                                             "width": frame.width, "height": frame.height,
+                                             "windowWidth": field.window?.bounds.width ?? 0,
+                                             "windowHeight": field.window?.bounds.height ?? 0,
+                                             "accessibilitySize": field.traitCollection.preferredContentSizeCategory.isAccessibilityCategory,
+                                             "reduceMotion": UIAccessibility.isReduceMotionEnabled,
+                                             "held": holdFocus])
+    }
+
+    func fieldMoved(_ field: UITextField, id: UUID) {
+        append(field.window == nil ? "fieldDetached" : "fieldMounted", id: id)
+    }
+
+    func fieldRemoved(_ field: UITextField, id: UUID) {
+        if self.field === field {
+            self.field = nil
+            fieldID = nil
+            holdFocus = false
+        }
+        append("fieldRemoved", id: id)
+    }
+
+    func focusBegan(_ field: UITextField, id: UUID) {
+        guard field.isFirstResponder, focusedID != id else { return }
+        focusedID = id
+        append("focusBegan", id: id)
+    }
+
+    func focusEnded(_ field: UITextField, id: UUID) {
+        if focusedID == id { focusedID = nil }
+        append("focusEnded", id: id)
+    }
+
+    func submitted(_ field: UITextField, id: UUID) {
+        append("submit", id: id, detail: ["text": field.text ?? "", "firstResponder": field.isFirstResponder])
+    }
+
+    @objc private func keyboardEvent(_ note: Notification) {
+        if let field, let fieldID, field.isFirstResponder { focusBegan(field, id: fieldID) }
+        append(note.name == UIResponder.keyboardWillShowNotification ? "keyboardWillShow" : "keyboardWillHide", id: fieldID)
+    }
+
+    @objc private func interrupted(_ note: Notification) {
+        guard holdFocus else { return }
+        append("backgroundBeforeFocus", id: fieldID)
+        holdFocus = false
+    }
+
+    private func append(_ name: String, id: UUID?, detail: [String: Any] = [:]) {
+        guard Self.enabled else { return }
+        var event = detail
+        event["event"] = name
+        event["time"] = CACurrentMediaTime()
+        event["field"] = id?.uuidString
+        events.append(event)
+    }
+
+    final class Label: UILabel {
+        override var accessibilityValue: String? {
+            get {
+                guard let data = try? JSONSerialization.data(withJSONObject: ChatSearchFocusTrace.shared.events) else { return nil }
+                return String(data: data, encoding: .utf8)
+            }
+            set { super.accessibilityValue = newValue }
+        }
+    }
+}
+
 /// Exercises the shipping ContentView navigation and complete AIChatView. In
 /// particular, materializes the real inputBar/inputBottomRow generic metadata
 /// which component-only share/search fixtures never instantiate.
@@ -628,7 +727,14 @@ import Darwin
             let historyMarker = "CHAT-LIFECYCLE-HISTORY-\(UUID().uuidString.prefix(8))"
             let session = await ChatStore.shared.createSession(modelId: LLMModel.claudeHaiku45.id,
                                                                title: "这是用于验证语音通话入口不会挤偏居中标题的长中文历史会话")
-            await ChatStore.shared.appendMessages([
+            let historyStart = Date().addingTimeInterval(-120)
+            let longHistory = ProcessInfo.processInfo.arguments.contains("--verify-send-layout")
+                ? (0..<28).map { index in
+                    RawMessage(id: UUID().uuidString, sessionId: session.id, role: index.isMultiple(of: 2) ? .user : .assistant,
+                               parts: [.text("第 \(index + 1) 条历史消息：验证恢复和键盘过渡时的稳定阅读位置。")],
+                               createdAt: historyStart.addingTimeInterval(Double(index)), tokenUsage: nil, reasoningContent: nil)
+                } : []
+            await ChatStore.shared.appendMessages(longHistory + [
                 RawMessage(id: UUID().uuidString, sessionId: session.id, role: .user,
                            parts: [.text("请检查历史对话可以重新打开。")], createdAt: Date(),
                            tokenUsage: nil, reasoningContent: nil),
@@ -665,6 +771,10 @@ import Darwin
             }
 
             try checkpoint("open-persisted-history")
+            let verifySlide = ProcessInfo.processInfo.arguments.contains("--verify-send-layout")
+            let recoverySampler = verifySlide ? ListSlideSampler(window: window, sessionID: session.id, phase: "first-history") : nil
+            recoverySampler?.start()
+            defer { recoverySampler?.stop() }
             NotificationCenter.default.post(name: .openSessionFromIntent, object: nil,
                                             userInfo: ["sessionId": session.id])
             try await waitFor("persisted history and full composer") {
@@ -688,9 +798,27 @@ import Darwin
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
             if ProcessInfo.processInfo.arguments.contains("--verify-send-layout") {
+                try verifySlideScoring()
+                if let recoverySampler {
+                    await settle(1.2)
+                    let initial = recoverySampler.captureWindow()
+                    // Exercise the mounted production recovery consumer as well.
+                    // Real background/foreground presentation is a device recording.
+                    recoverySampler.frames.removeAll()
+                    recoverySampler.phase = "mounted-active-notification"
+                    recoverySampler.tick()
+                    NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+                    NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+                    await settle(1.2)
+                    let mounted = recoverySampler.captureWindow()
+                    recoverySampler.stop()
+                    try verifySlideFrames(initial, kind: "recovery", name: "list-slide-first-history", startsAtFirstContent: true)
+                    try verifySlideFrames(mounted, kind: "recovery", name: "list-slide-mounted-recovery")
+                }
                 try await verifySessionLoadSearchLayout(window: window, returnSessionID: session.id,
                                                        returnMarker: historyMarker)
                 try await verifySendLayout(window: window, vm: historyVM)
+                try await verifySendLayout(window: window, vm: historyVM, overlapReply: true)
             }
             if ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang") {
                 try await verifyKeyboardHang(window: window, vm: historyVM, coldStart: coldKeyboardStart)
@@ -1008,39 +1136,113 @@ import Darwin
         try require(true, "Ten-cycle keyboard-hang reproducer completes with bounded counters")
     }
 
+    private struct SlideWindow {
+        let frames: [[String: Any]]
+        let endedAt: CFTimeInterval
+    }
+
     /// Uses the complete production page, including the nested keyboard host,
     /// actual collection cells, attachment grid and FloatingToolBar.
     /// Samples the real coordinator, real cells and presentation layers, including
     /// frames after the keyboard and content have both stopped changing.
-    @MainActor private final class SendLayoutSampler: NSObject {
+    @MainActor private final class ListSlideSampler: NSObject {
         let window: UIWindow
-        let list: UICollectionView
-        let oldReply: UUID
-        let vm: AIChatViewModel
+        let sessionID: String
+        weak var list: UICollectionView?
+        weak var vm: AIChatViewModel?
+        let oldUser: UUID?
+        let oldReply: UUID?
         var frames: [[String: Any]] = []
         var replyReleased = false
+        var phase: String
         private var link: CADisplayLink?
-        init(window: UIWindow, list: UICollectionView, oldReply: UUID, vm: AIChatViewModel) {
-            self.window = window; self.list = list; self.oldReply = oldReply; self.vm = vm
+        init(window: UIWindow, sessionID: String, phase: String,
+             list: UICollectionView? = nil, oldUser: UUID? = nil, oldReply: UUID? = nil, vm: AIChatViewModel? = nil) {
+            self.window = window; self.sessionID = sessionID; self.phase = phase
+            self.list = list; self.oldUser = oldUser; self.oldReply = oldReply; self.vm = vm
         }
         func start() {
-            let link = CADisplayLink(target: self, selector: #selector(tick))
+            let link = CADisplayLink(target: self, selector: #selector(displayTick(_:)))
             self.link = link
             link.add(to: .main, forMode: .common)
             tick()
         }
         func stop() { link?.invalidate(); link = nil }
-        @objc func tick() {
-            guard let source = list.dataSource as? UICollectionViewDiffableDataSource<CollectionViewMessageListV3.Section, MessageListItem> else { return }
-            var frame: [String: Any] = ["t": CACurrentMediaTime(), "offset": list.contentOffset.y,
-                "contentSize": list.contentSize.height, "inset": list.adjustedContentInset.bottom,
-                "processing": vm.isProcessing, "replyReleased": replyReleased]
-            if let input = marker("chat.verify.input", in: window) {
-                frame["input"] = rectData(renderedRect(input, window: window))
+        func captureWindow() -> SlideWindow {
+            let endedAt = CACurrentMediaTime()
+            return SlideWindow(frames: frames, endedAt: endedAt)
+        }
+        @objc private func displayTick(_ link: CADisplayLink) {
+            let interval = link.targetTimestamp - link.timestamp
+            record(displayTimestamp: link.timestamp, displayInterval: interval)
+        }
+        func tick() { record() }
+        private func record(displayTimestamp: CFTimeInterval? = nil, displayInterval: CFTimeInterval? = nil) {
+            let now = CACurrentMediaTime()
+            var frame: [String: Any] = ["t": now, "phase": phase, "replyReleased": replyReleased, "listCovered": false]
+            if let displayTimestamp, displayTimestamp.isFinite, displayTimestamp > 0 {
+                frame["displayTimestamp"] = displayTimestamp
             }
-            let newUser = vm.messages.dropFirst(2).last(where: { $0.role == .user })?.id
-            let newAssistant = vm.messages.last(where: { $0.role == .assistant && $0.id != oldReply })?.id
-            for item in source.snapshot().itemIdentifiers {
+            if let displayInterval, displayInterval.isFinite, displayInterval > 0 {
+                frame["displayInterval"] = displayInterval
+            }
+            defer { frames.append(frame) }
+            let candidates = list.map { [$0] } ?? descendants(window).compactMap { $0 as? UICollectionView }
+            guard let list = candidates.first(where: { list in
+                (list.delegate as? CollectionViewMessageListV3.Coordinator)?
+                    .sendLayoutGeometryEvidence()["sessionID"] as? String == sessionID && isVisible(list, in: window)
+            }), let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator,
+                let source = list.dataSource as? UICollectionViewDiffableDataSource<CollectionViewMessageListV3.Section, MessageListItem> else { return }
+            frame.merge(coordinator.sendLayoutGeometryEvidence()) { _, new in new }
+            let vm = vm ?? ViewModelCache.shared.get(for: sessionID)
+            let modelFrame = list.convert(list.bounds, to: window)
+            guard let displayFrame = slidePresentationRect(list, in: window) else { return }
+            let occluders = slideOccluders(for: list, in: window)
+            let bottom = recordSlideBoundary(in: &frame, list: displayFrame, occluders: occluders)
+            let base = frame["baseBottomInset"] as? CGFloat ?? 0
+            let top = displayFrame.minY + list.adjustedContentInset.top
+            let legalMin = -list.adjustedContentInset.top
+            let legalMax = max(legalMin, list.contentSize.height - list.bounds.height + list.adjustedContentInset.bottom)
+            let visualTarget = ChatListScrollTarget.resolve(contentHeight: list.contentSize.height,
+                viewportHeight: list.bounds.height, adjustedTop: list.adjustedContentInset.top,
+                adjustedBottom: list.adjustedContentInset.bottom, baseBottom: base,
+                safeAreaBottom: list.safeAreaInsets.bottom, current: 0, followsBottom: true)
+            frame["listCovered"] = true
+            frame["offset"] = list.contentOffset.y
+            frame["presentationOffset"] = (list.layer.presentation() ?? list.layer).bounds.origin.y
+            frame["listModel"] = rectData(modelFrame)
+            frame["containerModel"] = list.superview.map { rectData($0.convert($0.bounds, to: window)) }
+            frame["containerPresentation"] = list.superview.map { rectData(renderedRect($0, window: window)) }
+            frame["contentSize"] = list.contentSize.height
+            frame["inset"] = list.adjustedContentInset.bottom
+            frame["visibleTop"] = top
+            frame["legalMinimum"] = legalMin
+            frame["legalMaximum"] = legalMax
+            frame["visualTarget"] = visualTarget
+            frame["processing"] = vm?.isProcessing == true
+            let lastUser = vm?.messages.last(where: { $0.role == .user })?.id
+            let lastAssistant = vm?.messages.last(where: { $0.role == .assistant })?.id
+            let newUser = oldUser != nil && lastUser != oldUser ? lastUser : nil
+            let newAssistant = newUser != nil && lastAssistant != oldReply ? lastAssistant : nil
+            if let newUser, let index = source.indexPath(for: .wholeMessage(newUser)),
+               let attrs = list.collectionViewLayout.layoutAttributesForItem(at: index) {
+                frame["userAttributes"] = rectData(attrs.frame)
+            }
+            if let section = source.snapshot().sectionIdentifiers.first,
+               let tail = source.snapshot().itemIdentifiers(inSection: section).last,
+               let index = source.indexPath(for: tail),
+               let attrs = list.collectionViewLayout.layoutAttributesForItem(at: index) {
+                frame["tail"] = rectData(attrs.frame)
+                frame["tailItem"] = String(describing: tail)
+                if let cell = list.cellForItem(at: index), let display = slidePresentationRect(cell, in: window) {
+                    frame["tailPresentation"] = rectData(display)
+                }
+            }
+            var anchors: [[String: Any]] = []
+            for index in list.indexPathsForVisibleItems.sorted() {
+                guard let item = source.itemIdentifier(for: index), let cell = list.cellForItem(at: index),
+                      let display = slidePresentationRect(cell, in: window) else { continue }
+                let model = cell.convert(cell.bounds, to: window)
                 let role: String?
                 switch item {
                 case .wholeMessage(let id): role = id == newUser ? "bubble" : nil
@@ -1048,15 +1250,393 @@ import Darwin
                 case .assistantHeader(let id): role = id == newAssistant ? "newHeader" : nil
                 default: role = nil
                 }
-                if let role, let index = source.indexPath(for: item), let cell = list.cellForItem(at: index) {
-                    frame[role] = rectData(renderedRect(cell, window: window))
+                if let role { frame[role] = rectData(display) }
+                if let bottom, case .assistantBlock(let id, let blockID) = item, id == newAssistant,
+                   let block = vm?.messages.last(where: { $0.id == id })?.blocks.first(where: { $0.id == blockID }),
+                   (!block.content.isEmpty || (block.kind != .text && block.kind != .thinking)),
+                   display.minY < bottom && display.maxY > top && display.height > 0.5 {
+                    frame["replyVisible"] = true
+                }
+                // Use fixed, unobscured item tops. Headers and footers can
+                // change independently and cannot stand in for message text.
+                switch item {
+                case .wholeMessage, .assistantBlock:
+                    if isVisible(cell, in: window), display.minY < (bottom ?? displayFrame.maxY), display.maxY > top, display.height > 4 {
+                        frame["transcriptPresented"] = true
+                    }
+                    let covered = bottom.map { display.minY >= top - 0.5 && display.minY + 4 <= $0 && display.height > 4 } ?? false
+                    anchors.append(["item": String(describing: item), "message": item.messageId.uuidString,
+                                    "covered": covered, "model": rectData(model), "presentation": rectData(display)])
+                default: break
                 }
             }
-            if let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator {
-                frame.merge(coordinator.sendLayoutGeometryEvidence()) { _, new in new }
-            }
-            frames.append(frame)
+            frame["anchors"] = anchors
         }
+    }
+
+    private static func slidePresentationRect(_ view: UIView, in window: UIWindow) -> CGRect? {
+        guard view.window === window, let layer = view.layer.presentation(),
+              let windowLayer = window.layer.presentation() else { return nil }
+        return layer.convert(layer.bounds, to: windowLayer)
+    }
+
+    private static func slideOccluders(for list: UICollectionView, in window: UIWindow) -> [(String, CGRect?)] {
+        // Both hosts belong to the same viewport. A window-wide marker search
+        // can see a different chat while navigation is still animating.
+        let responders = sequence(first: list as UIResponder, next: { $0.next })
+        guard let viewport = responders.first(where: { $0 is ChatKeyboardViewportController }) as? ChatKeyboardViewportController else { return [] }
+        let markers = descendants(viewport.view).compactMap { $0 as? ChatLayoutGeometryUIView }
+        return ["input", "attachments", "preview", "status"].compactMap { role in
+            let views = markers.filter { $0.layoutRole == "chat.verify.\(role)" }
+            guard !views.isEmpty else { return nil }
+            return (role, views.count == 1 ? slidePresentationRect(views[0], in: window) : nil)
+        }
+    }
+
+    private static func recordSlideBoundary(in frame: inout [String: Any], list: CGRect,
+                                            occluders: [(String, CGRect?)]) -> CGFloat? {
+        func usable(_ rect: CGRect) -> Bool {
+            !rect.isEmpty && [rect.minX, rect.minY, rect.maxX, rect.maxY].allSatisfy(\.isFinite)
+        }
+        guard usable(list) else { return nil }
+        frame["listPresentation"] = rectData(list)
+        var presented: [String: CGRect] = [:]
+        for (role, rect) in occluders {
+            guard let rect, usable(rect), rect.maxX > list.minX, rect.minX < list.maxX else { return nil }
+            presented[role] = rect
+            frame[role] = rectData(rect)
+        }
+        guard let input = presented["input"] else { return nil }
+        // The input marker is on the chrome inside its top padding (8pt,
+        // omitted next to attachments). The transcript keeps an 8pt gutter.
+        let inputTop = input.minY - (presented["attachments"] == nil ? 8 : 0)
+        let obstructionTop = presented.filter { $0.key != "input" }.values.reduce(inputTop) { min($0, $1.minY) }
+        let bottom = min(list.maxY, obstructionTop - 8)
+        guard bottom > list.minY else { return nil }
+        frame["visibleBottom"] = bottom
+        return bottom
+    }
+
+    private static func slideRect(_ frame: [String: Any], _ key: String) -> [String: CGFloat]? {
+        frame[key] as? [String: CGFloat]
+    }
+
+    private static func commonDown(_ first: CGFloat, _ second: CGFloat, tolerance: CGFloat) -> CGFloat? {
+        guard abs(first - second) <= tolerance else { return nil }
+        return max(0, min(first, second))
+    }
+
+    private static func slideMaximumGap(_ period: Double?) -> Double? {
+        guard let period, period.isFinite, period > 0 else { return nil }
+        // A stall must not qualify itself by inflating the reported period.
+        return min(period, 1.0 / 30.0) * 1.5
+    }
+
+    private static func slideTimingGap(_ before: [String: Any], _ after: [String: Any], at index: Int) -> [String: Any]? {
+        var gap: [String: Any] = ["from": index - 1, "to": index]
+        let periods = [before, after].compactMap { $0["displayInterval"] as? Double }
+        // Use display time for two display callbacks and media time for the
+        // manual baseline captured before a fixture triggers the transition.
+        let key = before["displayTimestamp"] != nil && after["displayTimestamp"] != nil ? "displayTimestamp" : "t"
+        guard let maximum = slideMaximumGap(periods.max()),
+              let start = before[key] as? Double, let end = after[key] as? Double,
+              start.isFinite, end.isFinite else { return gap }
+        let elapsed = end - start
+        guard elapsed > 0, elapsed <= maximum else {
+            gap["seconds"] = elapsed
+            gap["maximumSeconds"] = maximum
+            return gap
+        }
+        return nil
+    }
+
+    private static func slideTailTimingGap(_ window: SlideWindow) -> [String: Any]? {
+        var gap: [String: Any] = ["boundary": "end"]
+        guard let index = window.frames.lastIndex(where: { $0["displayTimestamp"] != nil }) else { return gap }
+        gap["from"] = index
+        let last = window.frames[index]
+        guard let maximum = slideMaximumGap(last["displayInterval"] as? Double),
+              let time = last["t"] as? Double, time.isFinite, window.endedAt.isFinite else { return gap }
+        let elapsed = window.endedAt - time
+        guard elapsed >= 0, elapsed <= maximum else {
+            gap["seconds"] = elapsed
+            gap["maximumSeconds"] = maximum
+            return gap
+        }
+        return nil
+    }
+
+    /// Compare every covered interval in each phase, including reversals. The
+    /// trace retains uncovered frames; they cannot produce a passing verdict.
+    private static func slideIntervals(_ window: SlideWindow, kind: String, startsAtFirstContent: Bool) -> [String: Any] {
+        let frames = window.frames
+        let tolerance: CGFloat = 2 // UIKit points, fixture only; video uses 4 original pixels.
+        var resolved: [(index: Int, phase: Int, reference: CGFloat, rows: [String: (String, CGFloat)])] = []
+        var coverage: [String: Any] = [:]
+        var trace: [[String: Any]] = []
+        var missing: [Int] = []
+        var timingGaps: [[String: Any]] = []
+        var comparedAfterInsertion = 0
+        var maxCommon: CGFloat = 0
+        var scored: [String: Any] = [:]
+        var revealedIndex: Int?
+        var firstReplyIndex: Int?
+        // Loading frames before the first displayed message are outside a cold
+        // restore. Once any content appears, never skip a gap in the window.
+        let start = startsAtFirstContent ? frames.firstIndex { $0["transcriptPresented"] as? Bool == true } : frames.indices.first
+        for (index, frame) in frames.enumerated() where start.map({ index >= $0 }) == true {
+            if index > 0, let gap = slideTimingGap(frames[index - 1], frame, at: index) {
+                timingGaps.append(gap)
+            }
+            if revealedIndex == nil, frame["userAttributes"] != nil { revealedIndex = index }
+            if kind == "send", frame["replyVisible"] as? Bool == true { firstReplyIndex = index; break }
+            guard frame["listCovered"] as? Bool == true, frame["hasPlacedList"] as? Bool == true else { missing.append(index); continue }
+            let all = frame["anchors"] as? [[String: Any]] ?? []
+            guard let bottom = frame["visibleBottom"] as? CGFloat else { missing.append(index); continue }
+            var rows: [String: (String, CGFloat)] = [:]
+            for row in all where row["covered"] as? Bool == true {
+                guard let item = row["item"] as? String, let message = row["message"] as? String,
+                      let y = slideRect(row, "presentation")?["y"] else { continue }
+                rows[item] = (message, y)
+            }
+            guard Set(rows.values.map { $0.0 }).count >= 2 else { missing.append(index); continue }
+            let phase = revealedIndex == nil ? 0 : 1
+            let syncBottom = kind == "keyboard" ? frame["auto"] as? Bool == true : kind == "send" && phase == 1
+            let reference = syncBottom ? bottom : 0
+            let sample = (index: index, phase: phase, reference: reference, rows: rows)
+            var compared = false
+            if let prior = resolved.last, prior.phase == phase, prior.index == index - 1 {
+                let sharedMessages = Set(rows.compactMap { prior.rows[$0.key] == nil ? nil : $0.value.0 })
+                if sharedMessages.count < 2 { missing.append(index) }
+            }
+            var perItem: [String: Any] = [:]
+            for (item, (_, y)) in rows {
+                let prior = resolved.last.flatMap { $0.phase == phase ? $0.rows[item]?.1 : nil }
+                let baseline = resolved.first(where: { $0.phase == phase && $0.rows[item] != nil })
+                var evidence: [String: Any] = ["y": y, "residual": y - reference]
+                if let prior, let last = resolved.last, last.index + 1 == index { evidence["step"] = y - prior }
+                if let baseline, let baseY = baseline.rows[item]?.1 {
+                    evidence["net"] = y - baseY
+                    evidence["residualNet"] = y - reference - (baseY - baseline.reference)
+                }
+                perItem[item] = evidence
+            }
+            for earlier in resolved where earlier.phase == phase {
+                let pairs = rows.compactMap { item, row -> (String, String, CGFloat)? in
+                    guard let prior = earlier.rows[item] else { return nil }
+                    return (item, row.0, row.1 - prior.1 - reference + earlier.reference)
+                }
+                for a in pairs.indices {
+                    for b in pairs.indices where b > a && pairs[b].1 != pairs[a].1 {
+                        compared = true
+                        if let down = commonDown(pairs[a].2, pairs[b].2, tolerance: tolerance), down > maxCommon {
+                            maxCommon = down
+                            scored = ["from": earlier.index, "to": index, "items": [pairs[a].0, pairs[b].0]]
+                        }
+                    }
+                }
+            }
+            if compared {
+                coverage[String(index)] = true
+                if phase == 1 { comparedAfterInsertion += 1 }
+            }
+            trace.append(["frame": index, "phase": phase, "reference": reference, "items": perItem])
+            resolved.append(sample)
+        }
+        // A visible reply already ended the send window; its preceding gap
+        // was checked above during the scan.
+        if firstReplyIndex == nil, let gap = slideTailTimingGap(window) { timingGaps.append(gap) }
+        let incomplete = !missing.isEmpty || coverage.count < 2 || (kind == "send" && comparedAfterInsertion == 0)
+        let verdict = !timingGaps.isEmpty ? "inconclusive"
+            : (maxCommon > tolerance ? "failed" : (incomplete ? "inconclusive" : "within-tolerance"))
+        var result: [String: Any] = ["maxCommonDown": maxCommon, "maxInterval": scored,
+            "coveredFrames": resolved.count, "missingPairFrames": missing.count, "missingFrames": missing,
+            "comparedFrames": coverage.count, "timingGaps": timingGaps,
+            "tolerancePoints": tolerance, "trace": trace, "verdict": verdict]
+        if kind == "send" { result["comparedAfterInsertion"] = comparedAfterInsertion }
+        if let start { result["criticalStartFrame"] = start }
+        if let firstReplyIndex { result["firstReplyFrame"] = firstReplyIndex }
+        if let revealedIndex {
+            result["firstInsertedFrame"] = revealedIndex
+            result["insertion"] = scoreInsertion(frames, at: revealedIndex, tolerance: tolerance)
+        } else if kind == "send" {
+            result["insertion"] = ["verdict": "inconclusive"]
+        }
+        return result
+    }
+
+    private static func scoreInsertion(_ frames: [[String: Any]], at index: Int, tolerance: CGFloat) -> [String: Any] {
+        guard index > 0, let precedingOffset = frames[index - 1]["presentationOffset"] as? CGFloat,
+              let previousOrigin = slideRect(frames[index - 1], "listPresentation")?["y"],
+              let origin = slideRect(frames[index], "listPresentation")?["y"],
+              let bubble = slideRect(frames[index], "userAttributes"), let y = bubble["y"], let height = bubble["height"],
+              let bottom = frames[index]["visibleBottom"] as? CGFloat, let top = frames[index]["visibleTop"] as? CGFloat,
+              let minimum = frames[index]["legalMinimum"] as? CGFloat, let maximum = frames[index]["legalMaximum"] as? CGFloat else {
+            return ["verdict": "inconclusive"]
+        }
+        let before = frames[index - 1]["anchors"] as? [[String: Any]] ?? []
+        let after = frames[index]["anchors"] as? [[String: Any]] ?? []
+        guard slideRect(frames[index - 1], "input") != nil, slideRect(frames[index], "input") != nil else {
+            return ["verdict": "inconclusive"]
+        }
+        var deltas: [(String, CGFloat)] = []
+        for row in after where row["covered"] as? Bool == true {
+            guard let item = row["item"] as? String, let message = row["message"] as? String,
+                  let prior = before.first(where: { $0["item"] as? String == item && $0["covered"] as? Bool == true }),
+                  let oldY = slideRect(prior, "presentation")?["y"],
+                  let newY = slideRect(row, "presentation")?["y"],
+                  let oldModel = slideRect(prior, "model")?["y"], let newModel = slideRect(row, "model")?["y"],
+                  let oldModelOrigin = slideRect(frames[index - 1], "listModel")?["y"],
+                  let newModelOrigin = slideRect(frames[index], "listModel")?["y"],
+                  let oldOffset = frames[index - 1]["offset"] as? CGFloat, let newOffset = frames[index]["offset"] as? CGFloat else { continue }
+            let layoutDelta = (newModel - newModelOrigin + newOffset) - (oldModel - oldModelOrigin + oldOffset)
+            let reading = precedingOffset + origin - previousOrigin + layoutDelta
+            let reveal = min(y - (top - origin), y + height - (bottom - origin))
+            let legal = min(maximum, max(minimum, max(reading, reveal)))
+            deltas.append((message, newY - oldY - (reading - legal)))
+        }
+        var maximumDown: CGFloat = 0
+        var compared = false
+        for a in deltas.indices {
+            for b in deltas.indices where b > a && deltas[b].0 != deltas[a].0 {
+                compared = true
+                maximumDown = max(maximumDown, commonDown(deltas[a].1, deltas[b].1, tolerance: tolerance) ?? 0)
+            }
+        }
+        return ["from": index - 1, "to": index, "maxCommonDown": maximumDown,
+                "verdict": !compared ? "inconclusive" : (maximumDown > tolerance ? "failed" : "within-tolerance")]
+    }
+
+    private static func scoreBottomEndpoints(_ frames: [[String: Any]], direction: CGFloat?) -> [String: Any] {
+        func endpoint(_ frame: [String: Any]) -> (bottom: CGFloat, tail: CGFloat, scrolled: CGFloat, item: String)? {
+            guard frame["auto"] as? Bool == true,
+                  let bottom = frame["visibleBottom"] as? CGFloat,
+                  let tail = slideRect(frame, "tailPresentation"), let y = tail["y"], let height = tail["height"],
+                  let offset = frame["presentationOffset"] as? CGFloat,
+                  let minimum = frame["legalMinimum"] as? CGFloat, let item = frame["tailItem"] as? String else { return nil }
+            return (bottom, y + height, offset - minimum, item)
+        }
+        guard let startFrame = frames.first, let endFrame = frames.last,
+              let start = endpoint(startFrame), let end = endpoint(endFrame), start.item == end.item else {
+            return ["verdict": "inconclusive"]
+        }
+        let bottomDelta = end.bottom - start.bottom
+        let tailDelta = end.tail - start.tail
+        let aligned = [start, end].allSatisfy { point in
+            point.scrolled > 40 && abs(point.tail - point.bottom) <= 2
+        }
+        let followed = direction.map { bottomDelta * $0 > 40 && tailDelta * $0 > 40 && abs(tailDelta - bottomDelta) <= 2 } ?? true
+        return ["verdict": aligned && followed ? "within-tolerance" : "failed",
+                "bottomDelta": bottomDelta, "tailDelta": tailDelta, "startScrolled": start.scrolled, "endScrolled": end.scrolled,
+                "startGap": start.tail - start.bottom, "endGap": end.tail - end.bottom]
+    }
+
+    private static func scoreSlideFrames(_ window: SlideWindow, kind: String, startsAtFirstContent: Bool,
+                                         keyboardDirection: CGFloat? = nil) -> [String: Any] {
+        var result = slideIntervals(window, kind: kind, startsAtFirstContent: startsAtFirstContent)
+        if kind == "keyboard" || kind == "recovery" {
+            let start = result["criticalStartFrame"] as? Int ?? window.frames.count
+            result["endpoints"] = scoreBottomEndpoints(Array(window.frames.dropFirst(start)), direction: keyboardDirection)
+        }
+        return result
+    }
+
+    private static func verifySlideFrames(_ window: SlideWindow, kind: String, name: String,
+                                          startsAtFirstContent: Bool = false, keyboardDirection: CGFloat? = nil) throws {
+        let result = scoreSlideFrames(window, kind: kind, startsAtFirstContent: startsAtFirstContent, keyboardDirection: keyboardDirection)
+        try JSONSerialization.data(withJSONObject: ["frames": window.frames, "endedAt": window.endedAt, "intervals": result], options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("\(name).json"), options: .atomic)
+        try require(result["verdict"] as? String == "within-tolerance",
+                    "\(name): critical window must be covered and within tolerance (\(result["verdict"] ?? "missing"))")
+        if kind == "send" {
+            try require((result["insertion"] as? [String: Any])?["verdict"] as? String == "within-tolerance",
+                        "\(name): insertion must have covered adjacent frames and no excess downward jump")
+        } else {
+            try require((result["endpoints"] as? [String: Any])?["verdict"] as? String == "within-tolerance",
+                        "\(name): long list is pinned at both endpoints and its tail follows necessary viewport motion")
+        }
+    }
+
+    private static func verifySlideScoring() throws {
+        func frame(listEnd: CGFloat, chromeY: CGFloat?, tail: CGFloat, modelInset: CGFloat, extraDown: CGFloat = 0) -> [String: Any] {
+            var sample: [String: Any] = [
+                "listCovered": true, "hasPlacedList": true, "transcriptPresented": true, "auto": true,
+                "baseBottomInset": modelInset, "tailPresentation": ["y": tail - 20, "height": CGFloat(20)], "tailItem": "b",
+                "legalMinimum": CGFloat(0), "presentationOffset": 1100 - tail,
+                "anchors": [["item": "a", "message": "one", "covered": true, "presentation": ["y": tail - 100 + extraDown]],
+                            ["item": "b", "message": "two", "covered": true, "presentation": ["y": tail - 70 + extraDown]]]]
+            _ = recordSlideBoundary(in: &sample, list: CGRect(x: 0, y: 0, width: 400, height: listEnd),
+                                    occluders: [("input", chromeY.map { CGRect(x: 10, y: $0, width: 380, height: 60) })])
+            return sample
+        }
+        func timed(_ frames: [[String: Any]], at times: [Double]? = nil, endedAt: Double? = nil) -> SlideWindow {
+            let samples = frames.enumerated().map { index, frame in
+                var sample = frame
+                let time = times?[index] ?? Double(index) / 30
+                sample["t"] = time
+                sample["displayTimestamp"] = time
+                sample["displayInterval"] = 1.0 / 30
+                return sample
+            }
+            let last = samples.last?["t"] as? Double ?? 0
+            return SlideWindow(frames: samples, endedAt: endedAt ?? (last + 0.005))
+        }
+        let open = frame(listEnd: 500, chromeY: 376, tail: 360, modelInset: 140)
+        let closed = frame(listEnd: 700, chromeY: 616, tail: 600, modelInset: 100)
+        let gap: [String: Any] = ["listCovered": false]
+        let complete = slideIntervals(timed([closed, closed, closed]), kind: "recovery", startsAtFirstContent: true)
+        let incomplete = slideIntervals(timed([closed, gap, closed, closed, closed]), kind: "recovery", startsAtFirstContent: true)
+        try require(complete["verdict"] as? String == "within-tolerance" && incomplete["verdict"] as? String == "inconclusive",
+                    "Missing critical coverage stays inconclusive even with a stable tail")
+        let stalled = slideIntervals(timed([closed, closed, closed, closed], at: [0, 0.033, 0.400, 0.433]),
+                                    kind: "recovery", startsAtFirstContent: true)
+        try require(stalled["verdict"] as? String == "inconclusive" && stalled["missingPairFrames"] as? Int == 0
+                    && (stalled["timingGaps"] as? [[String: Any]])?.count == 1,
+                    "A gap between display callbacks stays inconclusive even when all recorded anchors are valid")
+        var inserted = closed
+        inserted["userAttributes"] = ["y": CGFloat(500), "height": CGFloat(20)]
+        let reply: [String: Any] = ["replyVisible": true]
+        let truncated = slideIntervals(timed([closed, closed, closed, inserted, reply]), kind: "send", startsAtFirstContent: false)
+        try require(truncated["verdict"] as? String == "inconclusive",
+                    "Pre-send frames alone cannot qualify a send cut short by the reply")
+        let stuck = frame(listEnd: 500, chromeY: 376, tail: 600, modelInset: 140)
+        let opening = frame(listEnd: 650, chromeY: 556, tail: 540, modelInset: 140)
+        let closing = frame(listEnd: 550, chromeY: 436, tail: 420, modelInset: 100)
+        for (path, direction) in [([closed, opening, open, open], CGFloat(-1)),
+                                  ([open, closing, closed, closed], CGFloat(1))] {
+            let score = scoreSlideFrames(timed(path), kind: "keyboard", startsAtFirstContent: false, keyboardDirection: direction)
+            try require(score["verdict"] as? String == "within-tolerance"
+                        && (score["endpoints"] as? [String: Any])?["verdict"] as? String == "within-tolerance",
+                        "A long-list tail follows keyboard motion even when the model is already at its destination")
+        }
+        let path = [closed, opening, open, open]
+        let times = [0.3, 1.0 / 3, 11.0 / 30, 0.4]
+        let promptEnd = scoreSlideFrames(timed(path, at: times, endedAt: 0.405), kind: "keyboard",
+                                         startsAtFirstContent: false, keyboardDirection: -1)
+        let lateEnd = scoreSlideFrames(timed(path, at: times, endedAt: 1.35), kind: "keyboard",
+                                       startsAtFirstContent: false, keyboardDirection: -1)
+        let lateGaps = lateEnd["timingGaps"] as? [[String: Any]]
+        try require(promptEnd["verdict"] as? String == "within-tolerance"
+                    && (promptEnd["endpoints"] as? [String: Any])?["verdict"] as? String == "within-tolerance"
+                    && lateEnd["verdict"] as? String == "inconclusive"
+                    && lateGaps?.count == 1 && lateGaps?.first?["boundary"] as? String == "end",
+                    "The same keyboard trace passes only when its display frames cover the observation end")
+
+        for index in 1...2 {
+            let early = index == 1
+            var drifting = path
+            drifting[index] = frame(listEnd: early ? 650 : 500, chromeY: early ? 556 : 376,
+                                    tail: early ? 540 : 360, modelInset: 140, extraDown: 8)
+            let score = scoreSlideFrames(timed(drifting), kind: "keyboard", startsAtFirstContent: false, keyboardDirection: -1)
+            try require(score["verdict"] as? String == "failed" && score["maxCommonDown"] as? CGFloat == 8,
+                        "Either intermediate display frame can contain detectable 8pt extra motion")
+        }
+        let unmeasured = frame(listEnd: 650, chromeY: nil, tail: 540, modelInset: 140)
+        let unknown = scoreSlideFrames(timed([closed, unmeasured, open, open]), kind: "keyboard",
+                                       startsAtFirstContent: false, keyboardDirection: -1)
+        try require(unknown["verdict"] as? String == "inconclusive" && unknown["missingFrames"] as? [Int] == [1]
+                    && scoreBottomEndpoints([closed, stuck], direction: -1)["verdict"] as? String == "failed",
+                    "An unavailable presented boundary stays inconclusive, and a tail that fails to follow still fails")
     }
 
     private static func verifySessionLoadSearchLayout(window: UIWindow, returnSessionID: String,
@@ -1130,7 +1710,7 @@ import Darwin
                 return hit.blockId != nil && vm.messages.first(where: { $0.id == hit.messageId })?.role == .assistant
                     && coordinator.scrollMode == .userBrowsing
             }
-            await settle(0.7) // Include search's deferred 0/0.25s placements.
+            await settle(0.7)
             try require(!coordinator.sessionLoadClampEvidence().pending,
                         "Explicit assistant search cancels session-load follow intent")
             let before = list.contentOffset.y
@@ -1148,6 +1728,19 @@ import Darwin
             coordinator.performViewportGeometryCommit { list.layoutIfNeeded() }
             try require(abs(list.contentOffset.y - afterKeyboard) <= 0.5,
                         "Repeated geometry-only commit cannot reapply the old load pin")
+            if !waitForDeadline, let hit = vm.chatSearch.current {
+                coordinator.revealSearchHit(hit)
+                vm.forceScrollToBottom.send()
+                await settle(0.8) // Leave the hit unchanged through both search retries.
+                let base = coordinator.sendLayoutGeometryEvidence()["baseBottomInset"] as? CGFloat ?? 0
+                let bottom = ChatListScrollTarget.resolve(contentHeight: list.contentSize.height,
+                    viewportHeight: list.bounds.height, adjustedTop: list.adjustedContentInset.top,
+                    adjustedBottom: list.adjustedContentInset.bottom, baseBottom: base,
+                    safeAreaBottom: list.safeAreaInsets.bottom, current: list.contentOffset.y, followsBottom: true)
+                try require(vm.chatSearch.current?.match == hit.match && coordinator.scrollMode == .autoScrolling
+                            && abs(list.contentOffset.y - bottom) <= 1,
+                            "Explicit bottom jump keeps ownership through the earlier search retries")
+            }
             records.append(["waitedForDeadline": waitForDeadline, "contentSizeChanges": contentSizeChanges,
                             "searchedOffset": before, "afterKeyboard": afterKeyboard,
                             "expectedBrowseOffset": expected, "clampPending": coordinator.sessionLoadClampEvidence().pending])
@@ -1158,8 +1751,9 @@ import Darwin
         await settle(0.5)
     }
 
-    private static func verifySendLayout(window: UIWindow, vm: AIChatViewModel) async throws {
-        try checkpoint("production-send-layout")
+    private static func verifySendLayout(window: UIWindow, vm: AIChatViewModel, overlapReply: Bool = false) async throws {
+        let run = overlapReply ? "overlap" : "slow"
+        try checkpoint("production-send-layout-\(run)")
         window.endEditing(true)
         guard let sessionID = vm.sessionId else { try require(false, "Send fixture has a persisted session"); return }
         let fixture = SendLayoutProvider()
@@ -1184,7 +1778,12 @@ import Darwin
         let oldReplyText = "已有的短回复，操作栏隐藏时应保留间距。"
         let oldReply = ChatMessage(role: .assistant, content: oldReplyText,
                                    blocks: [AssistantBlock(kind: .text, content: oldReplyText)])
-        vm.messages = [oldUser, oldReply]
+        let earlierMessages = (0..<28).map { index in
+            let text = "第 \(index + 1) 条历史消息，作为键盘过渡的稳定参照。"
+            if index.isMultiple(of: 2) { return ChatMessage(role: .user, content: text) }
+            return ChatMessage(role: .assistant, content: text, blocks: [AssistantBlock(kind: .text, content: text)])
+        }
+        vm.messages = earlierMessages + [oldUser, oldReply]
         vm.inputText = ""
         vm.attachments = []
         await settle(1)
@@ -1195,13 +1794,27 @@ import Darwin
         let longText = Array(repeating: "粘贴长文发送布局验证：输入栏收缩之后消息和新标题应保持稳定。", count: 24).joined(separator: "\n")
         // Same composer content and keyboard cycle without sending is the local
         // counter baseline; the next cycle adds the real send/snapshot work.
+        let sampler = ListSlideSampler(window: window, sessionID: sessionID, phase: "keyboard-open",
+                                      list: list, oldUser: oldUser.id, oldReply: oldReply.id, vm: vm)
+        sampler.start()
+        defer { sampler.stop() }
         KeyboardHangProbe.reset()
         vm.inputText = longText
+        await settle(0.3)
+        sampler.frames.removeAll()
+        sampler.tick()
         vm.requestComposerFocusSignal.send()
         try await waitFor("send baseline keyboard") { composer(in: window)?.isFirstResponder == true }
-        await settle(0.9)
+        await settle(1.35)
+        let keyboardOpen = sampler.captureWindow()
+        sampler.phase = "keyboard-close"
+        sampler.frames.removeAll()
+        sampler.tick()
         window.endEditing(true)
-        await settle(0.9)
+        await settle(1.35)
+        let keyboardClose = sampler.captureWindow()
+        try verifySlideFrames(keyboardOpen, kind: "keyboard", name: "list-slide-keyboard-open-\(run)", keyboardDirection: -1)
+        try verifySlideFrames(keyboardClose, kind: "keyboard", name: "list-slide-keyboard-close-\(run)", keyboardDirection: 1)
         let baseline = KeyboardHangProbe.snapshot()
         vm.inputText = ""
         await settle(0.5)
@@ -1212,12 +1825,14 @@ import Darwin
             composer(in: window)?.isFirstResponder == true && composer(in: window)?.text == longText
         }
         await settle(0.9)
-        let sampler = SendLayoutSampler(window: window, list: list, oldReply: oldReply.id, vm: vm)
-        sampler.start()
+        sampler.phase = "send-\(run)"
+        sampler.frames.removeAll()
+        sampler.tick()
+        await settle(0.12)
         defer {
             sampler.stop()
             if let data = try? JSONSerialization.data(withJSONObject: sampler.frames, options: [.prettyPrinted, .sortedKeys]) {
-                try? data.write(to: directory.appendingPathComponent("send-layout-frames.json"), options: .atomic)
+                try? data.write(to: directory.appendingPathComponent(overlapReply ? "send-layout-frames-overlap.json" : "send-layout-frames.json"), options: .atomic)
             }
         }
         guard let input = composer(in: window) as? PastableUITextView else {
@@ -1232,21 +1847,24 @@ import Darwin
                     "Old reply has a real text block, visible completion actions and measured footer before send")
         // This is the production Return action -> handleReturnKey -> performSend.
         input.onReturnKey?()
+        if overlapReply { sampler.replyReleased = true; fixture.releaseReply() }
         try await waitFor("real send creates user and assistant snapshot", timeout: 20) {
-            vm.isProcessing && vm.messages.contains { $0.role == .user && $0.content == longText }
+            (overlapReply || vm.isProcessing) && vm.messages.contains { $0.role == .user && $0.content == longText }
                 && vm.messages.contains { $0.role == .assistant && $0.id != oldReply.id }
         }
-        try await waitFor("old reply actions hide while processing") {
-            let actions = coordinator.completionActionEvidence(for: oldReply.id)
-            return vm.isProcessing && actions.reservesSpace && !actions.visible && actions.hasBody
+        if !overlapReply {
+            try await waitFor("old reply actions hide while processing") {
+                let actions = coordinator.completionActionEvidence(for: oldReply.id)
+                return vm.isProcessing && actions.reservesSpace && !actions.visible && actions.hasBody
+            }
+            let duringActions = coordinator.completionActionEvidence(for: oldReply.id)
+            try require(duringActions.footerHeight != nil
+                        && abs((duringActions.footerHeight ?? 0) - (beforeActions.footerHeight ?? 0)) <= 0.5,
+                        "Hidden old completion actions retain the same measured footer height")
+            await settle(1)
+            sampler.replyReleased = true
+            fixture.releaseReply()
         }
-        let duringActions = coordinator.completionActionEvidence(for: oldReply.id)
-        try require(duringActions.footerHeight != nil
-                    && abs((duringActions.footerHeight ?? 0) - (beforeActions.footerHeight ?? 0)) <= 0.5,
-                    "Hidden old completion actions retain the same measured footer height")
-        await settle(1)
-        sampler.replyReleased = true
-        fixture.releaseReply()
         try await waitFor("controlled provider completes real send", timeout: 30) { !vm.isProcessing }
         // Require 0.5s stable geometry, then retain at least a further second.
         var stableSince = CACurrentMediaTime()
@@ -1263,6 +1881,7 @@ import Darwin
             await settle(0.1)
         }
         try require(CACurrentMediaTime() - stableSince >= 1.5, "Send geometry settles and records at least one extra second")
+        let sendWindow = sampler.captureWindow()
         sampler.stop()
         let counters = KeyboardHangProbe.snapshot()
         try require(counters.composerHostLayoutIfNeededCalls <= baseline.composerHostLayoutIfNeededCalls * 2 + 12,
@@ -1277,29 +1896,14 @@ import Darwin
                 try require(abs(effective - reserved) <= 0.5, "Input geometry and reserved height agree in the displayed layout")
             }
         }
-        func rect(_ frame: [String: Any], _ key: String) -> [String: CGFloat]? { frame[key] as? [String: CGFloat] }
-        // A delayed correction after a visible pause is the regression, even
-        // if the final one-second tail eventually becomes stable again.
-        var previousBubbleY: CGFloat?
-        var previousInputY: CGFloat?
-        var pausedSince: Double?
-        for frame in sampler.frames where frame["processing"] as? Bool == true
-            && frame["replyReleased"] as? Bool == false {
-            guard let bubbleY = rect(frame, "bubble")?["y"],
-                  let inputY = rect(frame, "input")?["y"], let time = frame["t"] as? Double else { continue }
-            if let oldY = previousBubbleY, let oldInputY = previousInputY {
-                if abs(inputY - oldInputY) <= 0.5 {
-                    if abs(bubbleY - oldY) <= 0.5 { pausedSince = pausedSince ?? time }
-                    else {
-                        if let pausedSince, time - pausedSince >= 0.15 {
-                            try require(abs(bubbleY - oldY) <= 2, "No late bubble correction after input and bubble pause")
-                        }
-                        pausedSince = nil
-                    }
-                } else { pausedSince = nil }
-            }
-            previousBubbleY = bubbleY; previousInputY = inputY
+        try verifySlideFrames(sendWindow, kind: "send", name: "list-slide-send-\(run)")
+        let firstReply = sampler.frames.first { $0["replyVisible"] as? Bool == true }
+        try require(firstReply != nil, "\(run): actual reply content becomes visible")
+        if overlapReply {
+            try require(firstReply?["keyboardInFlight"] as? Bool == true,
+                        "Fast fixture covers real reply presentation during the keyboard transaction")
         }
+        func rect(_ frame: [String: Any], _ key: String) -> [String: CGFloat]? { slideRect(frame, key) }
         let paired = sampler.frames.filter { rect($0, "oldBody") != nil && rect($0, "bubble") != nil }
         let gaps = paired.compactMap { frame -> CGFloat? in
             guard let body = rect(frame, "oldBody"), let bubble = rect(frame, "bubble"),
@@ -1335,7 +1939,7 @@ import Darwin
             "baselineContentRoots": baseline.contentRootReplacements,
             "sendContentRoots": counters.contentRootReplacements,
             "frames": sampler.frames.count], options: [.prettyPrinted, .sortedKeys])
-            .write(to: directory.appendingPathComponent("send-layout-counters.json"), options: .atomic)
+            .write(to: directory.appendingPathComponent(overlapReply ? "send-layout-counters-overlap.json" : "send-layout-counters.json"), options: .atomic)
     }
 
     private static func verifyChatLayout(window: UIWindow, vm: AIChatViewModel) async throws {
@@ -1344,7 +1948,7 @@ import Darwin
         vm.inputText = ""
         let user = ChatMessage(role: .user, content: Array(repeating: "渐隐区域检查：这是真实消息气泡，向上滚动时应该连续淡出。", count: 45).joined(separator: "\n"))
         user.isUserTextExpanded = true
-        let reply = ChatMessage(role: .assistant, content: "附件与预览应同排，输入框保持跟随键盘。")
+        let reply = ChatMessage(role: .assistant, content: "附件与预览应同排，输入框保持跟随键盘。\n\n下次，下次，下次。下次见。\n\nlayoutsearch layoutsearch layoutsearch singlequery")
         reply.blocks = [AssistantBlock(kind: .shellTool(command: "printf layout-check"), content: "layout-check\nPreview remains tappable", toolStatus: .success),
                         AssistantBlock(kind: .text, content: reply.content)]
         vm.messages = [user, reply]
@@ -1518,6 +2122,10 @@ import Darwin
         UserDefaults.standard.set(false, forKey: "toolStatusBarEnabled")
         vm.attachments = [InputAttachment(fileName: "附件.png", cacheURL: url, kind: .image)]
         await settle(0.5)
+        try await verifySearchFromMarkdownSelection(window: window, vm: vm)
+        try await verifySearchDoneOcclusion(window: window, vm: vm)
+        try await verifySearchMessageActions(window: window, vm: vm, message: user)
+        try await waitFor("search field closes after verifying message actions") { marker("chatSearchField", in: window) == nil }
         if ProcessInfo.processInfo.arguments.contains("--verify-soul-avatar") {
             try verifyHeaderHitRegions(in: window, phase: "before-external-coordinate-tap")
         }
@@ -1526,6 +2134,194 @@ import Darwin
         ready.accessibilityIdentifier = "chat.layout.ready"
         ready.isAccessibilityElement = true
         window.addSubview(ready)
+        let trace = ChatSearchFocusTrace.Label(frame: CGRect(x: 0, y: window.safeAreaInsets.top, width: 2, height: 2))
+        trace.text = "."
+        trace.accessibilityIdentifier = "chat.search.trace"
+        trace.isAccessibilityElement = true
+        trace.isUserInteractionEnabled = false
+        window.addSubview(trace)
+        ChatSearchFocusTrace.shared.armNextOpening()
+    }
+
+    private static func verifySearchFromMarkdownSelection(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("production-search-selection")
+        let term = "附件与预览应同排"
+        guard let list = descendants(window).compactMap({ $0 as? UICollectionView })
+            .first(where: { $0.collectionViewLayout is MessageListLayout && isVisible($0, in: window) }) else {
+            try require(false, "Search fixture uses the production list"); return
+        }
+        let savedOffset = list.contentOffset
+        let trace = ChatSearchFocusTrace.shared
+        let traceStart = trace.events.count
+        defer {
+            if vm.chatSearch.isActive { vm.chatSearch.deactivate() }
+            window.endEditing(true)
+            list.setContentOffset(savedOffset, animated: false)
+        }
+        vm.forceScrollToBottom.send()
+        try await waitFor("selectable Markdown reply") { renderedHistory(term, in: window) }
+        guard let text = descendants(list).compactMap({ $0 as? SelectableMarkdownTextView })
+            .first(where: { $0.text?.contains(term) == true && isVisible($0, in: window) }) else {
+            try require(false, "Search entry uses a real Markdown text view"); return
+        }
+        text.selectedRange = (text.text as NSString).range(of: term)
+        try require(text.canPerformAction(#selector(SelectableMarkdownTextView.searchSelectionInChat(_:)), withSender: nil),
+                    "Search action is available for the selected Markdown")
+        text.searchSelectionInChat(nil)
+        try await waitFor("prefilled search field and hit") {
+            guard let field = marker("chatSearchField", in: window) as? UITextField else { return false }
+            return field.text == term && field.isFirstResponder && vm.chatSearch.current?.keyword == term
+        }
+        await settle(0.5)
+        guard let search = marker("chat.verify.searchBar", in: window),
+              let badge = marker("chat.verify.providerBadge", in: window),
+              let bar = descendants(window).compactMap({ $0 as? UINavigationBar }).first(where: { isVisible($0, in: window) }),
+              let field = marker("chatSearchField", in: window) else {
+            try require(false, "Production search, badge, field and navigation bar have window bounds"); return
+        }
+        let searchFrame = renderedRect(search, window: window)
+        let headerBottom = max(renderedRect(badge, window: window).maxY, renderedRect(bar, window: window).maxY)
+        let messagesTop = list.convert(list.bounds, to: window).minY + list.adjustedContentInset.top
+        let fieldFrame = renderedRect(field, window: window)
+        let hit = window.hitTest(CGPoint(x: fieldFrame.midX, y: fieldFrame.midY), with: nil)
+        try JSONSerialization.data(withJSONObject: ["search": rectData(searchFrame), "field": rectData(fieldFrame),
+                                                      "headerBottom": headerBottom, "messagesTop": messagesTop])
+            .write(to: directory.appendingPathComponent("production-search-frames.json"))
+        try require(searchFrame.minY >= headerBottom + 3.5, "Search bar clears the actual header")
+        try require(messagesTop >= searchFrame.maxY - 0.5, "List visible top clears the search bar")
+        try require(hit?.isDescendant(of: field) == true, "Search field receives window touches")
+        let initialEvents = trace.events.dropFirst(traceStart)
+        let initialNames = initialEvents.compactMap { $0["event"] as? String }
+        guard let readyIndex = initialNames.firstIndex(of: "rowReady"),
+              let focusIndex = initialNames.firstIndex(of: "focusBegan"),
+              let showIndex = initialNames.firstIndex(of: "keyboardWillShow") else {
+            try require(false, "Record search row, responder and initial keyboard show"); return
+        }
+        try require(readyIndex < focusIndex && focusIndex < showIndex, "Search row is ready before focus and keyboard show")
+        try capture("production-search-prefilled.png", window: window)
+        let dismissStart = trace.events.count
+        window.endEditing(true)
+        window.setNeedsLayout()
+        window.layoutIfNeeded()
+        await settle(0.7)
+        try require(marker("chatSearchField", in: window) === field && vm.chatSearch.query == term,
+                    "Dismissing the keyboard keeps the same search field and query")
+        let dismissNames = trace.events.dropFirst(dismissStart).compactMap { $0["event"] as? String }
+        try require(!field.isFirstResponder && dismissNames.contains("keyboardWillHide")
+                    && !dismissNames.contains("focusBegan") && !dismissNames.contains("keyboardWillShow"),
+                    "A consumed request does not refocus after manual keyboard dismissal")
+        try JSONSerialization.data(withJSONObject: Array(trace.events.dropFirst(traceStart)))
+            .write(to: directory.appendingPathComponent("production-search-selection-events.json"))
+        try capture("production-search-keyboard-hidden.png", window: window)
+        vm.chatSearch.deactivate()
+        try await waitFor("search overlay removed") { marker("chatSearchField", in: window) == nil }
+    }
+
+    private final class SearchDoneCover: UIView {
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            guard let window, let done = ConversationChatVerification.marker("chatSearchDone", in: window) as? UIButton else {
+                return false
+            }
+            return done.bounds.contains(done.convert(point, from: self))
+        }
+    }
+
+    private static func verifySearchDoneOcclusion(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("production-search-done-occlusion")
+        let cover = SearchDoneCover(frame: window.bounds)
+        window.addSubview(cover)
+        defer {
+            cover.removeFromSuperview()
+            if vm.chatSearch.isActive { vm.chatSearch.deactivate() }
+        }
+        let trace = ChatSearchFocusTrace.shared
+        let traceStart = trace.events.count
+        vm.chatSearch.activate()
+        try await waitFor("search field and covered Done mount") {
+            marker("chatSearchField", in: window) is UITextField && marker("chatSearchDone", in: window) is UIButton
+        }
+        guard let field = marker("chatSearchField", in: window) as? UITextField,
+              let done = marker("chatSearchDone", in: window) as? UIButton else {
+            try require(false, "Search has native field and Done controls"); return
+        }
+        let shield = UIView(frame: done.convert(done.bounds, to: cover))
+        shield.backgroundColor = .systemBackground
+        shield.isUserInteractionEnabled = false
+        cover.addSubview(shield)
+        await settle(0.8)
+        let fieldCenter = field.convert(CGPoint(x: field.bounds.midX, y: field.bounds.midY), to: window)
+        let doneCenter = done.convert(CGPoint(x: done.bounds.midX, y: done.bounds.midY), to: window)
+        try require(window.hitTest(fieldCenter, with: nil)?.isDescendant(of: field) == true,
+                    "The Done cover leaves the search field hittable")
+        try require(window.hitTest(doneCenter, with: nil) === cover, "The cover receives touches over Done")
+        try require(!field.isFirstResponder && !trace.events.dropFirst(traceStart).contains {
+            ($0["event"] as? String).map { ["rowReady", "focusBegan", "keyboardWillShow"].contains($0) } == true
+        }, "A covered Done prevents readiness and automatic focus")
+        try capture("production-search-done-covered.png", window: window)
+        let uncoverIndex = trace.events.count - traceStart
+        cover.removeFromSuperview()
+        try await waitFor("uncovering Done resumes the pending focus without a tap") {
+            field.isFirstResponder && window.hitTest(doneCenter, with: nil) === done
+        }
+        let events = Array(trace.events.dropFirst(traceStart))
+        try require(events.dropFirst(uncoverIndex).contains { $0["event"] as? String == "rowReady" },
+                    "The same search row becomes ready only after uncovering Done")
+        try JSONSerialization.data(withJSONObject: ["uncoverIndex": uncoverIndex, "events": events])
+            .write(to: directory.appendingPathComponent("production-search-done-occlusion.json"))
+        done.sendActions(for: .primaryActionTriggered)
+        try await waitFor("native Done closes search and resigns the field") {
+            !vm.chatSearch.isActive && !field.isFirstResponder && marker("chatSearchField", in: window) == nil
+        }
+    }
+
+    private static func verifySearchMessageActions(window: UIWindow, vm: AIChatViewModel, message: ChatMessage) async throws {
+        try checkpoint("production-search-message-actions")
+        guard let list = descendants(window).compactMap({ $0 as? UICollectionView })
+                .first(where: { $0.collectionViewLayout is MessageListLayout && isVisible($0, in: window) }),
+              let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator,
+              let reply = coordinator.onReplyMessage, let edit = coordinator.onEdit else {
+            try require(false, "Message list has its real reply and edit callbacks"); return
+        }
+        let savedInput = vm.inputText
+        let savedAttachments = vm.attachments
+        let savedOffset = list.contentOffset
+        defer {
+            window.endEditing(true)
+            vm.chatSearch.deactivate()
+            vm.cancelEdit()
+            vm.cancelReply()
+            vm.inputText = savedInput
+            vm.attachments = savedAttachments
+            list.setContentOffset(savedOffset, animated: false)
+        }
+        let term = "渐隐区域检查"
+        vm.chatSearch.activate(prefill: term)
+        try await waitFor("old message is a search hit and the search field is focused") {
+            vm.chatSearch.current?.messageId == message.id && coordinator.scrollMode == .userBrowsing
+                && (marker("chatSearchField", in: window) as? UITextField)?.isFirstResponder == true
+        }
+        guard let field = marker("chatSearchField", in: window) as? UITextField else { return }
+        let trace = ChatSearchFocusTrace.shared
+        let start = trace.events.count
+        reply(message.id)
+        await settle()
+        try require(field.isFirstResponder && vm.pendingQuote?.targetMessageId == message.id.uuidString,
+                    "Reply stages its draft without taking search focus")
+        edit(message.id)
+        await settle()
+        try require(field.isFirstResponder && vm.editingMessageIndex != nil && vm.inputText == message.content,
+                    "Edit stages its draft without taking search focus")
+        field.insertText("字")
+        try await waitFor("typing after message actions edits only the search field") {
+            field.isFirstResponder && vm.chatSearch.query == term + "字" && vm.inputText == message.content
+        }
+        try require(!descendants(window).contains { ($0 as? PastableUITextView)?.isFirstResponder == true },
+                    "The hidden composer never gains focus")
+        let events = Array(trace.events.dropFirst(start))
+        try require(events.isEmpty, "Reply and edit do not replace the search field or transition its keyboard")
+        try JSONSerialization.data(withJSONObject: ["searchQuery": vm.chatSearch.query, "draftPreserved": vm.inputText == message.content,
+                                                      "fieldFirstResponder": field.isFirstResponder, "events": events])
+            .write(to: directory.appendingPathComponent("production-search-message-actions.json"))
     }
 
     private static func verifySoulAvatar(window: UIWindow, vm: AIChatViewModel) async throws {

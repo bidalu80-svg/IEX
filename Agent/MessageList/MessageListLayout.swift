@@ -507,7 +507,9 @@ final class MessageListLayout: UICollectionViewLayout {
         // or decelerating) — UIKit applies contentOffsetAdjustment directly
         // inside the layout cycle, bypassing scrollViewDidScroll, which
         // disrupts the natural deceleration momentum and causes visible jitter.
-        if let cv = collectionView, !cv.isTracking, !cv.isDecelerating, !suppressContentOffsetAdjustment, viewportGeometryCommitDepth == 0 {
+        let coordinatorOwnsOffset = abs(delta) > 0.001 && positionForMeasuredHeight?(index, delta) == true
+        if let cv = collectionView, !cv.isTracking, !cv.isDragging, !cv.isDecelerating,
+           !suppressContentOffsetAdjustment, viewportGeometryCommitDepth == 0, !coordinatorOwnsOffset {
             let cellTop = originalAttributes.frame.minY
             let cellBottom = originalAttributes.frame.maxY
             let viewportTop = cv.contentOffset.y
@@ -567,6 +569,8 @@ final class MessageListLayout: UICollectionViewLayout {
 
         return ctx
     }
+
+    var positionForMeasuredHeight: ((Int, CGFloat) -> Bool)?
 
     /// [T-ios-footer-float-firstlayout] Coalescing flag so a burst of first-
     /// layout height corrections triggers a single prepare(), never one per cell.

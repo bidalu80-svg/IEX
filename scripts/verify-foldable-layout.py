@@ -97,25 +97,27 @@ def main():
 
     check("final class ChatScrollMemory" in scroll_memory,
           "ChatScrollMemory exists")
-    check("let messageId: UUID" in scroll_memory and "let offset: CGFloat" in scroll_memory,
-          "the anchor stores a message id plus an intra-row offset")
+    check("let item: MessageListItem" in scroll_memory and "let offset: CGFloat" in scroll_memory,
+          "the anchor stores a stable list item plus an intra-row offset")
     check("var scrollMemoryKey: String? = nil" in message_list,
           "the message list declares a scroll-memory key")
     check("scrollMemoryKey: sessionId ?? draftId" in chat_view,
           "AIChatView keys the list by session or draft")
     check("func updateScrollMemoryKey(_ key: String?)" in message_list,
           "the list rebinds its key when the conversation changes")
-    check("func scheduleScrollRestoreIfNeeded()" in message_list,
-          "the list schedules a scroll restore after a rebuild")
-    check("func restoreScrollIfNeeded()" in message_list,
-          "the list can scroll back to the saved anchor")
+    first_layout = message_list.split("private func finishPositionLayout() -> Bool", 1)[-1].split("private func boundedPosition(", 1)[0]
+    check("else if initial {" in first_layout and "ChatScrollMemory.shared.anchor(for: key)" in first_layout,
+          "the list selects its saved anchor during the first layout")
+    check("itemFrame(saved.item, in: cv)" in first_layout and "frame.minY - (saved.offset" in first_layout,
+          "the list places the saved stable item at its saved offset")
     check("func rememberScrollAnchor()" in message_list,
           "the list records the top row while the reader browses")
     check("rememberScrollAnchor()" in message_list,
           "the scroll callback feeds the anchor store")
-    check("coord.scheduleScrollRestoreIfNeeded()" in message_list,
-          "updateUIViewController triggers the restore")
-    check("scrollMode = .userBrowsing" in message_list.split("private func restoreScrollIfNeeded()", 1)[-1][:1400],
+    check("context.coordinator.updateScrollMemoryKey(scrollMemoryKey)" in message_list
+          and "scheduleScrollRestoreIfNeeded" not in message_list,
+          "the mount sets the key before its first snapshot without an async restore")
+    check("scrollMode = .userBrowsing" in first_layout,
           "a restore does not get re-pinned to the bottom by auto scrolling")
     check("ChatScrollMemory.shared.clear(sessionId)" in lifecycle,
           "deleting a session forgets its anchor")

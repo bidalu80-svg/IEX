@@ -10,6 +10,7 @@ final class ChatLayoutApplicationUITests: XCTestCase {
                                "--verify-conversation-chat", "--verify-chat-layout-only", "--verify-send-layout"]
         let verifyAvatar = ProcessInfo.processInfo.environment["ZE_VERIFY_SOUL_HEADER"] == "1"
         if verifyAvatar { app.launchArguments.append("--verify-soul-avatar") }
+        if !verifyAvatar { app.launchArguments.append("--verify-search-focus-interruption") }
         if ProcessInfo.processInfo.environment["ZE_VERIFY_KEYBOARD_HANG"] == "1" {
             app.launchArguments.append("--verify-keyboard-hang")
         }
@@ -80,6 +81,7 @@ final class ChatLayoutApplicationUITests: XCTestCase {
             returned.lifetime = .keepAlways
             add(returned)
         }
+        verifySearchThroughChatMenu(app, interruptsOpening: !verifyAvatar)
         let preview = app.descendants(matching: .any)["chat.tool.preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue(preview.isHittable)
@@ -100,5 +102,177 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         attachment.name = "actual-attachment-opened"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func verifySearchThroughChatMenu(_ app: XCUIApplication, interruptsOpening: Bool) {
+        let gear = app.buttons["chat.moreOptions"].firstMatch
+        let search = app.buttons.matching(NSPredicate(format: "label IN %@", ["聊天内搜索", "Search in Chat"])).firstMatch
+        let fields = app.textFields.matching(identifier: "chatSearchField")
+        let field = fields.firstMatch
+        let done = app.buttons["chatSearchDone"]
+        let counter = app.staticTexts["chatSearchCounter"]
+        let keyboard = app.keyboards.firstMatch
+        let chinese = ProcessInfo.processInfo.environment["ZE_VERIFY_SEARCH_NINE_KEY"] == "1"
+        let compactAccessibility = ProcessInfo.processInfo.environment["ZE_VERIFY_SEARCH_COMPACT_ACCESSIBILITY"] == "1"
+        if compactAccessibility {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
+        defer {
+            if compactAccessibility { XCUIDevice.shared.orientation = .portrait }
+        }
+        let trace = app.staticTexts["chat.search.trace"]
+        XCTAssertTrue(trace.exists)
+        let offset = searchEvents(trace).count
+
+        XCTAssertFalse(field.exists)
+        XCTAssertTrue(gear.waitForExistence(timeout: 5))
+        recordSearchScreen("chat-search-before")
+        gear.tap()
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(fields.count, 1)
+        waitForSearchState("The field and Done are both hittable") { field.isHittable && done.isHittable }
+        XCTAssertGreaterThanOrEqual(field.frame.minY, gear.frame.maxY)
+        if interruptsOpening {
+            waitForSearchState("A fully visible row has an unconsumed request") {
+                self.searchEvents(trace).dropFirst(offset).contains {
+                    $0["event"] as? String == "rowReady" && $0["held"] as? Bool == true
+                }
+            }
+            XCTAssertFalse(keyboard.exists)
+            XCTAssertFalse(searchEvents(trace).dropFirst(offset).contains { $0["event"] as? String == "focusBegan" })
+            XCUIDevice.shared.press(.home)
+            waitForSearchState("The app enters the background before retrying the pending focus request") {
+                app.state == .runningBackground || app.state == .runningBackgroundSuspended
+            }
+            app.activate()
+        }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let opening = Array(searchEvents(trace).dropFirst(offset))
+        let openingNames = opening.compactMap { $0["event"] as? String }
+        guard let ready = openingNames.firstIndex(of: "rowReady"),
+              let focused = openingNames.firstIndex(of: "focusBegan"),
+              let shown = openingNames.firstIndex(of: "keyboardWillShow"),
+              let fieldID = opening[ready]["field"] as? String else {
+            XCTFail("Missing opening events: \(opening)"); return
+        }
+        XCTAssertLessThan(ready, focused)
+        XCTAssertLessThan(focused, shown)
+        XCTAssertEqual(opening[focused]["field"] as? String, fieldID)
+        XCTAssertEqual(opening[shown]["field"] as? String, fieldID)
+        XCTAssertFalse(openingNames.contains("focusEnded"))
+        XCTAssertEqual(openingNames.filter { $0 == "rowReady" }.count, 1)
+        XCTAssertEqual(openingNames.filter { $0 == "fieldMounted" }.count, 1)
+        if interruptsOpening {
+            guard let background = openingNames.firstIndex(of: "backgroundBeforeFocus") else {
+                XCTFail("No actual scene interruption was observed"); return
+            }
+            XCTAssertLessThan(ready, background)
+            XCTAssertLessThan(background, focused)
+        }
+        if compactAccessibility {
+            XCTAssertLessThan(opening[ready]["windowHeight"] as? Double ?? .infinity,
+                              opening[ready]["windowWidth"] as? Double ?? 0)
+            XCTAssertGreaterThan(opening[ready]["height"] as? Double ?? 0, 85)
+            XCTAssertGreaterThanOrEqual(done.frame.minY, field.frame.maxY)
+            XCTAssertEqual(opening[ready]["accessibilitySize"] as? Bool, true)
+            XCTAssertEqual(opening[ready]["reduceMotion"] as? Bool, true)
+        } else if (opening[ready]["width"] as? Double ?? 0) >= 360,
+                  opening[ready]["accessibilitySize"] as? Bool == false {
+            XCTAssertLessThan(done.frame.minY, field.frame.maxY)
+            XCTAssertGreaterThan(done.frame.maxY, field.frame.minY)
+        }
+        let searchKey = keyboard.buttons.matching(NSPredicate(format: "label IN %@", ["搜索", "Search"])).firstMatch
+        XCTAssertTrue(searchKey.exists)
+        var submissionStart: Int?
+        for single in [false, true] {
+            if single { app.buttons["chatSearchClear"].tap() }
+            let query = chinese ? (single ? "下次见" : "下次") : (single ? "singlequery" : "layoutsearch")
+            if chinese {
+                enterNineKeyQuery(query, digits: single ? "942245426" : "94224", app: app, keyboard: keyboard)
+            } else {
+                field.typeText(query)
+            }
+            XCTAssertEqual(field.value as? String, query)
+            let count = single ? 1 : (chinese ? 4 : 3)
+            waitForSearchState("Initial hit \(count)/\(count)") { counter.label == "结果 \(count)，共 \(count) 个" }
+            let offset = searchEvents(trace).count
+            if submissionStart == nil { submissionStart = offset }
+            for (submit, index) in (single ? [1, 1] : [1, 2]).enumerated() {
+                searchKey.tap()
+                waitForSearchState("One native submit per tap, now at \(index)/\(count)") {
+                    counter.label == "结果 \(index)，共 \(count) 个" && self.searchEvents(trace).dropFirst(offset)
+                        .filter { $0["event"] as? String == "submit" }.count >= submit + 1
+                }
+                XCTAssertTrue(keyboard.exists)
+            }
+            let submitted = Array(searchEvents(trace).dropFirst(offset))
+            let evidence = opening + submitted
+            let data = try! JSONSerialization.data(withJSONObject: evidence, options: .prettyPrinted)
+            let attachment = XCTAttachment(string: String(decoding: data, as: UTF8.self))
+            attachment.name = single ? "chat-search-single-hit-events" : "chat-search-multiple-hit-events"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            XCTAssertEqual(submitted.compactMap { $0["event"] as? String }, ["submit", "submit"],
+                           "No field replacement, responder loss, or keyboard hide/show during this submit sequence")
+            XCTAssertTrue(submitted.allSatisfy {
+                $0["field"] as? String == fieldID && $0["firstResponder"] as? Bool == true && $0["text"] as? String == query
+            })
+            XCTAssertEqual(fields.count, 1)
+        }
+        let frames = XCTAttachment(string: "field=\(field.frame), gear=\(gear.frame), done=\(done.frame), keyboard=\(keyboard.frame)")
+        frames.name = "chat-search-frames"
+        frames.lifetime = .keepAlways
+        add(frames)
+        recordSearchScreen("chat-search-typing")
+        if let submissionStart {
+            let allSubmissions = searchEvents(trace).dropFirst(submissionStart)
+            XCTAssertEqual(allSubmissions.compactMap { $0["event"] as? String }, Array(repeating: "submit", count: 4))
+        }
+        done.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !field.exists && !keyboard.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed)
+        recordSearchScreen("chat-search-closed")
+    }
+
+    @MainActor
+    private func enterNineKeyQuery(_ query: String, digits: String, app: XCUIApplication, keyboard: XCUIElement) {
+        let letters = ["2": "ABC", "3": "DEF", "4": "GHI", "5": "JKL", "6": "MNO", "7": "PQRS", "8": "TUV", "9": "WXYZ"]
+        for digit in digits {
+            let group = letters[String(digit)] ?? ""
+            guard let key = keyboard.keys.allElementsBoundByIndex.first(where: {
+                $0.label == String(digit) || $0.label.uppercased().filter(\.isLetter) == group
+            }) else {
+                XCTFail("Configure and select the Simplified Chinese Pinyin 9-key keyboard (missing \(group))"); return
+            }
+            key.tap()
+        }
+        let candidates = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", query))
+        waitForSearchState("Missing Chinese IME candidate \(query)") { candidates.allElementsBoundByIndex.contains(where: \.isHittable) }
+        guard let candidate = candidates.allElementsBoundByIndex.first(where: \.isHittable) else { return }
+        candidate.tap()
+    }
+
+    @MainActor
+    private func searchEvents(_ trace: XCUIElement) -> [[String: Any]] {
+        guard let value = trace.value as? String,
+              let events = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [[String: Any]] else { return [] }
+        return events
+    }
+
+    @MainActor
+    private func waitForSearchState(_ description: String, condition: @escaping () -> Bool) {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, description)
+    }
+
+    @MainActor
+    private func recordSearchScreen(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

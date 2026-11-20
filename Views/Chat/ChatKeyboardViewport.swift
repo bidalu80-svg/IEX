@@ -18,12 +18,18 @@ enum ChatListScrollTarget {
 /// Per-chat UIKit geometry. Only the viewport publishes scalar configuration;
 /// a gated, older SwiftUI content root can consume it but cannot overwrite it.
 final class ChatListGeometryContext {
+    struct SearchContentBounds: Equatable {
+        let listTop: CGFloat
+        let bannerTop: CGFloat?
+    }
+
     struct Configuration {
         var fallbackInputHeight: CGFloat = 0
         var attachmentHeight: CGFloat = 0
         var floatingHeight: CGFloat = 0
         var topOverlayInset: CGFloat = 0
         var usesLiveTextGeometry = false
+        var searchTopIsMeasured = false
     }
     private(set) var configuration = Configuration()
     private(set) weak var marker: UIView?
@@ -32,17 +38,25 @@ final class ChatListGeometryContext {
     private(set) var mountGeneration: UInt = 0
     private var listGeneration: UInt = 0
     private var reconcile: (() -> Void)?
-    private var commit: ((() -> Void) -> Void)?
+    private var commit: ((Bool, () -> Void) -> Void)?
+    private var keyboard: ((Bool) -> Void)?
+    private var keyboardInFlight = false
+    var onSearchContentBounds: ((SearchContentBounds) -> Void)?
+    private var reportedSearchContentBounds: SearchContentBounds?
+    private weak var searchBannerAnchor: UIView?
 
     func bindViewport(_ view: UIView) {
         guard viewport !== view else { return }
         viewport = view
+        reportedSearchContentBounds = nil
         mountGeneration &+= 1
+        keyboardInFlight = false
     }
     func unbindViewport(_ view: UIView) {
         guard viewport === view else { return }
         viewport = nil
         mountGeneration &+= 1
+        keyboardInFlight = false
     }
     func update(_ configuration: Configuration) { self.configuration = configuration }
     func registerMarker(_ view: UIView) {
@@ -54,18 +68,30 @@ final class ChatListGeometryContext {
         marker = nil
         viewport?.setNeedsLayout()
     }
+    func registerSearchBannerAnchor(_ view: UIView) {
+        searchBannerAnchor = view
+        viewport?.setNeedsLayout()
+    }
+    func unregisterSearchBannerAnchor(_ view: UIView) {
+        if searchBannerAnchor === view { searchBannerAnchor = nil }
+    }
     func registerList(_ view: UICollectionView, reconcile: @escaping () -> Void,
-                      commit: @escaping (() -> Void) -> Void) {
+                      keyboard: @escaping (Bool) -> Void,
+                      commit: @escaping (Bool, () -> Void) -> Void) {
         collectionView = view
         listGeneration = mountGeneration
+        reportedSearchContentBounds = nil
         self.reconcile = reconcile
+        self.keyboard = keyboard
         self.commit = commit
+        if hasCurrentList, keyboardInFlight { keyboard(true) }
     }
     func unregisterList(_ view: UICollectionView) {
         guard collectionView === view else { return }
         collectionView = nil
         reconcile = nil
         commit = nil
+        keyboard = nil
     }
     private var hasCurrentList: Bool {
         guard let viewport, let collectionView else { return false }
@@ -83,12 +109,60 @@ final class ChatListGeometryContext {
     var baseBottomInset: CGFloat {
         effectiveInputHeight + configuration.attachmentHeight + configuration.floatingHeight + 8
     }
+    func reportSearchContentBounds() {
+        guard onSearchContentBounds != nil else { reportedSearchContentBounds = nil; return }
+        guard hasCurrentList, let collectionView, let window = collectionView.window,
+              !collectionView.bounds.isEmpty else { return }
+        let top = collectionView.convert(collectionView.bounds, to: window).minY
+            + collectionView.adjustedContentInset.top - collectionView.contentInset.top
+        guard top.isFinite else { return }
+        var bannerTop: CGFloat?
+        if let searchBannerAnchor, let viewport, searchBannerAnchor.window === window,
+           searchBannerAnchor.isDescendant(of: viewport) {
+            let value = searchBannerAnchor.convert(searchBannerAnchor.bounds, to: window).minY
+            if value.isFinite { bannerTop = value }
+        }
+        let scale = window.screen.scale
+        let bounds = SearchContentBounds(listTop: (top * scale).rounded() / scale,
+                                         bannerTop: bannerTop.map { ($0 * scale).rounded() / scale })
+        guard bounds != reportedSearchContentBounds else { return }
+        reportedSearchContentBounds = bounds
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.reportedSearchContentBounds == bounds else { return }
+            self.onSearchContentBounds?(bounds)
+        }
+    }
     func reconcileGeometry() {
         guard hasCurrentList else { return }
         reconcile?()
     }
-    func performViewportGeometryCommit(_ changes: () -> Void) {
-        if hasCurrentList, let commit { commit(changes) } else { changes() }
+    func keyboardTransition(_ active: Bool, in view: UIView) {
+        guard viewport === view else { return }
+        keyboardInFlight = active
+        if hasCurrentList { keyboard?(active) }
+    }
+    func performViewportGeometryCommit(finishing: Bool = true, _ changes: () -> Void) {
+        if hasCurrentList, let commit { commit(finishing, changes) } else { changes() }
+    }
+}
+
+struct ChatSearchBannerAnchor: UIViewRepresentable {
+    let geometry: ChatListGeometryContext
+
+    func makeCoordinator() -> ChatListGeometryContext { geometry }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        geometry.registerSearchBannerAnchor(view)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {}
+
+    static func dismantleUIView(_ view: UIView, coordinator: ChatListGeometryContext) {
+        coordinator.unregisterSearchBannerAnchor(view)
     }
 }
 
@@ -161,9 +235,11 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
     var usesWindowHeaderFade: Bool = true
     var geometryContext: ChatListGeometryContext? = nil
     var geometryConfiguration = ChatListGeometryContext.Configuration()
+    var onSearchContentBounds: ((ChatListGeometryContext.SearchContentBounds) -> Void)? = nil
 
     func makeUIViewController(context: Context) -> ChatKeyboardViewportController {
         geometryContext?.update(geometryConfiguration)
+        geometryContext?.onSearchContentBounds = onSearchContentBounds
         return ChatKeyboardViewportController(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
@@ -178,6 +254,7 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: ChatKeyboardViewportController, context: Context) {
+        geometryContext?.onSearchContentBounds = onSearchContentBounds
         controller.configureGeometry(geometryContext, configuration: geometryConfiguration)
         controller.update(
             content: AnyView(content.environment(\.self, context.environment)),
@@ -215,13 +292,15 @@ final class ChatKeyboardViewportController: UIViewController {
 
     func configureGeometry(_ context: ChatListGeometryContext?,
                            configuration: ChatListGeometryContext.Configuration) {
-        if geometryContext !== context {
+        let changedContext = geometryContext !== context
+        if changedContext {
             if isViewLoaded { geometryContext?.unbindViewport(view) }
             geometryContext = context
         }
         context?.update(configuration)
         if isViewLoaded {
             context?.bindViewport(view)
+            if changedContext, isKeyboardTransitioning { context?.keyboardTransition(true, in: view) }
             view.setNeedsLayout()
         }
     }
@@ -346,7 +425,6 @@ final class ChatKeyboardViewportController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        defer { geometryContext?.reconcileGeometry() }
         #if DEBUG
         KeyboardHangProbe.recordViewDidLayoutSubviewsCall()
         #endif
@@ -365,13 +443,16 @@ final class ChatKeyboardViewportController: UIViewController {
             // without re-entering a hosting tree on a keyplane-only pass whose
             // bounds did not move. List root replacements wait for settle;
             // composer display changes must enter layout immediately.
-            if hostSizeChanged {
-                performHostLayout()
-            } else if hostLayoutNeedsUpdate {
-                pendingHostSettleLayout = true
+            let layoutHosts = {
+                if composerSizeChanged || self.composerLayoutNeedsUpdate { self.performComposerLayout() }
+                if hostSizeChanged { self.performHostLayout() }
+                else if self.hostLayoutNeedsUpdate { self.pendingHostSettleLayout = true }
+                self.geometryContext?.reconcileGeometry()
             }
-            if composerSizeChanged || composerLayoutNeedsUpdate {
-                performComposerLayout()
+            if let geometryContext, hostSizeChanged || composerSizeChanged || composerLayoutNeedsUpdate {
+                geometryContext.performViewportGeometryCommit(finishing: false, layoutHosts)
+            } else {
+                layoutHosts()
             }
             return
         }
@@ -379,6 +460,7 @@ final class ChatKeyboardViewportController: UIViewController {
         if hostLayoutNeedsUpdate || hostSizeChanged { performHostLayout() }
         if composerLayoutNeedsUpdate || composerSizeChanged { performComposerLayout() }
         if pendingHostSettleLayout { performHostLayout() }
+        geometryContext?.reconcileGeometry()
     }
 
     private static func sizeChanged(_ current: CGSize, from previous: CGSize) -> Bool {
@@ -428,6 +510,7 @@ final class ChatKeyboardViewportController: UIViewController {
         }
         keyboardTransitionEndWork = fallback
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyboardTransitionFallbackDelay, execute: fallback)
+        geometryContext?.keyboardTransition(true, in: view)
         guard !isKeyboardTransitioning else { return }
         isKeyboardTransitioning = true
         applyKeyboardTransitionFlag(true)
@@ -477,6 +560,7 @@ final class ChatKeyboardViewportController: UIViewController {
         // before draining list content and doing its final layout.
         NotificationCenter.default.post(name: Self.keyboardTransitionDidEndNotification, object: self)
         isKeyboardTransitioning = false
+        geometryContext?.keyboardTransition(false, in: view)
         // Apply only the newest list update, with the transaction closed.
         let update = pendingUpdate
         pendingUpdate = nil

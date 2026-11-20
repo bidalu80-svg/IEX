@@ -43,7 +43,7 @@ begin = harness.index("@MainActor final class ChatSearchController:")
 end = harness.index("@MainActor private struct ShareSearchReferenceScene:")
 harness = harness[:begin] + adapter + harness[end:]
 harness = harness.replace("ChatSearchController", "ChatSearchModel")
-harness = harness.replace("ChatSearchBar(search: search, onDone: {})", "ChatSearchOverlay(model: search, onJump: { _ in }, onClose: {})")
+harness = harness.replace("ChatSearchBar(search: search, onDone: {})", "ChatSearchOverlay(model: search, onClose: {}, allowsInitialFocus: false)")
 harness = harness.replace('search.matchCount = ["search-empty", "search-none", "search-loading"].contains(scenario) ? 0 : scenario == "search-truncated" ? 2000 : 12', 'search.hits = Array(repeating: ChatSearchHit(), count: ["search-empty", "search-none", "search-loading"].contains(scenario) ? 0 : scenario == "search-truncated" ? 2000 : 12)')
 harness = harness.replace("search.currentIndex = search.matchCount > 0 ? 2 : nil", "search.currentIndex = search.hits.isEmpty ? 0 : 2")
 harness = harness.replace("search.notice = .wrappedToFirst", 'search.notice = String(localized: "Wrapped to the first result")').replace("search.notice = .wrappedToLast", 'search.notice = String(localized: "Wrapped to the last result")')

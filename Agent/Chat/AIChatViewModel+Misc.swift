@@ -59,7 +59,7 @@ extension AIChatViewModel {
 
     /// Queue the current input text as a prompt to be injected into the running agent loop.
     /// The message immediately appears in the chat with a dashed border (isQueued=true).
-    func enqueuePrompt() {
+    func enqueuePrompt(onAccepted: ((UUID) -> Void)? = nil) {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, isProcessing else { return }
         AppFeedback.haptic()
@@ -71,6 +71,7 @@ extension AIChatViewModel {
         let chatMsg = ChatMessage(role: .user, content: text, isQueued: true, quote: quote)
         chatMsg.queuedPromptId = prompt.id
         chatMsg.inputAttachments = pendingAttachments
+        onAccepted?(chatMsg.id)
         messages.append(chatMsg)
         scrollToBottomSignal.send()
         inputText = ""

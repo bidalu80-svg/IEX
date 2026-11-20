@@ -477,6 +477,10 @@ struct AIChatView: View {
     /// and hits; the overlay owns presentation only.
     private var chatSearchModel: ChatSearchModel { vm.chatSearch }
     @State private var showChatSearch = false
+    @State private var searchHeaderBounds: ChatSearchHeaderBounds?
+    @State private var searchBarHeight: CGFloat = 0
+    @State private var searchContentBounds: ChatListGeometryContext.SearchContentBounds?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// [T-session-share] Presents the session export / share configuration.
     @State private var showSessionShare = false
     @State private var selectedShareMessageId: UUID?
@@ -572,6 +576,35 @@ struct AIChatView: View {
     // Erasing only the finished tree leaves that construction just as deep.
     var body: some View { chatLifecycle }
 
+    private var canPresentChatSearch: Bool {
+        guard isChatViewVisible, !titleIsVisuallyLocked else { return false }
+        switch vm.kernelStatus {
+        case .booting, .failed: return false
+        default: return true
+        }
+    }
+
+    private var searchBarTop: CGFloat? {
+        guard showChatSearch, canPresentChatSearch else { return nil }
+        return searchHeaderBounds.map { max(0, $0.bottom + 4) }
+    }
+
+    private var searchBarBottomInWindow: CGFloat? {
+        guard let searchBarTop, let searchHeaderBounds, searchBarHeight > 0 else { return nil }
+        return searchHeaderBounds.windowOriginY + searchBarTop + searchBarHeight
+    }
+
+    private var chatListTopOverlayInset: CGFloat {
+        let ordinary = max(0, headerOverflowInset - 10)
+        guard let bottom = searchBarBottomInWindow, let searchContentBounds else { return ordinary }
+        return max(ordinary, bottom - searchContentBounds.listTop)
+    }
+
+    private var chatSearchBannerPadding: CGFloat? {
+        guard let bottom = searchBarBottomInWindow else { return nil }
+        return max(0, bottom - (searchContentBounds?.bannerTop ?? (searchHeaderBounds?.barBottomInWindow ?? bottom)))
+    }
+
     private var chatLayout: AnyView {
         AnyView(
             ChatKeyboardViewport(
@@ -590,8 +623,10 @@ struct AIChatView: View {
                     fallbackInputHeight: inputBarHeight,
                     attachmentHeight: standaloneAttachmentTrayHeight,
                     floatingHeight: hasFloatingPreview ? max(floatingBarHeight, 80) : 0,
-                    topOverlayInset: max(0, headerOverflowInset - 10),
-                    usesLiveTextGeometry: !voiceInputActive)
+                    topOverlayInset: chatListTopOverlayInset,
+                    usesLiveTextGeometry: !voiceInputActive,
+                    searchTopIsMeasured: searchBarBottomInWindow != nil && searchContentBounds != nil),
+                onSearchContentBounds: showChatSearch ? { searchContentBounds = $0 } : nil
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
@@ -627,6 +662,9 @@ struct AIChatView: View {
             toolPreviewEnabled: toolPreviewEnabled,
             maxContentWidth: maxContentWidth,
             headerOverflowInset: headerOverflowInset,
+            listTopOverlayInset: chatListTopOverlayInset,
+            searchBannerPadding: chatSearchBannerPadding,
+            showChatSearch: showChatSearch,
             voiceCallActive: voiceCallPresentation.isActive,
             voiceCallExpanded: voiceCallExpanded,
             subAgentsEnabled: subAgentsEnabled,
@@ -699,7 +737,7 @@ struct AIChatView: View {
             // land outside the popup card. Taps on the popup
             // itself naturally fall through to the popup view
             // because it sits on top in z-order.
-            if vm.showSlashMenu || vm.showMentionMenu {
+            if !showChatSearch && (vm.showSlashMenu || vm.showMentionMenu) {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -734,7 +772,7 @@ struct AIChatView: View {
                 // Register the composer (tool preview + input bar) as a
                 // region the global speech capsule must not cover.
                 .capsuleProtectedFrame("inputBar")
-                .disabled(voiceCallPresentation.isActive)
+                .disabled(voiceCallPresentation.isActive || showChatSearch)
                 .opacity(showChatSearch ? 0 : 1)
                 .allowsHitTesting(!showChatSearch)
                 .accessibilityHidden(showChatSearch)
@@ -745,7 +783,7 @@ struct AIChatView: View {
                         let bounds = geometry[region.bounds]
                         return !bounds.isNull && !bounds.isEmpty
                     }
-                    if let anchor = visibleRegions.first(where: { $0.target == .toolStatusBar })
+                    if !showChatSearch, let anchor = visibleRegions.first(where: { $0.target == .toolStatusBar })
                         ?? visibleRegions.first(where: { $0.target == .inputBar }) {
                         let visibleTop = geometry[anchor.bounds].minY
                         scrollToBottomControl
@@ -764,6 +802,7 @@ struct AIChatView: View {
                 .padding(.bottom, inputBarHeight)
                 .opacity(showChatSearch ? 0 : 1)
                 .allowsHitTesting(!showChatSearch)
+                .accessibilityHidden(showChatSearch)
         }
         .environmentObject(vm)
         .environmentObject(shareCoordinator)
@@ -781,47 +820,7 @@ struct AIChatView: View {
                 // Extend only the transcript behind the navigation controls;
                 // the input/voice overlays retain their existing safe areas.
                 .ignoresSafeArea(.container, edges: .top)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if voiceCallPresentation.isActive, let provider = activeCallProvider {
-                        ChatVoiceCallPanelHost(
-                            coordinator: voiceCallPresentation.coordinator,
-                            provider: provider,
-                            isExpanded: $voiceCallExpanded)
-                            .background(ChatCallLayoutMarker(identifier: "chat.verify.voicePanel"))
-                            // This page deliberately extends beneath the navigation bar.
-                            // The call controls must start after its measured bottom and badge.
-                            // The safeAreaInset region already starts below the bar, so
-                            // adding topSafeAreaInset again double-counts the bar height
-                            // and pushes the panel ~100pt too low (device-verified).
-                            .padding(.top, headerOverflowInset)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
-                    }
-                    if subAgentsEnabled, subAgentDockEnabled, !isReadOnly, let rootSessionId = vm.sessionId {
-                        ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
-                    }
-                    // Error banner
-                    if let error = vm.errorMessage {
-                        errorBanner(error)
-                    }
-                    // Transient notice (e.g. request-level image budget
-                    // elision). Auto-dismisses after ~4s.
-                    if let notice = vm.transientNotice {
-                        Text(notice)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.black.opacity(0.75))
-                            .onAppear {
-                                let captured = notice
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                                    if vm.transientNotice == captured {
-                                        vm.transientNotice = nil
-                                    }
-                                }
-                            }
-                    }
-                }
+                .safeAreaInset(edge: .top, spacing: 0) { chatTopBanners }
                 // Collapse the expanded speech player on a tap anywhere in the chat
                 // area. Attached as a SIMULTANEOUS TapGesture directly on the content
                 // (no full-screen hit-test overlay, which blocked scrolling) so a tap
@@ -876,7 +875,7 @@ struct AIChatView: View {
                     .allowsHitTesting(false)
                 }
                 .overlay {
-                    if vm.showSlashMenu || vm.showMentionMenu {
+                    if !showChatSearch && (vm.showSlashMenu || vm.showMentionMenu) {
                         Color.clear.contentShape(Rectangle()).onTapGesture {
                             if vm.showSlashMenu { vm.dismissSlashMenu() }
                             else { vm.dismissMentionMenu() }
@@ -897,6 +896,66 @@ struct AIChatView: View {
         .environmentObject(shareCoordinator)
         .environment(\.chatSessionId, vm.sessionId)
         )
+    }
+
+    @ViewBuilder
+    private var chatTopBanners: some View {
+        let callProvider = voiceCallPresentation.isActive ? activeCallProvider : nil
+        let showsDock = subAgentsEnabled && subAgentDockEnabled && !isReadOnly && vm.sessionId != nil
+        if callProvider != nil || showsDock || vm.errorMessage != nil || vm.transientNotice != nil {
+            VStack(spacing: 0) {
+                if let callProvider {
+                    ChatVoiceCallPanelHost(coordinator: voiceCallPresentation.coordinator,
+                                           provider: callProvider, isExpanded: $voiceCallExpanded)
+                        .background(ChatCallLayoutMarker(identifier: "chat.verify.voicePanel"))
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                }
+                if showsDock, let rootSessionId = vm.sessionId {
+                    ZeSubAgentDockView(rootSessionId: rootSessionId, parent: vm)
+                }
+                if let error = vm.errorMessage { errorBanner(error) }
+                if let notice = vm.transientNotice {
+                    Text(notice)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.black.opacity(0.75))
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                                if vm.transientNotice == notice { vm.transientNotice = nil }
+                            }
+                        }
+                }
+            }
+            .padding(.top, chatSearchBannerPadding ?? (callProvider == nil ? 0 : headerOverflowInset))
+            .background(alignment: .top) {
+                ChatSearchBannerAnchor(geometry: listGeometryContext)
+                    .frame(height: 0)
+            }
+        }
+    }
+
+    private var chatSearchRow: some View {
+        ZStack(alignment: .top) {
+            if let top = searchBarTop {
+                ChatSearchOverlay(model: chatSearchModel, onClose: closeChatSearch,
+                                  allowsInitialFocus: !hasOverlayPresented && !voiceInputActive,
+                                  focusHeader: searchHeaderBounds?.focusHeader,
+                                  isCurrentFocusRequest: { request in
+                                      chatSearchModel.isActive && chatSearchModel.focusRequest == request
+                                  })
+                    .background(ChatCallLayoutMarker(identifier: "chat.verify.searchBar"))
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                        if abs(searchBarHeight - height) > 0.5 { searchBarHeight = height }
+                    }
+                    .padding(.top, top)
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity))
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: searchBarTop != nil)
+        .allowsHitTesting(searchBarTop != nil)
+        .accessibilityHidden(searchBarTop == nil)
     }
 
     private var chatNavigation: AnyView {
@@ -926,8 +985,12 @@ struct AIChatView: View {
             model: chatSearchModel,
             viewModel: vm,
             isPresented: $showChatSearch,
-            inputFocused: $inputFocused,
-            onClose: closeChatSearch
+            isLocked: titleIsVisuallyLocked,
+            onOpen: prepareInputForChatSearch,
+            onClose: {
+                searchBarHeight = 0
+                searchContentBounds = nil
+            }
         ))
         .environment(\.chatSessionId, vm.sessionId)
         .background(GeometryReader { geometry in
@@ -942,7 +1005,9 @@ struct AIChatView: View {
             headerKey: chatNavigationHeaderKey,
             onHeaderOverflow: { value in
                 if abs(headerOverflowInset - value) > 0.5 { headerOverflowInset = value }
-            }))
+            },
+            onSearchHeaderBounds: { searchHeaderBounds = $0 },
+            searchOverlay: AnyView(chatSearchRow)))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(showsCompactToolbarNavigation)
         // [T-ios-navbar-toolbar-host] The ENTIRE toolbar now lives inside an
@@ -1206,6 +1271,7 @@ struct AIChatView: View {
             // VM fires this after filling the composer programmatically
             // (e.g. /skill tap) so the keyboard pops up immediately and
             // the user can keep typing without an extra tap on the field.
+            guard !vm.chatSearch.isActive else { return }
             inputFocused = true
         }
         .modifier(ChatInputAppendListener(vm: vm, inputFocused: $inputFocused))
@@ -1652,7 +1718,7 @@ struct AIChatView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     // Keep the first keyboard show inside the cold-start measurement.
                     guard !ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") else { return }
-                    guard !hasOverlayPresented, isChatViewVisible else { return }
+                    guard !hasOverlayPresented, isChatViewVisible, !vm.chatSearch.isActive else { return }
                     inputFocused = true
                 }
             }
@@ -1851,12 +1917,12 @@ struct AIChatView: View {
                 // Existing length-based skip is still applied so very long
                 // replies still don't trigger the auto-focus.
                 let autoFocusEnabled = (UserDefaults.standard.object(forKey: "chat.autoFocusAfterReply") as? Bool) ?? true
-                guard autoFocusEnabled else { return }
+                guard autoFocusEnabled, !vm.chatSearch.isActive else { return }
                 if GCKeyboard.coalesced != nil {
                     inputFocused = true
                 } else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        guard !hasOverlayPresented, isChatViewVisible else { return }
+                        guard !hasOverlayPresented, isChatViewVisible, !vm.chatSearch.isActive else { return }
                         guard !vm.isProcessing, vm.promptQueue.isEmpty else { return }
                         let lastAssistantLength = vm.messages.last.flatMap {
                             $0.role == .assistant ? $0.blocks.reduce(0) { $0 + $1.content.count } : nil
@@ -2042,7 +2108,7 @@ struct AIChatView: View {
         // Focus input if we injected text
         if !vm.inputText.isEmpty {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                guard self.isChatViewVisible else { return }
+                guard self.isChatViewVisible, !vm.chatSearch.isActive else { return }
                 inputFocused = true
             }
         }
@@ -2068,7 +2134,7 @@ struct AIChatView: View {
         // Focus input after the view is fully settled and keyboard from
         // the source session has dismissed
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            guard self.isChatViewVisible else { return }
+            guard self.isChatViewVisible, !vm.chatSearch.isActive else { return }
             inputFocused = true
         }
     }
@@ -2229,12 +2295,24 @@ struct AIChatView: View {
     /// Re-binding on every open keeps a long-running session searchable
     /// without subscribing the model to `$messages`.
     private func openChatSearch() {
+        guard canPresentChatSearch, !vm.messages.isEmpty else { return }
         chatSearchModel.bind(viewModel: vm)
         chatSearchModel.activate(prefill: nil)
     }
 
+    private func prepareInputForChatSearch() {
+        inputFocused = false
+        if vm.showSlashMenu { vm.dismissSlashMenu() }
+        if vm.showMentionMenu { vm.dismissMentionMenu() }
+        if speechManager.state == .recording { speechManager.stopRecording() }
+        if voiceInputActive {
+            voiceVM.reset(clearTranscript: false)
+            voiceInputActive = false
+        }
+    }
+
     private func closeChatSearch() {
-        chatSearchModel.deactivate()
+        if chatSearchModel.isActive { chatSearchModel.deactivate() }
     }
 
     // MARK: - New Chat (menu entry)
@@ -2664,11 +2742,11 @@ struct AIChatView: View {
                 onRetryLast: { vm.retry(); vm.forceScrollToBottom.send() },
                 onReplyMessage: { [self] msgId in
                     vm.beginReply(to: msgId)
-                    inputFocused = true
+                    if !vm.chatSearch.isActive { inputFocused = true }
                 },
                 onEdit: { [self] msgId in
                     vm.editMessage(msgId)
-                    inputFocused = true
+                    if !vm.chatSearch.isActive { inputFocused = true }
                 },
                 onDelete: { msgId in vm.deleteMessageAndFollowing(msgId) },
                 onDismissSystemInfo: { msgId in vm.dismissSystemInfoMessage(msgId) },
@@ -2713,7 +2791,7 @@ struct AIChatView: View {
                 // line sits just below the status row, ~30pt lower than
                 // the -40 landing, so the trim is -10. The voice panel
                 // keeps the untrimmed value (it must clear the status row).
-                topOverlayInset: max(0, headerOverflowInset - 10),
+                topOverlayInset: chatListTopOverlayInset,
                 geometryContext: listGeometryContext
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
@@ -3537,7 +3615,8 @@ struct AIChatView: View {
                         locale: "zh", source: "text_input")
                 }
             },
-            desiredCaret: vm.pendingCaret
+            desiredCaret: vm.pendingCaret,
+            mayTakeFocus: { !vm.chatSearch.isActive }
         )
         .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, horizontalPadding)
@@ -5071,7 +5150,7 @@ struct AIChatView: View {
         }
         speechManager.recognizedText = ""
         lastRecognizedLength = 0
-        vm.enqueuePrompt()
+        resolveComposerSendAttempt { vm.enqueuePrompt(onAccepted: $0) }
         // [inline-voice] Enqueue consumed the text — clear the voice transcript
         // too, otherwise it lingers in the panel (the "residual after swipe-send"
         // bug). performSend already does this; the enqueue path (taken while the
@@ -5110,12 +5189,21 @@ struct AIChatView: View {
         // onChange binding, so doing it before send() left send() with empty text
         // → "send() GUARD FAILED" and nothing was sent. send() consumes and clears
         // inputText itself; we re-arm voice listening only AFTER it has run.
-        vm.send()
+        resolveComposerSendAttempt { vm.send(onAccepted: $0) }
         // [inline-voice] Stay in voice mode after sending — clear the recognized
         // text and re-arm listening for the next utterance (close with ✕).
         if voiceInputActive {
             voiceVM.clearAndRearm()
         }
+    }
+
+    private func resolveComposerSendAttempt(_ submit: (@escaping (UUID) -> Void) -> Void) {
+        var accepted = false
+        submit { id in
+            accepted = true
+            vm.composerDidResolveSend.send(id)
+        }
+        if !accepted { vm.composerDidResolveSend.send(nil) }
     }
 
     /// Whether the floating tool preview is visible.
@@ -5756,24 +5844,42 @@ private struct ChatNavigationHeaderKey: Equatable {
     let scenePhase: ScenePhase
 }
 
+private struct ChatSearchHeaderBounds {
+    let bottom: CGFloat
+    let windowOriginY: CGFloat
+    let barBottomInWindow: CGFloat
+    let focusHeader: ChatSearchFocusHeader
+
+    func differs(from previous: Self?) -> Bool {
+        guard let previous else { return true }
+        return abs(bottom - previous.bottom) > 0.5
+            || abs(windowOriginY - previous.windowOriginY) > 0.5
+            || abs(barBottomInWindow - previous.barBottomInWindow) > 0.5
+    }
+}
+
 private struct NavBarStyleModifier: ViewModifier {
     @Binding var topSafeAreaInset: CGFloat
     var providerBadge: AnyView? = nil
     var headerSize: CGSize? = nil
     var headerKey: ChatNavigationHeaderKey? = nil
     var onHeaderOverflow: ((CGFloat) -> Void)? = nil
+    var onSearchHeaderBounds: ((ChatSearchHeaderBounds?) -> Void)? = nil
+    var searchOverlay: AnyView? = nil
 
     func body(content: Content) -> some View {
         content
-            .ignoresSafeArea(.container, edges: .top)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) { searchOverlay }
             .background(ChatNavigationBarAppearance(providerBadge: providerBadge,
                                                     headerSize: headerSize,
                                                     headerKey: headerKey,
                                                     onHeaderOverflow: onHeaderOverflow,
+                                                    onSearchHeaderBounds: onSearchHeaderBounds,
                                                     onTopInset: { value in
                 if abs(topSafeAreaInset - value) > 0.5 { topSafeAreaInset = value }
             }))
+            .ignoresSafeArea(.container, edges: .top)
+            .toolbarBackground(.hidden, for: .navigationBar)
     }
 }
 
@@ -5784,15 +5890,18 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
     var headerSize: CGSize? = nil
     var headerKey: ChatNavigationHeaderKey? = nil
     var onHeaderOverflow: ((CGFloat) -> Void)? = nil
+    var onSearchHeaderBounds: ((ChatSearchHeaderBounds?) -> Void)? = nil
     var onTopInset: ((CGFloat) -> Void)? = nil
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.onTopInset = onTopInset
         controller.onHeaderOverflow = onHeaderOverflow
+        controller.onSearchHeaderBounds = onSearchHeaderBounds
         controller.updateBadge(providerBadge.map { AnyView($0.environment(\.self, context.environment)) },
                                headerSize: headerSize,
                                headerKey: headerKey)
         controller.applyIfNeeded()
+        controller.reportSearchHeaderBounds()
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
         controller.restore()
@@ -5815,6 +5924,9 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
         private var headerSize: CGSize?
         var onTopInset: ((CGFloat) -> Void)?
         var onHeaderOverflow: ((CGFloat) -> Void)?
+        var onSearchHeaderBounds: ((ChatSearchHeaderBounds?) -> Void)?
+        private var reportedSearchHeaderBounds: ChatSearchHeaderBounds?
+        private let searchFocusHeader = ChatSearchFocusHeader()
         private var reportedHeaderOverflow: CGFloat = -1
         private var reportedTopInset: CGFloat = 0
         private var lastFrostFrame = CGRect.null
@@ -5879,6 +5991,17 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             view.isUserInteractionEnabled = false
             view.backgroundColor = .clear
         }
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            NotificationCenter.default.addObserver(self, selector: #selector(refreshSearchHeaderLayout),
+                                                   name: UIApplication.didBecomeActiveNotification, object: nil)
+        }
+
+        @objc private func refreshSearchHeaderLayout() {
+            guard let navigation = navigationController, item != nil else { return }
+            layoutHeader(in: navigation)
+        }
+
         override func viewWillAppear(_ animated: Bool) {
             super.viewWillAppear(animated)
             applyIfNeeded()
@@ -5901,6 +6024,32 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             layoutFrostedOverlay(in: navigation)
             if let badgeView {
                 headerHitRouting.install(badge: badgeView, navigation: navigation, item: item)
+            }
+            reportSearchHeaderBounds()
+        }
+
+        func reportSearchHeaderBounds() {
+            guard onSearchHeaderBounds != nil, item != nil, let window = viewIfLoaded?.window,
+                  let bar = navigationController?.navigationBar, bar.window === window,
+                  !bar.bounds.isEmpty, !view.bounds.isEmpty else { return }
+            let barFrame = bar.convert(bar.bounds, to: window)
+            var occlusion = barFrame
+            if let badgeView, badgeView.window === window, !badgeView.isHidden {
+                occlusion = occlusion.union(badgeView.convert(badgeView.bounds, to: window))
+            }
+            searchFocusHeader.bar = bar
+            searchFocusHeader.badge = badgeView
+            let measurement = ChatSearchHeaderBounds(
+                bottom: view.convert(occlusion, from: window).maxY - view.bounds.minY,
+                windowOriginY: view.convert(view.bounds.origin, to: window).y,
+                barBottomInWindow: barFrame.maxY,
+                focusHeader: searchFocusHeader)
+            guard measurement.bottom.isFinite, measurement.windowOriginY.isFinite,
+                  measurement.differs(from: reportedSearchHeaderBounds) else { return }
+            reportedSearchHeaderBounds = measurement
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.reportedSearchHeaderBounds != nil else { return }
+                self.onSearchHeaderBounds?(self.reportedSearchHeaderBounds)
             }
         }
 
@@ -6031,6 +6180,15 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             badgeLayoutNeedsUpdate = false
         }
         func restore() {
+            searchFocusHeader.bar = nil
+            searchFocusHeader.badge = nil
+            if reportedSearchHeaderBounds != nil {
+                reportedSearchHeaderBounds = nil
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.reportedSearchHeaderBounds == nil else { return }
+                    self.onSearchHeaderBounds?(nil)
+                }
+            }
             headerHitRouting.remove()
             badgeHost?.willMove(toParent: nil)
             badgeHost?.view.removeFromSuperview()
@@ -6335,6 +6493,9 @@ private struct ChatViewportContentRenderKey: Hashable {
     let toolPreviewEnabled: Bool
     let maxContentWidth: CGFloat?
     let headerOverflowInset: CGFloat
+    let listTopOverlayInset: CGFloat
+    let searchBannerPadding: CGFloat?
+    let showChatSearch: Bool
     let voiceCallActive: Bool
     let voiceCallExpanded: Bool
     let subAgentsEnabled: Bool
@@ -6776,6 +6937,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
         button.tintColor = UIColor(ChatColors.primaryText)
         button.showsMenuAsPrimaryAction = true
         button.accessibilityLabel = String(localized: "More options")
+        button.accessibilityIdentifier = "chat.moreOptions"
         button.menu = Self.buildMenu(key: key, coordinator: context.coordinator)
         context.coordinator.lastKey = key
         return button
@@ -6941,46 +7103,63 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
 
 // MARK: - Chat Search Host
 
-/// [T-chat-search] Keeps the panel out of `AIChatView.body`.
-///
-/// The body is a single long modifier chain, and inlining the panel pushed it
-/// past the type-checker's expression budget ("unable to type-check this
-/// expression in reasonable time"). One `.modifier(...)` call keeps the chain
-/// unchanged in shape; the modifier owns the slide-in, the stream refresh and
-/// the tap-through gating.
 private struct ChatSearchPresentation: ViewModifier {
-    @ObservedObject var model: ChatSearchModel
+    let model: ChatSearchModel
     let viewModel: AIChatViewModel
     @Binding var isPresented: Bool
-    @Binding var inputFocused: Bool
+    let isLocked: Bool
+    let onOpen: () -> Void
     let onClose: () -> Void
     @State private var ownerId = UUID()
+    @State private var ownedModel: ChatSearchModel?
 
     func body(content: Content) -> some View {
         content
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if isPresented {
-                    ChatSearchOverlay(model: model, onJump: { _ in }, onClose: onClose)
-                }
-            }
-            .onAppear {
-                model.bind(viewModel: viewModel)
-                model.highlights.openSearchOwner = ownerId
-                model.highlights.openSearch = { [weak model] prefill in
-                    model?.activate(prefill: prefill)
-                }
-            }
+            .onAppear(perform: attach)
+            .onChange(of: ObjectIdentifier(model)) { _ in attach() }
+            .onChange(of: viewModel.sessionId) { _ in deactivateOwnedSearch() }
+            .onChange(of: isLocked) { locked in if locked { deactivateOwnedSearch() } }
             .onReceive(model.$isActive.removeDuplicates()) { active in
+                guard ownedModel === model, model.highlights.openSearchOwner == ownerId else { return }
                 guard active != isPresented else { return }
-                if active { inputFocused = false }
+                if active { onOpen() } else { onClose() }
                 isPresented = active
             }
-            .onDisappear {
-                guard model.highlights.openSearchOwner == ownerId else { return }
-                model.deactivate()
-                model.highlights.openSearch = nil
-                model.highlights.openSearchOwner = nil
-            }
+            .onDisappear(perform: detach)
+    }
+
+    private func attach() {
+        if ownedModel !== model { detach() }
+        ownedModel = model
+        model.bind(viewModel: viewModel)
+        model.highlights.openSearchOwner = ownerId
+        model.highlights.openSearch = { [weak model, weak viewModel] prefill in
+            guard let viewModel else { return }
+            if let sessionId = viewModel.sessionId, SessionLockStore.shared.isVisuallyLocked(sessionId) { return }
+            model?.activate(prefill: prefill)
+        }
+        if isLocked { deactivateOwnedSearch() }
+        if model.isActive && !isPresented {
+            onOpen()
+            isPresented = true
+        }
+    }
+
+    private func deactivateOwnedSearch() {
+        guard let ownedModel, ownedModel.highlights.openSearchOwner == ownerId,
+              ownedModel.isActive else { return }
+        ownedModel.deactivate()
+    }
+
+    private func detach() {
+        if let ownedModel, ownedModel.highlights.openSearchOwner == ownerId {
+            deactivateOwnedSearch()
+            ownedModel.highlights.openSearch = nil
+            ownedModel.highlights.openSearchOwner = nil
+        }
+        ownedModel = nil
+        if isPresented { onClose() }
+        isPresented = false
     }
 }
 

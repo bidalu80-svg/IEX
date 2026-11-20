@@ -22,15 +22,15 @@ import CoreGraphics
 /// the default behaviour is unchanged.
 ///
 /// Deliberately not `@MainActor`: the writes come from a UIKit scroll delegate
-/// and the reads from a `DispatchQueue.main.async` hop, and the type stays
+/// and the reads from the first list layout, and the type stays
 /// compilable under both the Swift 5 and Swift 6 targets in this project. A lock
 /// around a three-entry dictionary costs nothing next to a scroll frame.
 final class ChatScrollMemory: @unchecked Sendable {
     static let shared = ChatScrollMemory()
 
     struct Anchor: Equatable, Sendable {
-        /// First message visible at the top of the viewport.
-        let messageId: UUID
+        /// First item visible at the top of the viewport, including block ID.
+        let item: MessageListItem
         /// Distance from the viewport's top edge to that row's top edge, so a
         /// tall message resumes at the same line instead of at its start.
         let offset: CGFloat

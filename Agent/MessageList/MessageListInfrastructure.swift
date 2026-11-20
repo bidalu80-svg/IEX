@@ -18,7 +18,7 @@ import UIKit
 /// Item identifier for the diffable data source.
 /// Assistant messages are split into header + individual blocks + footer
 /// so each block is its own small cell with a stable height.
-enum MessageListItem: Hashable {
+enum MessageListItem: Hashable, Sendable {
     /// A complete user message, compact divider, or system info message.
     case wholeMessage(UUID)
     /// The "sparkles Ze" label row at the top of an assistant turn.
@@ -562,11 +562,10 @@ final class NoAnimationCollectionView: UICollectionView {
     /// NSInternalInconsistencyException inside UIKit.
     var isApplyingSnapshot = false
 
-    /// The coordinator supplies intent; viewport geometry owns the timing.
-    var shouldFollowViewportBottom: (() -> Bool)?
-    var viewportBottomInset: (() -> CGFloat)?
-    private var viewportAnchor: (offset: CGFloat, followBottom: Bool)?
-    private var applyingViewportAnchor = false
+    var viewportWillResize: (() -> Void)?
+    var beginPositionLayout: (() -> Bool)?
+    var finishPositionLayout: (() -> Bool)?
+    private(set) var isInPositionLayout = false
 
     override var bounds: CGRect {
         willSet {
@@ -582,14 +581,15 @@ final class NoAnimationCollectionView: UICollectionView {
         }
     }
 
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        viewportWillResize?()
+    }
+
     private func rememberViewportAnchor(for size: CGSize) {
-        guard !applyingViewportAnchor, bounds.height > 0,
-              abs(size.width - bounds.width) < 0.5,
-              abs(size.height - bounds.height) > 0.5,
-              !isTracking, !isDecelerating else { return }
-        if viewportAnchor == nil {
-            viewportAnchor = (contentOffset.y, shouldFollowViewportBottom?() == true)
-        }
+        guard bounds.height > 0,
+              abs(size.width - bounds.width) > 0.5 || abs(size.height - bounds.height) > 0.5 else { return }
+        viewportWillResize?()
     }
 
     /// [T-ios-stream-grow-anim] When true, non-snapshot programmatic layout
@@ -599,8 +599,6 @@ final class NoAnimationCollectionView: UICollectionView {
     /// regresses the streaming stability this NoAnimation collection view was
     /// built to guarantee.
     var streamingGrowAnimationEnabled = true
-    var viewportGeometryCommitDepth = 0
-    var prepareViewportGeometry: (() -> Void)?
 
     /// [T-ios-user-collapse-smooth] True only for the synchronous layout pass
     /// the message-list coordinator runs inside its UIView.animate block for a
@@ -611,13 +609,6 @@ final class NoAnimationCollectionView: UICollectionView {
     /// other programmatic pass keeps the historical instant behavior, so the
     /// NoAnimation guarantees are unchanged.
     var disclosureAnimationInFlight = false
-
-    /// [T-ios-stream-grow-anim] Reentrancy guard: the grow path calls
-    /// `setContentOffset`, which can synchronously re-enter `layoutSubviews`.
-    /// Without this guard that re-entry would recurse back into the animated
-    /// branch (and `super.layoutSubviews()` while a layout pass is already on
-    /// the stack). When set, nested passes take the plain `super` path.
-    private var inStreamingGrowLayout = false
 
     /// Back-reference to the owning controller so a bounds-width change can
     /// front-load the visible-cell re-measure (prewarm) the same way rotation
@@ -660,28 +651,10 @@ final class NoAnimationCollectionView: UICollectionView {
         // above. The SelfSizingCell off-collection guard is the inner backstop.
         guard window != nil else { return }
 
-        let resizingViewport = viewportAnchor != nil
-        let anchor = viewportAnchor
-        viewportAnchor = nil
-        defer {
-            if let anchor, viewportGeometryCommitDepth == 0,
-               !isTracking, !isDecelerating, !applyingViewportAnchor {
-                prepareViewportGeometry?()
-                applyingViewportAnchor = true
-                let followsBottom = anchor.followBottom && shouldFollowViewportBottom?() == true
-                let target = ChatListScrollTarget.resolve(
-                    contentHeight: contentSize.height, viewportHeight: bounds.height,
-                    adjustedTop: adjustedContentInset.top, adjustedBottom: adjustedContentInset.bottom,
-                    baseBottom: viewportBottomInset?() ?? adjustedContentInset.bottom, safeAreaBottom: 0,
-                    current: anchor.offset, followsBottom: followsBottom)
-                if abs(contentOffset.y - target) > 0.5 {
-                    // This is inside UIKit's keyboard layout transaction. Do
-                    // not start a second UIScrollView animation or delayed pin.
-                    setContentOffset(CGPoint(x: contentOffset.x, y: target), animated: false)
-                }
-                applyingViewportAnchor = false
-            }
-        }
+        guard !isInPositionLayout else { return }
+        isInPositionLayout = true
+        defer { isInPositionLayout = false }
+        let inheritsKeyboardAnimation = beginPositionLayout?() == true
 
         #if DEBUG
         let newSize = bounds.size
@@ -697,94 +670,20 @@ final class NoAnimationCollectionView: UICollectionView {
         let t0 = CFAbsoluteTimeGetCurrent()
         #endif
 
-        // [T-ios-stream-grow-anim] Animate ONLY while a message is actively
-        // streaming (Processing). The layout sets `streamingCellIndex` to the
-        // streaming message's cell and clears it the instant the run ends, so
-        // this is the precise "is a Markdown message growing right now" signal —
-        // it keeps the grow animation off every other programmatic layout pass
-        // (cell reuse, image-load resize, scroll settle), confining it to the
-        // streaming Markdown cell's height growth.
-        let isStreamingNow = (collectionViewLayout as? MessageListLayout)?.streamingCellIndex != nil
-
-        // [T-ios-stream-grow-anim] Only animate when the content actually
-        // OVERFLOWS the viewport, i.e. there is a positive scrollable range. The
-        // first message of a session (and any short turn) leaves contentSize <
-        // bounds — a sub-viewport state where the resting offset is 0 and there
-        // is nothing to scroll. Running the offset animation there fought
-        // UIScrollView's bounce around offset 0, producing the −7→−46→0 decel
-        // wobble seen on iOS 16 ("the whole collection view shakes"). Gate it
-        // out: below the overflow threshold the layout pass stays un-animated.
-        let scrollableRange = contentSize.height - bounds.height + adjustedContentInset.bottom
-        let contentOverflowsViewport = scrollableRange > 1
-
-        // During user scroll (tracking/decelerating), let UIKit handle layout
-        // naturally — stripping animations mid-scroll kills the deceleration
-        // curve and causes a visible jitter at the end.
-        if viewportGeometryCommitDepth > 0 || resizingViewport || applyingViewportAnchor || isTracking || isDecelerating {
-            // Inherit the system keyboard transaction for a viewport resize.
-            // Streaming's separate 0.2s animation must not retime this pass.
+        let inheritsAnimation = inheritsKeyboardAnimation || isTracking || isDragging || isDecelerating || disclosureAnimationInFlight
+        if inheritsAnimation {
             super.layoutSubviews()
-        } else if disclosureAnimationInFlight, !isApplyingSnapshot, !inStreamingGrowLayout {
-            // [T-ios-user-collapse-smooth] Scoped disclosure pass: the
-            // coordinator set `disclosureAnimationInFlight` for exactly the
-            // synchronous pass below — run it WITHOUT the
-            // performWithoutAnimation strip so the frame deltas (the tapped
-            // bubble's height and the positions of the items below it) land as
-            // implicit animations inside the coordinator's enclosing
-            // UIView.animate block. The flag is cleared right after that pass.
-            super.layoutSubviews()
-        } else if streamingGrowAnimationEnabled, isStreamingNow, contentOverflowsViewport,
-                  !isApplyingSnapshot, !inStreamingGrowLayout {
-            // [T-ios-stream-grow-anim] The smooth-streaming trick, done right:
-            // let the CELL FRAMES snap to their final positions instantly (the
-            // content immediately occupies its final layout), but animate ONLY
-            // the contentOffset over a fixed 0.2s window so the VIEWPORT glides
-            // up to the new bottom.
-            //
-            // Why this and not the reverse: a cell's on-screen position is
-            // `frame.y − contentOffset.y`. If BOTH the frame AND the offset
-            // animate (the naive `UIView.animate { super.layoutSubviews() }`),
-            // they interpolate on independent CA timings, so cells above the
-            // streaming one (the "Ze" header) drift — the header↔body spacing
-            // jitter. Animating ONLY the offset means there is a single moving
-            // quantity: every cell, header included, slides up together in
-            // lock-step as the viewport eases to the bottom. No relative drift.
-            //
-            // Implementation: run the layout pass with frames applied
-            // instantly (no animation). super.layoutSubviews() also lands the
-            // final contentOffset; capture it, restore the PRE-pass offset, then
-            // animate to the captured final offset.
-            inStreamingGrowLayout = true
-            defer { inStreamingGrowLayout = false }
-
-            let preOffset = contentOffset
-            var finalOffset = preOffset
-            UIView.performWithoutAnimation {
-                super.layoutSubviews()
-                finalOffset = self.contentOffset
-            }
-            // Only animate a sane, finite downward (or any) viewport move. Guard
-            // against NaN/inf (defensive — a corrupt layout pass) and skip the
-            // animation for negligible deltas so we don't churn CA transactions.
-            let delta = finalOffset.y - preOffset.y
-            if delta.isFinite && finalOffset.y.isFinite && abs(delta) > 0.5 {
-                setContentOffset(preOffset, animated: false)
-                UIView.animate(withDuration: 0.20,
-                               delay: 0,
-                               options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
-                    self.setContentOffset(finalOffset, animated: false)
-                }
-            } else if finalOffset != contentOffset {
-                // Non-animated correction for the tiny/degenerate case so the
-                // viewport still lands where the layout intended.
-                setContentOffset(finalOffset, animated: false)
-            }
         } else {
-            // Kill any pending CALayer animations for programmatic updates
-            // (snapshot apply, etc.)
-            UIView.performWithoutAnimation {
-                super.layoutSubviews()
-            }
+            UIView.performWithoutAnimation { super.layoutSubviews() }
+        }
+        if finishPositionLayout?() == true {
+            // The first target can bring previously unmeasured cells into view.
+            // Materialize those cells before display, even if a nested UIKit
+            // layout request was declined by the reentrancy guard above.
+            _ = beginPositionLayout?()
+            if inheritsAnimation { super.layoutSubviews() }
+            else { UIView.performWithoutAnimation { super.layoutSubviews() } }
+            if finishPositionLayout?() == true { setNeedsLayout() }
         }
 
         // [T-ios-ipad-rotate-collapse-scroll-jank] Front-load the visible-cell

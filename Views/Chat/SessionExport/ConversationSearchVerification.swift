@@ -87,7 +87,7 @@ import UIKit
             activeWindow.frame = scene.coordinateSpace.bounds
             activeWindow.windowLevel = .alert + 1
             let host = UIHostingController(rootView: VStack(spacing: 0) {
-                ChatSearchOverlay(model: vm.chatSearch, onJump: { _ in }, onClose: {})
+                ChatSearchOverlay(model: vm.chatSearch, onClose: { vm.chatSearch.deactivate() })
                 CollectionViewMessageListV3(vm: vm, inputFocused: false, maxContentWidth: 0, floatingBarHeight: 0, inputBarHeight: 0)
             }.environmentObject(vm).background(Color(uiColor: .systemBackground)))
             activeWindow.rootViewController = host

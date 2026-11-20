@@ -54,6 +54,9 @@ targets=[t for c in d.get('TestConfigurations',[]) for t in c['TestTargets']] if
 for t in targets:
     t['UITargetAppPath']=sys.argv[2];t['UITargetAppBundleIdentifier']=sys.argv[3]
     t.setdefault('EnvironmentVariables',{}).update(ZE_LAYOUT_BUNDLE=sys.argv[3],ZE_LAYOUT_DYLD=sys.argv[4],ZE_VERIFY_SOUL_HEADER=os.environ.get('ZE_VERIFY_SOUL_HEADER','0'))
+    for name in ('ZE_VERIFY_SEARCH_NINE_KEY', 'ZE_VERIFY_SEARCH_COMPACT_ACCESSIBILITY'):
+        if name in os.environ:
+            t['EnvironmentVariables'][name] = os.environ[name]
 (products/'Layout.xctestrun').write_bytes(plistlib.dumps(d))
 PY
 if [ "${ZE_VERIFY_KEYBOARD_HANG:-0}" = 1 ]; then
@@ -102,8 +105,11 @@ import os,pathlib,json,sys
 d=json.loads(pathlib.Path(sys.argv[1]).read_text());print(json.dumps(d,ensure_ascii=False,indent=2))
 assert d['success'],d
 assert 'production-transcript-fade' in d['stages'],d
-assert 'production-send-layout' in d['stages'],d
+assert 'production-send-layout-slow' in d['stages'],d
+assert 'production-send-layout-overlap' in d['stages'],d
 assert 'production-load-clamp-search' in d['stages'],d
+assert 'production-search-done-occlusion' in d['stages'],d
+assert 'production-search-message-actions' in d['stages'],d
 assert d['lastStage']=='complete',d
 if os.environ.get('ZE_VERIFY_SOUL_HEADER') == '1':
     assert 'production-soul-avatar' in d['stages'],d
