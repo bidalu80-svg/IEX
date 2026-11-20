@@ -41,6 +41,7 @@ final class ChatMessage: Identifiable, ObservableObject {
     @Published var content: String
     /// For assistant turns: ordered list of content blocks (text + tool calls)
     @Published var blocks: [AssistantBlock] = []
+    @MainActor lazy var inlineSubAgentCards = ZeSubAgentInlineCards(message: self)
     /// Error that terminated this assistant turn (nil = no error).
     @Published var error: String?
     /// Number of mid-stream auto-retries that completed successfully before this turn finished.
@@ -349,7 +350,7 @@ final class AssistantBlock: Identifiable, ObservableObject {
     /// The tool_use ID from the provider, used to match with snapshots.
     var toolUseId: String?
     /// Serialized JSON of the tool input arguments (for introspection in SessionMemoryView, etc.).
-    var toolInputArgs: String?
+    @Published var toolInputArgs: String?
     /// Interactive assistant question-card state. Derived from the ask_user tool
     /// arguments and result so the card survives session reloads.
     @Published var questionCard: QuestionCardState?

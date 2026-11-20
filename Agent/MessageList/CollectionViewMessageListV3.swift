@@ -3,10 +3,16 @@ import UIKit
 import Combine
 import UniformTypeIdentifiers
 
-extension Notification.Name {
-    /// Posted by toggleUsage to tell the Coordinator to re-snapshot so the
-    /// footer cell is inserted or removed on demand.
-    static let messageListNeedsResnapshot = Notification.Name("messageListNeedsResnapshot")
+private enum FooterTextContent: Equatable {
+    case empty, whitespace, reply
+
+    init(_ text: String) {
+        if text.isEmpty {
+            self = .empty
+        } else {
+            self = text.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) == nil ? .whitespace : .reply
+        }
+    }
 }
 
 /// Shared by snapshot retention, rendering and footer estimates.
@@ -14,8 +20,37 @@ private func reservesCompletionActionSpace(_ message: ChatMessage) -> Bool {
     message.role == .assistant && !message.isCompactedHistory && message.error == nil
         && message.blocks.contains { block in
             guard case .text = block.kind else { return false }
-            return !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return FooterTextContent(block.content) == .reply
         }
+}
+
+private struct AssistantFooterPresentation: Equatable {
+    let messageObject: ObjectIdentifier
+    let showsTyping: Bool
+    let showsResume: Bool
+    let error: String?
+    let interruptCount: Int
+    let showsUsage: Bool
+    let hasUsage: Bool
+    let reservesActions: Bool
+    let prominent: Bool
+
+    init(_ message: ChatMessage, isActive: Bool, canResume: Bool, showsUsage: Bool) {
+        messageObject = ObjectIdentifier(message)
+        let hasVisibleContent = message.blocks.contains { $0.kind != .text || !$0.content.isEmpty }
+        showsTyping = isActive && (!hasVisibleContent || message.isAwaitingModelResponse)
+        error = message.error
+        showsResume = canResume && message.error == nil
+        interruptCount = message.streamInterruptCount
+        self.showsUsage = showsUsage
+        hasUsage = showsUsage && message.usage != nil
+        reservesActions = reservesCompletionActionSpace(message)
+        prominent = message.error != nil || showsResume || isActive
+    }
+
+    var needsItem: Bool {
+        showsTyping || showsResume || error != nil || interruptCount > 0 || showsUsage || reservesActions
+    }
 }
 
 // MARK: - CollectionViewMessageListV3
@@ -132,6 +167,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         if !vm.isLoadingSession && !vm.streamingUIUpdatesSuspended {
             coord.flushPendingSnapshotIfNeeded(caller: "updateUIVC-backstop")
         }
+        coord.scheduleFooterReconciliation()
 
         // Viewport changes preserve the bottom or reading position in the
         // collection view's own layout pass. Focus is not a geometry clock;
@@ -384,16 +420,9 @@ fileprivate struct BridgedAssistantBlockV3: View {
             withAnimation(.easeInOut(duration: 0.15)) { bridge.usageContentVisible = false }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 bridge.showUsage = false
-                // The footer cell may have been omitted from the snapshot
-                // (no content at build time). Notify the coordinator so it
-                // re-snapshots and removes the now-empty footer.
-                NotificationCenter.default.post(name: .messageListNeedsResnapshot, object: nil)
             }
         } else {
             bridge.showUsage = true
-            // The footer cell may not exist yet — notify the coordinator to
-            // re-snapshot and insert it.
-            NotificationCenter.default.post(name: .messageListNeedsResnapshot, object: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 withAnimation(.easeInOut(duration: 0.2)) { bridge.usageContentVisible = true }
             }
@@ -419,28 +448,6 @@ fileprivate struct BridgedAssistantFooterV3: View {
 
     // showUsage and usageContentVisible are on bridge, toggled by double-tap on block cells.
 
-    private var hasVisibleContent: Bool {
-        message.blocks.contains { block in
-            switch block.kind {
-            case .text: return !block.content.isEmpty
-            case .info: return true
-            default: return true
-            }
-        }
-    }
-
-    /// True when any of the footer's conditional sections will actually
-    /// render. When false the footer should collapse to zero height so it
-    /// doesn't insert a phantom 4pt gap between the last assistant block
-    /// and the next user message.
-    private var hasFooterContent: Bool {
-        let showTyping = bridge.isActiveMessage && (!hasVisibleContent || message.isAwaitingModelResponse)
-        let showError = message.error != nil
-        let showResume = bridge.canResume && message.error == nil
-        let showUsageRow = message.streamInterruptCount > 0 || bridge.showUsage
-        return showTyping || showError || showResume || showUsageRow || reservesCompletionActionSpace(message)
-    }
-
     private var replyText: String {
         message.blocks
             .compactMap { block in
@@ -451,29 +458,31 @@ fileprivate struct BridgedAssistantFooterV3: View {
     }
 
     var body: some View {
+        let footer = AssistantFooterPresentation(message, isActive: bridge.isActiveMessage,
+                                                 canResume: bridge.canResume, showsUsage: bridge.showUsage)
         VStack(alignment: .leading, spacing: 8) {
             // Typing indicator
-            if bridge.isActiveMessage && (!hasVisibleContent || message.isAwaitingModelResponse) {
+            if footer.showsTyping {
                 TypingIndicator()
             }
 
             // Inline error
-            if let error = message.error {
+            if let error = footer.error {
                 inlineError(error)
             }
 
             // Resume banner
-            if bridge.canResume && message.error == nil {
+            if footer.showsResume {
                 resumeBanner
             }
 
             // Token usage
-            if message.streamInterruptCount > 0 || bridge.showUsage {
+            if footer.interruptCount > 0 || footer.showsUsage {
                 HStack(spacing: 6) {
-                    if message.streamInterruptCount > 0 {
-                        streamInterruptBadge(message.streamInterruptCount)
+                    if footer.interruptCount > 0 {
+                        streamInterruptBadge(footer.interruptCount)
                     }
-                    if bridge.showUsage, let usage = message.usage {
+                    if footer.hasUsage, let usage = message.usage {
                         usageCapsule(usage)
                             .opacity(bridge.usageContentVisible ? 1 : 0)
                     }
@@ -481,7 +490,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
                 }
             }
 
-            if reservesCompletionActionSpace(message) {
+            if footer.reservesActions {
                 completionActionBar
                     .opacity(bridge.showsCompletionActions ? 1 : 0)
                     .allowsHitTesting(bridge.showsCompletionActions)
@@ -491,8 +500,8 @@ fileprivate struct BridgedAssistantFooterV3: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, hasFooterContent ? 16 : 0)
-        .padding(.vertical, hasFooterContent ? 2 : 0)
+        .padding(.horizontal, footer.needsItem ? 16 : 0)
+        .padding(.vertical, footer.needsItem ? 2 : 0)
         .opacity(message.isCompactedHistory ? 0.5 : 1.0)
         .accessibilityIdentifier("assistantFooter")
         // Sheet + contextMenu on zero-size overlay so they don't inflate self-sizing.
@@ -1706,7 +1715,9 @@ extension CollectionViewMessageListV3 {
                 self?.enqueuePosition(.resize)
             }
             (collectionView as? NoAnimationCollectionView)?.beginPositionLayout = { [weak self] in
-                self?.beginPositionLayout() ?? false
+                guard let self else { return false }
+                self.scheduleFooterReconciliation()
+                return self.beginPositionLayout()
             }
             (collectionView as? NoAnimationCollectionView)?.finishPositionLayout = { [weak self] in
                 self?.finishPositionLayout() ?? false
@@ -1912,6 +1923,7 @@ extension CollectionViewMessageListV3 {
                     return
                 }
                 let bridge = getOrCreateBridge(for: message, in: messages)
+                if block.kind.isSubAgentTool { observeInlineSubAgentRows(in: message) }
                 cell.backgroundColor = .clear
                 let config = UIHostingConfiguration {
                     BridgedAssistantBlockV3(
@@ -1950,6 +1962,7 @@ extension CollectionViewMessageListV3 {
                 guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { return }
                 let message = messages[msgIdx]
                 let bridge = getOrCreateBridge(for: message, in: messages)
+                syncFooterBridge(bridge, message: message, vm: vm, lastMessageID: messages.last?.id)
                 cell.backgroundColor = .clear
                 let config = UIHostingConfiguration {
                     BridgedAssistantFooterV3(
@@ -2064,15 +2077,34 @@ extension CollectionViewMessageListV3 {
 
         /// Subscriptions for bridge detailBlock → sheet presenter forwarding.
         private var bridgeSheetSubs: [UUID: AnyCancellable] = [:]
-        /// [T-ios-footer-stale-height] Per-message usage-capsule visibility
-        /// subscriptions — each flip invalidates that footer's cached height.
-        private var bridgeFooterHeightSubs: [UUID: AnyCancellable] = [:]
-        /// [T-ios-resume-card-live] Per-message resume-banner visibility
-        /// subscriptions — each flip invalidates that footer's cached height.
-        private var bridgeCanResumeHeightSubs: [UUID: AnyCancellable] = [:]
+        private var footerUsageSubs: [UUID: AnyCancellable] = [:]
+        private var inlineSubAgentSubs: [UUID: (message: ObjectIdentifier, subscription: AnyCancellable)] = [:]
+
+        private func observeInlineSubAgentRows(in message: ChatMessage) {
+            let identity = ObjectIdentifier(message)
+            guard inlineSubAgentSubs[message.id]?.message != identity else { return }
+            let subscription = message.inlineSubAgentCards.changedRows.sink { [weak self, weak message] blockIDs in
+                guard let self, let message,
+                      let index = self.messageIndex[message.id], self.snapshotMessages.indices.contains(index),
+                      self.snapshotMessages[index] === message,
+                      let cv = self.viewController?.collectionView, let layout = self.viewController?.messageListLayout,
+                      let source = self.dataSource else { return }
+                let paths = blockIDs.compactMap { source.indexPath(for: .assistantBlock(message.id, $0)) }
+                for path in paths {
+                    layout.invalidateContentHeight(at: path.item)
+                    (cv.cellForItem(at: path) as? SelfSizingCell)?.clearCachedHeight()
+                }
+                if !paths.isEmpty {
+                    layout.invalidateLayout()
+                    cv.setNeedsLayout()
+                }
+            }
+            inlineSubAgentSubs[message.id] = (identity, subscription)
+        }
 
         private func getOrCreateBridge(for message: ChatMessage, in messages: [ChatMessage]) -> CellStateBridgeV2 {
             if let existing = cellBridges[message.id] {
+                observeFooterUsage(for: message.id, bridge: existing)
                 refreshCompletionActions(existing, message: message)
                 return existing
             }
@@ -2100,43 +2132,32 @@ extension CollectionViewMessageListV3 {
                     }
                     // Dismiss is handled by sheetPresenter.onDismiss (set in attach)
                 }
-            // [T-ios-footer-stale-height] Usage-capsule show/hide changes the
-            // footer's content height without changing its item identity, so
-            // the stale cached height would be reused. Invalidate + reconfigure
-            // that message's footer whenever either visibility flag flips.
-            // Low-frequency: only the user's double-tap toggle reaches here.
-            let messageId = message.id
-            bridgeFooterHeightSubs[messageId] = bridge.$showUsage
-                .dropFirst()
-                .merge(with: bridge.$usageContentVisible.dropFirst())
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    self?.invalidateAndReconfigureFooterHeights(
-                        messageId: messageId,
-                        caller: "usage-capsule-visibility"
-                    )
-                }
-            // [T-ios-resume-card-live] Resume-banner show/hide changes the
-            // footer's content height too; invalidate + reconfigure that
-            // message's footer whenever canResume flips.
-            bridgeCanResumeHeightSubs[messageId] = bridge.$canResume
-                .dropFirst()
-                .removeDuplicates()
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    self?.invalidateAndReconfigureFooterHeights(
-                        messageId: messageId,
-                        caller: "canResume-flip"
-                    )
-                }
+            observeFooterUsage(for: message.id, bridge: bridge)
             return bridge
+        }
+
+        private func observeFooterUsage(for messageID: UUID, bridge: CellStateBridgeV2) {
+            guard footerUsageSubs[messageID] == nil, let vm else { return }
+            footerUsageSubs[messageID] = bridge.$showUsage
+                .removeDuplicates()
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self, weak vm, weak bridge] _ in
+                    guard let self, let vm, self.vm === vm,
+                          let bridge, self.cellBridges[messageID] === bridge else { return }
+                    self.markFooterDirty(messageID)
+                }
         }
 
         // MARK: - Bridge Updates
 
         private func updateBridge(_ bridge: CellStateBridgeV2, message: ChatMessage, in messages: [ChatMessage]) {
+            updateBridge(bridge, message: message, lastMessageID: messages.last?.id)
+        }
+
+        private func updateBridge(_ bridge: CellStateBridgeV2, message: ChatMessage, lastMessageID: UUID?) {
             guard let vm else { return }
-            let isLast = message.id == messages.last?.id
+            let isLast = message.id == lastMessageID
             let isActive = isLast && vm.isProcessing
 
             bridge.isActiveMessage = isActive
@@ -2154,11 +2175,7 @@ extension CollectionViewMessageListV3 {
             // still lists this session as active (same signal the home list spinner
             // reads). This closes the residual gap where a new/reloaded VM sees a
             // toolResult-tail during a live loop's tool_result → next-model-call gap.
-            let trackerActive: Bool = {
-                guard isLast, let sid = vm.sessionId else { return false }
-                return SessionActivityTracker.shared.isActive(sid)
-            }()
-            bridge.canResume = isLast ? (vm.canResume && !vm.isProcessing && !trackerActive) : false
+            bridge.canResume = canResumeFooter(vm: vm, isLast: isLast)
             bridge.onResume = isLast ? { [weak self] in self?.onResume?() } : nil
             bridge.onWithdraw = message.isQueued ? { [weak self] in self?.onWithdraw?(message.id) } : nil
             bridge.onToggleUserMessageExpansion = message.role == .user && !message.isQueued
@@ -2304,25 +2321,25 @@ extension CollectionViewMessageListV3 {
         private func updateLastCellBridge() {
             guard let vm else { return }
             let messages = vm.messages
-            guard let lastMsg = messages.last else { return }
+            guard let lastMsg = messages.last(where: { !$0.isInternalBridge }) else { return }
             if let bridge = cellBridges[lastMsg.id] {
-                updateBridge(bridge, message: lastMsg, in: messages)
+                updateBridge(bridge, message: lastMsg, lastMessageID: lastMsg.id)
             }
             if messages.count >= 2 {
                 let prev = messages[messages.count - 2]
-                if let prevBridge = cellBridges[prev.id], prevBridge.canResume {
+                if prev.id != lastMsg.id, let prevBridge = cellBridges[prev.id], prevBridge.canResume {
                     prevBridge.canResume = false
                     prevBridge.onResume = nil
                 }
             }
-            for msg in messages.dropLast() {
+            for msg in messages where msg.id != lastMsg.id {
                 if msg.role == .assistant, let b = cellBridges[msg.id], b.isActiveMessage {
                     b.isActiveMessage = false
                 }
             }
             for msg in messages where msg.role == .user {
                 if let b = cellBridges[msg.id] {
-                    updateBridge(b, message: msg, in: messages)
+                    updateBridge(b, message: msg, lastMessageID: lastMsg.id)
                 }
             }
         }
@@ -2351,7 +2368,17 @@ extension CollectionViewMessageListV3 {
             lastMessageSub?.cancel(); lastMessageSub = nil
             lastMessageBlockCountSub?.cancel(); lastMessageBlockCountSub = nil
             lastMessageId = nil
+            let previousFooterTailID = footerTail?.id
+            footerTailSub = nil
+            footerTail = nil
+            footerUsageSubs.removeAll()
+            pendingFooterIDs.removeAll()
+            if let previousFooterTailID { pendingFooterIDs.insert(previousFooterTailID) }
+            footerReconciliationScheduled = false
             vm = newVM
+            for (messageID, bridge) in cellBridges {
+                observeFooterUsage(for: messageID, bridge: bridge)
+            }
             bindViewModel(newVM)
             // Re-apply from the new VM's authoritative messages (identity may
             // be equal content-wise; applySnapshot no-ops on identical ids)
@@ -2374,6 +2401,8 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] msgs in
                     guard let self else { return }
+                    if let vm = self.vm { self.bindFooterTail(vm) }
+                    self.scheduleFooterReconciliation()
                     // [T-message-list-empty-on-foreground] If a load is in flight,
                     // DON'T silently drop this update — applySnapshot would no-op
                     // (it early-returns while isLoadingSession). Record it as
@@ -2417,6 +2446,7 @@ extension CollectionViewMessageListV3 {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     guard let self, let vm = self.vm else { return }
+                    self.scheduleFooterReconciliation()
                     let now = vm.streamingUIUpdatesSuspended
                     let was = self.lastSuspendedValue
                     self.lastSuspendedValue = now
@@ -2449,11 +2479,12 @@ extension CollectionViewMessageListV3 {
             //     missing trigger when suspend finally lifts. Only flush when the
             //     loop is no longer processing (a mid-stream resume is handled by
             //     the live subscriptions / settle path).
-            vm.onStreamingUIUpdatesResumed = { [weak self] in
-                guard let self else { return }
+            vm.onStreamingUIUpdatesResumed = { [weak self, weak vm] in
                 // Always main-thread: the chokepoint runs on the main actor, but
                 // hop defensively so flush never races a background caller.
                 let work = {
+                    guard let self, let vm, self.vm === vm else { return }
+                    self.scheduleFooterReconciliation()
                     // [T-ios-ui-frozen-on-tool-while-loop-runs] Flush regardless
                     // of isProcessing — see the objectWillChange sub above. A
                     // foreground-resume while the loop is still running must
@@ -2571,6 +2602,7 @@ extension CollectionViewMessageListV3 {
                         self.applySnapshot(messages: msgs, caller: "bind3-sessionLoad")
                     }
                     self.refreshAfterForegroundIfNeeded()
+                    self.scheduleFooterReconciliation()
                     // Sync reload: keep current scroll position, just update data
                 }
                 .store(in: &subscriptions)
@@ -2621,39 +2653,36 @@ extension CollectionViewMessageListV3 {
                         }
                     }
                 }
-                // [T-ios-footer-stale-height] Task end (isProcessing true→false)
-                // changes the footer's content (typing indicator out, usage
-                // capsule / completion actions in). The footer item identity is
-                // unchanged, so its old measured height would be carried into
-                // the next layout; invalidate + reconfigure every footer so it
-                // re-measures at the real content height. Runs once per turn
-                // end on the existing state-bridge path — never per token.
                 if wasProcessing, !state.0 {
                     if self.vm?.isProcessing == false, self.sendPosition != nil {
                         self.sendPosition = nil
                         self.enqueuePosition(.sendEnded)
                     }
-                    self.invalidateAndReconfigureFooterHeights(caller: "isProcessing-end")
                 }
             }
             .store(in: &subscriptions)
 
-            // 5b. [T-ios-resume-card-live] Session active-flag removal → bridge.
-            //     updateBridge samples SessionActivityTracker at write time; if
-            //     the tracker still listed this session as active, canResume was
-            //     written false and no later state change re-evaluates it. When
-            //     this VM's session leaves activeSessions, recompute once.
-            //     Additions are ignored — only removal changes the guard.
-            SessionActivityTracker.shared.$activeSessions
-                .removeDuplicates()
+            vm.$isProcessing.combineLatest(vm.$canResume)
+                .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
                 .receive(on: DispatchQueue.main)
-                .scan((previous: Set<String>(), current: Set<String>())) { state, sessions in
-                    (previous: state.current, current: sessions)
+                .sink { [weak self, weak vm] _ in
+                    guard let self, let vm, self.vm === vm else { return }
+                    self.markFooterTailDirty(vm)
                 }
-                .sink { [weak self] state in
-                    guard let self, let sid = self.vm?.sessionId else { return }
-                    guard state.previous.contains(sid), !state.current.contains(sid) else { return }
+                .store(in: &subscriptions)
+
+            let tracker = SessionActivityTracker.shared
+            tracker.$activeSessions.combineLatest(tracker.$draftAliases)
+                .receive(on: DispatchQueue.main)
+                .map { [weak vm] sessions, aliases in
+                    guard let sessionID = vm?.sessionId else { return false }
+                    return sessions.contains(sessionID) || aliases[sessionID].map(sessions.contains) == true
+                }
+                .removeDuplicates()
+                .sink { [weak self, weak vm] _ in
+                    guard let self, let vm, self.vm === vm else { return }
                     self.updateLastCellBridge()
+                    self.markFooterTailDirty(vm)
                 }
                 .store(in: &subscriptions)
 
@@ -2702,6 +2731,7 @@ extension CollectionViewMessageListV3 {
                     guard let self else { return }
                     self.needsForegroundRefresh = true
                     self.refreshAfterForegroundIfNeeded()
+                    self.scheduleFooterReconciliation()
                 }
                 .store(in: &subscriptions)
 
@@ -2725,15 +2755,6 @@ extension CollectionViewMessageListV3 {
 
                     snapshot.reconfigureItems([item])
                     ds.apply(snapshot, animatingDifferences: false)
-                }
-                .store(in: &subscriptions)
-
-            // Re-snapshot when toggleUsage inserts/removes a footer cell.
-            NotificationCenter.default.publisher(for: .messageListNeedsResnapshot)
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    guard let self, let vm = self.vm else { return }
-                    self.applySnapshot(messages: vm.messages)
                 }
                 .store(in: &subscriptions)
 
@@ -3238,6 +3259,155 @@ extension CollectionViewMessageListV3 {
             reconfigureVisibleCells()
         }
 
+        // MARK: - Live Assistant Footers
+
+        private weak var footerTail: ChatMessage?
+        private var footerTailSub: AnyCancellable?
+        private var pendingFooterIDs: Set<UUID> = []
+        private var footerReconciliationScheduled = false
+        private var appliedFooters: [UUID: AssistantFooterPresentation] = [:]
+
+        private func canResumeFooter(vm: AIChatViewModel, isLast: Bool) -> Bool {
+            guard isLast, vm.canResume, !vm.isProcessing else { return false }
+            return vm.sessionId.map { !SessionActivityTracker.shared.isActive($0) } ?? true
+        }
+
+        private func footerPresentation(for message: ChatMessage, vm: AIChatViewModel,
+                                        lastMessageID: UUID?) -> AssistantFooterPresentation {
+            let isLast = message.id == lastMessageID
+            return AssistantFooterPresentation(message, isActive: isLast && vm.isProcessing,
+                                               canResume: canResumeFooter(vm: vm, isLast: isLast),
+                                               showsUsage: cellBridges[message.id]?.showUsage == true)
+        }
+
+        private func syncFooterBridge(_ bridge: CellStateBridgeV2, message: ChatMessage,
+                                      vm: AIChatViewModel, lastMessageID: UUID?) {
+            let isLast = message.id == lastMessageID
+            if bridge.isActiveMessage != (isLast && vm.isProcessing)
+                || bridge.canResume != canResumeFooter(vm: vm, isLast: isLast) {
+                updateBridge(bridge, message: message, lastMessageID: lastMessageID)
+            }
+        }
+
+        private func bindFooterTail(_ vm: AIChatViewModel) {
+            let last = vm.messages.last(where: { !$0.isInternalBridge })
+            let tail = last?.role == .assistant ? last : nil
+            guard footerTail !== tail else { return }
+            if let previous = footerTail { markFooterDirty(previous.id) }
+            footerTailSub = nil
+            footerTail = tail
+            guard let tail else { return }
+
+            let contentEdges = tail.$blocks
+                .removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
+                .map { blocks -> AnyPublisher<Void, Never> in
+                    let edges = blocks.map { block in
+                        block.$kind.map { $0 == .text }.removeDuplicates()
+                            .map { isText -> AnyPublisher<Void, Never> in
+                                guard isText else { return Just(()).eraseToAnyPublisher() }
+                                return block.$content.map { FooterTextContent($0) }.removeDuplicates()
+                                    .map { _ in () }.eraseToAnyPublisher()
+                            }
+                            .switchToLatest()
+                            .dropFirst()
+                            .eraseToAnyPublisher()
+                    }
+                    return Publishers.MergeMany(edges).prepend(()).eraseToAnyPublisher()
+                }
+                .switchToLatest()
+                .eraseToAnyPublisher()
+            footerTailSub = Publishers.MergeMany([
+                contentEdges,
+                tail.$isAwaitingModelResponse.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+                tail.$isCompactedHistory.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+                tail.$error.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+                tail.$streamInterruptCount.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+                tail.$usage.map { $0 != nil }.removeDuplicates().map { _ in () }.eraseToAnyPublisher()
+            ])
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak vm, weak tail] _ in
+                guard let self, let vm, self.vm === vm, let tail, self.footerTail === tail else { return }
+                self.markFooterDirty(tail.id)
+            }
+            markFooterDirty(tail.id)
+        }
+
+        private func markFooterTailDirty(_ vm: AIChatViewModel) {
+            bindFooterTail(vm)
+            if let tail = footerTail { markFooterDirty(tail.id) }
+        }
+
+        private func markFooterDirty(_ messageID: UUID) {
+            pendingFooterIDs.insert(messageID)
+            scheduleFooterReconciliation()
+        }
+
+        private func canReconcileFooters(_ vm: AIChatViewModel) -> Bool {
+            UIApplication.shared.applicationState == .active && !needsForegroundRefresh
+                && !vm.isLoadingSession && !vm.transitionSuspended && !vm.streamingUIUpdatesSuspended
+                && !keyboardInFlight && viewportGeometryCommitDepth == 0 && !isFlushing
+                && viewController?.collectionView.window != nil
+        }
+
+        fileprivate func scheduleFooterReconciliation() {
+            guard !pendingFooterIDs.isEmpty, !footerReconciliationScheduled,
+                  let vm, canReconcileFooters(vm) else { return }
+            footerReconciliationScheduled = true
+            DispatchQueue.main.async { [weak self, weak vm] in
+                guard let self, let vm, self.vm === vm else { return }
+                self.footerReconciliationScheduled = false
+                guard self.canReconcileFooters(vm) else { return }
+                self.reconcileFooters(vm)
+            }
+        }
+
+        private func reconcileFooters(_ vm: AIChatViewModel) {
+            guard let ds = dataSource, let cv = viewController?.collectionView,
+                  let layout = viewController?.messageListLayout else { return }
+            bindFooterTail(vm)
+            let messageIDs = pendingFooterIDs
+            pendingFooterIDs.removeAll()
+            let lastMessageID = footerTail?.id
+            let candidates = vm.messages.filter {
+                messageIDs.contains($0.id) && $0.role == .assistant && !$0.isInternalBridge
+            }
+            var expected: [UUID: AssistantFooterPresentation] = [:]
+            for message in candidates {
+                if let bridge = cellBridges[message.id] {
+                    syncFooterBridge(bridge, message: message, vm: vm, lastMessageID: lastMessageID)
+                }
+                expected[message.id] = footerPresentation(for: message, vm: vm, lastMessageID: lastMessageID)
+            }
+
+            if messageIDs.contains(where: { messageID in
+                let exists = ds.indexPath(for: .assistantFooter(messageID)) != nil
+                return exists != (expected[messageID]?.needsItem == true)
+            }) {
+                applySnapshot(messages: vm.messages, caller: "footer-membership")
+            }
+
+            var itemsToReconfigure: [MessageListItem] = []
+            for (messageID, presentation) in expected where presentation.needsItem {
+                let item = MessageListItem.assistantFooter(messageID)
+                guard let indexPath = ds.indexPath(for: item), appliedFooters[messageID] != presentation else { continue }
+                appliedFooters[messageID] = presentation
+                layout.invalidateContentHeight(at: indexPath.item)
+                layout.setFooterHug(!presentation.prominent, at: indexPath.item)
+                layout.setEstimatedHeight(estimatedFooterHeight(presentation), at: indexPath.item)
+                (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
+                itemsToReconfigure.append(item)
+            }
+            guard !itemsToReconfigure.isEmpty else { return }
+            var snapshot = ds.snapshot()
+            snapshot.reconfigureItems(itemsToReconfigure)
+            ds.apply(snapshot, animatingDifferences: false)
+            layout.invalidateLayout()
+        }
+
+        private func estimatedFooterHeight(_ footer: AssistantFooterPresentation) -> CGFloat {
+            footer.prominent ? 48 : (footer.reservesActions ? 36 : 4)
+        }
+
         // MARK: - Streaming Subscription
 
         private func subscribeToLastMessage(_ message: ChatMessage?) {
@@ -3589,13 +3759,15 @@ extension CollectionViewMessageListV3 {
             let removedIds = Set(cellBridges.keys).subtracting(currentIds)
             for id in removedIds {
                 bridgeSheetSubs.removeValue(forKey: id)
-                bridgeFooterHeightSubs.removeValue(forKey: id)
-                bridgeCanResumeHeightSubs.removeValue(forKey: id)
+                footerUsageSubs.removeValue(forKey: id)
+                inlineSubAgentSubs.removeValue(forKey: id)
             }
             cellBridges = cellBridges.filter { currentIds.contains($0.key) }
 
             // Build items
             var newItems: [MessageListItem] = []
+            var newFooters: [UUID: AssistantFooterPresentation] = [:]
+            let lastMessageID = messages.last?.id
             for message in messages {
                 switch message.role {
                 case .user, .compactDivider, .systemInfo:
@@ -3628,28 +3800,10 @@ extension CollectionViewMessageListV3 {
                             newItems.append(contentsOf: segment.blocks.map { .assistantBlock(message.id, $0.id) })
                         }
                     }
-                    // Only emit a footer cell when it will actually render
-                    // content. A footer with zero visible content (no typing
-                    // indicator, no error, no resume, no usage) was leaving a
-                    // phantom 4pt gap above the next user message. When the
-                    // footer IS needed later (e.g. showUsage toggled by
-                    // double-tap), the toggle triggers a snapshot refresh
-                    // which re-evaluates this condition.
-                    let isLastMessage = message.id == messages.last?.id
-                    let hasVisibleContent = message.blocks.contains { block in
-                        if case .text = block.kind { return !block.content.isEmpty }
-                        return true
-                    }
-                    let showsTyping = isLastMessage && vm.isProcessing
-                        && (!hasVisibleContent || message.isAwaitingModelResponse)
-                    let showsResume = isLastMessage && vm.canResume && !vm.isProcessing
-                    let needsFooter = reservesCompletionActionSpace(message)
-                        || showsTyping || showsResume
-                        || message.error != nil
-                        || message.streamInterruptCount > 0
-                        || (cellBridges[message.id]?.showUsage == true)
-                    if needsFooter {
+                    let footer = footerPresentation(for: message, vm: vm, lastMessageID: lastMessageID)
+                    if footer.needsItem {
                         newItems.append(.assistantFooter(message.id))
+                        newFooters[message.id] = footer
                     }
                 }
             }
@@ -3680,20 +3834,17 @@ extension CollectionViewMessageListV3 {
                     // meta/usage row (or nothing); error banner / resume banner
                     // / typing indicator keep the full itemSpacing (user report
                     // 2026-07-21). Mirrors BridgedAssistantFooterV3's sections.
-                    var footerProminent = false
-                    var showsCompletionActions = false
-                    if case .assistantFooter(let footerMsgId) = item {
-                        let footerMsg = messageIndex[footerMsgId].flatMap {
-                            $0 < messages.count ? messages[$0] : nil
+                    if case .assistantFooter(let footerID) = item, let footer = newFooters[footerID] {
+                        let applied = appliedFooters[footerID]
+                        layout.setFooterHug(!(applied ?? footer).prominent, at: i)
+                        if applied == nil {
+                            layout.invalidateContentHeight(at: i)
+                        } else if layout.cachedHeight(at: i) == nil,
+                                  let memo = layout.measuredHeight(forKey: contentKey, width: cvWidth) {
+                            layout.setPrecalcHeight(memo, at: i)
                         }
-                        let isLastMsg = messages.last?.id == footerMsgId
-                        let hasError = footerMsg?.error != nil
-                        let showsResume = isLastMsg && !hasError
-                            && vm.canResume && !vm.isProcessing
-                        let isActive = isLastMsg && vm.isProcessing
-                        showsCompletionActions = footerMsg.map(reservesCompletionActionSpace) == true
-                        footerProminent = hasError || showsResume || isActive
-                        layout.setFooterHug(!footerProminent, at: i)
+                        layout.setEstimatedHeight(estimatedFooterHeight(applied ?? footer), at: i)
+                        continue
                     }
 
                     guard layout.cachedHeight(at: i) == nil else { continue }
@@ -3715,12 +3866,7 @@ extension CollectionViewMessageListV3 {
                         layout.setEstimatedHeight(28, at: i)
 
                     case .assistantFooter:
-                        // Prominent banners (error/resume/typing) measure
-                        // ~44-56pt; the quiet meta footer is ~0-4pt. Seeding
-                        // closer to the real height keeps the first-display
-                        // correction (and its scroll shift) small.
-                        // (footerProminent computed above, pre-guard.)
-                        layout.setEstimatedHeight(footerProminent ? 48 : (showsCompletionActions ? 36 : 4), at: i)
+                        break
 
                     case .assistantBlock(let msgId, let blockId):
                         guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { continue }
@@ -3939,6 +4085,8 @@ extension CollectionViewMessageListV3 {
             }
             let oldSet = Set(previousSnapshotIds)
             let inserted = newItems.filter { !oldSet.contains($0) }
+            appliedFooters = newFooters.merging(appliedFooters) { _, applied in applied }
+                .filter { newFooters[$0.key] != nil }
             enqueuePosition(newItems.count < oldCount ? .snapshotShrink : .snapshot, anchor: before)
             if case .inserting(let acceptedID?, _)? = sendPosition,
                inserted.contains(.wholeMessage(acceptedID)) {
@@ -4047,43 +4195,6 @@ extension CollectionViewMessageListV3 {
             attrStringHeightCache.removeAll()
             userBubbleHeightCache.removeAll()
             reconfigureVisibleCells()
-        }
-
-        /// [T-ios-footer-stale-height] A footer is estimated at 4pt
-        /// (`estimateItemHeight(.assistantFooter)`) and its measured height is
-        /// stored in the layout's index cache, which `updateCacheForSnapshot`
-        /// carries across snapshots by item identity. When the footer's
-        /// transient content changes (task end, usage capsule shown/hidden)
-        /// the item identity does not, so the stale 4pt measurement would be
-        /// reused and the new content would overlap the last text line. Drop
-        /// the cached height for the affected footer(s) and reconfigure the
-        /// cells — the same invalidateHeight + reconfigureItems sequence as
-        /// `blockContentFilledSignal` — so UIKit performs a real self-size.
-        /// `messageId == nil` covers every footer (task end); a concrete id
-        /// covers that message's footer only (usage-capsule visibility flips).
-        /// Called only from those low-frequency state edges, never from
-        /// streaming or scrolling paths.
-        private func invalidateAndReconfigureFooterHeights(messageId: UUID? = nil, caller: String) {
-            guard let ds = dataSource,
-                  let layout = viewController?.messageListLayout else { return }
-            var snapshot = ds.snapshot()
-            var footerIndices: [Int] = []
-            var footerItems: [MessageListItem] = []
-            for (index, item) in snapshot.itemIdentifiers.enumerated() {
-                guard case .assistantFooter(let footerMessageId) = item else { continue }
-                if let messageId, footerMessageId != messageId { continue }
-                footerIndices.append(index)
-                footerItems.append(item)
-            }
-            guard !footerItems.isEmpty else { return }
-            for index in footerIndices {
-                layout.invalidateHeight(at: index)
-            }
-            snapshot.reconfigureItems(footerItems)
-            ds.apply(snapshot, animatingDifferences: false)
-            AppLogger(category: "FooterHeight").info(
-                "[T-ios-footer-stale-height] caller=\(caller) messageId=\(messageId.map { String($0.uuidString.prefix(8)) } ?? "all") footers=\(footerItems.count) indices=\(footerIndices)"
-            )
         }
 
         /// Reconfigure all cells without clearing the height cache.

@@ -76,7 +76,8 @@ struct AssistantBlockView: View {
                 QuestionCardView(block: block)
                     .padding(.vertical, 4)
             } else if block.kind.isSubAgentTool {
-                ZeSubAgentInlineRow(block: block, detailBlock: $detailBlock)
+                ZeSubAgentInlineRow(block: block, cardRow: message.inlineSubAgentCards.row(for: block.id),
+                                    detailBlock: $detailBlock)
             } else {
                 ToolCapsuleView(
                     block: block,
@@ -157,37 +158,71 @@ struct AssistantBlockView: View {
 private struct ZeSubAgentInlineRow: View {
     @Environment(\.chatSearchMessageId) private var searchMessageId
     @ObservedObject var block: AssistantBlock
+    @ObservedObject var cardRow: ZeSubAgentInlineCardRow
     @ObservedObject private var coordinator = ZeSubAgentCoordinator.shared
     @Environment(\.chatSessionId) private var sessionId
     @Binding var detailBlock: AssistantBlock?
 
     var body: some View {
         let records = ZeSubAgentBlockLink.records(for: block, rootSessionId: sessionId, coordinator: coordinator)
-        let record = records.first(where: { $0.status.isActive }) ?? records.first
-        if let record {
-            ZeSubAgentCompactCard(record: record, open: { detailBlock = block },
-                                  stop: { coordinator.cancelRunGroup(id: record.id) },
-                                  resume: { _ = coordinator.resume(id: record.id) })
-                .environment(\.chatSearchBlockId, block.id)
-        } else {
-            Button { detailBlock = block } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: ZeSubAgentTheme.glyph)
-                        .font(.system(size: 13)).foregroundStyle(ZeSubAgentTheme.purple)
-                        .frame(width: 34, height: 34)
-                        .background(ZeSubAgentTheme.purple.opacity(0.15), in: Circle())
-                    VStack(alignment: .leading, spacing: 5) {
-                        SearchHighlightText(block.toolDescription, blockId: block.id, field: .title, messageId: searchMessageId).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        Text(fallbackStatus).font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 12)
-                .background(ZeSubAgentTheme.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(ZeSubAgentTheme.purple.opacity(0.35), lineWidth: 0.8))
-            }.buttonStyle(.plain)
+        let primary = records.first(where: { $0.status.isActive }) ?? records.first
+        let cards = records.filter { cardRow.recordIDs.contains($0.id) }
+        VStack(alignment: .leading, spacing: 8) {
+            if cards.isEmpty || !cards.contains(where: { $0.id == primary?.id }) {
+                operationSummary(primary)
+            }
+            ForEach(cards) { record in
+                ZeSubAgentCompactCard(record: record, open: { detailBlock = block },
+                                      stop: { coordinator.cancelRunGroup(id: record.id) },
+                                      resume: { _ = coordinator.resume(id: record.id) })
+                    .environment(\.chatSearchMessageId, record.id == primary?.id ? searchMessageId : nil)
+                    .environment(\.chatSearchBlockId, block.id)
+            }
         }
+    }
+
+    private func operationSummary(_ record: ZeSubAgentRecord?) -> some View {
+        Button { detailBlock = block } label: {
+            HStack(spacing: 8) {
+                Image(systemName: ZeSubAgentTheme.glyph)
+                    .font(.system(size: 12)).foregroundStyle(ZeSubAgentTheme.purple)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        if let record {
+                            Text(block.toolDescription).fontWeight(.medium).fixedSize()
+                            SearchHighlightText(record.shortPrompt, blockId: block.id, field: .title,
+                                                messageId: searchMessageId).lineLimit(1)
+                        } else {
+                            SearchHighlightText(block.toolDescription, blockId: block.id, field: .title,
+                                                messageId: searchMessageId)
+                                .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    HStack(spacing: 6) {
+                        Text(fallbackStatus).fixedSize()
+                        if let record, let activity = searchActivity(record) {
+                            SearchHighlightText(activity, blockId: block.id, field: .activity,
+                                                messageId: searchMessageId).lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func searchActivity(_ record: ZeSubAgentRecord) -> String? {
+        if record.status.isActive {
+            return record.steps?.last(where: { $0.state == "running" })?.title
+        }
+        return ZeSubAgentPresentation.status(record)
     }
 
     private var fallbackStatus: String {

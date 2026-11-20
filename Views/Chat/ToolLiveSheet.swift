@@ -18,6 +18,25 @@ import WebKit
 /// Persisted tool arguments/results are the identity of a child card. Never
 /// substitute an unrelated running child when a block has no resolvable ID.
 enum ZeSubAgentBlockLink {
+    struct Reference {
+        let blockID: UUID
+        let action: String
+        let recordIDs: [String]
+    }
+
+    static func inlineOwners(_ references: [Reference]) -> [UUID: [String]] {
+        var claimed: Set<String> = []
+        var owners: [UUID: [String]] = [:]
+        for spawning in [true, false] {
+            for reference in references where (reference.action == "spawn_agent") == spawning {
+                for id in reference.recordIDs where claimed.insert(id).inserted {
+                    owners[reference.blockID, default: []].append(id)
+                }
+            }
+        }
+        return owners
+    }
+
     static func ids(action: String, input: String?, output: String) -> [String] {
         func object(_ text: String?) -> Any? {
             guard let data = text?.data(using: .utf8) else { return nil }
@@ -62,6 +81,78 @@ extension ZeSubAgentBlockLink {
             // environment; its own descendants still belong to the root.
             return coordinator.record(id: id)
         }
+    }
+}
+
+@MainActor
+final class ZeSubAgentInlineCardRow: ObservableObject {
+    @Published fileprivate(set) var recordIDs: [String]
+
+    fileprivate init(recordIDs: [String]) {
+        self.recordIDs = recordIDs
+    }
+}
+
+@MainActor
+final class ZeSubAgentInlineCards {
+    let changedRows = PassthroughSubject<Set<UUID>, Never>()
+    private var owners: [UUID: [String]]
+    private var rows: [UUID: ZeSubAgentInlineCardRow] = [:]
+    private var observation: AnyCancellable?
+
+    init(message: ChatMessage) {
+        owners = Self.owners(for: message.blocks)
+        observation = message.$blocks
+            .removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
+            .map { blocks -> AnyPublisher<Void, Never> in
+                let links = blocks.filter { $0.kind.isSubAgentTool }.map { block in
+                    block.$toolInputArgs.removeDuplicates().dropFirst().map { _ in () }
+                        .merge(with: block.$content.removeDuplicates().dropFirst().map { _ in () })
+                        .eraseToAnyPublisher()
+                }
+                return Publishers.MergeMany(links).prepend(()).eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak message] _ in
+                guard let self, let message else { return }
+                self.update(message.blocks)
+            }
+    }
+
+    func row(for blockID: UUID) -> ZeSubAgentInlineCardRow {
+        if let row = rows[blockID] { return row }
+        let row = ZeSubAgentInlineCardRow(recordIDs: owners[blockID] ?? [])
+        rows[blockID] = row
+        return row
+    }
+
+    private static func owners(for blocks: [AssistantBlock]) -> [UUID: [String]] {
+        ZeSubAgentBlockLink.inlineOwners(blocks.compactMap { block in
+            guard case .memoryTool(let action) = block.kind, block.kind.isSubAgentTool else { return nil }
+            let ids = ZeSubAgentBlockLink.ids(action: action, input: block.toolInputArgs, output: block.content)
+            return ZeSubAgentBlockLink.Reference(blockID: block.id, action: action, recordIDs: ids)
+        })
+    }
+
+    private func update(_ blocks: [AssistantBlock]) {
+        let next = Self.owners(for: blocks)
+        let changed = Set(owners.keys).union(next.keys).filter { owners[$0] != next[$0] }
+        owners = next
+        for blockID in changed {
+            let nextIDs = next[blockID] ?? []
+            if let row = rows[blockID] {
+                let retained = row.recordIDs.filter { nextIDs.contains($0) }
+                if row.recordIDs != retained { row.recordIDs = retained }
+            }
+        }
+        for blockID in changed {
+            let nextIDs = next[blockID] ?? []
+            if let row = rows[blockID], row.recordIDs != nextIDs { row.recordIDs = nextIDs }
+        }
+        let liveIDs = Set(blocks.map(\.id))
+        rows = rows.filter { liveIDs.contains($0.key) }
+        if !changed.isEmpty { changedRows.send(changed) }
     }
 }
 
