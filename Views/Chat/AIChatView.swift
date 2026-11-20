@@ -337,6 +337,7 @@ struct AIChatView: View {
     /// row cannot flip the decision back and oscillate.
     @State private var composerRowWidth: CGFloat = 0
     @State private var inputBarHeight: CGFloat = 0
+    @State private var listGeometryContext = ChatListGeometryContext()
     @State private var inputBarHeightDebounce: Task<Void, Never>?
     /// [T-keyboard-hang] Non-zero while the composer is morphing between its
     /// compact and expanded chrome (keyboard show/hide or first content).
@@ -583,7 +584,14 @@ struct AIChatView: View {
                 // above scrolling content and below the header controls.
                 // Do not also mask the nested content host.
                 fadeCompleteY: 0,
-                usesWindowHeaderFade: false
+                usesWindowHeaderFade: false,
+                geometryContext: listGeometryContext,
+                geometryConfiguration: .init(
+                    fallbackInputHeight: inputBarHeight,
+                    attachmentHeight: standaloneAttachmentTrayHeight,
+                    floatingHeight: hasFloatingPreview ? max(floatingBarHeight, 80) : 0,
+                    topOverlayInset: max(0, headerOverflowInset - 10),
+                    usesLiveTextGeometry: !voiceInputActive)
             )
             // UIKit owns the keyboard edge. A second SwiftUI avoidance pass
             // would animate the entire host before its constraints can follow.
@@ -2705,7 +2713,8 @@ struct AIChatView: View {
                 // line sits just below the status row, ~30pt lower than
                 // the -40 landing, so the trim is -10. The voice panel
                 // keeps the untrimmed value (it must clear the status row).
-                topOverlayInset: max(0, headerOverflowInset - 10)
+                topOverlayInset: max(0, headerOverflowInset - 10),
+                geometryContext: listGeometryContext
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
@@ -3886,6 +3895,7 @@ struct AIChatView: View {
             // gutter was the visible blank band above the input.
             .padding(.top, hasPendingAttachmentPreviews ? 0 : 8)
             .padding(.bottom, 8)
+            .background(ChatInputGeometryMarker(geometry: listGeometryContext))
             // [T-ios-geometry-observer-crash] onGeometryChange replaces the
             // GeometryReader scaffold (async-renderer SIGTRAP — see the
             // floating-bar site). Fires with the initial value too, so the

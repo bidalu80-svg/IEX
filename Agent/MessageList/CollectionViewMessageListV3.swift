@@ -9,6 +9,15 @@ extension Notification.Name {
     static let messageListNeedsResnapshot = Notification.Name("messageListNeedsResnapshot")
 }
 
+/// Shared by snapshot retention, rendering and footer estimates.
+private func reservesCompletionActionSpace(_ message: ChatMessage) -> Bool {
+    message.role == .assistant && !message.isCompactedHistory && message.error == nil
+        && message.blocks.contains { block in
+            guard case .text = block.kind else { return false }
+            return !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+}
+
 // MARK: - CollectionViewMessageListV3
 
 /// V3 message list: builds on V2's cell-per-block model but simplifies
@@ -44,10 +53,12 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     var scrollMemoryKey: String? = nil
     /// Height of the floating chat header below the native navigation bar.
     var topOverlayInset: CGFloat = 0
+    var geometryContext: ChatListGeometryContext? = nil
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
         context.coordinator.attach(to: vc, vm: vm)
+        context.coordinator.bindGeometry(geometryContext)
         // Drops are handled exclusively by the SwiftUI `.onDrop` on the chat
         // root view. Previously a UIDropInteraction here intercepted drops on
         // top of the collection view, which (a) suppressed SwiftUI's
@@ -55,6 +66,10 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         // SwiftUI's drop session state half-tracked, sticking the highlight
         // on the second drag. See T-filedrop GH#12.
         return vc
+    }
+
+    static func dismantleUIViewController(_ vc: MessageListViewController, coordinator: Coordinator) {
+        coordinator.detachGeometry()
     }
 
     func updateUIViewController(_ vc: MessageListViewController, context: Context) {
@@ -88,54 +103,12 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         coord.maxContentWidth = maxContentWidth
         coord.updateToolGroupingPreference(collapseConsecutiveToolCalls)
 
-        // Bottom inset base = input bar + tool bar overlay height + breathing room.
-        // applySubViewportCompensation is the only writer of cv.contentInset.bottom;
-        // it reads coord.baseBottomInset and adds overflow on top when needed.
-        //
-        // [T-bottom-occluded 0a6d3c92] introduced +16 to fix a perceived
-        // clip of the last bubble's bottom text. That report turned out
-        // to be the cell-height bug fixed in [ClipFix 2026-05-16]
-        // (boundingRect / mtv missing textContainerInset). With cell
-        // heights now accurate the +16 breathing room becomes pure
-        // dead space — observed as ~100pt gap between the last bubble
-        // and the composer top. Restored to the historical +8.
-        let bottomPad: CGFloat = inputBarHeight + floatingBarHeight + 8
-        let baseChanged = abs(coord.baseBottomInset - bottomPad) > 0.5
-        if baseChanged {
-            let cv = vc.collectionView!
-            let wasSmaller = coord.baseBottomInset < bottomPad
-            // Capture follow-intent BEFORE mutating the inset: enlarging the
-            // inset enlarges maxOffset, so a user pinned at the bottom would
-            // measure as >20pt away from it and fail the isNearBottom() guard.
-            let wasNearBottomBefore = coord.isNearBottom()
-            coord.baseBottomInset = bottomPad
-            // Apply the base immediately so contentInset.bottom reflects the
-            // new base before applySubViewportCompensation runs (which may
-            // further inflate it). Compensation will overwrite if needed.
-            cv.contentInset.bottom = bottomPad
-            if wasSmaller && (coord.scrollMode == .autoScrolling || wasNearBottomBefore) {
-                coord.scrollMode = .autoScrolling
-                coord.scrollToBottomNow(animated: false)
-            }
+        coord.bindGeometry(geometryContext)
+        if geometryContext == nil {
+            coord.fallbackBottomInset = inputBarHeight + floatingBarHeight + 8
+            coord.fallbackTopOverlayInset = max(0, topOverlayInset)
         }
-
-        // [T-first-msg-top-gap 2026-07-18] Apply the top inset. User report
-        // (iOS 16 screenshot): the first user bubble sat flush against the
-        // opaque navbar — common to ALL of iOS 16-18, because
-        // `baseContentInsetTop` (designed as "8pt manual padding on older
-        // iOS", see its doc) was defined but never written into
-        // cv.contentInset.top anywhere; the legacy nav layout doesn't extend
-        // content behind the bar, so the collection view's own top edge IS
-        // the navbar bottom and the first row rendered with zero breathing
-        // room. iOS 26 returns 0 here (liquid-glass + .automatic adjustment
-        // already position content), so this is a no-op there.
-        let cvTop = vc.collectionView!
-        coord.topOverlayInset = max(0, topOverlayInset)
-        if abs(cvTop.contentInset.top - coord.baseContentInsetTop) > 0.5 {
-            cvTop.contentInset.top = coord.baseContentInsetTop
-        }
-
-        coord.applySubViewportCompensation(caller: "updateUIVC")
+        coord.applyViewportGeometry()
         coord.refreshAfterForegroundIfNeeded()
 
         // [T-message-list-empty-on-foreground] Backstop: if a snapshot was
@@ -464,7 +437,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
         let showError = message.error != nil
         let showResume = bridge.canResume && message.error == nil
         let showUsageRow = message.streamInterruptCount > 0 || bridge.showUsage
-        return showTyping || showError || showResume || showUsageRow || bridge.showsCompletionActions
+        return showTyping || showError || showResume || showUsageRow || reservesCompletionActionSpace(message)
     }
 
     private var replyText: String {
@@ -507,8 +480,11 @@ fileprivate struct BridgedAssistantFooterV3: View {
                 }
             }
 
-            if bridge.showsCompletionActions {
+            if reservesCompletionActionSpace(message) {
                 completionActionBar
+                    .opacity(bridge.showsCompletionActions ? 1 : 0)
+                    .allowsHitTesting(bridge.showsCompletionActions)
+                    .accessibilityHidden(!bridge.showsCompletionActions)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -668,15 +644,12 @@ fileprivate struct BridgedAssistantFooterV3: View {
         .padding(.top, 1)
     }
 
-    /// Each action enters from the leading edge with a short stagger. Applying
-    /// the animation to the individual transition keeps the row's layout
-    /// stable while making the left-to-right reveal feel continuous.
+    /// Visibility may fade, but the real action row remains in the layout.
     private func completionActionEntry<Content: View>(
         index: Int,
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
-            .transition(.opacity.combined(with: .move(edge: .leading)))
             .animation(
                 .easeOut(duration: 0.28).delay(Double(index) * 0.07),
                 value: bridge.showsCompletionActions
@@ -1033,6 +1006,9 @@ extension CollectionViewMessageListV3 {
         // === Scroll mode (replaces V2's 6+ mechanisms) ===
         var scrollMode: ScrollMode = .autoScrolling {
             didSet {
+                // Explicit browsing (including search/restoration/disclosure)
+                // supersedes the temporary session-load follow intent.
+                if scrollMode == .userBrowsing { clampAfterSessionLoad = false }
                 // Mirror to the layout so its invalidationContext can glue the
                 // streaming cell's bottom to the viewport while pinned (smooth
                 // grow) and skip that adjustment while the user browses.
@@ -1042,6 +1018,91 @@ extension CollectionViewMessageListV3 {
         }
         /// True during settleAfterInteraction flush — suppresses contentSize KVO offset changes.
         private var isFlushing = false
+        private var geometryContext: ChatListGeometryContext?
+        private var geometryMountGeneration: UInt?
+        private var viewportGeometryCommitDepth = 0
+        private var pendingViewportPosition = false
+        var fallbackBottomInset: CGFloat = 0
+        var fallbackTopOverlayInset: CGFloat = 0
+
+        func bindGeometry(_ context: ChatListGeometryContext?) {
+            guard geometryContext !== context || geometryMountGeneration != context?.mountGeneration else { return }
+            detachGeometry()
+            geometryContext = context
+            geometryMountGeneration = context?.mountGeneration
+            guard let cv = viewController?.collectionView else { return }
+            context?.registerList(cv, reconcile: { [weak self] in self?.applyViewportGeometry() },
+                                  commit: { [weak self] changes in
+                if let self { self.performViewportGeometryCommit(changes) } else { changes() }
+            })
+        }
+
+        func detachGeometry() {
+            if let cv = viewController?.collectionView { geometryContext?.unregisterList(cv) }
+            geometryContext = nil
+            geometryMountGeneration = nil
+            pendingViewportPosition = false
+            pendingScrollWork?.cancel()
+            pendingScrollWork = nil
+        }
+
+        func performViewportGeometryCommit(_ changes: () -> Void) {
+            viewportGeometryCommitDepth += 1
+            viewController?.messageListLayout?.viewportGeometryCommitDepth += 1
+            (viewController?.collectionView as? NoAnimationCollectionView)?.viewportGeometryCommitDepth += 1
+            pendingViewportPosition = true
+            defer {
+                viewportGeometryCommitDepth -= 1
+                viewController?.messageListLayout?.viewportGeometryCommitDepth -= 1
+                (viewController?.collectionView as? NoAnimationCollectionView)?.viewportGeometryCommitDepth -= 1
+                if viewportGeometryCommitDepth == 0, pendingViewportPosition {
+                    pendingViewportPosition = false
+                    applySubViewportCompensation(caller: "viewport-commit")
+                    syncScrollFlags()
+                }
+            }
+            changes()
+        }
+
+        #if DEBUG
+        func sessionLoadClampEvidence() -> (pending: Bool, deadline: Date) {
+            // Read raw state, without consuming/expiring it before the test.
+            (clampAfterSessionLoad, clampDeadline)
+        }
+
+        func completionActionEvidence(for messageID: UUID) -> (reservesSpace: Bool, visible: Bool, hasBody: Bool, footerHeight: CGFloat?) {
+            guard let message = vm?.messages.first(where: { $0.id == messageID }),
+                  let source = dataSource, let cv = viewController?.collectionView else {
+                return (false, false, false, nil)
+            }
+            let items = source.snapshot().itemIdentifiers
+            let hasBody = items.contains { item in
+                if case .assistantBlock(let id, _) = item { return id == messageID }
+                return false
+            }
+            let footerHeight = source.indexPath(for: .assistantFooter(messageID))
+                .flatMap { cv.layoutAttributesForItem(at: $0)?.frame.height }
+            return (reservesCompletionActionSpace(message), cellBridges[messageID]?.showsCompletionActions == true,
+                    hasBody, footerHeight)
+        }
+
+        func sendLayoutGeometryEvidence() -> [String: Any] {
+            let configuration = geometryContext?.configuration
+            return ["effectiveInputHeight": geometryContext?.effectiveInputHeight ?? 0,
+                    "reservedInputHeight": baseBottomInset - (configuration?.attachmentHeight ?? 0)
+                        - (configuration?.floatingHeight ?? 0) - 8,
+                    "baseBottomInset": baseBottomInset, "commitDepth": viewportGeometryCommitDepth]
+        }
+        #endif
+
+        func applyViewportGeometry() {
+            guard let cv = viewController?.collectionView else { return }
+            let bottom = geometryContext?.baseBottomInset ?? fallbackBottomInset
+            let top = geometryContext?.configuration.topOverlayInset ?? fallbackTopOverlayInset
+            guard abs(baseBottomInset - bottom) > 0.5 || abs(topOverlayInset - top) > 0.5
+                || abs(cv.contentInset.top - baseContentInsetTop) > 0.5 else { return }
+            applySubViewportCompensation(caller: "viewport-geometry")
+        }
 
         // === [T-foldable-scroll] Reader's place, across a pane-layout change ===
         /// Conversation this list belongs to; keys the saved scroll anchor.
@@ -1133,8 +1194,18 @@ extension CollectionViewMessageListV3 {
         // === Session Load ===
         /// When true, contentSize KVO keeps pinning to bottom until layout stabilizes.
         private var clampAfterSessionLoad: Bool = false
-        /// Hard deadline to stop clamping (2s after session load).
+        /// Hard deadline to stop clamping (8s after session load).
         private var clampDeadline: Date = .distantPast
+
+        /// Every consumer checks expiry, including geometry-only commits that
+        /// never receive contentSize KVO. A load pin cannot override browsing.
+        private func consumeSessionLoadClamp() -> Bool {
+            if clampAfterSessionLoad,
+               scrollMode != .autoScrolling || Date() >= clampDeadline {
+                clampAfterSessionLoad = false
+            }
+            return clampAfterSessionLoad
+        }
 
         // === Sheet Presenters ===
         private let sheetPresenter = ToolSheetPresenter()
@@ -1243,10 +1314,14 @@ extension CollectionViewMessageListV3 {
             (collectionView as? NoAnimationCollectionView)?.shouldFollowViewportBottom = { [weak self] in
                 self?.scrollMode == .autoScrolling
             }
+            (collectionView as? NoAnimationCollectionView)?.prepareViewportGeometry = { [weak self] in
+                self?.applySubViewportCompensation(caller: "viewport-anchor-prepare", position: false)
+            }
             (collectionView as? NoAnimationCollectionView)?.viewportBottomInset = { [weak self, weak collectionView] in
                 // Compensation can inflate contentInset for short content. It
                 // is scrollable space, not the desired visual bottom anchor.
-                (self?.baseBottomInset ?? 0) + (collectionView?.safeAreaInsets.bottom ?? 0)
+                self?.applySubViewportCompensation(caller: "viewport-anchor", position: false)
+                return (self?.baseBottomInset ?? 0) + (collectionView?.safeAreaInsets.bottom ?? 0)
             }
             // Disable UIKit's main-thread cell prefetch. Profile (Time Profiler)
             // showed -[UICollectionView _prefetchItemsForPrefetchingContext:]
@@ -1316,72 +1391,20 @@ extension CollectionViewMessageListV3 {
             // ContentSize KVO — pin to bottom during autoScrolling
             contentSizeObservation = collectionView.observe(\.contentSize, options: [.new, .old]) {
                 [weak self] cv, change in
-                guard let self, !self.isFlushing else { return }
+                guard let self else { return }
+                guard !self.isFlushing || self.viewportGeometryCommitDepth > 0 else { return }
                 let newH = change.newValue?.height ?? 0
                 let oldH = change.oldValue?.height ?? 0
                 guard newH != oldH else { return }
                 let delta = newH - oldH
 
-                // Session load stability: keep pinning to bottom until layout settles.
-                // Use time-based deadline only — fire-count was too fragile on iPad
-                // where width changes (sidebar) and async image loads produce many
-                // contentSize KVO fires before the layout truly stabilizes.
-                if self.clampAfterSessionLoad {
-                    let maxOff = max(0, newH - cv.bounds.height + cv.adjustedContentInset.bottom)
-                    if maxOff > 0 { cv.contentOffset.y = maxOff }
-                    if Date() >= self.clampDeadline {
-                        self.clampAfterSessionLoad = false
-                    }
+                if self.viewportGeometryCommitDepth > 0 {
+                    self.pendingViewportPosition = true
                     self.vm?.contentSizeDeltaSignal.send(delta)
                     return
                 }
-
-                if delta > 0 && self.scrollMode == .autoScrolling {
-                    // Pin to bottom — but if an animated scroll is in flight, directly
-                    // mutating contentOffset corrupts UIKit's animation interpolation.
-                    // Defer to a coalesced scroll that fires after the animation ends.
-                    if self.isAnimatingScrollToBottom {
-                        self.scheduleCoalescedScroll()
-                    } else {
-                        let maxOff = newH - cv.bounds.height + cv.adjustedContentInset.bottom
-                        if maxOff > 0 {
-                            // [DIAG-3] If tracking/decel, auto-scroll mode is fighting user gesture
-                            if cv.isTracking || cv.isDecelerating {
-                                AppLogger(category: "StreamDiag").info("[KVO] ⚠️ PIN-WHILE-SCROLLING contentSize grew +\(String(format: "%.0f", delta)) offset \(String(format: "%.0f", cv.contentOffset.y))→\(String(format: "%.0f", maxOff)) tracking=\(cv.isTracking) decel=\(cv.isDecelerating) — MODE SHOULD BE userBrowsing")
-                            }
-                            cv.contentOffset.y = max(cv.contentOffset.y, maxOff)
-                        }
-                    }
-                } else if delta > 0 && self.scrollMode == .userBrowsing {
-                    // [DIAG-3b] Content grew while user is browsing — no pin.
-                    // If a cell ABOVE viewport grew, all cells below shift down.
-                    AppLogger(category: "StreamDiag").info("[KVO] contentSize grew +\(String(format: "%.0f", delta)) IN BROWSE MODE — no pin. offset=\(String(format: "%.0f", cv.contentOffset.y)) tracking=\(cv.isTracking) decel=\(cv.isDecelerating)")
-                } else if delta < 0 && self.scrollMode == .autoScrolling {
-                    // Content shrank while auto-scrolling — clamp to prevent overscroll.
-                    // Skip during deceleration: settleAfterInteraction will handle it.
-                    let maxOff = max(0, newH - cv.bounds.height + cv.adjustedContentInset.bottom)
-                    if cv.contentOffset.y > maxOff && !cv.isDecelerating {
-                        cv.contentOffset.y = maxOff
-                    }
-                } else if delta < 0 && self.scrollMode != .autoScrolling {
-                    // Content shrank while user is browsing — clamp to prevent overscroll.
-                    let maxOff = max(0, newH - cv.bounds.height + cv.adjustedContentInset.bottom)
-                    if cv.contentOffset.y > maxOff && !cv.isTracking && !cv.isDecelerating {
-                        cv.contentOffset.y = maxOff
-                    }
-                }
-                // After settle, deferred heights are flushed and UIKit re-layouts
-                // with real heights. If contentSize shrinks, the current offset may
-                // exceed the new max — UIKit will hard-clamp it, causing a visible jump.
-                // Pre-emptively clamp with performWithoutAnimation to avoid the jitter.
-                if self.settleJustFinished && delta < -1 && !cv.isTracking && !cv.isDecelerating {
-                    let maxOff = max(0, newH - cv.bounds.height + cv.adjustedContentInset.bottom)
-                    if cv.contentOffset.y > maxOff {
-                        AppLogger(category: "Settle").debug("[Settle] POST-SETTLE SHRINK clamp offset \(String(format: "%.1f→%.1f", cv.contentOffset.y, maxOff)) contentSize \(String(format: "%.1f→%.1f", oldH, newH))")
-                        UIView.performWithoutAnimation {
-                            cv.contentOffset.y = maxOff
-                        }
-                    }
+                if self.isAnimatingScrollToBottom {
+                    self.scheduleCoalescedScroll()
                 }
                 // Forward contentSize changes to downstream observers.
                 self.vm?.contentSizeDeltaSignal.send(delta)
@@ -1682,7 +1705,10 @@ extension CollectionViewMessageListV3 {
         private var bridgeCanResumeHeightSubs: [UUID: AnyCancellable] = [:]
 
         private func getOrCreateBridge(for message: ChatMessage, in messages: [ChatMessage]) -> CellStateBridgeV2 {
-            if let existing = cellBridges[message.id] { return existing }
+            if let existing = cellBridges[message.id] {
+                refreshCompletionActions(existing, message: message)
+                return existing
+            }
             let bridge = CellStateBridgeV2()
             cellBridges[message.id] = bridge
             updateBridge(bridge, message: message, in: messages)
@@ -1754,11 +1780,7 @@ extension CollectionViewMessageListV3 {
             bridge.toolSnapshots = vm.toolSnapshots
             bridge.autoRetryAttempt = isLast ? vm.autoRetryAttempt : 0
             bridge.autoRetryCountdown = isLast ? vm.autoRetryCountdown : 0
-            bridge.showsCompletionActions = message.role == .assistant
-                && !message.isCompactedHistory
-                && !vm.isProcessing
-                && message.error == nil
-                && Self.hasReplyText(message)
+            refreshCompletionActions(bridge, message: message)
             // [T-ios-session-status-mismatch] Defense-in-depth: even if vm.canResume
             // is somehow stale-true and vm.isProcessing hasn't flipped yet, do NOT
             // show the "Interrupted — tap Resume" banner while SessionActivityTracker
@@ -1906,11 +1928,10 @@ extension CollectionViewMessageListV3 {
             return quote.text
         }
 
-        private static func hasReplyText(_ message: ChatMessage) -> Bool {
-            message.blocks.contains { block in
-                guard case .text = block.kind else { return false }
-                return !block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
+        private func refreshCompletionActions(_ bridge: CellStateBridgeV2, message: ChatMessage,
+                                              processing: Bool? = nil) {
+            let visible = reservesCompletionActionSpace(message) && !(processing ?? (vm?.isProcessing == true))
+            if bridge.showsCompletionActions != visible { bridge.showsCompletionActions = visible }
         }
 
         private func updateLastCellBridge() {
@@ -1952,6 +1973,9 @@ extension CollectionViewMessageListV3 {
         func rebindViewModelIfNeeded(_ newVM: AIChatViewModel) {
             if let current = vm, current === newVM { return }
             let hadOld = vm != nil
+            pendingViewportPosition = false
+            pendingScrollWork?.cancel()
+            pendingScrollWork = nil
             #if DEBUG
             ScrollMetricsRecorder.shared.record(
                 kind: "rebind", a: hadOld ? 1 : 0,
@@ -2105,6 +2129,9 @@ extension CollectionViewMessageListV3 {
                     self.pendingScrollWork?.cancel()
                     self.pendingScrollWork = nil
                     self.isAnimatingScrollToBottom = false
+                    self.clampAfterSessionLoad = false
+                    self.clampDeadline = .distantPast
+                    self.pendingViewportPosition = false
                     self.vm?.setStreamingUIUpdatesSuspended(false)
                     self.scrollMode = .autoScrolling
                 }
@@ -2223,6 +2250,13 @@ extension CollectionViewMessageListV3 {
                 let wasProcessing = self.lastProcessingValue
                 self.lastProcessingValue = state.0
                 self.updateLastCellBridge()
+                if wasProcessing != state.0, let messages = self.vm?.messages {
+                    for message in messages where message.role == .assistant {
+                        if let bridge = self.cellBridges[message.id] {
+                            self.refreshCompletionActions(bridge, message: message, processing: state.0)
+                        }
+                    }
+                }
                 // [T-ios-footer-stale-height] Task end (isProcessing true→false)
                 // changes the footer's content (typing indicator out, usage
                 // capsule / completion actions in). The footer item identity is
@@ -2951,6 +2985,10 @@ extension CollectionViewMessageListV3 {
         /// Uses a short 80ms delay — just enough to batch multiple near-simultaneous
         /// signals without noticeable visual lag during streaming.
         private func scheduleCoalescedScroll() {
+            if viewportGeometryCommitDepth > 0 {
+                pendingViewportPosition = true
+                return
+            }
             pendingScrollWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
@@ -3056,7 +3094,7 @@ extension CollectionViewMessageListV3 {
                             // window, re-pin to bottom — the corrected
                             // heights shift the content offset and otherwise
                             // leave the user looking at the wrong region.
-                            if self.clampAfterSessionLoad {
+                            if self.consumeSessionLoadClamp() {
                                 self.scrollToLastItem()
                             }
                         }
@@ -3194,13 +3232,16 @@ extension CollectionViewMessageListV3 {
                     // footer IS needed later (e.g. showUsage toggled by
                     // double-tap), the toggle triggers a snapshot refresh
                     // which re-evaluates this condition.
-                    let isLastAssistant = (message.id == messages.last(where: { $0.role == .assistant })?.id)
-                    let hasCompletionActions = !vm.isProcessing
-                        && !message.isCompactedHistory
-                        && message.error == nil
-                        && Self.hasReplyText(message)
-                    let needsFooter = isLastAssistant
-                        || hasCompletionActions
+                    let isLastMessage = message.id == messages.last?.id
+                    let hasVisibleContent = message.blocks.contains { block in
+                        if case .text = block.kind { return !block.content.isEmpty }
+                        return true
+                    }
+                    let showsTyping = isLastMessage && vm.isProcessing
+                        && (!hasVisibleContent || message.isAwaitingModelResponse)
+                    let showsResume = isLastMessage && vm.canResume && !vm.isProcessing
+                    let needsFooter = reservesCompletionActionSpace(message)
+                        || showsTyping || showsResume
                         || message.error != nil
                         || message.streamInterruptCount > 0
                         || (cellBridges[message.id]?.showUsage == true)
@@ -3247,10 +3288,7 @@ extension CollectionViewMessageListV3 {
                         let showsResume = isLastMsg && !hasError
                             && vm.canResume && !vm.isProcessing
                         let isActive = isLastMsg && vm.isProcessing
-                        showsCompletionActions = !vm.isProcessing
-                            && !(footerMsg?.isCompactedHistory ?? true)
-                            && !hasError
-                            && footerMsg.map(Self.hasReplyText) == true
+                        showsCompletionActions = footerMsg.map(reservesCompletionActionSpace) == true
                         footerProminent = hasError || showsResume || isActive
                         layout.setFooterHug(!footerProminent, at: i)
                     }
@@ -3571,32 +3609,8 @@ extension CollectionViewMessageListV3 {
                 cv.layoutIfNeeded()
                 snapshotLayout?.suppressContentOffsetAdjustment = false
                 isFlushing = false
-                let rawMaxOff = cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom
-                let maxOff = max(0, rawMaxOff)
-                if newItems.count < oldCount && cv.contentOffset.y > maxOff {
-                    cv.setContentOffset(CGPoint(x: 0, y: maxOff), animated: false)
-                    // After shrink, content may fall into the sub-viewport
-                    // overflow region — re-evaluate compensation so any
-                    // previously-inflated top inset relaxes back to base.
-                    // Shrink (delete/clear) — contentSize dropped, any inset
-                    // accumulated from streaming-time GROW is no longer needed
-                    // and would leave a permanent blank gap at the bottom.
-                    // forceRelax bypasses the monotonic guard.
-                    applySubViewportCompensation(caller: "snapshot-shrink", forceRelax: true)
-                } else if scrollMode == .autoScrolling && maxOff > 0 {
-                    cv.contentOffset.y = maxOff
-                    // Deferred pin-to-bottom: UIHostingConfiguration self-sizing may
-                    // complete asynchronously after layoutIfNeeded(), updating contentSize
-                    // via KVO. But if another applySnapshot starts before that KVO fires,
-                    // isFlushing suppresses it. The coalesced scroll (80ms) catches the
-                    // final contentSize and corrects any undershoot.
-                    scheduleCoalescedScroll()
-                } else {
-                    // Sub-viewport (rawMaxOff <= 0) or non-autoScrolling: keep
-                    // the top-inset compensation tracking contentSize so the
-                    // last cell stays pinned to the overlay top.
-                    applySubViewportCompensation(caller: "snapshot-subVP")
-                }
+                applySubViewportCompensation(caller: "snapshot", forceRelax: newItems.count < oldCount)
+                if scrollMode == .autoScrolling { scheduleCoalescedScroll() }
                 // Sync isNearBottom after snapshot apply. applySnapshot runs
                 // under isFlushing=true, which suppresses the contentSize KVO
                 // observer — so the KVO-side sync we added doesn't run here.
@@ -4376,8 +4390,8 @@ extension CollectionViewMessageListV3 {
         }
 
         /// Base contentInset.bottom = inputBarHeight + floatingBarHeight + 8.
-        /// Set by updateUIViewController; the actual cv.contentInset.bottom
-        /// equals this plus the current sub-viewport compensation (if any).
+        /// Resolved from the instance geometry context (or standalone fallback);
+        /// the actual inset adds the current sub-viewport compensation, if any.
         /// `applySubViewportCompensation` is the only place that writes
         /// contentInset.bottom — it reads this base and adds overflow.
         var baseBottomInset: CGFloat = 0
@@ -4394,16 +4408,23 @@ extension CollectionViewMessageListV3 {
         /// is always glued to the safe area — no blank above the user message.
         ///
         /// `applySubViewportCompensation` is the only writer of
-        /// `cv.contentInset.bottom`. updateUIViewController writes
-        /// `coord.baseBottomInset`; this function reads it and applies
+        /// `cv.contentInset.bottom`. It resolves the current shared geometry
+        /// before applying
         /// `baseBottomInset + (needs ? overflow : 0)`.
         ///
         /// Returns true if compensation is currently active.
         @discardableResult
-        func applySubViewportCompensation(caller: String = "?", forceRelax: Bool = false) -> Bool {
+        func applySubViewportCompensation(caller: String = "?", forceRelax: Bool = false, position: Bool = true) -> Bool {
+            _ = consumeSessionLoadClamp()
             guard let cv = viewController?.collectionView else { return false }
+            let previousBase = baseBottomInset
+            baseBottomInset = geometryContext?.baseBottomInset ?? fallbackBottomInset
+            topOverlayInset = geometryContext?.configuration.topOverlayInset ?? fallbackTopOverlayInset
+            if abs(cv.contentInset.top - baseContentInsetTop) > 0.5 {
+                cv.contentInset.top = baseContentInsetTop
+            }
             let safeAreaTop = cv.safeAreaInsets.top
-            // Use baseBottomInset (set by updateUIViewController) as the truth
+            // Use the resolved baseBottomInset as the truth
             // for the non-compensated bottom. Reading cv.adjustedContentInset.bottom
             // here would create a feedback loop: we'd be measuring the inset we
             // just inflated and concluding we don't need to inflate any more.
@@ -4419,7 +4440,9 @@ extension CollectionViewMessageListV3 {
             let rawMaxOff = cv.contentSize.height - cv.bounds.height
                           + bottomInsetBase + safeAreaTop
             let needsCompensation = overflow > 0 && rawMaxOff <= 0
-            let prevBottomInset = cv.contentInset.bottom
+            // A changed composer base is not accumulated compensation. Carry
+            // only the prior algorithm's inflation across this base update.
+            let prevBottomInset = max(bottomInsetBase, cv.contentInset.bottom + bottomInsetBase - previousBase)
 
             // [B-fix] Monotonic compensation: during streaming, contentSize
             // grows token-by-token. The naive `desired = needs ? base+overflow
@@ -4445,7 +4468,7 @@ extension CollectionViewMessageListV3 {
             } else {
                 desiredBottomInset = prevBottomInset
             }
-            let bottomInsetWillChange = abs(prevBottomInset - desiredBottomInset) > 0.5
+            let bottomInsetWillChange = abs(cv.contentInset.bottom - desiredBottomInset) > 0.5
             if bottomInsetWillChange {
                 let reason: String
                 if desiredBottomInset < prevBottomInset {
@@ -4458,51 +4481,33 @@ extension CollectionViewMessageListV3 {
                 AppLogger(category: "SubViewport").info("[CHANGE] from=\(caller) bottomInset \(String(format: "%.1f", prevBottomInset))→\(String(format: "%.1f", desiredBottomInset)) Δ\(String(format: "%+.1f", desiredBottomInset - prevBottomInset)) — \(reason)")
                 cv.contentInset.bottom = desiredBottomInset
             }
-            // Pin offset so content's bottom reaches the overlay top
-            // (= bounds - bottomInset in viewport coords). Active in both the
-            // compensation and the natural-scroll regime, as long as we are in
-            // autoScrolling mode and there's something to pin to. Read the
-            // INFLATED inset (cv.adjustedContentInset.bottom) for the pin
-            // target so we glue to the just-applied bottom.
-            if scrollMode == .autoScrolling {
-                // [PIN-fix] Pin against the BASE bottom inset, not the
-                // inflated one. Reading inflated `cv.adjustedContentInset.bottom`
-                // here would push the cell up by `bottomI - base` (= the
-                // sub-viewport compensation amount, up to ~90pt observed),
-                // because the inflated inset effectively reserves blank space
-                // BELOW the input bar that nobody can see. The compensation's
-                // sole job is to make UIKit's natural maxOffset positive so
-                // the user can scroll up to reveal the last cell — it is NOT
-                // meant to define the resting position. Pinning to base keeps
-                // the last cell glued to the input-bar top.
-                //
-                // adjustedContentInset.top still applies (safe-area /
-                // navigation bar) — keep that as-is.
-                let pinBottomInset = bottomInsetBase + cv.safeAreaInsets.bottom
-                let rawTarget = cv.contentSize.height - cv.bounds.height + pinBottomInset
-                // Clamp: don't let target go below -adjustedTop (would scroll
-                // past the top edge), and don't exceed the inflated-inset
-                // maxOff (would over-scroll past content end).
-                let inflatedMaxOff = cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom
-                let topLimit = -cv.adjustedContentInset.top
-                let target = min(max(rawTarget, topLimit), inflatedMaxOff)
-                if target > topLimit - 0.5 && abs(cv.contentOffset.y - target) > 0.5 {
-                    cv.contentOffset.y = target
-                }
+            if viewportGeometryCommitDepth > 0 {
+                pendingViewportPosition = true
+            } else if position && !cv.isTracking && !cv.isDecelerating && !isFlushing
+                        && userMessageViewportAnchor == nil {
+                let target = ChatListScrollTarget.resolve(
+                    contentHeight: cv.contentSize.height, viewportHeight: cv.bounds.height,
+                    adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
+                    baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
+                    current: cv.contentOffset.y, followsBottom: scrollMode == .autoScrolling)
+                if abs(cv.contentOffset.y - target) > 0.5 { cv.contentOffset.y = target }
             }
             return needsCompensation
         }
 
         func scrollToBottomNow(animated: Bool = false) {
             guard let cv = viewController?.collectionView else { return }
-            // Sub-viewport overflow path: re-evaluate compensation, then pin.
-            if applySubViewportCompensation(caller: "scrollToBottom") {
-                syncScrollFlags()
+            if viewportGeometryCommitDepth > 0 {
+                pendingViewportPosition = true
                 return
             }
-            let maxOff = cv.contentSize.height - cv.bounds.height + cv.adjustedContentInset.bottom
-            guard maxOff > 0 else { return }
-            let target = CGPoint(x: 0, y: maxOff)
+            applySubViewportCompensation(caller: "scrollToBottom", position: false)
+            let y = ChatListScrollTarget.resolve(
+                contentHeight: cv.contentSize.height, viewportHeight: cv.bounds.height,
+                adjustedTop: cv.adjustedContentInset.top, adjustedBottom: cv.adjustedContentInset.bottom,
+                baseBottom: baseBottomInset, safeAreaBottom: cv.safeAreaInsets.bottom,
+                current: cv.contentOffset.y, followsBottom: true)
+            let target = CGPoint(x: cv.contentOffset.x, y: y)
             if animated {
                 isAnimatingScrollToBottom = true
                 cv.setContentOffset(target, animated: true)

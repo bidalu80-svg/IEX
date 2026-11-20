@@ -90,6 +90,7 @@ struct KeyboardProbe: UIViewRepresentable {
 
 struct KeyboardFixture: View {
     @State private var text = ""
+    @State private var geometryContext = ChatListGeometryContext()
     @FocusState private var focused: Bool
     @State private var avoidsKeyboard = true
     @State private var showPreview = false
@@ -145,9 +146,11 @@ struct KeyboardFixture: View {
             .padding(12).background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 18))
             .background(KeyboardProbe())
             .padding(.horizontal, 12).padding(.bottom, 8)
+            .background(ChatInputGeometryMarker(geometry: geometryContext))
             }
         ), avoidsKeyboard: avoidsKeyboard, fadeCompleteY: fade ? 200 : 0,
-           usesWindowHeaderFade: navigationFade)
+           usesWindowHeaderFade: navigationFade, geometryContext: geometryContext,
+           geometryConfiguration: .init(fallbackInputHeight: 70, usesLiveTextGeometry: true))
         .ignoresSafeArea(.container, edges: (fade || navigationFade) ? .top : [])
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(Color.white)

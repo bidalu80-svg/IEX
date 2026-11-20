@@ -33,7 +33,7 @@ def prepare(work):
     source.write_text("\n".join([sources[0], cell_source, sources[2], sources[3]]), encoding="utf-8")
     (work / "sources.json").write_text(json.dumps({
         "sha256": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in PATHS},
-        "scope": "Unchanged production host, cell, layout. Fixture logger, exception bridge and message data. No production VM/coordinator/Markdown, no device IME/performance proof.",
+        "scope": "Unchanged production host, instance geometry context/marker, cell, layout. Fixture logger, exception bridge and message data. No production VM/coordinator/Markdown, no device IME/performance proof.",
     }, indent=2) + "\n", encoding="utf-8")
     return source
 

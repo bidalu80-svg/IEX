@@ -7,7 +7,7 @@ final class ChatLayoutApplicationUITests: XCTestCase {
         let bundle = ProcessInfo.processInfo.environment["ZE_LAYOUT_BUNDLE"]!
         let app = XCUIApplication(bundleIdentifier: bundle)
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN",
-                               "--verify-conversation-chat", "--verify-chat-layout-only"]
+                               "--verify-conversation-chat", "--verify-chat-layout-only", "--verify-send-layout"]
         let verifyAvatar = ProcessInfo.processInfo.environment["ZE_VERIFY_SOUL_HEADER"] == "1"
         if verifyAvatar { app.launchArguments.append("--verify-soul-avatar") }
         if ProcessInfo.processInfo.environment["ZE_VERIFY_KEYBOARD_HANG"] == "1" {

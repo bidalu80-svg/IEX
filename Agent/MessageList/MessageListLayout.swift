@@ -59,6 +59,8 @@ final class MessageListLayout: UICollectionViewLayout {
     /// Used during capture-restore layout flushes where the caller handles
     /// offset preservation manually.
     var suppressContentOffsetAdjustment: Bool = false
+    /// Independent of snapshot/capture suppression; synchronous and nestable.
+    var viewportGeometryCommitDepth = 0
 
     /// Index of the actively streaming cell (set by Coordinator).
     /// Used to skip contentOffsetAdjustment for this cell — its growth
@@ -505,7 +507,7 @@ final class MessageListLayout: UICollectionViewLayout {
         // or decelerating) — UIKit applies contentOffsetAdjustment directly
         // inside the layout cycle, bypassing scrollViewDidScroll, which
         // disrupts the natural deceleration momentum and causes visible jitter.
-        if let cv = collectionView, !cv.isTracking, !cv.isDecelerating, !suppressContentOffsetAdjustment {
+        if let cv = collectionView, !cv.isTracking, !cv.isDecelerating, !suppressContentOffsetAdjustment, viewportGeometryCommitDepth == 0 {
             let cellTop = originalAttributes.frame.minY
             let cellBottom = originalAttributes.frame.maxY
             let viewportTop = cv.contentOffset.y

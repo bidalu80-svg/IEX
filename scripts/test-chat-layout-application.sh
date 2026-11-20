@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+python3 scripts/test-chat-list-geometry.py
 layout_app="${ZE_SHARE_SEARCH_SIM_APP:?Build complete simulator app first}"
 layout_work="$RUNNER_TEMP/chat-layout-driver"
 layout_evidence="$PWD/chat-layout-evidence"
@@ -76,7 +77,7 @@ PY
 fi
 if [ "${ZE_VERIFY_SOUL_HEADER:-0}" = 1 ]; then
     SIMCTL_CHILD_DYLD_FALLBACK_LIBRARY_PATH="$layout_fallback" xcrun simctl launch "$layout_device" "$layout_bundle" \
-        -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN --verify-conversation-chat --verify-chat-layout-only --verify-soul-avatar
+        -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN --verify-conversation-chat --verify-chat-layout-only --verify-send-layout --verify-soul-avatar
     python3 - "$layout_container/Documents/chat-verification/result.json" <<'PY'
 import json,pathlib,sys,time
 path=pathlib.Path(sys.argv[1])
@@ -101,6 +102,8 @@ import os,pathlib,json,sys
 d=json.loads(pathlib.Path(sys.argv[1]).read_text());print(json.dumps(d,ensure_ascii=False,indent=2))
 assert d['success'],d
 assert 'production-transcript-fade' in d['stages'],d
+assert 'production-send-layout' in d['stages'],d
+assert 'production-load-clamp-search' in d['stages'],d
 assert d['lastStage']=='complete',d
 if os.environ.get('ZE_VERIFY_SOUL_HEADER') == '1':
     assert 'production-soul-avatar' in d['stages'],d

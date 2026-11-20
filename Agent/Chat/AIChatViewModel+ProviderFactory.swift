@@ -18,6 +18,13 @@ extension AIChatViewModel {
     /// method, since the resolution depends only on global state
     /// (ProviderConfigStore + LLMProviderFactory).
     static func makeAgentProvider(for entry: ModelEntry) async -> AgentProvider {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--verify-send-layout"),
+           let fixture = ConversationChatVerification.sendLayoutProvider,
+           entry.providerInstanceId == fixture.instanceID {
+            return fixture
+        }
+        #endif
         let store = ProviderConfigStore.shared
         guard let instance = store.instance(for: entry.providerInstanceId) else {
             logger.error("No ProviderInstance found for entry \(entry.id)")

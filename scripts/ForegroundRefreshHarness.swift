@@ -44,6 +44,7 @@ private struct PhaseHost: View {
 final class ForegroundRefreshHarness: UIResponder, UIApplicationDelegate, UICollectionViewDataSource {
     var window: UIWindow?
     private let inputs = RefreshInputs()
+    private let geometryContext = ChatListGeometryContext()
     private var checks: [String] = []
 
     func application(_ application: UIApplication,
@@ -88,9 +89,14 @@ final class ForegroundRefreshHarness: UIResponder, UIApplicationDelegate, UIColl
         // Real keyboard controller: foreground closes an interrupted will-
         // change and drains pending content before the 600ms fallback.
         let host = ChatKeyboardViewportController(content: AnyView(LiteralLabel(text: "before")),
-            composer: AnyView(LiteralLabel(text: "composer")), avoidsKeyboard: false)
+            composer: AnyView(LiteralLabel(text: "composer")
+                .background(ChatInputGeometryMarker(geometry: geometryContext))),
+            avoidsKeyboard: false, geometryContext: geometryContext)
         window.rootViewController = host
         await pause()
+        require(geometryContext.viewport === host.view, "Instance geometry binds the actual viewport")
+        require(geometryContext.marker?.isDescendant(of: host.view) == true,
+                "Input marker mounts inside its own viewport")
         NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         host.update(content: AnyView(LiteralLabel(text: "after")), composer: AnyView(LiteralLabel(text: "composer")),
                     contentRenderKey: "new", composerRenderKey: "same", avoidsKeyboard: false)

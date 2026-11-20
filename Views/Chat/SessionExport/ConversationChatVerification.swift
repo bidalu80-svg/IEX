@@ -7,6 +7,45 @@ import Darwin
 /// particular, materializes the real inputBar/inputBottomRow generic metadata
 /// which component-only share/search fixtures never instantiate.
 @MainActor enum ConversationChatVerification {
+    /// Used only by the explicit full-application send-layout launch mode.
+    static var sendLayoutProvider: SendLayoutProvider?
+
+    final class SendLayoutProvider: AgentProvider, @unchecked Sendable {
+        let instanceID = "send-layout-" + UUID().uuidString
+        let name = "Controlled send layout"
+        let model = LLMModel(id: "send-layout", displayName: "Send layout", provider: "OpenAI",
+                             contextWindow: 128_000, maxOutputTokens: 1024)
+        let defaultMaxTokens = 1024
+        private let lock = NSLock()
+        private var streams: [AsyncThrowingStream<AgentStreamEvent, Error>.Continuation] = []
+        private var released = false
+        private func finish(_ stream: AsyncThrowingStream<AgentStreamEvent, Error>.Continuation) {
+            stream.yield(.contentBlockStart(.text))
+            stream.yield(.textDelta("发送布局验证的受控短回复。"))
+            stream.yield(.done(stopReason: .endTurn))
+            stream.finish()
+        }
+        func releaseReply() {
+            lock.lock()
+            released = true
+            let pending = streams
+            streams.removeAll()
+            lock.unlock()
+            pending.forEach(finish)
+        }
+        func streamAgentMessageClamped(messages: [AgentMessage], systemPrompt: String?,
+                                       tools: [AgentToolDefinition], maxTokens: Int,
+                                       thinkingLevel: ThinkingLevel) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
+            AsyncThrowingStream { stream in
+                lock.lock()
+                let ready = released
+                if !ready { streams.append(stream) }
+                lock.unlock()
+                if ready { finish(stream) }
+            }
+        }
+    }
+
     private static var checks: [String] = []
     private static var stages: [String] = []
     private static var screenshots: [String] = []
@@ -648,6 +687,11 @@ import Darwin
             try require(historyVM.sessionId == session.id, "Visible history uses persisted session VM")
             try require(historyVM.messages.count >= 2, "History messages hydrate from ChatStore")
             try capture("03-persisted-history.png", window: window)
+            if ProcessInfo.processInfo.arguments.contains("--verify-send-layout") {
+                try await verifySessionLoadSearchLayout(window: window, returnSessionID: session.id,
+                                                       returnMarker: historyMarker)
+                try await verifySendLayout(window: window, vm: historyVM)
+            }
             if ProcessInfo.processInfo.arguments.contains("--verify-keyboard-hang") {
                 try await verifyKeyboardHang(window: window, vm: historyVM, coldStart: coldKeyboardStart)
                 try checkpoint("complete")
@@ -966,6 +1010,334 @@ import Darwin
 
     /// Uses the complete production page, including the nested keyboard host,
     /// actual collection cells, attachment grid and FloatingToolBar.
+    /// Samples the real coordinator, real cells and presentation layers, including
+    /// frames after the keyboard and content have both stopped changing.
+    private final class SendLayoutSampler: NSObject {
+        let window: UIWindow
+        let list: UICollectionView
+        let oldReply: UUID
+        let vm: AIChatViewModel
+        var frames: [[String: Any]] = []
+        var replyReleased = false
+        private var link: CADisplayLink?
+        init(window: UIWindow, list: UICollectionView, oldReply: UUID, vm: AIChatViewModel) {
+            self.window = window; self.list = list; self.oldReply = oldReply; self.vm = vm
+        }
+        func start() {
+            let link = CADisplayLink(target: self, selector: #selector(tick))
+            self.link = link
+            link.add(to: .main, forMode: .common)
+            tick()
+        }
+        func stop() { link?.invalidate(); link = nil }
+        @objc func tick() {
+            guard let source = list.dataSource as? UICollectionViewDiffableDataSource<CollectionViewMessageListV3.Section, MessageListItem> else { return }
+            var frame: [String: Any] = ["t": CACurrentMediaTime(), "offset": list.contentOffset.y,
+                "contentSize": list.contentSize.height, "inset": list.adjustedContentInset.bottom,
+                "processing": vm.isProcessing, "replyReleased": replyReleased]
+            if let input = marker("chat.verify.input", in: window) {
+                frame["input"] = rectData(renderedRect(input, window: window))
+            }
+            let newUser = vm.messages.dropFirst(2).last(where: { $0.role == .user })?.id
+            let newAssistant = vm.messages.last(where: { $0.role == .assistant && $0.id != oldReply })?.id
+            for item in source.snapshot().itemIdentifiers {
+                let role: String?
+                switch item {
+                case .wholeMessage(let id): role = id == newUser ? "bubble" : nil
+                case .assistantBlock(let id, _): role = id == oldReply ? "oldBody" : nil
+                case .assistantHeader(let id): role = id == newAssistant ? "newHeader" : nil
+                default: role = nil
+                }
+                if let role, let index = source.indexPath(for: item), let cell = list.cellForItem(at: index) {
+                    frame[role] = rectData(renderedRect(cell, window: window))
+                }
+            }
+            if let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator {
+                frame.merge(coordinator.sendLayoutGeometryEvidence()) { _, new in new }
+            }
+            frames.append(frame)
+        }
+    }
+
+    private static func verifySessionLoadSearchLayout(window: UIWindow, returnSessionID: String,
+                                                      returnMarker: String) async throws {
+        try checkpoint("production-load-clamp-search")
+        var records: [[String: Any]] = []
+        defer {
+            if let data = try? JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: directory.appendingPathComponent("load-clamp-search.json"), options: .atomic)
+            }
+        }
+        // Each case opens a fresh persisted session and enters the real first-
+        // load subscription, rather than injecting a clamp into a fixture shell.
+        for waitForDeadline in [false, true] {
+            window.endEditing(true)
+            let token = "LOAD-CLAMP-SEARCH-" + UUID().uuidString
+            let tail = "LOAD-CLAMP-TAIL-" + UUID().uuidString
+            let session = await ChatStore.shared.createSession(modelId: LLMModel.claudeHaiku45.id,
+                                                               title: "加载后搜索位置保护验证")
+            var messages: [RawMessage] = []
+            let created = Date()
+            for index in 0..<24 {
+                messages.append(RawMessage(id: UUID().uuidString, sessionId: session.id, role: .user,
+                    parts: [.text("历史问题 \(index)")], createdAt: created.addingTimeInterval(Double(index * 2)),
+                    tokenUsage: nil, reasoningContent: nil))
+                let text = index == 0 ? token : (index == 23 ? tail : "已有助手正文 \(index)，用于建立可以搜索浏览的长对话。")
+                messages.append(RawMessage(id: UUID().uuidString, sessionId: session.id, role: .assistant,
+                    parts: [.text(text)], createdAt: created.addingTimeInterval(Double(index * 2 + 1)),
+                    tokenUsage: nil, reasoningContent: nil))
+            }
+            await ChatStore.shared.appendMessages(messages)
+            NotificationCenter.default.post(name: .openSessionFromIntent, object: nil,
+                                            userInfo: ["sessionId": session.id])
+            try await waitFor("fresh persisted clamp fixture rendered") {
+                ViewModelCache.shared.get(for: session.id)?.isLoadingSession == false
+                    && renderedHistory(tail, in: window) && composer(in: window) != nil
+            }
+            guard let vm = ViewModelCache.shared.get(for: session.id),
+                  let list = descendants(window).compactMap({ $0 as? UICollectionView })
+                    .first(where: { $0.collectionViewLayout is MessageListLayout && isVisible($0, in: window) }),
+                  let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator else {
+                try require(false, "Load/search fixture mounts its production VM and coordinator"); return
+            }
+            let initial = coordinator.sessionLoadClampEvidence()
+            try require(initial.pending && initial.deadline > Date() && coordinator.scrollMode == .autoScrolling,
+                        "Fresh persisted session starts with an active load clamp and auto follow")
+            vm.requestComposerFocusSignal.send()
+            try await waitFor("load/search keyboard shown") { composer(in: window)?.isFirstResponder == true }
+            await settle(0.9)
+            var contentSizeChanges = 0
+            let observation = list.observe(\.contentSize, options: [.old, .new]) { _, change in
+                if change.oldValue != change.newValue { contentSizeChanges += 1 }
+            }
+            defer { observation.invalidate(); vm.chatSearch.deactivate() }
+            if waitForDeadline {
+                let changesBeforeWait = contentSizeChanges
+                while Date() <= initial.deadline { await settle(0.1) }
+                try require(contentSizeChanges == changesBeforeWait,
+                            "Load deadline elapses with no contentSize KVO")
+                coordinator.performViewportGeometryCommit { list.layoutIfNeeded() }
+                try require(!coordinator.sessionLoadClampEvidence().pending,
+                            "Geometry-only commit expires the load clamp without contentSize KVO")
+            } else {
+                try require(coordinator.sessionLoadClampEvidence().pending && Date() < initial.deadline,
+                            "Search begins inside the first-load clamp window")
+            }
+            vm.chatSearch.bind(viewModel: vm)
+            vm.chatSearch.activate(prefill: token)
+            try await waitFor("search selects the old assistant text block") {
+                guard let hit = vm.chatSearch.current else { return false }
+                return hit.blockId != nil && vm.messages.first(where: { $0.id == hit.messageId })?.role == .assistant
+                    && coordinator.scrollMode == .userBrowsing
+            }
+            await settle(0.7) // Include search's deferred 0/0.25s placements.
+            try require(!coordinator.sessionLoadClampEvidence().pending,
+                        "Explicit assistant search cancels session-load follow intent")
+            let before = list.contentOffset.y
+            let maxBefore = list.contentSize.height - list.bounds.height + list.adjustedContentInset.bottom
+            try require(maxBefore - before > 100, "Search fixture lands above the bottom without dragging")
+            window.endEditing(true)
+            await settle(0.9) // Includes the production keyboard-end geometry commit.
+            let expected = ChatListScrollTarget.resolve(contentHeight: list.contentSize.height,
+                viewportHeight: list.bounds.height, adjustedTop: list.adjustedContentInset.top,
+                adjustedBottom: list.adjustedContentInset.bottom, baseBottom: 0, safeAreaBottom: 0,
+                current: before, followsBottom: false)
+            try require(coordinator.scrollMode == .userBrowsing && abs(list.contentOffset.y - expected) <= 1,
+                        "Keyboard end preserves the searched reading offset, clamping only to the legal range")
+            let afterKeyboard = list.contentOffset.y
+            coordinator.performViewportGeometryCommit { list.layoutIfNeeded() }
+            try require(abs(list.contentOffset.y - afterKeyboard) <= 0.5,
+                        "Repeated geometry-only commit cannot reapply the old load pin")
+            records.append(["waitedForDeadline": waitForDeadline, "contentSizeChanges": contentSizeChanges,
+                            "searchedOffset": before, "afterKeyboard": afterKeyboard,
+                            "expectedBrowseOffset": expected, "clampPending": coordinator.sessionLoadClampEvidence().pending])
+        }
+        NotificationCenter.default.post(name: .openSessionFromIntent, object: nil,
+                                        userInfo: ["sessionId": returnSessionID])
+        try await waitFor("original send-layout history restored") { renderedHistory(returnMarker, in: window) }
+        await settle(0.5)
+    }
+
+    private static func verifySendLayout(window: UIWindow, vm: AIChatViewModel) async throws {
+        try checkpoint("production-send-layout")
+        window.endEditing(true)
+        guard let sessionID = vm.sessionId else { try require(false, "Send fixture has a persisted session"); return }
+        let fixture = SendLayoutProvider()
+        let store = ProviderConfigStore.shared
+        let savedBinding = store.binding(for: sessionID)
+        sendLayoutProvider = fixture
+        defer {
+            fixture.releaseReply()
+            sendLayoutProvider = nil
+            if let savedBinding { store.setBinding(savedBinding, for: sessionID) }
+            else { store.removeBinding(for: sessionID) }
+            store.removeInstance(fixture.instanceID)
+            window.endEditing(true)
+        }
+        store.addInstance(ProviderInstance(id: fixture.instanceID, label: fixture.name,
+                                           providerType: .openAI, credentialType: .apiKey))
+        let entry = ModelEntry(providerInstanceId: fixture.instanceID, model: fixture.model)
+        store.addEntry(entry)
+        store.setBinding(SessionModelBinding(sessionId: sessionID,
+            primarySource: .directEntry(modelEntryId: entry.id), subModelSource: nil), for: sessionID)
+        let oldUser = ChatMessage(role: .user, content: "已有的短问题。")
+        let oldReplyText = "已有的短回复，操作栏隐藏时应保留间距。"
+        let oldReply = ChatMessage(role: .assistant, content: oldReplyText,
+                                   blocks: [AssistantBlock(kind: .text, content: oldReplyText)])
+        vm.messages = [oldUser, oldReply]
+        vm.inputText = ""
+        vm.attachments = []
+        await settle(1)
+        guard let list = descendants(window).compactMap({ $0 as? UICollectionView })
+            .first(where: { $0.collectionViewLayout is MessageListLayout && isVisible($0, in: window) }) else {
+            try require(false, "Send fixture mounts the production collection list"); return
+        }
+        let longText = Array(repeating: "粘贴长文发送布局验证：输入栏收缩之后消息和新标题应保持稳定。", count: 24).joined(separator: "\n")
+        // Same composer content and keyboard cycle without sending is the local
+        // counter baseline; the next cycle adds the real send/snapshot work.
+        KeyboardHangProbe.reset()
+        vm.inputText = longText
+        vm.requestComposerFocusSignal.send()
+        try await waitFor("send baseline keyboard") { composer(in: window)?.isFirstResponder == true }
+        await settle(0.9)
+        window.endEditing(true)
+        await settle(0.9)
+        let baseline = KeyboardHangProbe.snapshot()
+        vm.inputText = ""
+        await settle(0.5)
+        KeyboardHangProbe.reset()
+        vm.inputText = longText
+        vm.requestComposerFocusSignal.send()
+        try await waitFor("long paste in actual composer") {
+            composer(in: window)?.isFirstResponder == true && composer(in: window)?.text == longText
+        }
+        await settle(0.9)
+        let sampler = SendLayoutSampler(window: window, list: list, oldReply: oldReply.id, vm: vm)
+        sampler.start()
+        defer {
+            sampler.stop()
+            if let data = try? JSONSerialization.data(withJSONObject: sampler.frames, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: directory.appendingPathComponent("send-layout-frames.json"), options: .atomic)
+            }
+        }
+        guard let input = composer(in: window) as? PastableUITextView else {
+            try require(false, "Real composer provides its Return handler"); return
+        }
+        guard let coordinator = list.delegate as? CollectionViewMessageListV3.Coordinator else {
+            try require(false, "Send fixture uses the production coordinator"); return
+        }
+        let beforeActions = coordinator.completionActionEvidence(for: oldReply.id)
+        try require(beforeActions.reservesSpace && beforeActions.visible && beforeActions.hasBody
+                    && (beforeActions.footerHeight ?? 0) > 0,
+                    "Old reply has a real text block, visible completion actions and measured footer before send")
+        // This is the production Return action -> handleReturnKey -> performSend.
+        input.onReturnKey?()
+        try await waitFor("real send creates user and assistant snapshot", timeout: 20) {
+            vm.isProcessing && vm.messages.contains { $0.role == .user && $0.content == longText }
+                && vm.messages.contains { $0.role == .assistant && $0.id != oldReply.id }
+        }
+        try await waitFor("old reply actions hide while processing") {
+            let actions = coordinator.completionActionEvidence(for: oldReply.id)
+            return vm.isProcessing && actions.reservesSpace && !actions.visible && actions.hasBody
+        }
+        let duringActions = coordinator.completionActionEvidence(for: oldReply.id)
+        try require(duringActions.footerHeight != nil
+                    && abs((duringActions.footerHeight ?? 0) - (beforeActions.footerHeight ?? 0)) <= 0.5,
+                    "Hidden old completion actions retain the same measured footer height")
+        await settle(1)
+        sampler.replyReleased = true
+        fixture.releaseReply()
+        try await waitFor("controlled provider completes real send", timeout: 30) { !vm.isProcessing }
+        // Require 0.5s stable geometry, then retain at least a further second.
+        var stableSince = CACurrentMediaTime()
+        var last: [Double] = []
+        let deadline = CACurrentMediaTime() + 15
+        while CACurrentMediaTime() < deadline {
+            let values = [Double(list.contentOffset.y), Double(list.contentSize.height),
+                          Double(list.adjustedContentInset.bottom),
+                          Double(marker("chat.verify.input", in: window).map { renderedRect($0, window: window).minY } ?? 0)]
+            if values.count != last.count || zip(values, last).contains(where: { abs($0 - $1) > 0.5 }) {
+                stableSince = CACurrentMediaTime(); last = values
+            }
+            if CACurrentMediaTime() - stableSince >= 1.5 { break }
+            await settle(0.1)
+        }
+        try require(CACurrentMediaTime() - stableSince >= 1.5, "Send geometry settles and records at least one extra second")
+        sampler.stop()
+        let counters = KeyboardHangProbe.snapshot()
+        try require(counters.composerHostLayoutIfNeededCalls <= baseline.composerHostLayoutIfNeededCalls * 2 + 12,
+                    "Send composer layout count stays within local keyboard baseline allowance")
+        try require(counters.contentRootReplacements <= baseline.contentRootReplacements * 2 + 6,
+                    "Send content root count stays within local keyboard baseline allowance")
+        let finalFrames = sampler.frames.filter { ($0["t"] as? Double ?? 0) >= stableSince + 0.5 }
+        try require(finalFrames.count >= 10, "Per-display-frame tail covers at least one second")
+        for frame in sampler.frames {
+            if let effective = frame["effectiveInputHeight"] as? CGFloat,
+               let reserved = frame["reservedInputHeight"] as? CGFloat {
+                try require(abs(effective - reserved) <= 0.5, "Input geometry and reserved height agree in the displayed layout")
+            }
+        }
+        func rect(_ frame: [String: Any], _ key: String) -> [String: CGFloat]? { frame[key] as? [String: CGFloat] }
+        // A delayed correction after a visible pause is the regression, even
+        // if the final one-second tail eventually becomes stable again.
+        var previousBubbleY: CGFloat?
+        var previousInputY: CGFloat?
+        var pausedSince: Double?
+        for frame in sampler.frames where frame["processing"] as? Bool == true
+            && frame["replyReleased"] as? Bool == false {
+            guard let bubbleY = rect(frame, "bubble")?["y"],
+                  let inputY = rect(frame, "input")?["y"], let time = frame["t"] as? Double else { continue }
+            if let oldY = previousBubbleY, let oldInputY = previousInputY {
+                if abs(inputY - oldInputY) <= 0.5 {
+                    if abs(bubbleY - oldY) <= 0.5 { pausedSince = pausedSince ?? time }
+                    else {
+                        if let pausedSince, time - pausedSince >= 0.15 {
+                            try require(abs(bubbleY - oldY) <= 2, "No late bubble correction after input and bubble pause")
+                        }
+                        pausedSince = nil
+                    }
+                } else { pausedSince = nil }
+            }
+            previousBubbleY = bubbleY; previousInputY = inputY
+        }
+        let paired = sampler.frames.filter { rect($0, "oldBody") != nil && rect($0, "bubble") != nil }
+        let gaps = paired.compactMap { frame -> CGFloat? in
+            guard let body = rect(frame, "oldBody"), let bubble = rect(frame, "bubble"),
+                  let y = bubble["y"], let oldY = body["y"], let height = body["height"] else { return nil }
+            return y - oldY - height
+        }
+        try require(!gaps.isEmpty, "Real old reply and new long user bubble are sampled together")
+        if let low = gaps.min(), let high = gaps.max() {
+            try require(high - low <= 2, "Hiding old completion actions preserves body-to-user spacing")
+        }
+        try require(finalFrames.allSatisfy { rect($0, "bubble") != nil && rect($0, "newHeader") != nil },
+                    "Stable tail includes the long bubble and new assistant header")
+        for dimension in ["width", "height"] {
+            let values = sampler.frames.compactMap { rect($0, "bubble")?[dimension] }
+            if let low = values.min(), let high = values.max() {
+                try require(high - low <= 1, "Long bubble \(dimension) stays stable across send")
+            }
+        }
+        for key in ["bubble", "newHeader", "input"] {
+            let positions = finalFrames.compactMap { rect($0, key)?["y"] }
+            if let low = positions.min(), let high = positions.max() {
+                try require(high - low <= 1, "Settled \(key) presentation has no delayed jump")
+            }
+        }
+        let before = list.contentOffset.y
+        coordinator.performViewportGeometryCommit {
+            coordinator.performViewportGeometryCommit { list.layoutIfNeeded() }
+        }
+        try require(abs(before - list.contentOffset.y) <= 0.5, "Repeated nested geometry commits are idempotent")
+        try JSONSerialization.data(withJSONObject: [
+            "baselineComposerLayouts": baseline.composerHostLayoutIfNeededCalls,
+            "sendComposerLayouts": counters.composerHostLayoutIfNeededCalls,
+            "baselineContentRoots": baseline.contentRootReplacements,
+            "sendContentRoots": counters.contentRootReplacements,
+            "frames": sampler.frames.count], options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("send-layout-counters.json"), options: .atomic)
+    }
+
     private static func verifyChatLayout(window: UIWindow, vm: AIChatViewModel) async throws {
         try checkpoint("production-layout-combinations")
         window.endEditing(true)

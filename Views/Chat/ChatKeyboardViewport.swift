@@ -2,6 +2,122 @@ import Foundation
 import SwiftUI
 import UIKit
 
+/// Pure target shared by every ordinary follow/clamp path.
+enum ChatListScrollTarget {
+    static func resolve(contentHeight: CGFloat, viewportHeight: CGFloat,
+                        adjustedTop: CGFloat, adjustedBottom: CGFloat,
+                        baseBottom: CGFloat, safeAreaBottom: CGFloat,
+                        current: CGFloat, followsBottom: Bool) -> CGFloat {
+        let minimum = -adjustedTop
+        let maximum = max(minimum, contentHeight - viewportHeight + adjustedBottom)
+        let desired = followsBottom ? contentHeight - viewportHeight + baseBottom + safeAreaBottom : current
+        return min(maximum, max(minimum, desired))
+    }
+}
+
+/// Per-chat UIKit geometry. Only the viewport publishes scalar configuration;
+/// a gated, older SwiftUI content root can consume it but cannot overwrite it.
+final class ChatListGeometryContext {
+    struct Configuration {
+        var fallbackInputHeight: CGFloat = 0
+        var attachmentHeight: CGFloat = 0
+        var floatingHeight: CGFloat = 0
+        var topOverlayInset: CGFloat = 0
+        var usesLiveTextGeometry = false
+    }
+    private(set) var configuration = Configuration()
+    private(set) weak var marker: UIView?
+    private(set) weak var viewport: UIView?
+    private(set) weak var collectionView: UICollectionView?
+    private(set) var mountGeneration: UInt = 0
+    private var listGeneration: UInt = 0
+    private var reconcile: (() -> Void)?
+    private var commit: ((() -> Void) -> Void)?
+
+    func bindViewport(_ view: UIView) {
+        guard viewport !== view else { return }
+        viewport = view
+        mountGeneration &+= 1
+    }
+    func unbindViewport(_ view: UIView) {
+        guard viewport === view else { return }
+        viewport = nil
+        mountGeneration &+= 1
+    }
+    func update(_ configuration: Configuration) { self.configuration = configuration }
+    func registerMarker(_ view: UIView) {
+        marker = view
+        viewport?.setNeedsLayout()
+    }
+    func unregisterMarker(_ view: UIView) {
+        guard marker === view else { return }
+        marker = nil
+        viewport?.setNeedsLayout()
+    }
+    func registerList(_ view: UICollectionView, reconcile: @escaping () -> Void,
+                      commit: @escaping (() -> Void) -> Void) {
+        collectionView = view
+        listGeneration = mountGeneration
+        self.reconcile = reconcile
+        self.commit = commit
+    }
+    func unregisterList(_ view: UICollectionView) {
+        guard collectionView === view else { return }
+        collectionView = nil
+        reconcile = nil
+        commit = nil
+    }
+    private var hasCurrentList: Bool {
+        guard let viewport, let collectionView else { return false }
+        return listGeneration == mountGeneration && collectionView.isDescendant(of: viewport)
+    }
+    var effectiveInputHeight: CGFloat {
+        let fallback = configuration.fallbackInputHeight
+        guard configuration.usesLiveTextGeometry, hasCurrentList,
+              let marker, let viewport, let window = viewport.window,
+              marker.window === window, collectionView?.window === window,
+              marker.isDescendant(of: viewport) else { return fallback }
+        let height = marker.bounds.height
+        return height.isFinite && height > 0 ? height : fallback
+    }
+    var baseBottomInset: CGFloat {
+        effectiveInputHeight + configuration.attachmentHeight + configuration.floatingHeight + 8
+    }
+    func reconcileGeometry() {
+        guard hasCurrentList else { return }
+        reconcile?()
+    }
+    func performViewportGeometryCommit(_ changes: () -> Void) {
+        if hasCurrentList, let commit { commit(changes) } else { changes() }
+    }
+}
+
+/// A background of the padded input bar, never the entire composer host.
+struct ChatInputGeometryMarker: UIViewRepresentable {
+    let geometry: ChatListGeometryContext
+    final class Coordinator {
+        var geometry: ChatListGeometryContext
+        init(_ geometry: ChatListGeometryContext) { self.geometry = geometry }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(geometry) }
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
+        geometry.registerMarker(view)
+        return view
+    }
+    func updateUIView(_ view: UIView, context: Context) {
+        guard context.coordinator.geometry !== geometry else { return }
+        context.coordinator.geometry.unregisterMarker(view)
+        context.coordinator.geometry = geometry
+        geometry.registerMarker(view)
+    }
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        coordinator.geometry.unregisterMarker(view)
+    }
+}
+
 /// UIKit moves the composer as a separate view, so SwiftUI never has to
 /// interpolate its bottom alignment while the conversation changes height.
 struct ChatKeyboardViewport: UIViewControllerRepresentable {
@@ -43,17 +159,26 @@ struct ChatKeyboardViewport: UIViewControllerRepresentable {
     /// Production uses the attached window's status-bar safe area, not a
     /// navigation-bar frame reported through a different coordinate space.
     var usesWindowHeaderFade: Bool = true
+    var geometryContext: ChatListGeometryContext? = nil
+    var geometryConfiguration = ChatListGeometryContext.Configuration()
 
     func makeUIViewController(context: Context) -> ChatKeyboardViewportController {
-        ChatKeyboardViewportController(
+        geometryContext?.update(geometryConfiguration)
+        return ChatKeyboardViewportController(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
             avoidsKeyboard: avoidsKeyboard,
             fadeCompleteY: fadeCompleteY,
-            usesWindowHeaderFade: usesWindowHeaderFade)
+            usesWindowHeaderFade: usesWindowHeaderFade,
+            geometryContext: geometryContext)
+    }
+
+    static func dismantleUIViewController(_ controller: ChatKeyboardViewportController, coordinator: ()) {
+        ChatKeyboardViewportController.dismantleGeometry(controller)
     }
 
     func updateUIViewController(_ controller: ChatKeyboardViewportController, context: Context) {
+        controller.configureGeometry(geometryContext, configuration: geometryConfiguration)
         controller.update(
             content: AnyView(content.environment(\.self, context.environment)),
             composer: AnyView(composer.environment(\.self, context.environment)),
@@ -86,6 +211,20 @@ final class ChatKeyboardViewportController: UIViewController {
     static let keyboardTransitionDidEndNotification = Notification.Name("ChatKeyboardViewportTransitionDidEnd")
     // Only list content waits for settle; composer display state stays live.
     private var pendingUpdate: (() -> Void)?
+    private var geometryContext: ChatListGeometryContext?
+
+    func configureGeometry(_ context: ChatListGeometryContext?,
+                           configuration: ChatListGeometryContext.Configuration) {
+        if geometryContext !== context {
+            if isViewLoaded { geometryContext?.unbindViewport(view) }
+            geometryContext = context
+        }
+        context?.update(configuration)
+        if isViewLoaded {
+            context?.bindViewport(view)
+            view.setNeedsLayout()
+        }
+    }
 
     // [T-keyboard-hang-1253] Render-key gates for the two hosting roots.
     // A nil key means "never rendered from an update yet".
@@ -111,10 +250,11 @@ final class ChatKeyboardViewportController: UIViewController {
     private var appliedUsesWindowHeaderFade: Bool?
 
     init(content: AnyView, composer: AnyView, avoidsKeyboard: Bool, fadeCompleteY: CGFloat = 0,
-         usesWindowHeaderFade: Bool = false) {
+         usesWindowHeaderFade: Bool = false, geometryContext: ChatListGeometryContext? = nil) {
         self.host = UIHostingController(rootView: Self.root(content))
         self.composerHost = UIHostingController(rootView: Self.composerRoot(composer))
         self.avoidsKeyboard = avoidsKeyboard
+        self.geometryContext = geometryContext
         super.init(nibName: nil, bundle: nil)
         conversationContainer.configure(completeY: fadeCompleteY, usesWindowSafeArea: usesWindowHeaderFade)
     }
@@ -134,6 +274,7 @@ final class ChatKeyboardViewportController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        geometryContext?.bindViewport(view)
         view.backgroundColor = .clear
         addChild(host)
         host.view.backgroundColor = .clear
@@ -199,8 +340,13 @@ final class ChatKeyboardViewportController: UIViewController {
         keyboardTransitionEndWork?.cancel()
     }
 
+    static func dismantleGeometry(_ controller: ChatKeyboardViewportController) {
+        if controller.isViewLoaded { controller.geometryContext?.unbindViewport(controller.view) }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        defer { geometryContext?.reconcileGeometry() }
         #if DEBUG
         KeyboardHangProbe.recordViewDidLayoutSubviewsCall()
         #endif
@@ -309,6 +455,14 @@ final class ChatKeyboardViewportController: UIViewController {
         keyboardTransitionEndWork?.cancel()
         keyboardTransitionEndWork = nil
         guard isKeyboardTransitioning else { return }
+        if let geometryContext {
+            geometryContext.performViewportGeometryCommit { finishKeyboardGeometry() }
+        } else {
+            finishKeyboardGeometry()
+        }
+    }
+
+    private func finishKeyboardGeometry() {
         // Resolve the parent's latest keyboard constraints and the live
         // composer's target geometry while width/height publication is gated.
         // Laying out only composerHost can still use its old parent bounds.
@@ -318,6 +472,7 @@ final class ChatKeyboardViewportController: UIViewController {
             || Self.sizeChanged(composerHost.view.bounds.size, from: lastComposerLaidOutSize) {
             performComposerLayout()
         }
+        geometryContext?.reconcileGeometry()
         // The single end signal now commits width/height from that geometry,
         // before draining list content and doing its final layout.
         NotificationCenter.default.post(name: Self.keyboardTransitionDidEndNotification, object: self)
@@ -334,6 +489,7 @@ final class ChatKeyboardViewportController: UIViewController {
         // hosting trees; resolve any owed work now, outside the keyboard's
         // UIKit transaction.
         if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
+        geometryContext?.collectionView?.layoutIfNeeded()
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {

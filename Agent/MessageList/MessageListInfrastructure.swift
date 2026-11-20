@@ -599,6 +599,8 @@ final class NoAnimationCollectionView: UICollectionView {
     /// regresses the streaming stability this NoAnimation collection view was
     /// built to guarantee.
     var streamingGrowAnimationEnabled = true
+    var viewportGeometryCommitDepth = 0
+    var prepareViewportGeometry: (() -> Void)?
 
     /// [T-ios-user-collapse-smooth] True only for the synchronous layout pass
     /// the message-list coordinator runs inside its UIView.animate block for a
@@ -662,14 +664,16 @@ final class NoAnimationCollectionView: UICollectionView {
         let anchor = viewportAnchor
         viewportAnchor = nil
         defer {
-            if let anchor, !isTracking, !isDecelerating, !applyingViewportAnchor {
+            if let anchor, viewportGeometryCommitDepth == 0,
+               !isTracking, !isDecelerating, !applyingViewportAnchor {
+                prepareViewportGeometry?()
                 applyingViewportAnchor = true
-                let minimum = -adjustedContentInset.top
-                let maximum = max(minimum, contentSize.height - bounds.height + adjustedContentInset.bottom)
                 let followsBottom = anchor.followBottom && shouldFollowViewportBottom?() == true
-                let pinned = contentSize.height - bounds.height
-                    + (viewportBottomInset?() ?? adjustedContentInset.bottom)
-                let target = min(maximum, max(minimum, followsBottom ? pinned : anchor.offset))
+                let target = ChatListScrollTarget.resolve(
+                    contentHeight: contentSize.height, viewportHeight: bounds.height,
+                    adjustedTop: adjustedContentInset.top, adjustedBottom: adjustedContentInset.bottom,
+                    baseBottom: viewportBottomInset?() ?? adjustedContentInset.bottom, safeAreaBottom: 0,
+                    current: anchor.offset, followsBottom: followsBottom)
                 if abs(contentOffset.y - target) > 0.5 {
                     // This is inside UIKit's keyboard layout transaction. Do
                     // not start a second UIScrollView animation or delayed pin.
@@ -716,7 +720,7 @@ final class NoAnimationCollectionView: UICollectionView {
         // During user scroll (tracking/decelerating), let UIKit handle layout
         // naturally — stripping animations mid-scroll kills the deceleration
         // curve and causes a visible jitter at the end.
-        if resizingViewport || applyingViewportAnchor || isTracking || isDecelerating {
+        if viewportGeometryCommitDepth > 0 || resizingViewport || applyingViewportAnchor || isTracking || isDecelerating {
             // Inherit the system keyboard transaction for a viewport resize.
             // Streaming's separate 0.2s animation must not retime this pass.
             super.layoutSubviews()
