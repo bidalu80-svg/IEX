@@ -1012,7 +1012,7 @@ import Darwin
     /// actual collection cells, attachment grid and FloatingToolBar.
     /// Samples the real coordinator, real cells and presentation layers, including
     /// frames after the keyboard and content have both stopped changing.
-    private final class SendLayoutSampler: NSObject {
+    @MainActor private final class SendLayoutSampler: NSObject {
         let window: UIWindow
         let list: UICollectionView
         let oldReply: UUID
