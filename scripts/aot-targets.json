@@ -43,19 +43,6 @@
       "ok_markers": []
     },
     {
-      "path": "/usr/bin/node",
-      "module": "/usr/bin/node",
-      "build_id": "75fddd4ad61eb31ca5eb9917be4217eeebc889c6",
-      "package": "nodejs",
-      "version": "22.23.5-r0",
-      "family": "node",
-      "id": "nodejs",
-      "workload": "/tmp/aojit/node/node_train.sh",
-      "selector": "/usr/bin/node",
-      "min_translations": 1,
-      "ok_markers": []
-    },
-    {
       "path": "/usr/lib/python3.12/site-packages/PIL/_imaging.cpython-312-aarch64-linux-musl.so",
       "module": "/usr/lib/python3.12/site-packages/PIL/_imaging.cpython-312-aarch64-linux-musl.so",
       "build_id": "4c527f1dd53c539fadb6e761f32fe1c97453f94e",

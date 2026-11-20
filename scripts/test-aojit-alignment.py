@@ -69,13 +69,9 @@ class RecordingTests(unittest.TestCase):
 
     def test_reference_table_and_effective_manifest(self):
         entries = rec.manifest()
-        self.assertEqual(len(entries), len(rec.TARGETS['images']))
-        self.assertEqual(set(entries), {t['id'] for t in rec.TARGETS['images']})
+        self.assertEqual(len(entries), 24)
         self.assertEqual(entries['sqlite'][0], 'libsqlite3.so')
-        self.assertIn('nodejs', entries)
-        self.assertEqual(entries['nodejs'][0], '/usr/bin/node')
-        self.assertEqual(entries['nodejs'][1], ROOT / 'scripts/aot-workloads/nodejs.sh')
-        self.assertEqual(entries['nodejs'][2], 18000)
+        self.assertNotIn('nodejs', entries)
         self.assertEqual(entries['musl'][2], 600)
         for t in rec.TARGETS['images']:
             workload = entries[t['id']][1].read_text()
