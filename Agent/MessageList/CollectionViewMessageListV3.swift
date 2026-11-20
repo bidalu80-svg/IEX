@@ -1026,6 +1026,12 @@ extension CollectionViewMessageListV3 {
         private enum PositionReason: String, Hashable {
             case geometry, resize, keyboardEnd, snapshot, snapshotShrink, measurement, contentSize
             case signal, coalesced, foreground, attachment, disclosure, explicit, sendEnded
+
+            static let streamingGrowth: Set<PositionReason> = [.measurement, .contentSize, .signal]
+            static let keyboardSettlement: Set<PositionReason> = [
+                .keyboardEnd, .geometry, .resize, .snapshot, .snapshotShrink, .measurement, .contentSize, .signal
+            ]
+            static let passiveMeasurement: Set<PositionReason> = [.measurement, .contentSize]
         }
         private struct PositionStamp: Equatable {
             let view: ObjectIdentifier
@@ -1047,6 +1053,7 @@ extension CollectionViewMessageListV3 {
         }
         private var positionGeneration: UInt = 0
         private var positionOwnerGeneration: UInt = 0
+        private var settledPlacementGeneration: UInt?
         private var positionReasons: Set<PositionReason> = []
         private var positionAnchor: PositionAnchor?
         private var foregroundAnchor: PositionAnchor?
@@ -1054,6 +1061,7 @@ extension CollectionViewMessageListV3 {
         private var keyboardInFlight = false
         private var sendPosition: SendPosition?
         private var growingItems: Set<MessageListItem> = []
+        private var layoutAdjustedStreamingGrowth = false
         private var resolvingPosition = false
         private var lastPositionSources = ""
         private var lastPositionTarget: CGFloat?
@@ -1177,6 +1185,7 @@ extension CollectionViewMessageListV3 {
             foregroundAnchor = nil
             keyboardAnchor = nil
             growingItems.removeAll()
+            layoutAdjustedStreamingGrowth = false
             pendingScrollWork?.cancel()
             pendingScrollWork = nil
         }
@@ -1264,9 +1273,16 @@ extension CollectionViewMessageListV3 {
         }
 
         private func beginPositionLayout() -> Bool {
+            layoutAdjustedStreamingGrowth = false
             guard let cv = viewController?.collectionView else { return false }
             if positionIsAvailable(in: cv), positionAnchor == nil {
                 positionAnchor = keyboardAnchor ?? capturePosition(in: cv)
+            }
+            if viewportGeometryCommitDepth == 0, canUseKeyboardLayoutTarget(in: cv, reasons: positionReasons) {
+                UIView.performWithoutAnimation {
+                    prepareViewportInsets(caller: PositionReason.keyboardEnd.rawValue,
+                                          forceRelax: positionReasons.contains(.snapshotShrink))
+                }
             }
             return keyboardInFlight && didRestoreScroll
                 && !positionReasons.contains(.foreground) && !positionReasons.contains(.keyboardEnd)
@@ -1287,23 +1303,82 @@ extension CollectionViewMessageListV3 {
             enqueuePosition(.measurement, scheduleLayout: (cv as? NoAnimationCollectionView)?.isInPositionLayout != true)
             if delta > 0.5, viewController?.messageListLayout?.isStreamingCell(index) == true,
                let item = dataSource?.itemIdentifier(for: IndexPath(item: index, section: 0)),
-               isPresentableBlock(item) { growingItems.insert(item) }
+               isPresentableBlock(item) {
+                growingItems.insert(item)
+                if let list = cv as? NoAnimationCollectionView, list.streamingGrowthStart != nil,
+                   canUseLayoutStreamingTarget(in: list, reasons: positionReasons) {
+                    layoutAdjustedStreamingGrowth = true
+                    return false
+                }
+            }
+            if viewportGeometryCommitDepth == 0 {
+                if canUseKeyboardLayoutTarget(in: cv, reasons: positionReasons) { return false }
+                if keepsSettledPlacement(reasons: positionReasons, grew: hasLaidOutGrowth(in: cv)) { return false }
+            }
             return true
+        }
+
+        private func canUseLayoutStreamingTarget(in list: NoAnimationCollectionView, reasons: Set<PositionReason>) -> Bool {
+            guard let layout = viewController?.messageListLayout else { return false }
+            return didRestoreScroll && scrollMode == .autoScrolling && sendPosition == nil
+                && !keyboardInFlight && !layout.isKeyboardTransitioning && viewportGeometryCommitDepth == 0
+                && !layout.suppressContentOffsetAdjustment && !list.offsetLocked
+                && reasons.isSubset(of: PositionReason.streamingGrowth)
+                && abs(list.contentInset.bottom - baseBottomInset) <= 0.5
+        }
+
+        private func canUseKeyboardLayoutTarget(in cv: UICollectionView, reasons: Set<PositionReason>) -> Bool {
+            didRestoreScroll && !keyboardInFlight && sendPosition == nil && positionIsAvailable(in: cv)
+                && reasons.contains(.keyboardEnd) && reasons.isSubset(of: PositionReason.keyboardSettlement)
+        }
+
+        private func hasLaidOutGrowth(in cv: UICollectionView) -> Bool {
+            growingItems.contains { (itemFrame($0, in: cv)?.height ?? 0) > 0.5 }
+        }
+
+        private func keepsSettledPlacement(reasons: Set<PositionReason>, grew: Bool) -> Bool {
+            didRestoreScroll && settledPlacementGeneration == positionGeneration
+                && sendPosition == nil && !grew && reasons.isSubset(of: PositionReason.passiveMeasurement)
         }
 
         private func finishPositionLayout() -> Bool {
             guard viewportGeometryCommitDepth == 0, !isFlushing, !resolvingPosition,
                   let cv = viewController?.collectionView, let window = cv.window else { return false }
+            let finalOffset = cv.contentOffset
             let reasons = positionReasons
             let anchor = positionAnchor
-            let grew = growingItems.contains { (itemFrame($0, in: cv)?.height ?? 0) > 0.5 }
+            let grew = hasLaidOutGrowth(in: cv)
+            let layoutAdjustedGrowth = layoutAdjustedStreamingGrowth
             positionReasons.removeAll()
             positionAnchor = nil
             growingItems.removeAll()
+            layoutAdjustedStreamingGrowth = false
             guard !reasons.isEmpty || !didRestoreScroll else { return false }
 
             resolvingPosition = true
             defer { resolvingPosition = false }
+            if canUseKeyboardLayoutTarget(in: cv, reasons: reasons) {
+                lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
+                lastPositionTarget = finalOffset.y
+                settledPlacementGeneration = positionGeneration
+                if reasons.contains(.contentSize) {
+                    positionReasons.insert(.contentSize)
+                    cv.setNeedsLayout()
+                }
+                syncScrollFlags()
+                return false
+            }
+
+            let maintainsSettledPlacement = keepsSettledPlacement(reasons: reasons, grew: grew)
+            if !maintainsSettledPlacement { settledPlacementGeneration = nil }
+            if layoutAdjustedGrowth, let list = cv as? NoAnimationCollectionView, let preOffset = list.streamingGrowthStart,
+               positionIsAvailable(in: list), canUseLayoutStreamingTarget(in: list, reasons: reasons) {
+                lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
+                lastPositionTarget = finalOffset.y
+                list.animateStreamingGrowth(from: preOffset, to: finalOffset)
+                syncScrollFlags()
+                return false
+            }
             let inheritsKeyboard = keyboardInFlight && didRestoreScroll && !reasons.contains(.foreground)
                 && !reasons.contains(.keyboardEnd)
             let prepare = {
@@ -1311,6 +1386,10 @@ extension CollectionViewMessageListV3 {
                                            forceRelax: reasons.contains(.snapshotShrink))
             }
             if inheritsKeyboard { prepare() } else { UIView.performWithoutAnimation(prepare) }
+            if maintainsSettledPlacement {
+                syncScrollFlags()
+                return false
+            }
             guard !previousSnapshotIds.isEmpty, positionIsAvailable(in: cv) else { return false }
 
             let origin = cv.convert(cv.bounds, to: window).minY
@@ -1320,6 +1399,8 @@ extension CollectionViewMessageListV3 {
             var desired = cv.contentOffset.y
             var useVisualBottom = followsBottom
             let initial = !didRestoreScroll
+            let settlesRecovery = sendPosition == nil && reasons.isDisjoint(with: [.explicit, .disclosure, .sendEnded])
+                && (initial || reasons.contains(.foreground))
             if initial && reasons.contains(.explicit) {
                 didRestoreScroll = true
                 useVisualBottom = true
@@ -1399,15 +1480,17 @@ extension CollectionViewMessageListV3 {
             lastPositionSources = reasons.map(\.rawValue).sorted().joined(separator: "+")
             lastPositionTarget = target
             defer { syncScrollFlags() }
+            if settlesRecovery {
+                supersedeOrdinaryPositionRequests()
+                settledPlacementGeneration = positionGeneration
+            }
             guard target.isFinite, abs(target - cv.contentOffset.y) > 0.5 else { return false }
             let update = { cv.setContentOffset(CGPoint(x: cv.contentOffset.x, y: target), animated: false) }
-            if inheritsKeyboard, !initial { update() }
-            else if grew, useVisualBottom, !initial, !geometryChanged, !reasons.contains(.foreground), !reasons.contains(.explicit),
-                    !keyboardInFlight, (cv as? NoAnimationCollectionView)?.streamingGrowAnimationEnabled == true,
-                    target > cv.contentOffset.y, target > -cv.adjustedContentInset.top + 1 {
-                UIView.animate(withDuration: 0.20, delay: 0,
-                               options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction], animations: update)
-            } else { UIView.performWithoutAnimation(update) }
+            if inheritsKeyboard, !initial { update() } else { UIView.performWithoutAnimation(update) }
+            if settlesRecovery, let list = cv as? NoAnimationCollectionView {
+                list.materializePositionWithoutResolving = true
+                return false
+            }
             return true
         }
 
@@ -3054,22 +3137,19 @@ extension CollectionViewMessageListV3 {
             needsForegroundRefresh = false
             let anchor = foregroundAnchor ?? capturePosition(in: cv)
             foregroundAnchor = nil
-            let stamp = positionStamp()
             // Rebuild and reconfigure before exposing the recovery target.
             performPositionBatch {
                 self.enqueuePosition(.foreground, anchor: anchor)
                 self.rebuildForegroundPresentation(vm: vm, cv: cv, layout: layout)
             }
             // Hosting configuration publishes one more real measurement after
-            // the new bodies mount. Keep the same reading intent for that pass.
+            // the new bodies mount. Keep the measurement, not a second restore.
             DispatchQueue.main.async { [weak self, weak vm, weak cv] in
                 guard let self, let vm, let cv, self.vm === vm,
                       self.viewController?.collectionView === cv,
                       UIApplication.shared.applicationState == .active,
                       !vm.isLoadingSession, !vm.transitionSuspended, cv.window != nil,
                       let layout = self.viewController?.messageListLayout else { return }
-                let stillOwnsPosition = stamp != nil && stamp == self.positionStamp()
-                if stillOwnsPosition { self.enqueuePosition(.foreground, anchor: anchor) }
                 for indexPath in cv.indexPathsForVisibleItems {
                     (cv.cellForItem(at: indexPath) as? SelfSizingCell)?.clearCachedHeight()
                     layout.invalidateContentHeight(at: indexPath.item)
@@ -3077,7 +3157,6 @@ extension CollectionViewMessageListV3 {
                 UIView.performWithoutAnimation {
                     layout.invalidateLayout()
                     cv.setNeedsLayout()
-                    if stillOwnsPosition { cv.layoutIfNeeded() }
                 }
             }
             AppLogger(category: "FGLayout").info("[FGLayout] recovered current VM: messages=\(vm.messages.count) items=\(dataSource.snapshot().numberOfItems)")
@@ -3254,9 +3333,13 @@ extension CollectionViewMessageListV3 {
             // isTracking/isDecelerating, so this won't cause scroll jitter.
             // Skipping invalidation entirely caused text blocks that transitioned
             // from empty to non-empty (via streaming bypass) to stay at ~0 height.
+            let list = viewController?.collectionView as? NoAnimationCollectionView
+            let usesLayoutTarget = list.map {
+                layout.hasActiveStreaming && $0.canAnimateStreamingGrowth && positionIsAvailable(in: $0)
+                    && canUseLayoutStreamingTarget(in: $0, reasons: positionReasons)
+            } ?? false
             layout.invalidateLayout()
-
-            enqueuePosition(.measurement)
+            if !usesLayoutTarget { enqueuePosition(.measurement) }
         }
 
         /// Coalesce rapid scroll signals into a single scroll action.

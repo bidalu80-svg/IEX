@@ -573,7 +573,6 @@ final class ChatKeyboardViewportController: UIViewController {
         // hosting trees; resolve any owed work now, outside the keyboard's
         // UIKit transaction.
         if pendingHostSettleLayout || hostLayoutNeedsUpdate { performHostLayout() }
-        geometryContext?.collectionView?.layoutIfNeeded()
     }
 
     private func applyKeyboardTransitionFlag(_ active: Bool) {

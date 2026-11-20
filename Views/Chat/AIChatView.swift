@@ -3880,8 +3880,11 @@ struct AIChatView: View {
                         .fill(ChatColors.inputBg)
                 )
                 .clipShape(inputComposerShape)
-                .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 2)
-                .shadow(color: Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0, alpha: 0.5) : UIColor(white: 0, alpha: 0) }), radius: 8, x: 0, y: -4)
+                .overlay {
+                    inputComposerShape
+                        .strokeBorder(ChatColors.inputBorder.opacity(0.35), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
             }
         )
     }
@@ -3965,6 +3968,7 @@ struct AIChatView: View {
             // onGeometryChange then wrote inputBarHeight from every frame,
             // rebuilding the full page and both hosting roots. The chrome
             // still changes shape, just without a per-frame layout clock.
+            .animation(nil, value: usesExpandedComposerChrome)
             .onChange(of: hasComposerContent) { _ in
                 if !voiceInputActive { beginComposerChromeTransition() }
             }

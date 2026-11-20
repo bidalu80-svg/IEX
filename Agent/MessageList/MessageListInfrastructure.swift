@@ -565,7 +565,9 @@ final class NoAnimationCollectionView: UICollectionView {
     var viewportWillResize: (() -> Void)?
     var beginPositionLayout: (() -> Bool)?
     var finishPositionLayout: (() -> Bool)?
+    var materializePositionWithoutResolving = false
     private(set) var isInPositionLayout = false
+    private(set) var streamingGrowthStart: CGPoint?
 
     override var bounds: CGRect {
         willSet {
@@ -599,6 +601,12 @@ final class NoAnimationCollectionView: UICollectionView {
     /// regresses the streaming stability this NoAnimation collection view was
     /// built to guarantee.
     var streamingGrowAnimationEnabled = true
+
+    var canAnimateStreamingGrowth: Bool {
+        streamingGrowAnimationEnabled && !isApplyingSnapshot && !disclosureAnimationInFlight
+            && !isTracking && !isDragging && !isDecelerating
+            && contentSize.height - bounds.height + adjustedContentInset.bottom > 1
+    }
 
     /// [T-ios-user-collapse-smooth] True only for the synchronous layout pass
     /// the message-list coordinator runs inside its UIView.animate block for a
@@ -670,13 +678,21 @@ final class NoAnimationCollectionView: UICollectionView {
         let t0 = CFAbsoluteTimeGetCurrent()
         #endif
 
+        streamingGrowthStart = !inheritsKeyboardAnimation && canAnimateStreamingGrowth ? contentOffset : nil
         let inheritsAnimation = inheritsKeyboardAnimation || isTracking || isDragging || isDecelerating || disclosureAnimationInFlight
         if inheritsAnimation {
             super.layoutSubviews()
         } else {
             UIView.performWithoutAnimation { super.layoutSubviews() }
         }
-        if finishPositionLayout?() == true {
+        let shouldMaterializePosition = finishPositionLayout?() == true
+        streamingGrowthStart = nil
+        if materializePositionWithoutResolving {
+            UIView.performWithoutAnimation { super.layoutSubviews() }
+            materializePositionWithoutResolving = false
+            setNeedsLayout()
+        }
+        if shouldMaterializePosition {
             // The first target can bring previously unmeasured cells into view.
             // Materialize those cells before display, even if a nested UIKit
             // layout request was declined by the reentrancy guard above.
@@ -710,6 +726,17 @@ final class NoAnimationCollectionView: UICollectionView {
             Self.watchdogProbe.warning("[WatchdogProbe][cv-layout] slow layoutSubviews elapsed=\(String(format: "%.1f", elapsed))ms visibleCells=\(visibleCells.count) bounds=\(Int(newSize.width))x\(Int(newSize.height)) widthChanged=\(widthChanged ? 1 : 0)")
         }
         #endif
+    }
+
+    func animateStreamingGrowth(from preOffset: CGPoint, to finalOffset: CGPoint) {
+        let delta = finalOffset.y - preOffset.y
+        guard delta.isFinite, finalOffset.y.isFinite, abs(delta) > 0.5 else { return }
+        setContentOffset(preOffset, animated: false)
+        UIView.animate(withDuration: 0.20,
+                       delay: 0,
+                       options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            self.setContentOffset(finalOffset, animated: false)
+        }
     }
 
     /// Suppress UIKit's automatic scroll-to-first-responder when a UITextView
