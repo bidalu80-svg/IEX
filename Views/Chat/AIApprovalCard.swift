@@ -4,8 +4,7 @@ import UIKit
 @MainActor
 struct AIApprovalCard: View {
     let request: RemoteServerAIConfirmationRequest
-    let notificationID: UUID?
-    var onReady: () -> Void
+    var canDecide: () -> Bool
     var onDecision: (Bool) -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicType
@@ -41,7 +40,6 @@ struct AIApprovalCard: View {
         .background(Color.black.opacity(0.45).ignoresSafeArea().accessibilityHidden(true))
         .accessibilityElement(children: .contain)
         .accessibilityAction(.escape) { decide(false) }
-        .task(id: notificationID) { onReady() }
         .onAppear { questionFocused = true }
     }
 
@@ -175,7 +173,7 @@ struct AIApprovalCard: View {
     }
 
     private func decide(_ allowed: Bool) {
-        guard !submitted else { return }
+        guard !submitted, canDecide() else { return }
         submitted = true
         onDecision(allowed)
     }
@@ -193,6 +191,8 @@ struct AIApprovalModalHost: UIViewRepresentable {
         anchor.isUserInteractionEnabled = false
         NotificationCenter.default.addObserver(anchor, selector: #selector(Anchor.appWillResignActive),
                                                name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(anchor, selector: #selector(Anchor.updateCard),
+                                               name: UIApplication.didBecomeActiveNotification, object: nil)
         return anchor
     }
 
@@ -210,28 +210,34 @@ struct AIApprovalModalHost: UIViewRepresentable {
     final class Anchor: UIView {
         var configuration: AIApprovalModalHost?
         private var hosting: UIHostingController<AnyView>?
+        private var presentationTimer: Timer?
+        private var lastReportedReady: (requestID: UUID, notificationID: UUID?)?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
             updateCard()
         }
 
-        func updateCard() {
-            guard let window, window.windowScene?.activationState == .foregroundActive,
-                  UIApplication.shared.applicationState == .active, let parent = window.rootViewController,
-                  let configuration, let request = configuration.request else {
+        @objc func updateCard() {
+            guard let window = activeWindow, let request = configuration?.request else {
+                stopWatchingPresentation()
+                return
+            }
+            watchPresentation()
+            guard let (parent, container) = availableContainer(in: window) else {
                 removeCard()
                 return
             }
-            if hosting?.view.superview !== window { removeCard() }
-            let card = AIApprovalCard(request: request, notificationID: configuration.notificationID, onReady: { [weak self] in
-                guard let self, self.isShowing(request.id) else { return }
-                self.configuration?.onReady(request.id)
+            if let hosting, hosting.parent !== parent || hosting.view.superview !== container {
+                removeCard()
+            }
+            let card = AIApprovalCard(request: request, canDecide: { [weak self] in
+                self?.isShowing(request.id) == true
             }, onDecision: { [weak self] allowed in
-                guard let self, self.isShowing(request.id) else { return }
-                self.configuration?.onDecision(request.id, allowed)
+                self?.configuration?.onDecision(request.id, allowed)
             }).id(request.id)
             if let hosting {
+                if container.subviews.last !== hosting.view { container.bringSubviewToFront(hosting.view) }
                 hosting.rootView = AnyView(card)
                 return
             }
@@ -240,19 +246,70 @@ struct AIApprovalModalHost: UIViewRepresentable {
             let view = controller.view!
             view.backgroundColor = .clear
             view.accessibilityViewIsModal = true
-            view.frame = window.bounds
+            view.frame = container.bounds
             view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             parent.addChild(controller)
             hosting = controller
-            window.addSubview(view)
+            container.addSubview(view)
             controller.didMove(toParent: parent)
         }
 
+        private var activeWindow: UIWindow? {
+            guard let window, window.windowScene?.activationState == .foregroundActive,
+                  UIApplication.shared.applicationState == .active else { return nil }
+            return window
+        }
+
+        private func availableContainer(in window: UIWindow) -> (UIViewController, UIView)? {
+            guard window.isKeyWindow, !window.isHidden, window.alpha > 0.01, let parent = window.rootViewController,
+                  let container = parent.viewIfLoaded, container.window === window,
+                  !container.isHidden, container.alpha > 0.01, !container.bounds.isEmpty,
+                  !hasPresentation(from: parent, in: window) else { return nil }
+            return (parent, container)
+        }
+
+        private func hasPresentation(from controller: UIViewController, in window: UIWindow) -> Bool {
+            if controller.presentedViewController != nil || controller.transitionCoordinator != nil { return true }
+            return controller.children.contains { child in
+                child !== hosting && child.viewIfLoaded?.window === window && hasPresentation(from: child, in: window)
+            }
+        }
+
         private func isShowing(_ id: UUID) -> Bool {
-            configuration?.request?.id == id && hosting?.view.window != nil
+            guard configuration?.request?.id == id, let window = activeWindow,
+                  let (parent, container) = availableContainer(in: window), let hosting,
+                  let view = hosting.viewIfLoaded else { return false }
+            return hosting.parent === parent && view.superview === container && container.subviews.last === view
+                && view.window === window && !view.isHidden && view.alpha > 0.01 && !view.bounds.isEmpty
+        }
+
+        private func watchPresentation() {
+            guard presentationTimer == nil else { return }
+            let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] timer in
+                guard let self else { timer.invalidate(); return }
+                MainActor.assumeIsolated { self.checkPresentation() }
+            }
+            presentationTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        private func checkPresentation() {
+            guard let configuration, let id = configuration.request?.id, isShowing(id) else {
+                updateCard()
+                return
+            }
+            guard lastReportedReady?.requestID != id || lastReportedReady?.notificationID != configuration.notificationID else { return }
+            lastReportedReady = (id, configuration.notificationID)
+            configuration.onReady(id)
         }
 
         @objc func appWillResignActive() {
+            stopWatchingPresentation()
+        }
+
+        private func stopWatchingPresentation() {
+            presentationTimer?.invalidate()
+            presentationTimer = nil
             removeCard()
         }
 
@@ -262,6 +319,7 @@ struct AIApprovalModalHost: UIViewRepresentable {
             hosting.view.removeFromSuperview()
             hosting.removeFromParent()
             self.hosting = nil
+            lastReportedReady = nil
         }
     }
 }

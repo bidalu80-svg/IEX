@@ -113,8 +113,8 @@ check("a ready unlocked host presents only the intended pending UUID and settles
       and "!lockStore.isVisuallyLocked" in dialog
       and "scenePhase == .active" in dialog and "!gate.showsExpiredNotice" in dialog
       and "onReady: presentationReady, onDecision: resolve" in dialog and ".id(request.id)" in modal
-      and modal.count("self.isShowing(request.id)") == 2 and "configuration?.request?.id == id" in modal
-      and "self.configuration?.onDecision(request.id, allowed)" in modal
+      and "configuration?.request?.id == id" in modal
+      and "self?.configuration?.onDecision(request.id, allowed)" in modal
       and "guard presentableRequest?.id == id else { return }" in ready and "gate.presentationReady(id: id)" in ready
       and "guard presentableRequest?.id == id else { return }" in decision
       and "gate.resolve(id: id, allowed: allowed)" in decision and dialog.count("gate.resolve(") == 1
@@ -122,13 +122,96 @@ check("a ready unlocked host presents only the intended pending UUID and settles
 check("the single modal path blocks the background, deactivates without settling and honors the first explicit click",
       dialog.count("AIApprovalModalHost(") == 1 and ".confirmationDialog" not in dialog
       and modal.count("AIApprovalCard(") == 1 and "AIApprovalCard(" not in dialog + home
-      and "view.accessibilityViewIsModal = true" in modal and "window.addSubview(view)" in modal
+      and "view.accessibilityViewIsModal = true" in modal
+      and ".background(Color.black.opacity(0.45).ignoresSafeArea().accessibilityHidden(true))" in card
+      and ".onTapGesture" not in card
       and "UIApplication.willResignActiveNotification" in modal and "removeCard()" in modal
       and "onDisappear" not in card + dialog and "resolve(" not in card
       and ".accessibilityAction(.escape) { decide(false) }" in card
-      and re.search(r"guard !submitted else \{ return \}\s*submitted = true\s*onDecision\(allowed\)", card)
+      and re.search(r"guard !submitted, canDecide\(\) else \{ return \}\s*submitted = true\s*onDecision\(allowed\)", card)
       and decision.index("visibleApprovalID = nil") < decision.index("gate.resolve(")
       and 'String(localized: "This review has ended")' in dialog)
+def defers_approval_under_presentations(modal_source):
+    update = section(modal_source, "func updateCard()", "private var activeWindow")
+    container = section(modal_source, "private func availableContainer(", "private func hasPresentation(")
+    presentations = section(modal_source, "private func hasPresentation(", "private func isShowing(")
+    return bool(
+        re.search(r"watchPresentation\(\)\s*guard let \(parent, container\) = availableContainer\(in: window\) else \{\s*"
+                  r"removeCard\(\)\s*return\s*\}", update)
+        and update.index("availableContainer(in: window)") < update.index("UIHostingController(rootView:")
+        and "!hasPresentation(from: parent, in: window) else { return nil }" in container
+        and "controller.presentedViewController != nil || controller.transitionCoordinator != nil" in presentations
+        and "child.viewIfLoaded?.window === window && hasPresentation(from: child, in: window)" in presentations)
+
+
+def checks_approval_card_visibility(modal_source):
+    showing = section(modal_source, "private func isShowing(", "private func watchPresentation()")
+    observer = section(modal_source, "private func checkPresentation()", "@objc func appWillResignActive()")
+    return bool(
+        "configuration?.request?.id == id, let window = activeWindow" in showing
+        and "let (parent, container) = availableContainer(in: window)" in showing
+        and "hosting.parent === parent && view.superview === container && container.subviews.last === view" in showing
+        and "view.window === window && !view.isHidden && view.alpha > 0.01 && !view.bounds.isEmpty" in showing
+        and re.search(r"guard let configuration, let id = configuration\.request\?\.id, isShowing\(id\) else \{\s*"
+                      r"updateCard\(\)\s*return\s*\}.*?configuration\.onReady\(id\)", observer, re.S)
+        and re.search(r"canDecide: \{ \[weak self\] in\s*self\?\.isShowing\(request\.id\) == true\s*\}", modal_source)
+        and modal_source.count(".onReady(") == 1)
+
+
+def uses_matched_approval_container(modal_source):
+    update = section(modal_source, "func updateCard()", "private var activeWindow")
+    container = section(modal_source, "private func availableContainer(", "private func hasPresentation(")
+    return bool(
+        "let parent = window.rootViewController" in container
+        and "let container = parent.viewIfLoaded, container.window === window" in container
+        and "return (parent, container)" in container
+        and re.search(r"view\.frame = container\.bounds\s*"
+                      r"view\.autoresizingMask = \[\.flexibleWidth, \.flexibleHeight\]\s*"
+                      r"parent\.addChild\(controller\)\s*hosting = controller\s*"
+                      r"container\.addSubview\(view\)\s*controller\.didMove\(toParent: parent\)", update)
+        and update.count(".addSubview(") == 1)
+
+
+check("the root container remains free of approvals until existing presentations and transitions finish",
+      defers_approval_under_presentations(modal))
+check("only the attached front-most approval can report ready or accept a decision",
+      checks_approval_card_visibility(modal) and "window.isKeyWindow, !window.isHidden" in modal
+      and ".task(id: notificationID)" not in card)
+check("the pending approval is retried without a SwiftUI state change and watching stops on teardown or deactivation",
+      "guard presentationTimer == nil else { return }" in modal
+      and "repeats: true" in modal and "MainActor.assumeIsolated { self.checkPresentation() }" in modal
+      and "RunLoop.main.add(timer, forMode: .common)" in modal
+      and "let window = activeWindow, let request = configuration?.request else {\n                stopWatchingPresentation()" in modal
+      and "anchor.configuration = nil\n        anchor.updateCard()" in modal
+      and "UIApplication.didBecomeActiveNotification" in modal
+      and "func appWillResignActive() {\n            stopWatchingPresentation()" in modal
+      and re.search(r"presentationTimer\?\.invalidate\(\)\s*presentationTimer = nil\s*removeCard\(\)", modal))
+check("the approval hosting controller and view mount in the same root container",
+      uses_matched_approval_container(modal))
+update_card = section(modal, "func updateCard()", "private var activeWindow")
+check("an already mounted approval host updates its content without remounting",
+      re.search(r"if let hosting, hosting\.parent !== parent \|\| hosting\.view\.superview !== container \{\s*"
+                r"removeCard\(\)\s*\}", update_card)
+      and re.search(r"if let hosting \{\s*if container\.subviews\.last !== hosting\.view \{ container\.bringSubviewToFront\(hosting\.view\) \}\s*"
+                    r"hosting\.rootView = AnyView\(card\)\s*return\s*\}\s*"
+                    r"window\.endEditing\(true\)\s*let controller = UIHostingController", update_card))
+
+for description, before, after, guard_ in (
+    ("legacy UUID and non-nil window only",
+     section(modal, "private func isShowing(", "private func watchPresentation()"),
+     "private func isShowing(_ id: UUID) -> Bool {\n"
+     "            configuration?.request?.id == id && hosting?.view.window != nil\n        }\n\n        ",
+     checks_approval_card_visibility),
+    ("mount directly on the root despite an existing sheet",
+     "guard let (parent, container) = availableContainer(in: window) else {",
+     "guard let parent = window.rootViewController, let container = parent.view else {",
+     defers_approval_under_presentations),
+    ("split UIKit controller and view containment again", "container.addSubview(view)",
+     "window.addSubview(view)", uses_matched_approval_container),
+):
+    mutated = modal.replace(before, after, 1)
+    check(f"approval visibility mutation rejected: {description}", mutated != modal and not guard_(mutated))
+
 actions = section(card, "private var actions: some View", "private func decide(")
 check("Allow approves and Deny rejects through the explicit decision path",
       re.findall(r'Button\s*\{\s*decide\((true|false)\)\s*\}\s*label:\s*\{\s*Text\("(Allow|Deny)"\)', actions)

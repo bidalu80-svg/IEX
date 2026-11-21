@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import CryptoKit
+import Combine
 import Photos
 import QuickLook
 
@@ -550,7 +551,7 @@ struct SimpleStandaloneMedia: View {
     @State private var videoURL: URL?
     @State private var audioURL: URL?
 
-    private enum Failure: Error {
+    fileprivate enum Failure: Error {
         case unavailable, unsupported
 
         static func classify(_ error: Error, remaining: Int = 4) -> Self {
@@ -570,22 +571,14 @@ struct SimpleStandaloneMedia: View {
             return .unsupported
         }
     }
-    private struct Resource {
+    fileprivate struct Resource {
         let url: URL
         var thumbnail: UIImage? = nil
-        var imageSize: CGSize? = nil
         var duration: Double? = nil
         var bytes: Int? = nil
     }
 
     private var kind: SimpleSegmentID.Kind { segmentID.kind }
-
-    static func coverSize(width: CGFloat, kind: SimpleSegmentID.Kind, natural: CGSize?) -> CGSize {
-        let maxWidth = min(400, width)
-        let size = natural ?? CGSize(width: maxWidth, height: maxWidth * (kind == .video ? 9.0 / 16 : 1))
-        let scale = min(1, maxWidth / max(1, size.width), UIScreen.main.bounds.height / 2 / max(1, size.height))
-        return CGSize(width: size.width * scale, height: size.height * scale)
-    }
 
     var body: some View {
         Group {
@@ -604,13 +597,21 @@ struct SimpleStandaloneMedia: View {
         .frame(width: kind == .audio || kind == .file ? min(width, 360) : nil)
         .frame(height: kind == .audio ? Self.audioHeight : nil)
         .background(ChatColors.secondaryBg)
-        .clipShape(RoundedRectangle(cornerRadius: ChatBubbleStyle.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: retry) { await load() }
         .fullScreenCover(item: $videoURL) { ZeVideoFullscreenPlayer(fileURL: $0, startsAutomatically: false) }
         .sheet(item: $audioURL) { ZeAudioPreviewView(fileURL: $0).presentationDetents([.large]).presentationDragIndicator(.hidden) }
     }
 
     private var sourceURL: URL? { URL(string: ImageAttachment.canonicalizeMarkdownImageSource(media.source)) }
+
+    private var cornerRadius: CGFloat {
+        switch kind {
+        case .image: return ImageAttachment.thumbnailCornerRadius(width: coverSize.width)
+        case .video: return VideoAttachment.thumbnailCornerRadius
+        default: return ChatBubbleStyle.cornerRadius
+        }
+    }
 
     fileprivate static func audioFont(_ size: CGFloat) -> CGFloat {
         UIFontMetrics(forTextStyle: .body).scaledValue(for: FontSettings.shared.scaledMessage(size), compatibleWith: UIScreen.main.traitCollection)
@@ -627,20 +628,25 @@ struct SimpleStandaloneMedia: View {
         SimpleTranscriptMediaRouter.post(message: message, payload: .file(sourceURL))
     }
 
+    private var coverSize: CGSize {
+        if kind == .video {
+            return VideoAttachment.thumbnailSize(availableWidth: width, imageSize: bodyModel.mediaSize(for: segmentID, media: media))
+        }
+        return ImageAttachment.thumbnailSize(availableWidth: width)
+    }
+
     private var cover: some View {
-        let size = Self.coverSize(width: width, kind: kind, natural: bodyModel.mediaSize(for: segmentID, media: media))
+        let size = coverSize
         return ZStack(alignment: .bottomTrailing) {
             if let resource {
                 Button {
                     if kind == .video { videoURL = resource.url }
-                    else if let destination = media.linkDestination, let url = normalizedMarkdownLinkURL(from: destination) {
-                        SimpleTranscriptMediaRouter.post(message: message, payload: .link(url))
-                    }
-                    else { openImageGallery() }
+                    else { Self.openImage(message: message, blockID: key.blockId, segmentID: segmentID, media: media) }
                 } label: {
                     ZStack {
                         if let thumbnail = resource.thumbnail {
-                            Image(uiImage: thumbnail).resizable().aspectRatio(contentMode: .fit)
+                            SimpleThumbnailImage(image: thumbnail, contentMode: kind == .video
+                                                 ? VideoAttachment.thumbnailContentMode : ImageAttachment.thumbnailContentMode)
                         }
                         if kind == .video {
                             Image(systemName: "play.circle.fill").font(.system(size: 38)).foregroundStyle(.white).shadow(radius: 4)
@@ -698,9 +704,8 @@ struct SimpleStandaloneMedia: View {
         do {
             let loaded = try await Self.fetch(sourceURL, kind: kind)
             guard !Task.isCancelled else { return }
-            if var size = loaded.imageSize {
-                if kind == .video, size.width > 0, size.height > 0 { size = CGSize(width: 400, height: 400 * size.height / size.width) }
-                if size.width > 0, size.height > 0, bodyModel.recordMediaSize(size, for: segmentID, media: media) {
+            if kind == .video, let size = loaded.thumbnail?.size {
+                if bodyModel.recordMediaSize(size, for: segmentID, media: media) {
                     onResize(segmentID)
                 }
             }
@@ -710,7 +715,7 @@ struct SimpleStandaloneMedia: View {
         }
     }
 
-    private static func fetch(_ source: URL, kind: SimpleSegmentID.Kind) async throws -> Resource {
+    fileprivate static func fetch(_ source: URL, kind: SimpleSegmentID.Kind) async throws -> Resource {
         let url: URL
         if source.scheme == "ze" || source.isFileURL {
             var available: URL?
@@ -731,7 +736,7 @@ struct SimpleStandaloneMedia: View {
         switch kind {
         case .image:
             let cacheKey = "simple-image:\(zeMediaCacheKey(for: source))"
-            if let cached = NativeMediaImageCache.shared.image(for: cacheKey) { return Resource(url: url, thumbnail: cached, imageSize: cached.size) }
+            if let cached = NativeMediaImageCache.shared.image(for: cacheKey) { return Resource(url: url, thumbnail: cached) }
             let data: Data
             if url.isFileURL {
                 data = try await Task.detached(priority: .utility) { try Data(contentsOf: url) }.value
@@ -743,22 +748,18 @@ struct SimpleStandaloneMedia: View {
             let image = await Task.detached(priority: .utility) { downsampleImageData(data, maxPixelSize: 2048) }.value
             guard let image else { throw Failure.unsupported }
             NativeMediaImageCache.shared.set(image, for: cacheKey)
-            return Resource(url: url, thumbnail: image, imageSize: image.size)
+            return Resource(url: url, thumbnail: image)
         case .video:
             let asset = AVURLAsset(url: url)
             let tracks = try await asset.loadTracks(withMediaType: .video)
-            guard let track = tracks.first else { throw Failure.unsupported }
-            let natural = try await track.load(.naturalSize)
-            let transform = try await track.load(.preferredTransform)
-            let transformed = natural.applying(transform)
+            guard !tracks.isEmpty else { throw Failure.unsupported }
             let duration = (try? await asset.load(.duration))?.seconds
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 800, height: 800)
+            generator.maximumSize = VideoAttachment.thumbnailPixelSize
             let frame = try? await generator.image(at: .zero)
             let image = frame?.0
-            return Resource(url: url, thumbnail: image.map { UIImage(cgImage: $0) },
-                            imageSize: CGSize(width: abs(transformed.width), height: abs(transformed.height)), duration: duration)
+            return Resource(url: url, thumbnail: image.map { UIImage(cgImage: $0) }, duration: duration)
         case .audio:
             let local: URL
             if url.isFileURL { local = url }
@@ -797,7 +798,15 @@ struct SimpleStandaloneMedia: View {
         throw Failure.unsupported
     }
 
-    private func openImageGallery() {
+    static func openImage(message: ChatMessage, blockID: UUID, segmentID: SimpleSegmentID, media: SimpleBodySegment.Media) {
+        if let destination = media.linkDestination, let url = normalizedMarkdownLinkURL(from: destination) {
+            SimpleTranscriptMediaRouter.post(message: message, payload: .link(url))
+        } else {
+            openImageGallery(message: message, blockID: blockID, segmentID: segmentID)
+        }
+    }
+
+    private static func openImageGallery(message: ChatMessage, blockID: UUID, segmentID: SimpleSegmentID) {
         let entries = message.blocks.filter { SimpleTranscript.row(for: $0) == .text }.flatMap { block -> [(UUID, SimpleSegmentID, SimpleBodySegment.Media, String)] in
             let segments = block.simpleBody.segments
             guard segments.contains(where: { $0.id.kind == .image }) else { return [] }
@@ -807,7 +816,7 @@ struct SimpleStandaloneMedia: View {
                 return (block.id, segment.id, media, titles[segment.id] ?? media.galleryTitle)
             }
         }
-        guard let start = entries.firstIndex(where: { $0.0 == key.blockId && $0.1 == segmentID }) else { return }
+        guard let start = entries.firstIndex(where: { $0.0 == blockID && $0.1 == segmentID }) else { return }
         let items = entries.map { blockID, id, entry, title in
             let source = URL(string: ImageAttachment.canonicalizeMarkdownImageSource(entry.source))
             return GalleryItem(id: "\(blockID):\(id)", title: title, sourceURL: source, onFavorite: {
@@ -821,6 +830,141 @@ struct SimpleStandaloneMedia: View {
             }
         }
         SimpleTranscriptMediaRouter.post(message: message, payload: .gallery(.init(items: items, startIndex: start)))
+    }
+}
+
+private struct SimpleThumbnailImage: UIViewRepresentable {
+    let image: UIImage
+    let contentMode: UIView.ContentMode
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.clipsToBounds = true
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        view.image = image
+        view.contentMode = contentMode
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
+    }
+}
+
+@MainActor struct SimpleImageGroup: View {
+    let segments: [SimpleBodySegment]
+    let width: CGFloat
+    let message: ChatMessage
+    let blockID: UUID
+    @Binding var selectedImageID: SimpleSegmentID?
+    @Environment(\.chatSearchHighlights) private var search
+    @State private var images: [Occurrence: Result<UIImage, SimpleStandaloneMedia.Failure>] = [:]
+    @State private var retry = 0
+
+    private struct Occurrence: Hashable, Sendable {
+        let id: SimpleSegmentID
+        let source: String
+    }
+
+    private struct LoadKey: Equatable {
+        let occurrences: [Occurrence]
+        let retry: Int
+    }
+
+    var body: some View {
+        let entries = segments.compactMap { segment in
+            segment.media.map { (Occurrence(id: segment.id, source: $0.source), $0) }
+        }
+        let occurrences = entries.map { $0.0 }
+        let size = ImageAttachment.thumbnailSize(availableWidth: width, isGroup: true)
+        if occurrences.count > 1 {
+            let selected = occurrences.firstIndex { $0.id == selectedImageID } ?? 0
+            let (occurrence, media) = entries[selected]
+            Strip(images: occurrences.map { images[$0].flatMap { try? $0.get() } },
+                  labels: entries.map { $0.1.name }, selected: selected, size: size,
+                  onSelect: { selectedImageID = occurrences[$0].id },
+                  onOpen: { SimpleStandaloneMedia.openImage(message: message, blockID: blockID, segmentID: occurrence.id, media: media) })
+                .id(occurrences)
+                .frame(width: size.width, height: size.height)
+                .overlay(alignment: .topLeading) {
+                    if case .failure(let failure)? = images[occurrence] {
+                        Group {
+                            if failure == .unavailable {
+                                Button { retry += 1 } label: { Image(systemName: "arrow.clockwise.circle") }
+                                    .buttonStyle(.plain).accessibilityLabel(Text("Retry"))
+                            } else {
+                                Image(systemName: "exclamationmark.circle").accessibilityLabel(Text("Unsupported"))
+                            }
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                    }
+                }
+                .task(id: LoadKey(occurrences: occurrences, retry: retry)) { await load(occurrences) }
+                .task(id: occurrences) {
+                    for await id in searchMatches(occurrences).values { selectedImageID = id }
+                }
+        }
+    }
+
+    private func searchMatches(_ occurrences: [Occurrence]) -> AnyPublisher<SimpleSegmentID, Never> {
+        let publishers = occurrences.compactMap { occurrence in
+            search?.token(for: ChatSearchUnitKey(messageId: message.id, blockId: blockID, field: .body, segmentID: occurrence.id))
+                .$state.compactMap { $0?.current == nil ? nil : occurrence.id }
+        }
+        return Publishers.MergeMany(publishers).eraseToAnyPublisher()
+    }
+
+    private func load(_ occurrences: [Occurrence]) async {
+        guard !Task.isCancelled else { return }
+        let active = Set(occurrences)
+        if images.keys.contains(where: { !active.contains($0) }) {
+            images = images.filter { active.contains($0.key) }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for occurrence in occurrences {
+                if case .success? = images[occurrence] { continue }
+                group.addTask { await self.loadImage(occurrence) }
+            }
+        }
+    }
+
+    private func loadImage(_ occurrence: Occurrence) async {
+        let result: Result<UIImage, SimpleStandaloneMedia.Failure>
+        do {
+            guard let source = URL(string: ImageAttachment.canonicalizeMarkdownImageSource(occurrence.source)),
+                  ["ze", "file", "http", "https"].contains(source.scheme?.lowercased() ?? ""),
+                  let image = try await SimpleStandaloneMedia.fetch(source, kind: .image).thumbnail else {
+                throw SimpleStandaloneMedia.Failure.unsupported
+            }
+            result = .success(image)
+        } catch {
+            result = .failure(.classify(error))
+        }
+        guard !Task.isCancelled else { return }
+        images[occurrence] = result
+    }
+
+    private struct Strip: UIViewRepresentable {
+        let images: [UIImage?]
+        let labels: [String]
+        let selected: Int
+        let size: CGSize
+        let onSelect: (Int) -> Void
+        let onOpen: () -> Void
+
+        func makeUIView(context: Context) -> MarkdownImageGroupView {
+            MarkdownImageGroupView(side: size.width, imageCount: images.count)
+        }
+
+        func updateUIView(_ view: MarkdownImageGroupView, context: Context) {
+            view.updateSimpleImages(images, selectedIndex: selected, labels: labels, onSelect: onSelect, onOpen: onOpen)
+        }
+
+        func sizeThatFits(_ proposal: ProposedViewSize, uiView: MarkdownImageGroupView, context: Context) -> CGSize? { size }
     }
 }
 

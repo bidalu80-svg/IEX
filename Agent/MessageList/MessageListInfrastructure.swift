@@ -62,6 +62,7 @@ final class ReplyCompletionGlowEvents {
 
     @MainActor final class Body: ObservableObject {
         @Published private(set) var segments: [SimpleBodySegment]
+        private var displayRows: DisplayRows
         let contentChanges = PassthroughSubject<[SimpleSegmentID], Never>()
         var tableOffsets: [SimpleSegmentID: CGPoint] = [:]
         private var mediaSizes: [SimpleSegmentID: (media: SimpleBodySegment.Media, size: CGSize)] = [:]
@@ -71,8 +72,16 @@ final class ReplyCompletionGlowEvents {
         init(block: AssistantBlock) {
             parsedContent = block.content
             parsedFinalised = Self.isFinalised(block)
-            segments = SimpleBodySegment.parse(parsedContent, finalised: parsedFinalised)
+            let initial = SimpleBodySegment.parse(parsedContent, finalised: parsedFinalised)
+            segments = initial
+            displayRows = DisplayRows(initial)
         }
+
+        var rowIDs: [SimpleSegmentID] { displayRows.ids }
+
+        func rowID(for id: SimpleSegmentID) -> SimpleSegmentID? { displayRows.owners[id] }
+
+        func segments(inRow id: SimpleSegmentID) -> [SimpleBodySegment] { displayRows.members[id] ?? [] }
 
         func observe(_ block: AssistantBlock) -> AnyPublisher<Void, Never> {
             refresh(block)
@@ -98,13 +107,14 @@ final class ReplyCompletionGlowEvents {
             parsedFinalised = finalised
             let next = SimpleBodySegment.parse(parsedContent, finalised: parsedFinalised)
             guard next != segments else { return }
-            let previous = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let changed = next.compactMap { segment in
-                previous[segment.id].map { $0 != segment } == true ? segment.id : nil
+            let nextRows = DisplayRows(next)
+            let changed = nextRows.ids.filter { id in
+                displayRows.members[id].map { $0 != nextRows.members[id] } == true
             }
             let currentMedia = Dictionary(next.compactMap { segment in segment.media.map { (segment.id, $0) } },
                                           uniquingKeysWith: { first, _ in first })
             mediaSizes = mediaSizes.filter { currentMedia[$0.key] == $0.value.media }
+            displayRows = nextRows
             segments = next
             if !changed.isEmpty { contentChanges.send(changed) }
         }
@@ -136,6 +146,27 @@ final class ReplyCompletionGlowEvents {
 
         private static func isFinalised(_ block: AssistantBlock) -> Bool {
             block.cachedMarkdown != nil || block.cachedAttributedString != nil
+        }
+
+        private struct DisplayRows {
+            var ids: [SimpleSegmentID] = []
+            var owners: [SimpleSegmentID: SimpleSegmentID] = [:]
+            var members: [SimpleSegmentID: [SimpleBodySegment]] = [:]
+
+            init(_ segments: [SimpleBodySegment]) {
+                for segment in segments {
+                    let id = segment.id
+                    let owner: SimpleSegmentID
+                    if id.kind == .image, let last = ids.last, last.kind == .image {
+                        owner = last
+                    } else {
+                        owner = id
+                        ids.append(id)
+                    }
+                    owners[id] = owner
+                    members[owner, default: []].append(segment)
+                }
+            }
         }
     }
 

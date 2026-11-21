@@ -51,10 +51,10 @@ check("single V3 host receives mode before attach and updates it in place",
 
 projection = section(v3, "// Build items", "// Remap height cache")
 simple_projection = section(projection, "case .assistant:", "newItems.append(.assistantHeader(message.id))")
-check("simple projects source segments before the standard fold branch and keeps questions whole",
+check("simple projects body rows before the standard fold branch and keeps questions whole",
       re.search(r"case \.assistant:\s*if transcriptMode == \.simple \{\s*"
                 r"for block in message\.blocks \{\s*guard let role = SimpleTranscript\.row\(for: block\) else \{ continue \}\s*"
-                r"let ids: \[SimpleSegmentID\?\] = role == \.question \? \[nil\] : block\.simpleBody\.segments\.map \{ \$0\.id \}\s*"
+                r"let ids: \[SimpleSegmentID\?\] = role == \.question \? \[nil\] : block\.simpleBody\.rowIDs\.map \{ \$0 \}\s*"
                 r"for id in ids \{\s*let item = MessageListItem\.assistantBlock\(message\.id, block\.id, id\)\s*newItems\.append\(item\)", simple_projection)
       and simple_projection.count("newItems.append(") == 2 and "continue" in simple_projection)
 simple_roles = section(infra, "enum Row: Equatable", "static func hasText")
@@ -219,7 +219,7 @@ check("late questions and first nonblank text can enter without token-driven too
       and "Publishers.Merge(states, updates).eraseToAnyPublisher()" in content_edges)
 check("streamed body batches updates and invalidates changed segment sizes without a snapshot edge",
       ".throttle(for: .milliseconds(32), scheduler: DispatchQueue.main, latest: true)" in simple_roles
-      and "previous[segment.id].map { $0 != segment } == true ? segment.id : nil" in simple_roles
+      and "displayRows.members[id].map { $0 != nextRows.members[id] } == true" in simple_roles
       and "block.simpleBody.contentChanges" in v3 and "simpleBlockObjects[item] == ObjectIdentifier(block)" in v3
       and "if newItems == previousSnapshotIds && reconfigured.isEmpty && !modeChanged" in v3)
 check("message sink marks the simple projection dirty",
@@ -306,9 +306,60 @@ check("simple search indexes segments and lands on the matching table cell or ex
       and "ChatSearchMarkdownText.tableCellText(cell)" in markdown and "NSIntersectionRange(matches[current], range)" in markdown
       and "scroll.scrollRectToVisible(tableCell.convert(tableCell.bounds, to: scroll)" in v3
       and "SearchHighlightText(media.name, key: key)" in media)
-check("standalone image and video preserve one segment, use capped geometry and do not autoplay",
-      all(marker in media for marker in ("min(400, width)", "UIScreen.main.bounds.height / 2", "9.0 / 16",
-          "bodyModel.recordMediaSize(size, for: segmentID, media: media)", "onResize(segmentID)", "startsAutomatically: false", ".gallery(.init(items: items, startIndex: start))"))
+image_attachment = section(markdown, "final class ImageAttachment:", "final class MarkdownImageGroupView:")
+video_attachment = section(markdown, "final class VideoAttachment:", "private final class VideoTapGesture:")
+image_group = section(media, "@MainActor struct SimpleImageGroup:", "@MainActor enum SimpleTranscriptMediaRouter")
+
+
+def shares_standard_thumbnail_geometry(media_source):
+    sizing = section(media_source, "private var coverSize: CGSize", "private var cover: some View")
+    rendering = section(media_source, "private var cover: some View", "private var fileDetail:")
+    return (sizing.strip().splitlines() == [
+        "private var coverSize: CGSize {",
+        "        if kind == .video {",
+        "            return VideoAttachment.thumbnailSize(availableWidth: width, imageSize: bodyModel.mediaSize(for: segmentID, media: media))",
+        "        }",
+        "        return ImageAttachment.thumbnailSize(availableWidth: width)",
+        "    }",
+    ] and "let size = coverSize" in rendering
+        and rendering.count(".frame(width: size.width, height: size.height)") == 2
+        and "VideoAttachment.thumbnailContentMode : ImageAttachment.thumbnailContentMode" in rendering)
+
+
+check("simple image/video covers share the standard size and crop configuration through rendering and estimation",
+      shares_standard_thumbnail_geometry(media)
+      and "imageView.contentMode = Self.thumbnailContentMode" in image_attachment
+      and "thumbView.contentMode = Self.thumbnailContentMode" in video_attachment
+      and "Self.thumbnailSize(availableWidth: width, isGroup: isImageGroup)" in image_attachment
+      and "Self.thumbnailSize(availableWidth: lineFrag.width, imageSize: thumbnail?.size)" in video_attachment
+      and "ImageAttachment.thumbnailSize(availableWidth: column, isGroup: members.count > 1).height" in v3
+      and "VideoAttachment.thumbnailSize(availableWidth: column, imageSize: size).height" in v3)
+for name, target, replacement in (
+    ("restore an independent large image card", "return ImageAttachment.thumbnailSize(availableWidth: width)",
+     "return CGSize(width: min(400, width), height: min(400, width))"),
+    ("hardcode the video placeholder", "VideoAttachment.thumbnailSize(availableWidth: width, imageSize: bodyModel.mediaSize(for: segmentID, media: media))",
+     "CGSize(width: 400, height: 200)"),
+):
+    mutated = media.replace(target, replacement, 1)
+    check(f"thumbnail structure mutation rejected: {name}", mutated != media and not shares_standard_thumbnail_geometry(mutated))
+
+check("contiguous images use the same native group view and reserve its exact size at the first occurrence",
+      "if id.kind == .image, let last = ids.last, last.kind == .image" in infra
+      and "members[owner, default: []].append(segment)" in infra and "block.simpleBody.rowIDs.map" in v3
+      and "let members = bodyModel.segments(inRow: id)" in segment_view and "SimpleImageGroup(segments: members" in segment_view
+      and "MarkdownImageGroupView(attachment: self, side: side)" in image_attachment
+      and "MarkdownImageGroupView(side: size.width, imageCount: images.count)" in image_group
+      and "ImageAttachment.thumbnailSize(availableWidth: width, isGroup: true)" in image_group
+      and ".frame(width: size.width, height: size.height)" in image_group
+      and r"\(members.hashValue)" in v3)
+check("group selection keeps occurrence identity for search, activation and the existing long-press menu",
+      "block.simpleBody.rowID(for: segmentID)" in v3 and "segmentID: occurrence.id" in image_group
+      and "selectedImageID = occurrences[$0].id" in image_group
+      and "members.first(where: { $0.id == selectedImageID }) ?? members.first" in v3
+      and "SimpleStandaloneMedia.openImage(message: message, blockID: blockID, segmentID: occurrence.id, media: media)" in image_group)
+check("video uses loaded frame dimensions for relayout and does not autoplay",
+      all(marker in media for marker in ("if kind == .video, let size = loaded.thumbnail?.size",
+          "bodyModel.recordMediaSize(size, for: segmentID, media: media)", "onResize(segmentID)", "startsAutomatically: false"))
       and "if externalPlayer == nil && startsAutomatically" in video
       and "startsAutomatically: Bool = true" in video)
 check("audio and files use independent cards, with unavailable resources gated and no stop on row reuse",
@@ -329,7 +380,11 @@ check("standalone file URLs enter the existing preview and share dispatch withou
       and 'guard url.scheme == "ze" else { return .systemAction }' in file_preview
       and "presentChatFile(url, resolved: resolveZeFileURL(url: url))" in file_preview
       and "previewDocumentFile = fileURL" in file_preview and "shareFile = fileURL" in file_preview)
-gallery = section(media, "private func openImageGallery()", "@MainActor enum SimpleTranscriptMediaRouter")
+gallery = section(media, "private static func openImageGallery(", "private struct SimpleThumbnailImage")
+check("the gallery keeps body order and opens at the selected block/segment occurrence even when URLs repeat",
+      "let segments = block.simpleBody.segments" in gallery
+      and "entries.firstIndex(where: { $0.0 == blockID && $0.1 == segmentID })" in gallery
+      and ".gallery(.init(items: items, startIndex: start))" in gallery)
 check("standalone gallery items retain checked image favorites for resolved local files",
       "onFavorite: {" in gallery and "source.isFileURL ? source : resolveZeFileURLCached(url: source)" in gallery
       and "MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName:" in gallery)
@@ -442,7 +497,7 @@ check("loaded and pending audio rows use the same scaled height as the list esti
       ".frame(height: kind == .audio ? Self.audioHeight : nil)" in media and "case .audio: return SimpleStandaloneMedia.audioHeight" in v3
       and "UIFontMetrics(forTextStyle: .body).scaledValue" in media and "max(70, title + controls + 14)" in media
       and ".frame(minHeight: 70)" not in media)
-failure = section(media, "private enum Failure: Error", "private struct Resource")
+failure = section(media, "fileprivate enum Failure: Error", "fileprivate struct Resource")
 check("retry is allowlisted for temporary failures rather than unknown media errors",
       "Failure.classify(error)" in media and ".timedOut" in failure and "NSFileReadNoSuchFileError" in failure
       and "default: return .unsupported" in failure and failure.rstrip().endswith("return .unsupported\n        }\n    }")
