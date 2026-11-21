@@ -1,5 +1,8 @@
 import Citadel
+import Combine
 import Foundation
+import UIKit
+import UserNotifications
 
 /// Result returned to the model after a remote-server tool request. The
 /// gateway never serializes local authentication material into this value.
@@ -11,11 +14,16 @@ struct RemoteServerAIToolResult {
 /// A single explicit user-approval request for a model-proposed remote action.
 /// Read-only operations do not reach this gate; commands and all mutations do.
 struct RemoteServerAIConfirmationRequest: Identifiable {
-    let id = UUID()
+    let id: UUID
+    let sessionID: String?
     let serverName: String
     let operation: String
     let detail: String
     let isDestructive: Bool
+}
+
+enum AIApprovalContext {
+    @TaskLocal static var sessionID: String?
 }
 
 /// Non-secret connection details proposed by a model. A draft is never
@@ -56,11 +64,31 @@ final class RemoteServerAIDraftStore: ObservableObject {
 @MainActor
 final class RemoteServerAIConfirmationGate: ObservableObject {
     static let shared = RemoteServerAIConfirmationGate()
+    nonisolated static let notificationPrefix = "ai-approval-"
 
     @Published private(set) var pending: RemoteServerAIConfirmationRequest?
+    @Published private(set) var notificationPresentationID: UUID?
+    @Published private(set) var showsExpiredNotice = false
     private var continuation: CheckedContinuation<Bool, Never>?
+    private var isInBackground = UIApplication.shared.applicationState == .background
+    private var backgroundGeneration = 0
+    private var notifiedID: UUID?
+    private var isAddingNotification = false
+    private static var isRequestingAuthorization = false
 
-    private init() {}
+    private init() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.isInBackground = true
+                self?.notifyIfBackgrounded()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.returnToForeground()
+            }
+        }
+    }
 
     func request(
         serverName: String,
@@ -68,23 +96,117 @@ final class RemoteServerAIConfirmationGate: ObservableObject {
         detail: String,
         isDestructive: Bool
     ) async -> Bool {
-        guard pending == nil else { return false }
-        return await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            self.pending = RemoteServerAIConfirmationRequest(
-                serverName: serverName,
-                operation: operation,
-                detail: detail,
-                isDestructive: isDestructive
-            )
+        guard pending == nil, !Task.isCancelled else { return false }
+        let request = RemoteServerAIConfirmationRequest(
+            id: UUID(), sessionID: AIApprovalContext.sessionID,
+            serverName: serverName, operation: operation, detail: detail, isDestructive: isDestructive
+        )
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                guard pending == nil, !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                self.continuation = continuation
+                self.pending = request
+                notifyIfBackgrounded()
+            }
+        } onCancel: {
+            Task { @MainActor in self.resolve(id: request.id, allowed: false) }
         }
     }
 
-    func resolve(allowed: Bool) {
-        let continuation = self.continuation
+    func resolve(id: UUID, allowed: Bool) {
+        guard pending?.id == id, let continuation else { return }
         self.continuation = nil
-        self.pending = nil
-        continuation?.resume(returning: allowed)
+        pending = nil
+        notifiedID = nil
+        removeNotification(id: id)
+        if notificationPresentationID == id { showsExpiredNotice = true }
+        continuation.resume(returning: allowed)
+    }
+
+    func openNotification(id: UUID) -> RemoteServerAIConfirmationRequest? {
+        guard let request = pendingRequest(forNotification: id) else { return nil }
+        notificationPresentationID = id
+        return request
+    }
+
+    func pendingRequest(forNotification id: UUID) -> RemoteServerAIConfirmationRequest? {
+        removeNotification(id: id)
+        guard let pending, pending.id == id else {
+            showsExpiredNotice = true
+            return nil
+        }
+        return pending
+    }
+
+    func presentationReady(id: UUID) {
+        guard notificationPresentationID == id, pending?.id == id else { return }
+        notificationPresentationID = nil
+    }
+
+    func dismissExpiredNotice() {
+        showsExpiredNotice = false
+        if notificationPresentationID != pending?.id { notificationPresentationID = nil }
+    }
+
+    private func returnToForeground() {
+        isInBackground = false
+        backgroundGeneration &+= 1
+        notifiedID = nil
+        if let id = pending?.id { removeNotification(id: id) }
+    }
+
+    private func canNotify(id: UUID, generation: Int) -> Bool {
+        pending?.id == id && isInBackground && UIApplication.shared.applicationState == .background
+            && backgroundGeneration == generation && BackgroundKeepAliveManager.shared.backgroundNotificationsEnabled
+    }
+
+    private func notifyIfBackgrounded() {
+        let generation = backgroundGeneration
+        guard let id = pending?.id, canNotify(id: id, generation: generation),
+              notifiedID != id, !isAddingNotification else { return }
+        notifiedID = id
+        isAddingNotification = true
+        Task {
+            await sendNotification(id: id, generation: generation)
+            isAddingNotification = false
+            notifyIfBackgrounded()
+        }
+    }
+
+    private func sendNotification(id: UUID, generation: Int) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard canNotify(id: id, generation: generation) else { return }
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral: break
+        default: return
+        }
+        let content = UNMutableNotificationContent()
+        content.body = "Ze 有一项操作等你审核"
+        let notification = UNNotificationRequest(identifier: Self.notificationPrefix + id.uuidString, content: content, trigger: nil)
+        try? await center.add(notification)
+        if !canNotify(id: id, generation: generation) { removeNotification(id: id) }
+    }
+
+    private func removeNotification(id: UUID) {
+        let center = UNUserNotificationCenter.current()
+        let identifier = Self.notificationPrefix + id.uuidString
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+    }
+
+    static func enableNotificationsFromSettings() async {
+        guard UIApplication.shared.applicationState == .active, !isRequestingAuthorization else { return }
+        isRequestingAuthorization = true
+        defer { isRequestingAuthorization = false }
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .notDetermined, UIApplication.shared.applicationState == .active,
+              BackgroundKeepAliveManager.shared.backgroundNotificationsEnabled else { return }
+        _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 }
 

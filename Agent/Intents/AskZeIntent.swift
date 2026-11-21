@@ -80,12 +80,7 @@ struct AskZeIntent: AppIntent {
         // the cold-launch buffer already consume for notification taps / deep
         // links — no new navigation surface.
         if !sid.isEmpty {
-            NotificationNavigationStore.shared.setPending(sid)
-            NotificationCenter.default.post(
-                name: .openSessionFromIntent,
-                object: nil,
-                userInfo: ["sessionId": sid]
-            )
+            NotificationNavigationStore.shared.navigate(to: .init(sessionId: sid, approvalID: nil))
         }
 
         return .result(dialog: "On it — opening Ze.")

@@ -245,14 +245,26 @@ final class ZeVisualizationCache: @unchecked Sendable {
     }
 }
 
+typealias MarkdownSourceEdit = (range: Range<Int>, replacementLength: Int)
+
 enum ZeVisualizationStreaming {
+    private static func lineOffsets(_ lines: [String]) -> [Int] {
+        lines.reduce(into: [0]) { offsets, line in offsets.append(offsets.last! + line.utf8.count + 1) }
+    }
+
     /// Recover an omitted/wrong fence only for a complete validated visualization
     /// envelope. Ordinary JSON, inline code and explicitly typed code examples are
     /// left alone. Strings/escapes are scanned, never matched with a brace regex.
-    static func normalizeEnvelopes(_ markdown: String) -> String {
+    static func normalizeEnvelopes(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
         guard markdown.contains("{") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
+        let offsets = recordEdits.map { _ in lineOffsets(lines) }
+        var edits: [MarkdownSourceEdit] = []
         var output: [String] = []
+        func appendReplacement(_ replacement: String, from start: Int, to end: Int) {
+            output.append(replacement)
+            if let offsets { edits.append((offsets[start]..<(offsets[end] - 1), replacement.utf8.count)) }
+        }
         var index = 0
         var typedFence: Character?
         var typedLength = 0
@@ -322,12 +334,12 @@ enum ZeVisualizationStreaming {
             }
             if complete, !invalidTail, genericClosed, recovered < 4,
                case .success = ZeVisualizationCache.shared.parse(raw) {
-                output.append("\n```ze-visualization\n" + raw + "\n```\n")
+                appendReplacement("\n```ze-visualization\n" + raw + "\n```\n", from: index, to: isFence ? after : end)
                 recovered += 1; index = isFence ? after : end
             } else if likelyEnvelope, (!complete && end == lines.count || isFence && !genericClosed && (after == lines.count || after == lines.count - 1 && lines[after].allSatisfy { $0 == first || $0.isWhitespace })), bytes <= ZeVisualizationParser.maxBytes {
                 // Stable placeholder until the remaining stream arrives. No
                 // decoding or partial chart redraw on every arriving token.
-                output.append("```ze-visualization-pending\n\n```")
+                appendReplacement("```ze-visualization-pending\n\n```", from: index, to: lines.count)
                 index = lines.count
             } else {
                 // Consume scanned candidates once: no quadratic rescan of nested
@@ -337,13 +349,14 @@ enum ZeVisualizationStreaming {
                 else { if !isFence { output.append(line) }; index += 1 }
             }
         }
+        recordEdits?(edits)
         return output.joined(separator: "\n")
     }
 
     /// Linear scan of fenced lines, preserving ordinary code examples. Replace
     /// an unfinished visualization payload before cmark sees its growing JSON.
     /// Four complete blocks per message bounds retained attachment data as well.
-    static func prepare(_ markdown: String, readable: Bool = false) -> String {
+    static func prepare(_ markdown: String, readable: Bool = false, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
         // A fence label itself arrives token by token. Do not briefly mount a
         // code card for an empty/partial visualization opening fence.
         var input = markdown
@@ -354,12 +367,15 @@ enum ZeVisualizationStreaming {
                 let info = trimmed.dropFirst(run).trimmingCharacters(in: .whitespaces)
                 if run >= 3, !info.isEmpty, "ze-visualization".hasPrefix(info), info != "ze-visualization" {
                     input.removeLast(tail.count)
+                    recordEdits?([(input.utf8.count..<markdown.utf8.count, 0)])
                 }
             }
         }
-        let markdown = normalizeEnvelopes(input)
+        let markdown = normalizeEnvelopes(input, recordEdits: recordEdits)
         guard markdown.contains("ze-visualization") else { return markdown }
         let lines = markdown.components(separatedBy: "\n")
+        let offsets = recordEdits.map { _ in lineOffsets(lines) }
+        var edits: [MarkdownSourceEdit] = []
         var output: [String] = []
         var fence: Character?
         var length = 0
@@ -367,7 +383,9 @@ enum ZeVisualizationStreaming {
         var payload: [String] = []
         var bytes = 0
         var count = 0
-        func finish(_ closed: Bool) {
+        var visualStart = 0
+        func finish(_ closed: Bool, end: Int) {
+            let outputStart = output.count
             if closed, bytes <= ZeVisualizationParser.maxBytes, count <= 4 {
                 if readable {
                     switch ZeVisualizationCache.shared.parse(payload.joined(separator: "\n")) {
@@ -384,15 +402,19 @@ enum ZeVisualizationStreaming {
             } else {
                 output.append(readable ? ZeVisualizationError.incomplete.text : "```ze-visualization-pending\n\n```")
             }
+            if let offsets {
+                let length = output[outputStart...].reduce(0) { $0 + $1.utf8.count + 1 } - 1
+                edits.append((offsets[visualStart]..<(offsets[end] - 1), length))
+            }
             payload.removeAll(keepingCapacity: false)
         }
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let first = trimmed.first
             let run = first.map { ch in trimmed.prefix(while: { $0 == ch }).count } ?? 0
             if let current = fence {
                 if first == current, run >= length, trimmed.dropFirst(run).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if visual { finish(true) } else { output.append(line) }
+                    if visual { finish(true, end: index + 1) } else { output.append(line) }
                     fence = nil; visual = false
                 } else if visual {
                     bytes += line.utf8.count + 1
@@ -402,10 +424,11 @@ enum ZeVisualizationStreaming {
                 fence = first; length = run
                 let info = String(trimmed.dropFirst(run)).trimmingCharacters(in: .whitespacesAndNewlines)
                 visual = ZeVisualizationParser.isFence(info) || (readable && info == "ze-visualization-pending")
-                if visual { count += 1; bytes = 0 } else { output.append(line) }
+                if visual { count += 1; bytes = 0; visualStart = index } else { output.append(line) }
             } else { output.append(line) }
         }
-        if visual { finish(false) }
+        if visual { finish(false, end: lines.count) }
+        recordEdits?(edits)
         return output.joined(separator: "\n")
     }
 }

@@ -1,12 +1,15 @@
 #!/bin/bash
 set -euo pipefail
-APP="$RUNNER_TEMP/ZeFeedbackHarness.app"
-mkdir -p "$APP" feedback-ui-evidence
-PROBE="$RUNNER_TEMP/ZeFeedbackCompletionProbe.swift"
+if [[ ${1:-} == --generate-probe ]]; then
+  PROBE=${2:?probe output path required}
+else
+  PROBE="$RUNNER_TEMP/ZeFeedbackCompletionProbe.swift"
+fi
 python3 - "$PROBE" <<'PY'
 import pathlib,sys
 vm=pathlib.Path('Agent/Chat/AIChatViewModel.swift').read_text(encoding='utf-8')
 background=pathlib.Path('Agent/Chat/AIChatViewModel+BackgroundTask.swift').read_text(encoding='utf-8')
+infrastructure=pathlib.Path('Agent/MessageList/MessageListInfrastructure.swift').read_text(encoding='utf-8')
 def extract(source, marker):
     start=source.index(marker)
     opening=source.index('{',start)
@@ -16,18 +19,27 @@ def extract(source, marker):
         depth += (source[end] == '{') - (source[end] == '}')
         end += 1
     return source[start:end]
-methods=[extract(vm,'    private func notifyCompletionFeedback(').replace('private func','func',1),
-         extract(background,'    func notifyBackgroundReplyCompletion('),
-         extract(background,'    func postBackgroundSummaryIfNeeded(')]
-methods='\n'.join(methods).replace('for message: ChatMessage','for message: FeedbackProbeMessage')
-methods=methods.replace('UIApplication.shared.applicationState','probeApplicationState')
+completion=extract(vm,'    private func notifyCompletionFeedback(').replace('private func','func',1)
+background_methods='\n'.join([extract(background,'    func notifyBackgroundReplyCompletion('),
+                              extract(background,'    func postBackgroundSummaryIfNeeded(')])
+background_methods=background_methods.replace('for message: ChatMessage','for message: FeedbackProbeMessage')
+background_methods=background_methods.replace('UIApplication.shared.applicationState','probeApplicationState')
+glow=infrastructure[infrastructure.index('struct ReplyCompletionGlowEvent {'):infrastructure.index('@MainActor enum SimpleTranscript')]
+row=extract(infrastructure,'    static func row(for block:').replace('block: AssistantBlock','block: FeedbackProbeBlock',1)
+has_text=extract(infrastructure,'    static func hasText(')
 prefix="""import Foundation
+import Combine
 import UIKit
 struct FeedbackProbeBlock {
     enum Kind { case text, tool }
+    let id = UUID()
     var kind: Kind
     var content: String
+    var questionCard: Bool? = nil
 }
+@MainActor enum SimpleTranscript {
+    enum Row: Equatable { case text, question }
+"""+row+"\n"+has_text+"\n}\n"+glow+"""
 final class FeedbackProbeMessage {
     enum Role { case user, assistant }
     let id = UUID()
@@ -74,8 +86,11 @@ enum MarkdownStripper { static func plainText(_ text: String) -> String { text }
     var feedbackBackgroundScheduledReplyID: UUID?
     var feedbackBackgroundNotificationAttempt: (replyID: UUID, task: Task<Bool, Never>)?
 """
-pathlib.Path(sys.argv[1]).write_text(prefix+methods+"\n}\n", encoding="utf-8")
+pathlib.Path(sys.argv[1]).write_text(prefix+completion+"\n"+background_methods+"\n}\n", encoding="utf-8")
 PY
+if [[ ${1:-} == --generate-probe ]]; then exit 0; fi
+APP="$RUNNER_TEMP/ZeFeedbackHarness.app"
+mkdir -p "$APP" feedback-ui-evidence
 xcrun swiftc -parse-as-library -D DEBUG \
   -target "$(uname -m)-apple-ios16.0-simulator" \
   -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \

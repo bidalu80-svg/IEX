@@ -36,6 +36,7 @@ struct ChatSearchUnitKey: Hashable {
     let messageId: UUID
     let blockId: UUID?
     let field: ChatSearchField
+    var segmentID: SimpleSegmentID? = nil
 }
 
 /// One piece of visible text, in display order.
@@ -235,9 +236,11 @@ enum ChatSearchMarkdownText {
     /// Used for the renderer's TableAttachment by both sides.
     static func tableText(rows: [RawTableRow], columnCount: Int) -> String {
         rows.map { row in
-            row.cells.prefix(columnCount).map { normalized(inlineText($0.content)) }.joined(separator: "\t")
+            row.cells.prefix(columnCount).map { tableCellText($0) }.joined(separator: "\t")
         }.joined(separator: "\n")
     }
+
+    static func tableCellText(_ cell: RawTableCell) -> String { normalized(inlineText(cell.content)) }
 
     /// A code block's visible text: its content without the final newline
     /// (MarkdownNSRenderer.renderCodeBlockAttachment trims it the same way).
@@ -305,19 +308,19 @@ enum ChatSearchMarkdownText {
             }
             for (i, item) in items.enumerated() {
                 if i > 0 { out += "\n" }
-                out += glyph + "  "
+                if !item.continuesPrevious { out += glyph + "  " }
                 appendSequence(item.children, listDepth: listDepth + 1, to: &out)
             }
         case .numberedList(_, let start, let items):
             for (i, item) in items.enumerated() {
                 if i > 0 { out += "\n" }
-                out += "\(start + i). "
+                if !item.continuesPrevious { out += "\(start + i). " }
                 appendSequence(item.children, listDepth: listDepth + 1, to: &out)
             }
         case .taskList(_, let items):
             for (i, item) in items.enumerated() {
                 if i > 0 { out += "\n" }
-                out += item.isCompleted ? "\u{2611} " : "\u{2610} "
+                if !item.continuesPrevious { out += item.isCompleted ? "\u{2611} " : "\u{2610} " }
                 appendSequence(item.children, listDepth: listDepth + 1, to: &out)
             }
         case .table(let alignments, let rows):
@@ -625,6 +628,15 @@ enum ChatSearchUnitBuilder {
                     switch block.kind {
                     case .thinking: break
                     case .text:
+                        if mode == .simple {
+                            for segment in block.simpleBody.segmentsForSearch(block) {
+                                let text = segment.searchText
+                                if !text.isEmpty {
+                                    units.append(.init(key: .init(messageId: mid, blockId: bid, field: .body, segmentID: segment.id), text: text))
+                                }
+                            }
+                            continue
+                        }
                         units.append(.init(key: .init(messageId: mid, blockId: bid, field: .body), text: block.content, markdown: true, blocks: block.cachedMarkdown?.blocks, finalised: block.cachedMarkdown != nil || block.cachedAttributedString != nil))
                     case .info:
                         let lines = block.content.components(separatedBy: "\n").filter { !$0.isEmpty }; let reasons = lines.filter { $0.hasPrefix("⚠️") }
@@ -658,6 +670,28 @@ enum ChatSearchUnitBuilder {
         return (units, nextCache)
     }
 
+}
+
+extension SimpleBodySegment {
+    var hasVisibleText: Bool {
+        func containsText(_ block: BlockNode) -> Bool {
+            switch block {
+            case .blockquote, .bulletedList, .numberedList, .taskList:
+                return block.children.contains(where: containsText)
+            default:
+                return !ChatSearchMarkdownText.text(blocks: [block]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        }
+        return id.kind == .text && blocks.contains(where: containsText)
+    }
+
+    var searchText: String {
+        if let media { return id.kind == .file || id.kind == .audio ? media.name : "" }
+        if id.kind == .table, case .table(let alignments, let rows)? = blocks.first {
+            return ChatSearchMarkdownText.tableText(rows: rows, columnCount: alignments.count)
+        }
+        return ChatSearchMarkdownText.text(blocks: blocks)
+    }
 }
 @MainActor final class ChatSearchModel: ObservableObject {
     @Published var query = "" { didSet { if query != oldValue && isActive { schedule() } } }

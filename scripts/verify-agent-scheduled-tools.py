@@ -1,5 +1,6 @@
 """Static checks for model-created scheduled task integration and the reference dot-cube glyph."""
 from pathlib import Path
+import json
 import re
 ROOT=Path(__file__).resolve().parents[1]
 def source(p):return (ROOT/p).read_text(encoding='utf-8-sig')
@@ -27,6 +28,15 @@ glyph=anim[anim.index('// MARK: - Typing Indicator'):anim.index('// MARK: - Thin
 check('TimelineView(.animation(minimumInterval: 1.0 / 60.0' in glyph and 'paused: reduceMotion || scenePhase != .active' in glyph,'glyph requests a 60Hz animation schedule and pauses for reduced motion or an inactive scene')
 check('globalRotationDegrees(elapsed:' in glyph and 'loopStartFrameIndex' in glyph and 'frameIndex(elapsed:' in glyph,'local dot turns and continuous global rotation use independent time sampling')
 check('Canvas {' in glyph and 'ThinkingCubeAtlas' in glyph and 'NSCache<NSString, CubeThinkingGlyphFrames>' in glyph and 'didReceiveMemoryWarningNotification' in glyph and 'spectrum' not in glyph,'bounded transparent dot atlas is drawn natively with a purgeable shared cache')
-check('private struct CubeThinkingGlyph' in anim and 'HStack(spacing: 4)' in anim,'glyph is placed before Chinese thinking label')
+check('private struct CubeThinkingGlyph' in anim and 'HStack(spacing: 4)' in glyph,'glyph is placed before the reply waiting label')
+check(r'String(localized: "\(assistantName) 正在处理中")' in glyph
+      and 'TypingIndicatorFrame(elapsed: elapsed, assistantName: assistantName, reducedMotion: reduceMotion)' in glyph
+      and '.accessibilityLabel(Text(label))' in glyph
+      and re.search(r'private var labelText: some View \{\s*Text\(label\)', glyph),
+      'visible and spoken waiting labels share the localized dynamic processing copy')
+labels=json.loads(source('Localizable.xcstrings'))['strings']
+check(all(labels.get('%@ 正在处理中', {}).get('localizations', {}).get(locale, {}).get('stringUnit', {}).get('value') == value
+          for locale, value in {'zh-Hans': '%@ 正在处理中', 'zh-Hant': '%@ 正在處理中'}.items()),
+      'both Chinese translations preserve the soul-name placeholder')
 check('scripts/verify-agent-scheduled-tools.py' in source('.github/workflows/build.yml'),'CI runs integration gate')
 print(f'Structural checks passed: {checks}')

@@ -5,7 +5,7 @@ root=pathlib.Path(__file__).resolve().parents[1]
 source=(root/'Views/Chat/ChatSearch.swift').read_text(encoding='utf-8')
 def section(begin,end):return source[source.index(begin):source.index(end)]
 parser=(root/'Agent/Markdown/ZeMarkdownParser.swift').read_text(encoding='utf-8').split('// MARK: - MarkdownContent')[0]
-parser='\n'.join(x for x in parser.splitlines() if not x.startswith('import cmark'))
+parser='\n'.join(x for x in parser.splitlines() if not x.startswith(('import cmark', 'import UniformTypeIdentifiers')))
 text=parser+'\n'+section('// BEGIN chat-search-engine','// END chat-search-engine')+'\n'+section('// BEGIN chat-search-markdown-text','// END chat-search-markdown-text')+'\n'+(root/'scripts/ChatSearchEngineChecks.swift').read_text(encoding='utf-8')
 compiler=shutil.which('swiftc')
 if not compiler:raise SystemExit('swiftc required: run on the macOS workflow')

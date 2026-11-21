@@ -167,14 +167,16 @@ struct ZeVideoFullscreenPlayer: View {
     /// Optional externally-managed AVPlayer (e.g. from PlayerOffloadBridge).
     /// When provided, the view skips creating its own player.
     let externalPlayer: AVPlayer?
+    let startsAutomatically: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var showShareSheet = false
     @State private var saveStatus: SaveStatus = .idle
 
-    init(fileURL: URL, externalPlayer: AVPlayer? = nil) {
+    init(fileURL: URL, externalPlayer: AVPlayer? = nil, startsAutomatically: Bool = true) {
         self.fileURL = fileURL
         self.externalPlayer = externalPlayer
+        self.startsAutomatically = startsAutomatically
     }
 
     // Custom controls state
@@ -379,7 +381,7 @@ struct ZeVideoFullscreenPlayer: View {
             player = p
             try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
             try? AVAudioSession.sharedInstance().setActive(true)
-            if externalPlayer == nil {
+            if externalPlayer == nil && startsAutomatically {
                 p.play()
             }
             isPlaying = p.rate > 0

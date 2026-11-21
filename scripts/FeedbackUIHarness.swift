@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+import Combine
 
 // The audio-session coordinator boundary is the only fixture. The real
 // waveform, AVAudioPlayer, settings store, haptic gate and SwiftUI page run here.
@@ -61,6 +62,13 @@ import AVFoundation
             let completionProbe = FeedbackCompletionProbe()
             let firstReply = FeedbackProbeMessage()
             let queuedReply = FeedbackProbeMessage()
+            let lastText = FeedbackProbeBlock(kind: .text, content: "Last visible text block")
+            queuedReply.blocks += [lastText, FeedbackProbeBlock(kind: .tool, content: "Tool output"),
+                                   FeedbackProbeBlock(kind: .text, content: "Question", questionCard: true),
+                                   FeedbackProbeBlock(kind: .text, content: " \n")]
+            var glowEvents: [ReplyCompletionGlowEvent] = []
+            let glowSubscription = ReplyCompletionGlowEvents.shared.events.sink { glowEvents.append($0) }
+            defer { glowSubscription.cancel() }
             completionProbe.messages = [firstReply, queuedReply]
             var notifiedIDs = Set<UUID>()
             await completionProbe.notifyCompletionFeedback(for: firstReply.id, notifiedMessageIDs: &notifiedIDs)
@@ -68,6 +76,10 @@ import AVFoundation
             await completionProbe.notifyCompletionFeedback(for: queuedReply.id, notifiedMessageIDs: &notifiedIDs)
             try check(events.count == 2 && notifiedIDs == Set([firstReply.id, queuedReply.id]),
                       "Each completed queued reply notifies once; loop-exit fallback does not replay the last message")
+            try check(glowEvents.map(\.messageID) == [firstReply.id, queuedReply.id]
+                        && glowEvents.last?.sessionID == completionProbe.sessionId
+                        && glowEvents.last?.blockID == lastText.id,
+                      "Real completion emits one glow per reply, using the last text block's UUID")
             events.removeAll()
             let removedReply = FeedbackProbeMessage()
             completionProbe.messages = [removedReply]

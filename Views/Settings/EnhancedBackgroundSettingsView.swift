@@ -1,9 +1,14 @@
 import AVFoundation
 import SwiftUI
+import UIKit
+import UserNotifications
 
 struct EnhancedBackgroundSettingsView: View {
     @ObservedObject private var keepAlive = BackgroundKeepAliveManager.shared
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var notificationAuthorization: UNAuthorizationStatus?
     // Owns the preview synthesizer and routes its audio-session intent through
     // AudioSessionCoordinator (a SwiftUI struct can't be an AVSpeechSynthesizer
     // delegate, so the lifecycle lives in this reference-type helper).
@@ -48,9 +53,25 @@ struct EnhancedBackgroundSettingsView: View {
             }
 
             Section {
-                Toggle("Task Notifications", isOn: $keepAlive.backgroundNotificationsEnabled)
+                Toggle("Task Notifications", isOn: Binding(
+                    get: { keepAlive.backgroundNotificationsEnabled },
+                    set: { enabled in
+                        keepAlive.backgroundNotificationsEnabled = enabled
+                        if enabled { Task { await enableNotificationAuthorization() } }
+                    }
+                ))
+                if keepAlive.backgroundNotificationsEnabled, notificationAuthorization == .notDetermined {
+                    Button("Enable Notification Permission") {
+                        Task { await enableNotificationAuthorization() }
+                    }
+                } else if notificationAuthorization == .denied {
+                    Button("Open System Notification Settings") {
+                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                        openURL(url)
+                    }
+                }
             } footer: {
-                Text("Show local notifications when agent tasks start and complete, including tasks triggered by Shortcuts.")
+                Text("Show local notifications for agent tasks and operations awaiting approval.")
             }
 
             // [T-ios-live-activity-privacy-mode] Sits right after the two
@@ -184,6 +205,9 @@ struct EnhancedBackgroundSettingsView: View {
         }
         .navigationTitle("Background")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: scenePhase) {
+            if scenePhase == .active { await refreshNotificationAuthorization() }
+        }
         .onAppear {
             // [T-settings-focus-highlight] One-shot consume of the parsed focus
             // directives (parsing + decision live in DeepLinkCoordinator). Held
@@ -223,6 +247,15 @@ struct EnhancedBackgroundSettingsView: View {
     }
 
     // MARK: - Preview
+
+    private func enableNotificationAuthorization() async {
+        await RemoteServerAIConfirmationGate.enableNotificationsFromSettings()
+        await refreshNotificationAuthorization()
+    }
+
+    private func refreshNotificationAuthorization() async {
+        notificationAuthorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
 
     private func previewSpeech() {
         let text = keepAlive.speechVoiceZh.isEmpty && keepAlive.speechVoiceEn.isEmpty

@@ -309,24 +309,36 @@ enum ShortcutNotification {
 final class NotificationNavigationStore {
     static let shared = NotificationNavigationStore()
 
-    private var pendingSessionId: String?
+    struct Target {
+        let sessionId: String
+        let approvalID: UUID?
+    }
+
+    private var pending: Target?
     private var pendingSetAt: Date?
     private var handledAt: Date?
 
-    /// Buffer a tap target (called from didReceive before posting the event).
-    func setPending(_ sessionId: String) {
-        pendingSessionId = sessionId
+    func navigate(to target: Target) {
+        setPending(target)
+        var userInfo = ["sessionId": target.sessionId]
+        if let id = target.approvalID { userInfo["approvalID"] = id.uuidString }
+        NotificationCenter.default.post(name: .openSessionFromIntent, object: nil, userInfo: userInfo)
+    }
+
+    /// Buffer a tap target before posting the event.
+    private func setPending(_ target: Target) {
+        pending = target
         pendingSetAt = Date()
     }
 
     /// One-shot consume for the cold-launch path. Entries older than 30s are
     /// stale (a warm tap that `.onReceive` already navigated for) and ignored.
-    func takePending() -> String? {
-        defer { pendingSessionId = nil; pendingSetAt = nil }
-        guard let sid = pendingSessionId,
+    func takePending() -> Target? {
+        defer { pending = nil; pendingSetAt = nil }
+        guard let target = pending,
               let t = pendingSetAt,
               Date().timeIntervalSince(t) < 30 else { return nil }
-        return sid
+        return target
     }
 
     /// Warm path: `.onReceive` navigated directly — drop the buffered copy so
@@ -334,7 +346,7 @@ final class NotificationNavigationStore {
     /// in-flight launch `.task` (post arrived during its await) doesn't
     /// clobber the navigation with the Launch Session default.
     func markHandled() {
-        pendingSessionId = nil
+        pending = nil
         pendingSetAt = nil
         handledAt = Date()
     }
@@ -368,6 +380,20 @@ final class ShortcutNotificationDelegate: NSObject, UNUserNotificationCenterDele
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        let identifier = response.notification.request.identifier
+        let prefix = RemoteServerAIConfirmationGate.notificationPrefix
+        if identifier.hasPrefix(prefix) {
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+               let id = UUID(uuidString: String(identifier.dropFirst(prefix.count))) {
+                Task { @MainActor in
+                    guard let request = RemoteServerAIConfirmationGate.shared.openNotification(id: id),
+                          let sessionId = request.sessionID else { return }
+                    NotificationNavigationStore.shared.navigate(to: .init(sessionId: sessionId, approvalID: id))
+                }
+            }
+            completionHandler()
+            return
+        }
         let userInfo = response.notification.request.content.userInfo
         if response.notification.request.content.categoryIdentifier == QuestionCardCoordinator.categoryId {
             Task { @MainActor in
@@ -380,14 +406,7 @@ final class ShortcutNotificationDelegate: NSObject, UNUserNotificationCenterDele
         }
         if let sessionId = userInfo["sessionId"] as? String {
             DispatchQueue.main.async {
-                // Buffer first (cold-launch consumer), then post (warm-path
-                // consumer). Whichever runs marks the other's copy dead.
-                NotificationNavigationStore.shared.setPending(sessionId)
-                NotificationCenter.default.post(
-                    name: .openSessionFromIntent,
-                    object: nil,
-                    userInfo: ["sessionId": sessionId]
-                )
+                NotificationNavigationStore.shared.navigate(to: .init(sessionId: sessionId, approvalID: nil))
             }
         }
         completionHandler()
@@ -399,6 +418,10 @@ final class ShortcutNotificationDelegate: NSObject, UNUserNotificationCenterDele
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        if notification.request.identifier.hasPrefix(RemoteServerAIConfirmationGate.notificationPrefix) {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
     }
 }

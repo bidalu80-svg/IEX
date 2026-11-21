@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import cmark_gfm
 import cmark_gfm_extensions
 
@@ -42,11 +43,13 @@ extension BlockNode {
 
 struct RawListItem: Hashable {
     let children: [BlockNode]
+    var continuesPrevious = false
 }
 
 struct RawTaskListItem: Hashable {
     let isCompleted: Bool
     let children: [BlockNode]
+    var continuesPrevious = false
 }
 
 enum RawTableColumnAlignment: Character {
@@ -104,6 +107,13 @@ extension InlineNode {
     }
 }
 
+struct SimpleSegmentID: Hashable, Sendable {
+    enum Kind: String, Hashable, Sendable { case text, image, video, audio, file, table }
+    let kind: Kind
+    let line: Int32
+    let column: Int32
+}
+
 // MARK: - MarkdownContent (minimal replacement for MarkdownUI.MarkdownContent)
 
 struct MarkdownContent: Hashable {
@@ -136,12 +146,26 @@ enum MarkdownMathExtractor {
 
     /// Extract math expressions, replacing them with placeholders.
     /// Returns the cleaned markdown and the list of extracted spans.
-    static func extract(from markdown: String) -> (String, [MathSpan]) {
+    static func extract(from markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> (String, [MathSpan]) {
         var spans: [MathSpan] = []
         var result = ""
         let chars = Array(markdown)
         let count = chars.count
         var i = 0
+        var edits: [MarkdownSourceEdit] = []
+        var offsets: [Int] = []
+        func appendMath(_ latex: String, isBlock: Bool, end: Int) {
+            let placeholder = "\u{FFFC}MATH\(spans.count)\u{FFFC}"
+            spans.append(MathSpan(placeholder: placeholder, latex: latex, isBlock: isBlock))
+            result.append(placeholder)
+            if recordEdits != nil {
+                if offsets.isEmpty {
+                    offsets = chars.reduce(into: [0]) { offsets, character in offsets.append(offsets.last! + String(character).utf8.count) }
+                }
+                edits.append((offsets[i]..<offsets[end], placeholder.utf8.count))
+            }
+            i = end
+        }
 
         // Track code fences and inline code to skip them
         var inFencedCode = false
@@ -230,10 +254,7 @@ enum MarkdownMathExtractor {
             if chars[i] == "\\" && i + 1 < count && chars[i + 1] == "[" {
                 if let end = findClosingBracket(chars: chars, from: i + 2, close: "\\]") {
                     let latex = String(chars[(i + 2)..<end])
-                    let placeholder = "\u{FFFC}MATH\(spans.count)\u{FFFC}"
-                    spans.append(MathSpan(placeholder: placeholder, latex: latex, isBlock: true))
-                    result.append(placeholder)
-                    i = end + 2 // skip past \]
+                    appendMath(latex, isBlock: true, end: end + 2)
                     continue
                 }
             }
@@ -242,10 +263,7 @@ enum MarkdownMathExtractor {
             if chars[i] == "\\" && i + 1 < count && chars[i + 1] == "(" {
                 if let end = findClosingBracket(chars: chars, from: i + 2, close: "\\)") {
                     let latex = String(chars[(i + 2)..<end])
-                    let placeholder = "\u{FFFC}MATH\(spans.count)\u{FFFC}"
-                    spans.append(MathSpan(placeholder: placeholder, latex: latex, isBlock: false))
-                    result.append(placeholder)
-                    i = end + 2
+                    appendMath(latex, isBlock: false, end: end + 2)
                     continue
                 }
             }
@@ -254,10 +272,7 @@ enum MarkdownMathExtractor {
             if chars[i] == "$" && i + 1 < count && chars[i + 1] == "$" {
                 if let end = findDoubleDollar(chars: chars, from: i + 2) {
                     let latex = String(chars[(i + 2)..<end])
-                    let placeholder = "\u{FFFC}MATH\(spans.count)\u{FFFC}"
-                    spans.append(MathSpan(placeholder: placeholder, latex: latex, isBlock: true))
-                    result.append(placeholder)
-                    i = end + 2
+                    appendMath(latex, isBlock: true, end: end + 2)
                     continue
                 }
             }
@@ -276,10 +291,7 @@ enum MarkdownMathExtractor {
                     // (whitespace-adjacent or unbalanced bars), which preserves
                     // real absolute-value formulas like $|x|$ / $\|v\|$.
                     if looksLikeMath(latex) && !isTablePipeArtifact(latex) {
-                        let placeholder = "\u{FFFC}MATH\(spans.count)\u{FFFC}"
-                        spans.append(MathSpan(placeholder: placeholder, latex: latex, isBlock: false))
-                        result.append(placeholder)
-                        i = end + 1
+                        appendMath(latex, isBlock: false, end: end + 1)
                         continue
                     }
                 }
@@ -289,6 +301,7 @@ enum MarkdownMathExtractor {
             i += 1
         }
 
+        recordEdits?(edits)
         return (result, spans)
     }
 
@@ -399,15 +412,15 @@ enum MarkdownMathExtractor {
             return .blockquote(children: children.map { restoreBlock($0, placeholderMap: placeholderMap) })
         case .bulletedList(let isTight, let items):
             return .bulletedList(isTight: isTight, items: items.map {
-                RawListItem(children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) })
+                RawListItem(children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) }, continuesPrevious: $0.continuesPrevious)
             })
         case .numberedList(let isTight, let start, let items):
             return .numberedList(isTight: isTight, start: start, items: items.map {
-                RawListItem(children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) })
+                RawListItem(children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) }, continuesPrevious: $0.continuesPrevious)
             })
         case .taskList(let isTight, let items):
             return .taskList(isTight: isTight, items: items.map {
-                RawTaskListItem(isCompleted: $0.isCompleted, children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) })
+                RawTaskListItem(isCompleted: $0.isCompleted, children: $0.children.map { restoreBlock($0, placeholderMap: placeholderMap) }, continuesPrevious: $0.continuesPrevious)
             })
         case .table(let alignments, let rows):
             return .table(columnAlignments: alignments, rows: rows.map { row in
@@ -480,6 +493,336 @@ enum MarkdownMathExtractor {
 }
 
 // MARK: - cmark parsing glue
+
+struct SimpleBodySegment: Hashable {
+    struct Media: Hashable {
+        let source: String
+        let alt: [InlineNode]
+        let linkDestination: String?
+        var url: URL? { URL(string: source) }
+        var name: String {
+            guard let name = url?.lastPathComponent, !name.isEmpty else { return source }
+            return name
+        }
+
+        var galleryTitle: String {
+            Self.galleryTitle(alt: ChatSearchMarkdownText.inlineText(alt), source: source)
+        }
+
+        fileprivate static func galleryTitle(alt: String, source: String) -> String {
+            alt.isEmpty ? (source as NSString).lastPathComponent : alt
+        }
+
+        var kind: SimpleSegmentID.Kind {
+            let ext = url?.pathExtension.lowercased() ?? ""
+            if zeVideoExtensions.contains(ext) { return .video }
+            if zeAudioExtensions.contains(ext) { return .audio }
+            guard !ext.isEmpty, !zeImageExtensions.contains(ext),
+                  let type = UTType(filenameExtension: ext), !type.isDynamic else { return .image }
+            if type.conforms(to: .image) { return .image }
+            if type.conforms(to: .movie) { return .video }
+            if type.conforms(to: .audio) { return .audio }
+            return .file
+        }
+
+        var markdown: String {
+            let caption = ChatSearchMarkdownText.inlineText(alt)
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "[", with: "\\[")
+                .replacingOccurrences(of: "]", with: "\\]")
+            let image = "![\(caption)](\(Self.destination(source)))"
+            return linkDestination.map { "[\(image)](\(Self.destination($0)))" } ?? image
+        }
+
+        private static func destination(_ value: String) -> String {
+            value.isEmpty ? "" : "<" + value.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: ">", with: "\\>") + ">"
+        }
+    }
+
+    let id: SimpleSegmentID
+    let blocks: [BlockNode]
+    let media: Media?
+
+    private struct SourceSpan {
+        let startLine: Int32
+        let startColumn: Int32
+        let endLine: Int32
+        let endColumn: Int32
+        let cutsInlineWrapper: Bool
+
+        init(_ node: UnsafeNode, cutsInlineWrapper: Bool = false) {
+            startLine = cmark_node_get_start_line(node)
+            startColumn = cmark_node_get_start_column(node)
+            endLine = cmark_node_get_end_line(node)
+            endColumn = cmark_node_get_end_column(node)
+            self.cutsInlineWrapper = cutsInlineWrapper
+        }
+    }
+
+    private struct SourceText {
+        let bytes: [UInt8]
+        let lineStarts: [Int]
+
+        init(_ original: String) {
+            let bytes = Array(original.utf8)
+            var lineStarts = [0]
+            for offset in bytes.indices where bytes[offset] == 10 || (bytes[offset] == 13 && (offset + 1 == bytes.count || bytes[offset + 1] != 10)) {
+                lineStarts.append(offset + 1)
+            }
+            self.bytes = bytes
+            self.lineStarts = lineStarts
+        }
+
+        func offset(_ line: Int32, _ column: Int32) -> Int? {
+            let row = Int(line) - 1
+            guard lineStarts.indices.contains(row), column >= 0 else { return nil }
+            let offset = lineStarts[row] + Int(column)
+            let limit = row + 1 < lineStarts.count ? lineStarts[row + 1] : bytes.count
+            return offset <= limit ? offset : nil
+        }
+
+        func slice(_ start: Int, _ end: Int) -> String? {
+            guard 0 <= start, start < end, end <= bytes.count else { return nil }
+            return String(bytes: bytes[start..<end], encoding: .utf8)
+        }
+    }
+
+    private struct OriginalSource {
+        let raw: SourceText
+        let prepared: SourceText
+        let edits: [[MarkdownSourceEdit]]
+
+        func offset(_ line: Int32, _ column: Int32, isStart: Bool) -> Int? {
+            guard var offset = prepared.offset(line, column) else { return nil }
+            for stage in edits.reversed() {
+                var shift = 0
+                for edit in stage {
+                    let start = edit.range.lowerBound + shift
+                    if offset < start || (offset == start && (edit.replacementLength != 0 || !isStart)) { break }
+                    guard offset >= start + edit.replacementLength else { return nil }
+                    shift += edit.replacementLength - edit.range.count
+                }
+                offset -= shift
+            }
+            return offset
+        }
+    }
+
+    private enum Piece<Node> {
+        case content(Node)
+        case standalone(SimpleBodySegment, SourceSpan)
+
+        static func group<Wrapped>(_ pieces: [Self], wrap: ([Node]) -> Wrapped) -> [Piece<Wrapped>] {
+            var output: [Piece<Wrapped>] = []
+            var pending: [Node] = []
+            func flush() {
+                if !pending.isEmpty { output.append(.content(wrap(pending))); pending.removeAll() }
+            }
+            for piece in pieces {
+                switch piece {
+                case .content(let node): pending.append(node)
+                case .standalone(let segment, let span): flush(); output.append(.standalone(segment, span))
+                }
+            }
+            flush()
+            return output
+        }
+    }
+
+    private static func prepareSource(_ markdown: String, finalised: Bool, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil)
+        -> (markdown: String, math: [MarkdownMathExtractor.MathSpan], plainSuffix: String, prefixEndsWithBlankLine: Bool) {
+        let split = finalised ? (prefix: markdown, plainSuffix: "") : splitStreamingTableTail(markdown)
+        let formatted = prepareMarkdownForRender(split.prefix, recordEdits: recordEdits)
+        let prepared = ZeVisualizationStreaming.prepare(formatted, recordEdits: recordEdits)
+        let (cleaned, spans) = MarkdownMathExtractor.extract(from: prepared, recordEdits: recordEdits)
+        return (cleaned, spans, split.plainSuffix, !split.plainSuffix.isEmpty && split.prefix.hasSuffix("\n\n"))
+    }
+
+    static func parse(_ markdown: String, finalised: Bool) -> [Self] {
+        let prepared = prepareSource(markdown, finalised: finalised)
+        let pieces = UnsafeNode.parseMarkdown(prepared.markdown) { $0.children.flatMap(blockPieces) } ?? []
+        var output: [Self] = []
+        var pending: [BlockNode] = []
+        var textID = SimpleSegmentID(kind: .text, line: 0, column: 0)
+        func flush() {
+            let blocks = MarkdownMathExtractor.restore(blocks: pending, spans: prepared.math)
+            if blocks.contains(where: visible) { output.append(.init(id: textID, blocks: blocks, media: nil)) }
+            pending.removeAll()
+        }
+        for piece in pieces {
+            switch piece {
+            case .content(let block): pending.append(block)
+            case .standalone(let segment, _):
+                flush()
+                output.append(.init(id: segment.id, blocks: MarkdownMathExtractor.restore(blocks: segment.blocks, spans: prepared.math), media: segment.media))
+                textID = .init(kind: .text, line: segment.id.line, column: segment.id.column)
+            }
+        }
+        if !prepared.plainSuffix.isEmpty,
+           !pending.isEmpty || output.last?.id.kind != .table || prepared.prefixEndsWithBlankLine {
+            pending.append(.paragraph(content: [.text(prepared.plainSuffix)]))
+        }
+        flush()
+        return output
+    }
+
+    private static func originalStandalones(in original: String, segments: [Self], finalised: Bool)
+        -> (spans: [SimpleSegmentID: SourceSpan], source: OriginalSource)? {
+        let standalone = segments.filter { $0.id.kind != .text }
+        guard !standalone.isEmpty else { return nil }
+        var edits: [[MarkdownSourceEdit]] = []
+        let prepared = prepareSource(original, finalised: finalised) { stage in
+            if !stage.isEmpty { edits.append(stage) }
+        }
+        let pieces = UnsafeNode.parseMarkdown(prepared.markdown) { $0.children.flatMap(blockPieces) } ?? []
+        let raw = pieces.compactMap { piece -> (segment: Self, span: SourceSpan)? in
+            guard case .standalone(let segment, let span) = piece else { return nil }
+            return (segment, span)
+        }
+        let byPosition = Dictionary(grouping: raw, by: { $0.segment.id })
+        var spans: [SimpleSegmentID: SourceSpan] = [:]
+        for segment in standalone {
+            guard let candidates = byPosition[segment.id], candidates.count == 1, let candidate = candidates.first,
+                  candidate.segment.media == segment.media else { continue }
+            spans[segment.id] = candidate.span
+        }
+        return (spans, OriginalSource(raw: SourceText(original), prepared: SourceText(prepared.markdown), edits: edits))
+    }
+
+    private static let galleryImagePattern = try? NSRegularExpression(pattern: #"!\[([^\]]*)\]\(([^)\s]+)\)"#)
+
+    static func imageGalleryTitles(in original: String, segments: [Self], finalised: Bool = true) -> [SimpleSegmentID: String] {
+        guard let (spans, source) = originalStandalones(in: original, segments: segments, finalised: finalised) else { return [:] }
+        var titles: [SimpleSegmentID: String] = [:]
+        for (id, span) in spans where id.kind == .image {
+            guard let start = source.offset(id.line, id.column - 1, isStart: true),
+                  let end = source.offset(span.endLine, span.endColumn, isStart: false),
+                  let slice = source.raw.slice(start, end) else { continue }
+            let content = slice as NSString
+            let range = NSRange(location: 0, length: content.length)
+            guard let match = galleryImagePattern?.firstMatch(in: slice, options: .anchored, range: range) else { continue }
+            let alt = content.substring(with: match.range(at: 1))
+            let src = content.substring(with: match.range(at: 2))
+            titles[id] = Media.galleryTitle(alt: alt, source: src)
+        }
+        return titles
+    }
+
+    func markdownForCopy(in original: String, segments: [Self], finalised: Bool = true) -> String {
+        let fallback = media?.markdown ?? original
+        guard let index = segments.firstIndex(of: self),
+              let (spans, source) = Self.originalStandalones(in: original, segments: segments, finalised: finalised) else { return fallback }
+        if id.kind != .text {
+            guard let span = spans[id] else { return fallback }
+            guard let start = source.offset(span.startLine, span.startColumn - 1, isStart: true),
+                  let end = source.offset(span.endLine, span.endColumn, isStart: false) else { return fallback }
+            return source.raw.slice(start, end) ?? fallback
+        }
+        let preceding = segments[..<index].last(where: { $0.id.kind != .text })
+        let following = segments[(index + 1)...].first(where: { $0.id.kind != .text })
+        if preceding == nil, following == nil { return original }
+        let prior = preceding.flatMap { spans[$0.id] }
+        let next = following.flatMap { spans[$0.id] }
+        let start = prior.flatMap { source.offset($0.endLine, $0.endColumn, isStart: false) }
+        let end = next.flatMap { source.offset($0.startLine, $0.startColumn - 1, isStart: true) }
+        guard preceding == nil || start != nil, following == nil || end != nil,
+              let slice = source.raw.slice(start ?? 0, end ?? source.raw.bytes.count) else { return fallback }
+        if prior?.cutsInlineWrapper == true || next?.cutsInlineWrapper == true {
+            return slice
+        }
+        return slice.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func position(_ node: UnsafeNode, kind: SimpleSegmentID.Kind) -> SimpleSegmentID {
+        .init(kind: kind, line: cmark_node_get_start_line(node), column: cmark_node_get_start_column(node))
+    }
+
+    private static func inlinePieces(_ node: UnsafeNode) -> [Piece<InlineNode>] {
+        inlinePieces(node, link: nil, linkedImage: nil, insideWrapper: false)
+    }
+
+    private static func inlinePieces(_ node: UnsafeNode, link: String?, linkedImage: UnsafeNode?, insideWrapper: Bool) -> [Piece<InlineNode>] {
+        guard let inline = InlineNode(unsafeNode: node) else { return [] }
+        if case .image(let source, let alt) = inline {
+            let media = Media(source: source, alt: alt, linkDestination: link)
+            let span = SourceSpan(linkedImage ?? node, cutsInlineWrapper: insideWrapper)
+            return [.standalone(.init(id: position(node, kind: media.kind), blocks: [], media: media), span)]
+        }
+        switch inline {
+        case .emphasis, .strong, .strikethrough, .link:
+            var destination = link
+            var enclosingImage = linkedImage
+            if case .link(let target, let children) = inline {
+                destination = target
+                if children.count == 1, case .image? = children.first { enclosingImage = node }
+            }
+            let splitsWrapper = insideWrapper || enclosingImage == nil
+            return Piece.group(node.children.flatMap { inlinePieces($0, link: destination, linkedImage: enclosingImage, insideWrapper: splitsWrapper) }) { children in
+                var wrapper = inline
+                wrapper.children = children
+                return wrapper
+            }
+        default: return [.content(inline)]
+        }
+    }
+
+    private static func blockPieces(_ node: UnsafeNode) -> [Piece<BlockNode>] {
+        switch node.nodeType {
+        case .paragraph, .heading:
+            return Piece.group(node.children.flatMap(inlinePieces)) { children in
+                node.nodeType == .heading ? .heading(level: node.headingLevel, content: children) : .paragraph(content: children)
+            }
+        case .blockquote:
+            return Piece.group(node.children.flatMap(blockPieces)) { .blockquote(children: $0) }
+        case .list:
+            let items = node.children.enumerated().flatMap { index, item in
+                var emittedMarker = false
+                return Piece.group(item.children.flatMap(blockPieces)) { children in
+                    let continuation = emittedMarker
+                    if children.contains(where: visible) { emittedMarker = true }
+                    return (index, item.isTaskListItem && item.isTaskListItemChecked, children, continuation)
+                }
+            }
+            let isTask = node.children.contains(where: \.isTaskListItem)
+            return Piece.group(items) { children in
+                if isTask {
+                    return .taskList(isTight: node.isTightList, items: children.map { .init(isCompleted: $0.1, children: $0.2, continuesPrevious: $0.3) })
+                }
+                let items = children.map { RawListItem(children: $0.2, continuesPrevious: $0.3) }
+                if node.listType == CMARK_ORDERED_LIST {
+                    return .numberedList(isTight: node.isTightList, start: node.listStart + (children.first?.0 ?? 0), items: items)
+                }
+                return .bulletedList(isTight: node.isTightList, items: items)
+            }
+        case .table:
+            guard let table = BlockNode(unsafeNode: node) else { return [] }
+            return [.standalone(.init(id: position(node, kind: .table), blocks: [table], media: nil), SourceSpan(node))]
+        default:
+            return BlockNode(unsafeNode: node).map { [.content($0)] } ?? []
+        }
+    }
+
+    private static func visible(_ block: BlockNode) -> Bool {
+        switch block {
+        case .paragraph(let content), .heading(_, let content):
+            return content.contains(where: visible)
+        case .blockquote, .bulletedList, .numberedList, .taskList:
+            return block.children.contains(where: visible)
+        default: return true
+        }
+    }
+
+    private static func visible(_ node: InlineNode) -> Bool {
+        switch node {
+        case .text(let value):
+            return value.unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) && $0.value != 0x200B }
+        case .softBreak, .lineBreak: return false
+        case .emphasis, .strong, .strikethrough, .link: return node.children.contains(where: visible)
+        default: return true
+        }
+    }
+}
 
 extension Array where Element == BlockNode {
     init(markdown: String) {

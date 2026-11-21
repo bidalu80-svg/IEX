@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+enum ChatBubbleStyle {
+    static let cornerRadius: CGFloat = 18
+}
+
 extension Notification.Name {
     /// Synchronous pre-mutation hook. `object` is the UUID of the user message
     /// and `userInfo["expanded"]` is its current state.
@@ -489,7 +493,7 @@ struct ChatMessageRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: ChatBubbleStyle.cornerRadius)
                 .fill(ChatColors.userMessageBubble)
         )
     }
@@ -554,9 +558,9 @@ struct ChatMessageRow: View {
             // stays a full Rectangle (so the whole row is long-pressable), but
             // the context-menu PREVIEW must clip to the bubble's rounded shape —
             // otherwise the lifted preview shows square corners while the bubble
-            // is RoundedRectangle(cornerRadius: 18). iOS 16+ lets us specify the
+            // uses the shared bubble radius. iOS 16+ lets us specify the
             // preview clip shape independently from the interaction shape.
-            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: ChatBubbleStyle.cornerRadius))
             .accessibilityActions {
                 if transcriptDisplayMode == .simple {
                     Button("Copy") { UIPasteboard.general.string = message.content }
@@ -734,7 +738,7 @@ struct ChatMessageRow: View {
             // Typing indicator: show when waiting for first content, or when
             // all tools have completed and we're waiting for the model's next response
             if isActiveMessage && (!hasVisibleContent || message.isAwaitingModelResponse) {
-                TypingIndicator()
+                AssistantReplyWaitingIndicator()
             }
 
             // Inline error + retry

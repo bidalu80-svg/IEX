@@ -9,14 +9,14 @@ private struct ThinkingGlyphSamples: View {
     private let rowTimes: [TimeInterval] = [0, 0.467, 0.533, 0.60, 0.70, 0.90]
     var body: some View {
         VStack(spacing: 12) {
-            TypingIndicator()
+            TypingIndicator(assistantName: "Ze")
             Text("真实文案入场与魔方时间采样").font(.caption).foregroundStyle(.secondary)
             VStack(spacing: 6) {
                 ForEach(Array(rowTimes.enumerated()), id: \.offset) { _, time in
                     HStack(spacing: 8) {
                         Text(String(format: "%.3fs", time))
                             .font(.system(size: 9, design: .monospaced)).frame(width: 45)
-                        TypingIndicatorFrame(elapsed: time)
+                        TypingIndicatorFrame(elapsed: time, assistantName: "Ze")
                         Spacer(minLength: 0)
                     }
                 }
@@ -104,7 +104,7 @@ private struct ThinkingGlyphSamples: View {
 
     private func renderedRow(at elapsed: TimeInterval, dark: Bool = false,
                              reducedMotion: Bool = false) throws -> UIImage {
-        let content = TypingIndicatorFrame(elapsed: elapsed, reducedMotion: reducedMotion)
+        let content = TypingIndicatorFrame(elapsed: elapsed, assistantName: "Ze", reducedMotion: reducedMotion)
             .frame(width: 220, height: 48, alignment: .leading)
             .background(dark ? Color.black : Color.white)
             .environment(\.colorScheme, dark ? .dark : .light)

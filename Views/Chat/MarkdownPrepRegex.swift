@@ -4,7 +4,7 @@ import Foundation
 
 /// Normalizes common non-standard list markers (e.g. `1)` and `•`) into
 /// CommonMark-friendly syntax so list spacing/styles apply consistently.
-func normalizeMarkdownListSyntax(_ markdown: String) -> String {
+func normalizeMarkdownListSyntax(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
     let orderedParenRegex = MarkdownPrepRegex.orderedParen
     let bulletGlyphRegex = MarkdownPrepRegex.bulletGlyph
 
@@ -12,9 +12,12 @@ func normalizeMarkdownListSyntax(_ markdown: String) -> String {
     let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
     var normalized: [String] = []
     normalized.reserveCapacity(lines.count)
+    var offset = 0
+    var edits: [MarkdownSourceEdit] = []
 
     for raw in lines {
         var line = String(raw)
+        defer { if recordEdits != nil { offset += raw.utf8.count + 1 } }
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("```") {
             inCodeFence.toggle()
@@ -36,9 +39,19 @@ func normalizeMarkdownListSyntax(_ markdown: String) -> String {
             range: NSRange(location: 0, length: (line as NSString).length),
             withTemplate: "$1- "
         )
+        if recordEdits != nil, !raw.utf8.elementsEqual(line.utf8) {
+            let original = String(raw)
+            let text = original as NSString
+            let range = NSRange(location: 0, length: text.length)
+            if let match = orderedParenRegex.firstMatch(in: original, range: range) ?? bulletGlyphRegex.firstMatch(in: original, range: range) {
+                let length = text.substring(to: NSMaxRange(match.range)).utf8.count
+                edits.append((offset..<(offset + length), length + line.utf8.count - raw.utf8.count))
+            }
+        }
         normalized.append(line)
     }
 
+    recordEdits?(edits)
     return normalized.joined(separator: "\n")
 }
 
@@ -69,8 +82,11 @@ private enum MarkdownPrepRegex {
 // straight through code fences), and a single O(n) pass instead of six
 // NSRegularExpressions on the streaming hot path. [T-md-cjk-emphasis-pairs]
 
-func prepareMarkdownForRender(_ markdown: String) -> String {
-    return strictifyStrikethrough(padInlineCode(fixEmphasisPairsForCJK(normalizeMarkdownListSyntax(insertBlankLineAfterTable(markdown)))))
+func prepareMarkdownForRender(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
+    let tables = insertBlankLineAfterTable(markdown, recordEdits: recordEdits)
+    let lists = normalizeMarkdownListSyntax(tables, recordEdits: recordEdits)
+    let emphasis = fixEmphasisPairsForCJK(lists, recordEdits: recordEdits)
+    return strictifyStrikethrough(padInlineCode(emphasis), recordEdits: recordEdits)
 }
 
 // MARK: - CJK Emphasis Pair Fix  [T-md-cjk-emphasis-pairs]
@@ -94,13 +110,16 @@ func prepareMarkdownForRender(_ markdown: String) -> String {
 /// Pairs that already parse are left byte-identical; lone/unpairable runs
 /// (`2**8`, `a ** b`) are never rewritten. The pass is idempotent: after the
 /// ZWSP insert the pair passes strict flanking and re-runs are no-ops.
-func fixEmphasisPairsForCJK(_ markdown: String) -> String {
+func fixEmphasisPairsForCJK(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
     guard markdown.contains("*") else { return markdown }
     var out: [String] = []
     var inFence = false
     var fenceMarker = ""
+    var offset = 0
+    var edits: [MarkdownSourceEdit] = []
     for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
         let lineStr = String(line)
+        defer { if recordEdits != nil { offset += line.utf8.count + 1 } }
         let trimmed = lineStr.drop(while: { $0 == " " || $0 == "\t" })
         if !inFence, trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
             inFence = true
@@ -116,12 +135,20 @@ func fixEmphasisPairsForCJK(_ markdown: String) -> String {
             out.append(lineStr)
             continue
         }
-        out.append(fixEmphasisPairsInLine(lineStr))
+        if recordEdits != nil {
+            out.append(fixEmphasisPairsInLine(lineStr) { position in
+                let start = offset + position
+                edits.append((start..<start, "\u{200B}".utf8.count))
+            })
+        } else {
+            out.append(fixEmphasisPairsInLine(lineStr))
+        }
     }
+    recordEdits?(edits)
     return out.joined(separator: "\n")
 }
 
-private func fixEmphasisPairsInLine(_ line: String) -> String {
+private func fixEmphasisPairsInLine(_ line: String, recordInsertion: ((Int) -> Void)? = nil) -> String {
     guard line.contains("*") else { return line }
     let chars = Array(line)
     let n = chars.count
@@ -249,8 +276,20 @@ private func fixEmphasisPairsInLine(_ line: String) -> String {
     }
     guard !insertPositions.isEmpty else { return line }
 
+    let positions = insertPositions.sorted()
+    if let recordInsertion {
+        var index = 0
+        var offset = 0
+        for position in positions {
+            while index < position {
+                offset += String(chars[index]).utf8.count
+                index += 1
+            }
+            recordInsertion(offset)
+        }
+    }
     var result = chars
-    for pos in insertPositions.sorted(by: >) {
+    for pos in positions.reversed() {
         result.insert("\u{200B}", at: pos)
     }
     return String(result)
@@ -275,7 +314,7 @@ private func fixEmphasisPairsInLine(_ line: String) -> String {
 /// alone — those are unambiguous and rarely false-positive.
 /// Fenced code (```` ``` ```` / `~~~`) is skipped so code samples
 /// stay verbatim.
-func strictifyStrikethrough(_ markdown: String) -> String {
+func strictifyStrikethrough(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
     // Fast path: no `~~` anywhere → no work to do.
     guard markdown.contains("~~") else { return markdown }
     let ns = markdown as NSString
@@ -284,6 +323,8 @@ func strictifyStrikethrough(_ markdown: String) -> String {
     var fenceMarker = ""
     var out = String()
     out.reserveCapacity(markdown.count)
+    var lineOffset = 0
+    var edits: [MarkdownSourceEdit] = []
     // Walk line-by-line so we can skip fenced code blocks intact.
     let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
     func isBoundaryChar(_ ch: Character?) -> Bool {
@@ -297,6 +338,7 @@ func strictifyStrikethrough(_ markdown: String) -> String {
     }
     for (idx, line) in lines.enumerated() {
         let lineStr = String(line)
+        defer { if recordEdits != nil { lineOffset += line.utf8.count + 1 } }
         let trimmed = lineStr.drop(while: { $0 == " " || $0 == "\t" })
         // Fence tracking (mirrors insertBlankLineAfterTable's logic).
         if !inFence, (trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~")) {
@@ -323,6 +365,7 @@ func strictifyStrikethrough(_ markdown: String) -> String {
         var lineOut = String()
         lineOut.reserveCapacity(lineStr.count)
         var inInlineCode = false
+        var escapesAdded = 0
         while i < chars.count {
             let ch = chars[i]
             if ch == "`" {
@@ -340,6 +383,12 @@ func strictifyStrikethrough(_ markdown: String) -> String {
                     lineOut.append("~~")
                 } else {
                     // Mid-word `~~` — escape both tildes.
+                    if recordEdits != nil {
+                        let offset = lineOffset + lineOut.utf8.count - escapesAdded
+                        edits.append((offset..<offset, 1))
+                        edits.append(((offset + 1)..<(offset + 1), 1))
+                        escapesAdded += 2
+                    }
                     lineOut.append("\\~\\~")
                 }
                 i += 2
@@ -352,6 +401,7 @@ func strictifyStrikethrough(_ markdown: String) -> String {
         if idx < lines.count - 1 { out.append("\n") }
     }
     _ = nsLen
+    recordEdits?(edits)
     return out
 }
 
@@ -415,13 +465,15 @@ func splitStreamingTableTail(_ markdown: String) -> (prefix: String, plainSuffix
 /// surrounding paragraph to a table.
 ///
 /// Skips fenced code blocks so `|` chars in code aren't affected.
-func insertBlankLineAfterTable(_ markdown: String) -> String {
+func insertBlankLineAfterTable(_ markdown: String, recordEdits: (([MarkdownSourceEdit]) -> Void)? = nil) -> String {
     var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     guard lines.count > 1 else { return markdown }
     var inFence = false
     var fenceMarker = ""
     var result: [String] = []
     result.reserveCapacity(lines.count + 4)
+    var offset = 0
+    var edits: [MarkdownSourceEdit] = []
     func isTableLine(_ s: String) -> Bool {
         let t = s.drop(while: { $0 == " " || $0 == "\t" })
         return t.hasPrefix("|")
@@ -431,6 +483,7 @@ func insertBlankLineAfterTable(_ markdown: String) -> String {
     }
     for i in 0..<lines.count {
         let line = lines[i]
+        if recordEdits != nil { offset += line.utf8.count + 1 }
         result.append(line)
         let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
         if !inFence {
@@ -453,8 +506,10 @@ func insertBlankLineAfterTable(_ markdown: String) -> String {
         let next = lines[i + 1]
         if !isBlank(next) && !isTableLine(next) {
             result.append("")
+            if recordEdits != nil { edits.append((offset..<offset, 1)) }
         }
     }
+    recordEdits?(edits)
     return result.joined(separator: "\n")
 }
 

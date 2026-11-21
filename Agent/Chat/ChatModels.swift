@@ -232,6 +232,7 @@ final class AssistantBlock: Identifiable, ObservableObject {
     let id: UUID
     @Published var kind: AssistantBlockKind
     @Published var content: String
+    @MainActor lazy var simpleBody = SimpleTranscript.Body(block: self)
 
     // MARK: Thinking block performance (T-thinking-render-perf-ios)
 
