@@ -3425,6 +3425,55 @@ extension CollectionViewMessageListV3 {
             }
         }
 
+        private typealias Edge = AnyPublisher<Void, Never>
+        private typealias TextState = (hasText: Bool, refs: Set<String>)
+
+        private static func contentEdges(_ block: AssistantBlock) -> Edge {
+            let states: AnyPublisher<TextState, Never> = block.$content.map { content -> TextState in
+                (hasText: SimpleTranscript.hasText(content), refs: SimpleTranscript.explicitMediaReferences(content))
+            }.eraseToAnyPublisher()
+            return states.removeDuplicates { previous, current in
+                previous.hasText == current.hasText && previous.refs == current.refs
+            }.dropFirst().map { _ in () }.eraseToAnyPublisher()
+        }
+
+        private static func textEdges(_ block: AssistantBlock) -> Edge {
+            let isText: AnyPublisher<Bool, Never> = block.$kind.map { $0 == .text }.removeDuplicates().eraseToAnyPublisher()
+            let sources: AnyPublisher<Edge, Never> = isText.map { isText -> Edge in
+                guard isText else { return Empty<Void, Never>().eraseToAnyPublisher() }
+                return Self.contentEdges(block)
+            }.eraseToAnyPublisher()
+            return sources.switchToLatest().eraseToAnyPublisher()
+        }
+
+        private static func normalizedStatus(_ status: ToolBlockStatus?) -> ToolBlockStatus? {
+            if case .streaming(_)? = status { return .streaming(bytes: 0) }
+            return status
+        }
+
+        private static func blockEdges(_ block: AssistantBlock) -> [Edge] {
+            let text: Edge = Self.textEdges(block)
+            let kind: Edge = block.$kind.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+            let question: Edge = block.$questionCard.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+            let image: Edge = block.$imageFilePath.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+            let status: Edge = block.$toolStatus.map { Self.normalizedStatus($0) }
+                .removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+            return [text, kind, question, image, status]
+        }
+
+        private static func edgesForBlocks(_ blocks: [AssistantBlock]) -> Edge {
+            let edges: [Edge] = blocks.flatMap { Self.blockEdges($0) }
+            return Publishers.MergeMany(edges).prepend(()).eraseToAnyPublisher()
+        }
+
+        private static func messageBlockEdges(_ message: ChatMessage) -> Edge {
+            let sources: AnyPublisher<Edge, Never> = message.$blocks
+                .removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
+                .map { blocks -> Edge in Self.edgesForBlocks(blocks) }
+                .eraseToAnyPublisher()
+            return sources.switchToLatest().dropFirst().eraseToAnyPublisher()
+        }
+
         private func observeSimpleProjection(_ messages: [ChatMessage], vm: AIChatViewModel) {
             let assistants = transcriptMode == .simple ? messages.filter { $0.role == .assistant } : []
             let live = Set(assistants.map(\.id))
@@ -3439,29 +3488,9 @@ extension CollectionViewMessageListV3 {
                 }
             }
             for message in assistants where simpleMessageSubs[message.id]?.0 != ObjectIdentifier(message) {
-                let blocks = message.$blocks.removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
-                    .map { blocks -> AnyPublisher<Void, Never> in
-                        let edges = blocks.flatMap { block -> [AnyPublisher<Void, Never>] in
-                            let text = block.$kind.map { $0 == .text }.removeDuplicates()
-                                .map { isText -> AnyPublisher<Void, Never> in
-                                    guard isText else { return Empty().eraseToAnyPublisher() }
-                                    return block.$content.map { content in
-                                        (SimpleTranscript.hasText(content), SimpleTranscript.explicitMediaReferences(content))
-                                    }.removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
-                                        .dropFirst().map { _ in () }.eraseToAnyPublisher()
-                                }.switchToLatest().eraseToAnyPublisher()
-                            return [text,
-                                    block.$kind.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-                                    block.$questionCard.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-                                    block.$imageFilePath.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
-                                    block.$toolStatus.map { status -> ToolBlockStatus? in
-                                        if case .streaming(_)? = status { return .streaming(bytes: 0) }
-                                        return status
-                                    }.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()]
-                        }
-                        return Publishers.MergeMany(edges).prepend(()).eraseToAnyPublisher()
-                    }.switchToLatest().dropFirst().eraseToAnyPublisher()
-                let sub = Publishers.Merge(blocks, message.$error.removeDuplicates().dropFirst().map { _ in () })
+                let blocks: Edge = Self.messageBlockEdges(message)
+                let errors: Edge = message.$error.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+                let sub = Publishers.Merge(blocks, errors)
                     .receive(on: DispatchQueue.main).sink { [weak self, weak vm, weak message] _ in
                         guard let self, let vm, self.vm === vm, let message,
                               self.simpleMessageSubs[message.id]?.0 == ObjectIdentifier(message) else { return }

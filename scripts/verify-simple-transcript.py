@@ -55,15 +55,62 @@ check("reply path wins over an image snapshot copied from the original tool path
       and "original = block.imageFilePath" in infra and "case .readImageTool(let path)" in infra
       and "pathAliases($0, markdown: true)" in infra and "resolveZeFileURL(url: url)" in path_aliases
       and "lastPathComponent" not in aliases + path_aliases)
-check("hidden blocks can enter without token-driven tool log diffs",
-      all(marker in v3 for marker in ("block.$questionCard.removeDuplicates()", "block.$imageFilePath.removeDuplicates()",
-                                      "vm.$toolSnapshots.map", "ObjectIdentifier(message)", "SimpleTranscript.hasText(content)")))
 observer = section(v3, "private func observeSimpleProjection", "private func markSimpleProjectionDirty")
+message_loop = observer.partition("for message in assistants where ")[2]
+message_sink = re.search(
+    r"(?ms)let sub = Publishers\.Merge\(blocks, errors\)\s*"
+    r"^(?P<indent>[ \t]*)\.receive\(on: DispatchQueue\.main\)\.sink \{[^\n]*\n"
+    r"(?P<body>.*?)^(?P=indent)\}[ \t]*$", message_loop)
+sink_body = message_sink["body"] if message_sink else ""
+after_sink = message_loop[message_sink.end():] if message_sink else ""
+message_edges = section(v3, "private static func messageBlockEdges", "private func observeSimpleProjection")
+array_edges = section(v3, "private static func edgesForBlocks", "private static func messageBlockEdges")
+block_edges = section(v3, "private static func blockEdges", "private static func edgesForBlocks")
+text_edges = section(v3, "private static func textEdges", "private static func normalizedStatus")
+content_edges = section(v3, "private static func contentEdges", "private static func textEdges")
+status = section(v3, "private static func normalizedStatus", "private static func blockEdges")
+check("hidden blocks can enter without token-driven tool log diffs",
+      "vm.$toolSnapshots.map { SimpleTranscript.snapshotImages($0) }" in observer
+      and "simpleMessageSubs[message.id]?.0 != ObjectIdentifier(message)" in observer
+      and re.search(r"let blocks: Edge = Self\.messageBlockEdges\(message\)\s*"
+                    r"let errors: Edge = message\.\$error\.removeDuplicates\(\)\.dropFirst\(\)"
+                    r"\.map \{ _ in \(\) \}\.eraseToAnyPublisher\(\)\s*"
+                    r"let sub = Publishers\.Merge\(blocks, errors\)\s*"
+                    r"\.receive\(on: DispatchQueue\.main\)\.sink", message_loop)
+      and all(marker in message_edges for marker in (
+          "message.$blocks", ".removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }",
+          ".map { blocks -> Edge in Self.edgesForBlocks(blocks) }",
+          "return sources.switchToLatest().dropFirst().eraseToAnyPublisher()"))
+      and "blocks.flatMap { Self.blockEdges($0) }" in array_edges
+      and "return Publishers.MergeMany(edges).prepend(()).eraseToAnyPublisher()" in array_edges
+      and "let text: Edge = Self.textEdges(block)" in block_edges
+      and "return [text, kind, question, image, status]" in block_edges
+      and all(f"block.${field}.removeDuplicates().dropFirst()" in block_edges
+              for field in ("kind", "questionCard", "imageFilePath"))
+      and all(marker in text_edges for marker in (
+          "block.$kind.map { $0 == .text }.removeDuplicates()", "isText.map",
+          "guard isText else { return Empty<Void, Never>().eraseToAnyPublisher() }",
+          "return Self.contentEdges(block)", "return sources.switchToLatest().eraseToAnyPublisher()"))
+      and "block.$content.map" in content_edges and "block.content" not in content_edges
+      and "(hasText: SimpleTranscript.hasText(content), refs: SimpleTranscript.explicitMediaReferences(content))" in content_edges
+      and re.search(r"return states\.removeDuplicates \{ previous, current in\s*"
+                    r"previous\.hasText == current\.hasText && previous\.refs == current\.refs\s*"
+                    r"\}\.dropFirst\(\)\.map \{ _ in \(\) \}", content_edges))
+check("message sink marks the simple projection dirty",
+      re.search(r"(?m)^[ \t]*self\.markSimpleProjectionDirty\(\)[ \t]*$", sink_body))
+check("message sink rejects queued callbacks from replaced message instances",
+      re.search(r"(?m)^[ \t]*guard\b[^{}]*,\s*"
+                r"self\.simpleMessageSubs\[message\.id\]\?\.0 == ObjectIdentifier\(message\)"
+                r"\s+else\s*\{\s*return\s*\}", sink_body))
+check("message projection retains its subscription under the current message identity",
+      re.match(r"\s*simpleMessageSubs\[message\.id\] = \(ObjectIdentifier\(message\), sub\)", after_sink))
 signature = section(infra, "mutating func update(in message:", "static func rows(in message:")
 attachment = section(v3, "attachmentSizeChangedSub = NotificationCenter", "let visibleIPs =")
 check("semantic membership reuses rows while byte-count, Markdown and media edges are handled separately",
-      "if case .streaming(_)? = status { return .streaming(bytes: 0) }" in observer
-      and "self.markFooterDirty(message.id)" in observer
+      re.search(r"block\.\$toolStatus\.map \{ Self\.normalizedStatus\(\$0\) \}\s*"
+                r"\.removeDuplicates\(\)\.dropFirst\(\)", block_edges)
+      and re.search(r"if case \.streaming\(_\)\? = status \{ return \.streaming\(bytes: 0\) \}\s*return status", status)
+      and "self.markFooterDirty(message.id)" in sink_body
       and "footerPresentation(for: message" in projection
       and re.search(r"if messageObject == identity && members == nextMembers \{\s*"
                     r"guard imageProbes\.retryPending\(\) else \{ return rows \}", signature)
