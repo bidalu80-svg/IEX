@@ -3794,8 +3794,7 @@ final class ImageAttachment: NSTextAttachment {
 
     func resizeGroupView(_ view: UIView, width: CGFloat) {
         guard let group = view as? MarkdownImageGroupView else { return }
-        let side = Self.thumbnailSize(availableWidth: width).width
-        group.frame.size = CGSize(width: side, height: side + MarkdownImageGroupView.stripSpacing + MarkdownImageGroupView.stripHeight)
+        group.frame.size = Self.thumbnailSize(availableWidth: width, isGroup: true)
         group.setNeedsLayout()
     }
 
@@ -3867,17 +3866,20 @@ final class ImageAttachment: NSTextAttachment {
     private static let maxImageWidth: CGFloat = 224
     private static let imageCornerRadius: CGFloat = 24
 
-    private static func thumbnailSize(availableWidth: CGFloat) -> CGSize {
+    static let thumbnailContentMode: UIView.ContentMode = .scaleAspectFill
+
+    static func thumbnailCornerRadius(width: CGFloat) -> CGFloat { min(imageCornerRadius, width / 2) }
+
+    static func thumbnailSize(availableWidth: CGFloat, isGroup: Bool = false) -> CGSize {
         let side = availableWidth.isFinite ? max(1, min(availableWidth, maxImageWidth)) : maxImageWidth
-        return CGSize(width: side, height: side)
+        let strip = isGroup ? MarkdownImageGroupView.stripSpacing + MarkdownImageGroupView.stripHeight : 0
+        return CGSize(width: side, height: side + strip)
     }
 
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         attachmentBoundsCallCount &+= 1
         let width = min(lineFrag.width, textContainer?.size.width ?? lineFrag.width)
-        var size = Self.thumbnailSize(availableWidth: width)
-        if isImageGroup { size.height += MarkdownImageGroupView.stripSpacing + MarkdownImageGroupView.stripHeight }
-        return CGRect(origin: .zero, size: size)
+        return CGRect(origin: .zero, size: Self.thumbnailSize(availableWidth: width, isGroup: isImageGroup))
     }
 
     func beginLoadingIfNeeded() {
@@ -4093,10 +4095,10 @@ final class ImageAttachment: NSTextAttachment {
         container.backgroundColor = .clear
 
         let imageView = UIImageView(image: img)
-        imageView.contentMode = .scaleAspectFill
+        imageView.contentMode = Self.thumbnailContentMode
         imageView.backgroundColor = .black
         imageView.frame = container.bounds
-        imageView.layer.cornerRadius = min(Self.imageCornerRadius, size.width / 2)
+        imageView.layer.cornerRadius = Self.thumbnailCornerRadius(width: size.width)
         imageView.clipsToBounds = true
         imageView.isUserInteractionEnabled = true
 
@@ -4117,7 +4119,7 @@ final class ImageAttachment: NSTextAttachment {
 
         let bg = UIView(frame: container.bounds)
         bg.backgroundColor = .secondarySystemBackground
-        bg.layer.cornerRadius = min(Self.imageCornerRadius, size.width / 2)
+        bg.layer.cornerRadius = Self.thumbnailCornerRadius(width: size.width)
         bg.clipsToBounds = true
         container.addSubview(bg)
 
@@ -4143,10 +4145,10 @@ final class ImageAttachment: NSTextAttachment {
 
 /// UIKit controls keep thumbnail selection inside the image attachment. The
 /// attachment owns no view strongly, so recycled transcript/export views release.
-private final class MarkdownImageGroupView: UIView {
+final class MarkdownImageGroupView: UIView {
     static let stripSpacing: CGFloat = 8
     static let stripHeight: CGFloat = 52
-    private let attachment: ImageAttachment
+    private let attachment: ImageAttachment?
     private let mainImage = UIImageView()
     private let emptyIcon = UIImageView(image: UIImage(systemName: "photo"))
     private let strip = UIScrollView()
@@ -4155,9 +4157,15 @@ private final class MarkdownImageGroupView: UIView {
     private var thumbnails: [UIImageView] = []
     private var selectionObserver: AnyCancellable?
     private var lastSelectedSource: String?
+    private var simpleSelectedIndex: Int?
+    private var selectSimpleImage: ((Int) -> Void)?
     private var revealSelection = true
 
-    init(attachment: ImageAttachment, side: CGFloat) {
+    convenience init(attachment: ImageAttachment, side: CGFloat) {
+        self.init(side: side, imageCount: attachment.groupItems.count, attachment: attachment)
+    }
+
+    init(side: CGFloat, imageCount: Int, attachment: ImageAttachment? = nil) {
         self.attachment = attachment
         super.init(frame: CGRect(x: 0, y: 0, width: side,
                                  height: side + Self.stripSpacing + Self.stripHeight))
@@ -4182,15 +4190,21 @@ private final class MarkdownImageGroupView: UIView {
         strip.alwaysBounceHorizontal = false
         strip.delaysContentTouches = false
         addSubview(strip)
-        for (index, item) in attachment.groupItems.enumerated() {
+        for index in 0..<imageCount {
             let button = UIButton(type: .custom)
             button.accessibilityIdentifier = "markdown.imageGroup.thumbnail.\(index)"
             button.accessibilityLabel = "第 \(index + 1) 张图片"
             button.layer.cornerRadius = 12
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
-                self.attachment.selectionState.select(source: item.source,
-                    messageId: self.attachment.messageId, sources: self.attachment.groupSources)
+                if let selectSimpleImage = self.selectSimpleImage {
+                    selectSimpleImage(index)
+                    return
+                }
+                guard let attachment = self.attachment else { return }
+                let item = attachment.groupItems[index]
+                attachment.selectionState.select(source: item.source,
+                    messageId: attachment.messageId, sources: attachment.groupSources)
                 item.beginLoadingIfNeeded()
             }, for: .touchUpInside)
             let thumbnail = UIImageView()
@@ -4203,13 +4217,14 @@ private final class MarkdownImageGroupView: UIView {
             buttons.append(button); thumbnails.append(thumbnail)
             strip.addSubview(button)
         }
-        bindSelectionState()
+        if attachment != nil { bindSelectionState() }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
     func bindSelectionState() {
+        guard let attachment else { return }
         selectionObserver = attachment.selectionState.$revision.dropFirst().sink { [weak self] _ in
             self?.refreshImages()
         }
@@ -4217,20 +4232,38 @@ private final class MarkdownImageGroupView: UIView {
     }
 
     func refreshImages() {
+        guard let attachment else { return }
         let items = attachment.groupItems
         let selected = attachment.selectionState.selectedSource(messageId: attachment.messageId,
                                                                   sources: attachment.groupSources)
         let selectedIndex = items.firstIndex { $0.source == selected } ?? 0
         if selected != lastSelectedSource { revealSelection = true; lastSelectedSource = selected }
         let current = items[selectedIndex]
-        mainImage.image = current.loadedImage
-        emptyIcon.isHidden = current.loadedImage != nil
-        mainTap.attachedImage = current.loadedImage
         mainTap.sourceURL = current.source
         mainTap.messageId = attachment.messageId
-        mainTap.isEnabled = current.loadedImage != nil
-        for (index, item) in items.enumerated() {
-            thumbnails[index].image = item.loadedImage
+        mainTap.attachedImage = current.loadedImage
+        render(images: items.map(\.loadedImage), selectedIndex: selectedIndex)
+    }
+
+    func updateSimpleImages(_ images: [UIImage?], selectedIndex: Int, labels: [String],
+                            onSelect: @escaping (Int) -> Void, onOpen: @escaping () -> Void) {
+        if simpleSelectedIndex != selectedIndex { revealSelection = true; simpleSelectedIndex = selectedIndex }
+        selectSimpleImage = onSelect
+        mainTap.openAction = onOpen
+        mainImage.accessibilityLabel = labels[selectedIndex]
+        mainImage.accessibilityCustomActions = images[selectedIndex].map { _ in
+            [UIAccessibilityCustomAction(name: String(localized: "Open Image")) { _ in onOpen(); return true }]
+        }
+        buttons.indices.forEach { buttons[$0].accessibilityLabel = labels[$0] }
+        render(images: images, selectedIndex: selectedIndex)
+    }
+
+    private func render(images: [UIImage?], selectedIndex: Int) {
+        mainImage.image = images[selectedIndex]
+        emptyIcon.isHidden = mainImage.image != nil
+        mainTap.isEnabled = mainImage.image != nil
+        for (index, image) in images.enumerated() {
+            thumbnails[index].image = image
             let button = buttons[index]
             button.isSelected = index == selectedIndex
             button.layer.borderWidth = button.isSelected ? 2 : 0
@@ -4279,8 +4312,10 @@ private final class ImageTapGesture: UITapGestureRecognizer {
     var attachedImage: UIImage?
     var sourceURL: String?
     var messageId: UUID?
+    var openAction: (() -> Void)?
 
     @objc func handleTap() {
+        if let openAction { openAction(); return }
         // Preferred path: route up to SwiftUI so a paged gallery can be shown.
         if let messageId, let sourceURL {
             MarkdownImageTapRouter.postTap(messageId: messageId, sourceURL: sourceURL)
@@ -4351,16 +4386,24 @@ final class VideoAttachment: NSTextAttachment {
     }()
 
     private static let placeholderHeight: CGFloat = 200
+    private static let maxThumbnailWidth: CGFloat = 400
+    static let thumbnailPixelSize = CGSize(width: maxThumbnailWidth, height: maxThumbnailWidth)
+    static let thumbnailContentMode: UIView.ContentMode = .scaleAspectFill
+    static let thumbnailCornerRadius: CGFloat = 8
+
+    private static func thumbnailWidth(_ width: CGFloat) -> CGFloat { min(width, maxThumbnailWidth) }
+
+    static func thumbnailSize(availableWidth: CGFloat, imageSize: CGSize?) -> CGSize {
+        let width = thumbnailWidth(availableWidth)
+        let height = imageSize.map { size in
+            min(width * (size.height / max(size.width, 1)), UIScreen.main.bounds.height / 2)
+        } ?? placeholderHeight
+        return CGSize(width: width, height: height)
+    }
 
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
-        let width = min(lineFrag.width, 400)
-        if let thumb = thumbnail {
-            let aspect = thumb.size.height / max(thumb.size.width, 1)
-            let h = min(width * aspect, UIScreen.main.bounds.height / 2)
-            // +24 for filename label below
-            return CGRect(x: 0, y: 0, width: lineFrag.width, height: h + 24)
-        }
-        return CGRect(x: 0, y: 0, width: lineFrag.width, height: Self.placeholderHeight)
+        let size = Self.thumbnailSize(availableWidth: lineFrag.width, imageSize: thumbnail?.size)
+        return CGRect(x: 0, y: 0, width: lineFrag.width, height: size.height + (thumbnail == nil ? 0 : 24))
     }
 
     func beginLoadingIfNeeded() {
@@ -4404,7 +4447,7 @@ final class VideoAttachment: NSTextAttachment {
             let asset = AVAsset(url: fileURL)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 400, height: 400)
+            generator.maximumSize = Self.thumbnailPixelSize
 
             var thumb: UIImage?
             do {
@@ -4431,7 +4474,7 @@ final class VideoAttachment: NSTextAttachment {
     }
 
     func makeView(width: CGFloat) -> UIView {
-        let maxW = min(width, 400)
+        let maxW = Self.thumbnailWidth(width)
         if let thumb = thumbnail {
             return makeThumbnailView(thumb, maxWidth: maxW, totalWidth: width)
         } else {
@@ -4440,23 +4483,22 @@ final class VideoAttachment: NSTextAttachment {
     }
 
     private func makeThumbnailView(_ thumb: UIImage, maxWidth: CGFloat, totalWidth: CGFloat) -> UIView {
-        let aspect = thumb.size.height / max(thumb.size.width, 1)
-        let h = min(maxWidth * aspect, UIScreen.main.bounds.height / 2)
+        let h = Self.thumbnailSize(availableWidth: maxWidth, imageSize: thumb.size).height
 
         let container = UIView(frame: CGRect(x: 0, y: 0, width: totalWidth, height: h + 24))
         container.backgroundColor = .clear
 
         let thumbView = UIImageView(image: thumb)
-        thumbView.contentMode = .scaleAspectFill
+        thumbView.contentMode = Self.thumbnailContentMode
         thumbView.frame = CGRect(x: 0, y: 0, width: maxWidth, height: h)
-        thumbView.layer.cornerRadius = 8
+        thumbView.layer.cornerRadius = Self.thumbnailCornerRadius
         thumbView.clipsToBounds = true
         container.addSubview(thumbView)
 
         // Dark overlay
         let overlay = UIView(frame: thumbView.frame)
         overlay.backgroundColor = UIColor.black.withAlphaComponent(0.3)
-        overlay.layer.cornerRadius = 8
+        overlay.layer.cornerRadius = Self.thumbnailCornerRadius
         overlay.clipsToBounds = true
         container.addSubview(overlay)
 
@@ -4495,12 +4537,12 @@ final class VideoAttachment: NSTextAttachment {
     }
 
     private func makePlaceholderView(maxWidth: CGFloat, totalWidth: CGFloat) -> UIView {
-        let h = Self.placeholderHeight
+        let h = Self.thumbnailSize(availableWidth: maxWidth, imageSize: nil).height
         let container = UIView(frame: CGRect(x: 0, y: 0, width: totalWidth, height: h))
 
         let bg = UIView(frame: CGRect(x: 0, y: 0, width: maxWidth, height: h))
         bg.backgroundColor = .secondarySystemBackground
-        bg.layer.cornerRadius = 8
+        bg.layer.cornerRadius = Self.thumbnailCornerRadius
         bg.clipsToBounds = true
         container.addSubview(bg)
 

@@ -311,6 +311,7 @@ fileprivate struct BridgedAssistantBlockV3: View {
     var segmentID: SimpleSegmentID? = nil
     var glow: CompletionGlow? = nil
     var onSegmentResize: ((SimpleSegmentID) -> Void)? = nil
+    @State private var selectedImageID: SimpleSegmentID? = nil
 
     private var blockAccessibilityId: String {
         switch block.kind {
@@ -377,6 +378,7 @@ fileprivate struct BridgedAssistantBlockV3: View {
             if let segmentID {
                 SimpleAssistantSegmentView(bodyModel: block.simpleBody, message: message, block: block,
                                            id: segmentID, width: max(1, maxWidth), bridge: bridge, glow: glow,
+                                           selectedImageID: $selectedImageID,
                                            onResize: onSegmentResize)
                     .id(ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: segmentID))
             }
@@ -395,7 +397,8 @@ fileprivate struct BridgedAssistantBlockV3: View {
         let text = message.blocks.filter { $0.kind == .text }.map(\.content).joined(separator: "\n\n")
         if SimpleTranscript.hasText(text) {
             Button("Copy All") { UIPasteboard.general.string = ZeVisualizationStreaming.prepare(text, readable: true) }
-            if let segmentID, let segment = block.simpleBody.segments.first(where: { $0.id == segmentID }), let media = segment.media {
+            let members = segmentID.map { block.simpleBody.segments(inRow: $0) } ?? []
+            if let segment = members.first(where: { $0.id == selectedImageID }) ?? members.first, let media = segment.media {
                 Button("Copy Markdown") { UIPasteboard.general.string = block.simpleBody.markdownForCopy(segment) }
                 if let link = media.linkDestination {
                     Button("Copy Link") { UIPasteboard.general.string = link }
@@ -517,10 +520,15 @@ private struct SimpleAssistantSegmentView: View {
     let width: CGFloat
     let bridge: CellStateBridgeV2
     let glow: CompletionGlow?
+    @Binding var selectedImageID: SimpleSegmentID?
     let onResize: ((SimpleSegmentID) -> Void)?
 
     var body: some View {
-        if let segment = bodyModel.segments.first(where: { $0.id == id }) {
+        let members = bodyModel.segments(inRow: id)
+        if members.count > 1 {
+            SimpleImageGroup(segments: members, width: width, message: message, blockID: block.id,
+                             selectedImageID: $selectedImageID)
+        } else if let segment = members.first {
             let key = ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: id)
             let copyMarkdown = { bodyModel.markdownForCopy(segment) }
             if let media = segment.media {
@@ -3669,9 +3677,11 @@ extension CollectionViewMessageListV3 {
                 case .assistantBlock(_, let blockID, let segmentID):
                     guard let block = message.blocks.first(where: { $0.id == blockID }) else { return false }
                     if let segmentID {
-                        guard transcriptMode == .simple, let segment = block.simpleBody.segments.first(where: { $0.id == segmentID }),
-                              let media = segment.media else { return false }
-                        return matches(media.source)
+                        guard transcriptMode == .simple else { return false }
+                        return block.simpleBody.segments(inRow: segmentID).contains { segment in
+                            guard let media = segment.media else { return false }
+                            return matches(media.source)
+                        }
                     }
                     guard transcriptMode == .standard, block.content.contains("![") else { return false }
                     let markdown = block.cachedMarkdown ?? MarkdownContent(prepareMarkdownForRender(block.content))
@@ -4330,7 +4340,7 @@ extension CollectionViewMessageListV3 {
                     if transcriptMode == .simple {
                         for block in message.blocks {
                             guard let role = SimpleTranscript.row(for: block) else { continue }
-                            let ids: [SimpleSegmentID?] = role == .question ? [nil] : block.simpleBody.segments.map { $0.id }
+                            let ids: [SimpleSegmentID?] = role == .question ? [nil] : block.simpleBody.rowIDs.map { $0 }
                             for id in ids {
                                 let item = MessageListItem.assistantBlock(message.id, block.id, id)
                                 newItems.append(item)
@@ -5054,9 +5064,12 @@ extension CollectionViewMessageListV3 {
                 return "g:\(mid.uuidString):\(bid.uuidString):\(blocks.count):\(blocks.first?.isToolGroupExpanded == true)"
             case .assistantBlock(let mid, let bid, let segmentID):
                 let block = msg(mid)?.blocks.first(where: { $0.id == bid })
-                if let segmentID, let segment = block?.simpleBody.segments.first(where: { $0.id == segmentID }) {
-                    let size = segment.media.flatMap { block?.simpleBody.mediaSize(for: segmentID, media: $0) }
-                    return "s:\(mid):\(bid):\(segmentID):\(segment.hashValue):\(String(describing: size))"
+                if let segmentID, let block {
+                    let members = block.simpleBody.segments(inRow: segmentID)
+                    if let segment = members.first {
+                        let size = segment.media.flatMap { block.simpleBody.mediaSize(for: segmentID, media: $0) }
+                        return "s:\(mid):\(bid):\(segmentID):\(members.hashValue):\(String(describing: size))"
+                    }
                 }
                 let n = block?.content.count ?? 0
                 return "b:\(mid.uuidString):\(bid.uuidString):\(n)"
@@ -5067,13 +5080,16 @@ extension CollectionViewMessageListV3 {
                                        maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil,
                                        simpleRow: SimpleTranscript.Row? = nil) -> CGFloat {
             if case .assistantBlock(let mid, let bid, let id?) = item,
-               let block = messages.first(where: { $0.id == mid })?.blocks.first(where: { $0.id == bid }),
-               let segment = block.simpleBody.segments.first(where: { $0.id == id }) {
+               let block = messages.first(where: { $0.id == mid })?.blocks.first(where: { $0.id == bid }) {
+                let members = block.simpleBody.segments(inRow: id)
+                guard let segment = members.first else { return 44 }
                 let column = max(1, min(width - 32, maxContentWidth > 0 ? maxContentWidth : width))
                 switch id.kind {
-                case .image, .video:
+                case .image:
+                    return ImageAttachment.thumbnailSize(availableWidth: column, isGroup: members.count > 1).height
+                case .video:
                     let size = segment.media.flatMap { block.simpleBody.mediaSize(for: id, media: $0) }
-                    return SimpleStandaloneMedia.coverSize(width: column, kind: id.kind, natural: size).height
+                    return VideoAttachment.thumbnailSize(availableWidth: column, imageSize: size).height
                 case .audio: return SimpleStandaloneMedia.audioHeight
                 case .file: return 56
                 case .table:
@@ -5491,7 +5507,16 @@ extension CollectionViewMessageListV3 {
             guard let items = dataSource?.snapshot().itemIdentifiers else { return nil }
             let preferred: MessageListItem?
             if hit.match.key.field == .footerError { preferred = .assistantFooter(hit.messageId) }
-            else if let blockID = hit.blockId { preferred = .assistantBlock(hit.messageId, blockID, hit.match.key.segmentID) }
+            else if let blockID = hit.blockId {
+                let segmentID = hit.match.key.segmentID
+                if transcriptMode == .simple, let segmentID {
+                    guard let block = vm?.messages.first(where: { $0.id == hit.messageId })?.blocks.first(where: { $0.id == blockID }),
+                          let rowID = block.simpleBody.rowID(for: segmentID) else { return nil }
+                    preferred = .assistantBlock(hit.messageId, blockID, rowID)
+                } else {
+                    preferred = .assistantBlock(hit.messageId, blockID, segmentID)
+                }
+            }
             else { preferred = transcriptMode == .simple ? .wholeMessage(hit.messageId) : nil }
             if transcriptMode == .simple { return items.first { $0 == preferred } }
             return items.first { $0 == preferred } ?? items.first { $0.messageId == hit.messageId }
