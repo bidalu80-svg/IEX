@@ -262,6 +262,7 @@ struct AIChatView: View {
     var remoteDeviceId: String? = nil
     /// Model group to bind when creating a new session (from long-press FAB).
     var initialGroupId: String? = nil
+    let receivesIncomingShares: Bool
     @EnvironmentObject var shareCoordinator: ShareCoordinator
     @StateObject private var cached: CachedViewModel
 
@@ -282,11 +283,13 @@ struct AIChatView: View {
         )
     }
 
-    init(sessionId: String? = nil, draftId: String? = nil, remoteDeviceId: String? = nil, initialGroupId: String? = nil) {
+    init(sessionId: String? = nil, draftId: String? = nil, remoteDeviceId: String? = nil, initialGroupId: String? = nil,
+         receivesIncomingShares: Bool = false) {
         self.sessionId = sessionId
         self.draftId = draftId
         self.remoteDeviceId = remoteDeviceId
         self.initialGroupId = initialGroupId
+        self.receivesIncomingShares = receivesIncomingShares
         // [T-ios-aichatview-eager-cachedvm] Build the CachedViewModel INSIDE the
         // StateObject autoclosure so SwiftUI only constructs it the first time
         // this view's StateObject is created — NOT on every struct re-init.
@@ -400,6 +403,7 @@ struct AIChatView: View {
     @State private var showTerminal = false
     @State private var terminalInitCommand: String?
     @State private var showAttachmentMenu = false
+    @State private var pendingTextPaste: ComposerTextPasteChoice?
     @State private var isDropTargeted = false
     @State private var showCamera = false
     @State private var showPhotoPicker = false
@@ -472,6 +476,7 @@ struct AIChatView: View {
     // string for import + a temp-copied file URL for the attachment path
     // (the original shared file is cleaned up right after ingestion).
     @State private var pendingProviderImport: PendingProviderImport?
+    @State private var promptedShareIDs: Set<UUID> = []
     @State private var providerImportResult: String?
     @State private var screenshotPreview: ChatScreenshotPreview?
     /// [T-chat-search] In-conversation search panel. The model owns the query
@@ -1083,6 +1088,14 @@ struct AIChatView: View {
         } message: {
             Text(String(localized: "This will delete all local messages for this chat and re-download them from iCloud. Local changes that haven't synced yet will be lost. Continue?"))
         }
+        .alert("粘贴为文件", isPresented: Binding(
+            get: { pendingTextPaste != nil },
+            set: { if !$0 { pendingTextPaste = nil } }
+        ), presenting: pendingTextPaste) { choice in
+            Button("粘贴为文本", action: choice.pasteAsText)
+            Button("附加为文件", action: choice.attachAsFile)
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        }
         .modifier(AIApprovalDialogModifier(sessionID: vm.sessionId,
                                            hostReady: isChatViewVisible && !vm.isLoadingSession && !titleIsVisuallyLocked))
         .modifier(RemoteServerAIDraftPresentationModifier())
@@ -1093,8 +1106,12 @@ struct AIChatView: View {
         .modifier(ProviderImportPromptModifier(
             pending: $pendingProviderImport,
             result: $providerImportResult,
-            onImport: { json in configStore.importInstanceJSON(json) },
-            onAttach: { url in vm.addFileAttachment(from: url) }
+            onImport: importSharedProvider,
+            onAttach: { item in _ = attachPendingShare(item.receipt) },
+            onCancel: { item in
+                if canReceiveIncomingShares { shareCoordinator.acknowledge(item.receipt) }
+            },
+            onDismiss: injectPendingShareIfNeeded
         ))
         .overlay(alignment: .top) {
             if let msg = forcePullToast {
@@ -1715,10 +1732,9 @@ struct AIChatView: View {
                     inputFocused = true
                 }
             }
-            zeLogger.info("[Share] AIChatView.onAppear: sessionId=\(sessionId ?? "nil") bufferVersion=\(shareCoordinator.bufferVersion) hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
-            injectPendingShareIfNeeded()
             injectPendingTransferIfNeeded()
             isChatViewVisible = true
+            injectPendingShareIfNeeded()
             refreshTitlePillSession()
             // Notify workflow that THIS view is mounted + visible. If
             // the workflow is waiting for our session id, it will
@@ -1730,6 +1746,7 @@ struct AIChatView: View {
         }
         .observingQuickActions(modifier: quickActionObserver)
         .onChange(of: vm.sessionId) { _ in
+            pendingTextPaste = nil
             refreshTitlePillSession()
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ZeChatVoiceLayoutVerification"))) { note in
@@ -1757,12 +1774,22 @@ struct AIChatView: View {
                   updatedId == sid else { return }
             refreshTitlePillSession()
         }
-        .onChange(of: shareCoordinator.bufferVersion) { newVersion in
-            // Warm start: user is already in a session when share arrives
-            zeLogger.info("[Share] AIChatView.onChange(bufferVersion)=\(newVersion) sessionId=\(sessionId ?? "nil") hasBuffer=\(shareCoordinator.pendingShareBuffer != nil)")
+        .onChange(of: shareCoordinator.pending.map(\.id)) { _ in
             injectPendingShareIfNeeded()
         }
+        .onChange(of: canReceiveIncomingShares) { canReceive in
+            if canReceive {
+                promptedShareIDs.removeAll()
+                injectPendingShareIfNeeded()
+            } else {
+                pendingProviderImport = nil
+            }
+        }
+        .onChange(of: providerImportResult) { result in
+            if result == nil { injectPendingShareIfNeeded() }
+        }
         .onDisappear {
+            pendingTextPaste = nil
             endVoiceCall()
             composerChromeTransition.task?.cancel()
             composerChromeTransition.task = nil
@@ -2017,22 +2044,16 @@ struct AIChatView: View {
     /// A shared/opened JSON file detected as a Provider export, pending the
     /// user's import-vs-attach choice. [T-ios-json-open-provider-import-prompt]
     struct PendingProviderImport: Identifiable {
-        let id = UUID()
-        /// The raw JSON string, fed directly to `importInstanceJSON`.
+        let receipt: PendingShareInbox.Receipt
         let json: String
-        /// A temp copy of the file for the "add as attachment" branch (the
-        /// shared original is cleaned up right after ingestion).
-        let fileURL: URL
+        var id: UUID { receipt.id }
     }
 
-    /// Returns the file's JSON string iff it is a Provider export — i.e. its
-    /// top-level object carries `providerType` (a valid `ProviderType`),
-    /// `credentialType` (String), and `models` (array). Same required fields
-    /// `ProviderConfigStore.importInstanceJSON` keys on, so a hit reliably
-    /// imports. Returns nil for non-JSON or ordinary JSON. [T-ios-json-open-provider-import-prompt]
+    /// Checks the export header before reading and validating the full JSON.
     static func providerExportJSON(at url: URL) -> String? {
         guard url.pathExtension.lowercased() == "json",
-              let data = try? Data(contentsOf: url),
+              hasProviderExportHeader(at: url),
+              let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let providerTypeRaw = dict["providerType"] as? String,
               ProviderType(rawValue: providerTypeRaw) != nil,
@@ -2043,67 +2064,184 @@ struct AIChatView: View {
         return String(data: data, encoding: .utf8)
     }
 
-    private func injectPendingShareIfNeeded() {
-        guard let pending = shareCoordinator.consumeBuffer() else {
-            zeLogger.info("[Share] injectPendingShareIfNeeded — no buffer or expired")
-            return
+    private static func hasProviderExportHeader(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        var header = ProviderExportPrefix(handle: handle)
+        do {
+            try header.readThroughModels()
+            return true
+        } catch ProviderExportPrefix.ScanError.limitReached {
+            return true
+        } catch {
+            return false
         }
-        zeLogger.info("[Share] Injecting \(pending.items.count) items into chat")
+    }
 
-        for (i, item) in pending.items.enumerated() {
-            switch item.kind {
-            case .inlineText:
-                zeLogger.info("[Share] item[\(i)] inlineText: \(String(item.value.prefix(100)))")
-                if !vm.inputText.isEmpty { vm.inputText += "\n" }
-                let text = item.value
-                // Append a trailing space to URLs so the cursor doesn't stick to the link
-                if text.hasPrefix("http://") || text.hasPrefix("https://") {
-                    vm.inputText += text + " "
-                } else {
-                    vm.inputText += text
+    private struct ProviderExportPrefix {
+        enum ScanError: Error { case endOfFile, mismatch, limitReached }
+        enum Field { case base64, flag, credential, string, arrayStart }
+
+        private static let chunkSize = 4 * 1024
+        private static let scanLimit = 256 * 1024
+        private let handle: FileHandle
+        private var bytes: [UInt8] = []
+        private var offset = 0
+        private var bytesRead = 0
+
+        init(handle: FileHandle) { self.handle = handle }
+
+        mutating func readThroughModels() throws {
+            let fields: [(key: String, kind: Field, optional: Bool)] = [
+                ("apiKey", .base64, true),
+                ("appendV1Suffix", .flag, true),
+                ("credentialType", .credential, false),
+                ("customBaseURL", .string, true),
+                ("customUserAgent", .string, true),
+                ("label", .string, false),
+                ("manualOAuthToken", .base64, true),
+                ("models", .arrayStart, false),
+            ]
+            try take("{")
+            for field in fields {
+                guard try take("\"\(field.key)\"", optional: field.optional) else { continue }
+                try take(":")
+                switch field.kind {
+                case .base64: try readString(base64: true)
+                case .flag: try take("false")
+                case .credential:
+                    if try take(#""apiKey""#, optional: true) { break }
+                    if try take(#""oauth""#, optional: true) { break }
+                    try take(#""chatGPTWeb""#)
+                case .string: try readString(base64: false)
+                case .arrayStart: try take("["); return
                 }
-            case .attachment:
-                guard let dir = SharedContainerStore.sharedFileDirectory else {
-                    zeLogger.error("[Share] item[\(i)] sharedFileDirectory is nil!")
-                    continue
-                }
-                let fileURL = dir.appendingPathComponent(item.value)
-                let exists = FileManager.default.fileExists(atPath: fileURL.path)
-                zeLogger.info("[Share] item[\(i)] attachment: \(item.value) exists=\(exists) path=\(fileURL.path)")
-                guard exists else { continue }
-                // [T-ios-json-open-provider-import-prompt] If this is a JSON
-                // Provider export, don't silently attach it — ask the user
-                // whether to import it as a provider or add it as an attachment.
-                // We only intercept the FIRST such file (the prompt is modal);
-                // capture the JSON string (for import) + a temp copy of the file
-                // (for the attachment path, since cleanSharedFiles() below will
-                // delete the shared original) and defer to the dialog.
-                if pendingProviderImport == nil, let json = Self.providerExportJSON(at: fileURL) {
-                    let tempURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("provider-share-\(UUID().uuidString).json")
-                    try? FileManager.default.copyItem(at: fileURL, to: tempURL)
-                    pendingProviderImport = PendingProviderImport(json: json, fileURL: tempURL)
-                    zeLogger.info("[Share] item[\(i)] detected Provider export JSON — prompting import vs attachment")
-                    continue
-                }
-                vm.addFileAttachment(from: fileURL)
-                zeLogger.info("[Share] item[\(i)] addFileAttachment done, attachments count=\(self.vm.attachments.count)")
+                try take(",")
             }
         }
 
-        // Clean up shared files after ingestion
-        SharedContainerStore.cleanSharedFiles()
+        @discardableResult
+        private mutating func take(_ token: String, optional: Bool = false) throws -> Bool {
+            var whitespaceCount = 0
+            while [0x20, 0x09, 0x0A, 0x0D].contains(try peekByte()) {
+                offset += 1
+                whitespaceCount += 1
+                guard whitespaceCount <= 8 else { throw ScanError.mismatch }
+            }
+            for (ahead, byte) in token.utf8.enumerated() {
+                if try peekByte(ahead: ahead) != byte {
+                    if optional { return false }
+                    throw ScanError.mismatch
+                }
+            }
+            offset += token.utf8.count
+            return true
+        }
 
-        zeLogger.info("[Share] Injection complete. inputText='\(String(self.vm.inputText.prefix(100)))' attachments=\(self.vm.attachments.count)")
+        private mutating func readString(base64: Bool) throws {
+            try take("\"")
+            while true {
+                let byte = try nextByte()
+                if byte == 0x22 { return }
+                if byte == 0x5C {
+                    let escape = try nextByte()
+                    if base64 {
+                        guard escape == 0x2F else { throw ScanError.mismatch }
+                    } else if escape == 0x75 {
+                        for _ in 0..<4 {
+                            switch try nextByte() {
+                            case 0x30...0x39, 0x41...0x46, 0x61...0x66: break
+                            default: throw ScanError.mismatch
+                            }
+                        }
+                    } else if !#""\/bfnrt"#.utf8.contains(escape) {
+                        throw ScanError.mismatch
+                    }
+                } else if base64 {
+                    switch byte {
+                    case 0x41...0x5A, 0x61...0x7A, 0x30...0x39, 0x2B, 0x2F, 0x3D: break
+                    default: throw ScanError.mismatch
+                    }
+                } else if byte < 0x20 {
+                    throw ScanError.mismatch
+                }
+            }
+        }
 
-        hasInjectedShareContent = true
+        private mutating func nextByte() throws -> UInt8 {
+            let byte = try peekByte()
+            offset += 1
+            return byte
+        }
 
-        // Focus input if we injected text
-        if !vm.inputText.isEmpty {
+        private mutating func peekByte(ahead: Int = 0) throws -> UInt8 {
+            while offset + ahead >= bytes.count {
+                guard bytesRead < Self.scanLimit else { throw ScanError.limitReached }
+                let count = min(Self.chunkSize, Self.scanLimit - bytesRead)
+                guard let chunk = try handle.read(upToCount: count), !chunk.isEmpty else { throw ScanError.endOfFile }
+                bytesRead += chunk.count
+                bytes.removeFirst(offset)
+                offset = 0
+                bytes.append(contentsOf: chunk)
+            }
+            return bytes[offset + ahead]
+        }
+    }
+
+    private var canReceiveIncomingShares: Bool {
+        receivesIncomingShares && isChatViewVisible && scenePhase == .active && !isReadOnly
+            && !lockStore.appIsLocked && !lockStore.showPrivacyScreen && !titleIsVisuallyLocked
+            && !hasOverlayPresented && !vm.isLoadingSession && (sessionId == nil || vm.hasCompletedInitialLoad)
+            && vm.editingMessageIndex == nil
+    }
+
+    private func injectPendingShareIfNeeded() {
+        guard canReceiveIncomingShares, pendingProviderImport == nil, providerImportResult == nil else { return }
+        var appendedText = false
+        receipts: for receipt in shareCoordinator.pending where !promptedShareIDs.contains(receipt.id) {
+            switch receipt.share.kind {
+            case .inlineText:
+                if !vm.inputText.isEmpty { vm.inputText += "\n" }
+                let text = receipt.share.value
+                vm.inputText += text.hasPrefix("http://") || text.hasPrefix("https://") ? text + " " : text
+                shareCoordinator.acknowledge(receipt)
+                appendedText = true
+                hasInjectedShareContent = true
+            case .attachment:
+                if let fileURL = receipt.fileURL, let json = Self.providerExportJSON(at: fileURL) {
+                    promptedShareIDs.insert(receipt.id)
+                    pendingProviderImport = PendingProviderImport(receipt: receipt, json: json)
+                    break receipts
+                }
+                if !attachPendingShare(receipt) { promptedShareIDs.insert(receipt.id) }
+            }
+        }
+        if appendedText, pendingProviderImport == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                guard self.isChatViewVisible, !vm.chatSearch.isActive else { return }
+                guard canReceiveIncomingShares, !vm.chatSearch.isActive else { return }
                 inputFocused = true
             }
+        }
+    }
+
+    private func attachPendingShare(_ receipt: PendingShareInbox.Receipt) -> Bool {
+        guard canReceiveIncomingShares, shareCoordinator.pending.contains(receipt), let fileURL = receipt.fileURL else { return false }
+        guard vm.addFileAttachment(from: fileURL, isInboxFile: true) else {
+            ShareFeedbackToast.show(String(localized: "Could not add the shared file. It is still in the inbox."))
+            return false
+        }
+        shareCoordinator.acknowledge(receipt)
+        hasInjectedShareContent = true
+        return true
+    }
+
+    private func importSharedProvider(_ item: PendingProviderImport) {
+        guard canReceiveIncomingShares, shareCoordinator.pending.contains(item.receipt) else { return }
+        if let label = configStore.importInstanceJSON(item.json) {
+            shareCoordinator.acknowledge(item.receipt)
+            providerImportResult = String(localized: "Imported provider \"\(label)\".")
+        } else {
+            providerImportResult = String(localized: "Could not import this provider configuration.")
         }
     }
 
@@ -2209,6 +2347,15 @@ struct AIChatView: View {
 
     // MARK: - Toolbar Trailing Menu
 
+    private var trailingMenuTitle: String {
+        guard !titleIsVisuallyLocked, !lockStore.appIsLocked, !lockStore.showPrivacyScreen else { return "" }
+        guard let session = titlePillSession, session.id == vm.sessionId,
+              let title = session.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            return String(localized: "New Chat")
+        }
+        return title.components(separatedBy: .newlines).joined(separator: " ")
+    }
+
     @ViewBuilder
     private var trailingMenu: some View {
         // [T-ios-navbar-uikit-menu] FINAL: UIKit-owned button+menu. The
@@ -2224,6 +2371,7 @@ struct AIChatView: View {
         // the intrinsic icon size so the system wraps it in the same round
         // glass as a plain toolbar icon (fixes the earlier capsule).
         ChatTrailingMenuButton(
+            menuTitle: trailingMenuTitle,
             messagesEmpty: vm.messages.isEmpty,
             hasSession: vm.sessionId != nil,
             isForcePulling: isForcePulling,
@@ -2420,6 +2568,7 @@ struct AIChatView: View {
             viewportWidth: chatViewportWidth,
             voiceCallActive: voiceCallPresentation.isActive,
             voiceCallAvailable: canStartVoiceCall,
+            menuTitle: trailingMenuTitle,
             messagesEmpty: vm.messages.isEmpty,
             hasSession: vm.sessionId != nil,
             isForcePulling: isForcePulling,
@@ -3529,6 +3678,7 @@ struct AIChatView: View {
                     inputText: inputTextBinding,
                     onPasteImage: { image in vm.addImageAttachment(image) },
                     onPasteFile: { url in vm.addFileAttachment(from: url) },
+                    onPasteTextChoice: presentTextPasteChoice,
                     conversationContext: { voiceCorrectionContext(from: vm.messages) }
                 )
             )
@@ -3581,6 +3731,7 @@ struct AIChatView: View {
             placeholder: "询问\(soulName)助手",
             onPasteImage: { image in vm.addImageAttachment(image) },
             onPasteFile: { url in vm.addFileAttachment(from: url) },
+            onPasteTextChoice: presentTextPasteChoice,
             onReturnKey: handleReturnKey,
             onArrowUp: handleArrowUp,
             onArrowDown: handleArrowDown,
@@ -3609,6 +3760,24 @@ struct AIChatView: View {
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 6)
         return AnyView(field)
+    }
+
+    private func presentTextPasteChoice(_ choice: ComposerTextPasteChoice) {
+        guard pendingTextPaste == nil else { return }
+        let cache = cached
+        let owner = cache.vm
+        let session = owner.sessionId
+        let editingIndex = owner.editingMessageIndex
+        let voicePreference = voiceMode
+        let wasVoiceActive = voicePreference.isVoiceActive
+        func isCurrentComposer() -> Bool {
+            cache.vm === owner && owner.sessionId == session
+                && owner.editingMessageIndex == editingIndex && voicePreference.isVoiceActive == wasVoiceActive
+        }
+        pendingTextPaste = ComposerTextPasteChoice(
+            pasteAsText: { if isCurrentComposer() { choice.pasteAsText() } },
+            attachAsFile: { if isCurrentComposer() { choice.attachAsFile() } }
+        )
     }
 
     // MARK: - Input keyboard handlers (extracted to avoid inflating the
@@ -5218,10 +5387,10 @@ struct AIChatView: View {
 private struct ProviderImportPromptModifier: ViewModifier {
     @Binding var pending: AIChatView.PendingProviderImport?
     @Binding var result: String?
-    /// Import the provider from JSON; returns the new instance label on success.
-    let onImport: (String) -> String?
-    /// Add the (temp-copied) file to the chat as an attachment.
-    let onAttach: (URL) -> Void
+    let onImport: (AIChatView.PendingProviderImport) -> Void
+    let onAttach: (AIChatView.PendingProviderImport) -> Void
+    let onCancel: (AIChatView.PendingProviderImport) -> Void
+    let onDismiss: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -5232,24 +5401,19 @@ private struct ProviderImportPromptModifier: ViewModifier {
             // rounded card over the messages — the "not a system dialog" look
             // the user reported. A `.sheet` with detents is a genuine
             // bottom-pinned sheet on BOTH iPhone and iPad.
-            .sheet(item: $pending) { item in
+            .sheet(item: $pending, onDismiss: onDismiss) { item in
                 ProviderImportSheet(
                     onImport: {
                         pending = nil
-                        if let label = onImport(item.json) {
-                            result = String(localized: "Imported provider \"\(label)\".")
-                        } else {
-                            result = String(localized: "Could not import this provider configuration.")
-                        }
-                        try? FileManager.default.removeItem(at: item.fileURL)
+                        onImport(item)
                     },
                     onAttach: {
                         pending = nil
-                        onAttach(item.fileURL)
+                        onAttach(item)
                     },
                     onCancel: {
-                        try? FileManager.default.removeItem(at: item.fileURL)
                         pending = nil
+                        onCancel(item)
                     }
                 )
             }
@@ -5278,10 +5442,6 @@ private struct ProviderImportSheet: View {
     let onAttach: () -> Void
     let onCancel: () -> Void
 
-    /// Set once the user taps any explicit button, so the `.onDisappear`
-    /// safety-cleanup only fires for a genuine swipe-to-dismiss (no choice).
-    @State private var chose = false
-
     var body: some View {
         VStack(spacing: 20) {
             VStack(spacing: 8) {
@@ -5300,21 +5460,21 @@ private struct ProviderImportSheet: View {
             }
 
             VStack(spacing: 10) {
-                Button(action: { chose = true; onImport() }) {
+                Button(action: onImport) {
                     Text(String(localized: "Import as Provider"))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
 
-                Button(action: { chose = true; onAttach() }) {
+                Button(action: onAttach) {
                     Text(String(localized: "Add as Chat Attachment"))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
 
-                Button(role: .cancel, action: { chose = true; onCancel() }) {
+                Button(role: .cancel, action: onCancel) {
                     Text(String(localized: "Cancel"))
                         .frame(maxWidth: .infinity)
                 }
@@ -5324,8 +5484,6 @@ private struct ProviderImportSheet: View {
         .padding(24)
         .presentationDetents([.height(360), .medium])
         .presentationDragIndicator(.visible)
-        // Swipe-to-dismiss without tapping a button still needs cleanup.
-        .onDisappear { if !chose { onCancel() } }
     }
 }
 
@@ -6561,6 +6719,7 @@ private struct ChatToolbarKey: Equatable {
     let viewportWidth: CGFloat
     let voiceCallActive: Bool
     let voiceCallAvailable: Bool
+    let menuTitle: String
     let messagesEmpty: Bool
     let hasSession: Bool
     let isForcePulling: Bool
@@ -6615,6 +6774,7 @@ private struct ChatToolbarHost<Leading: View, Title: View, Trailing: View>: View
                 if l.titleLocked != r.titleLocked { diffs.append("titleLocked") }
             }
             if lhs.key.showsCompactNavigation != rhs.key.showsCompactNavigation { diffs.append("showsCompactNavigation") }
+            if lhs.key.menuTitle != rhs.key.menuTitle { diffs.append("menuTitle") }
             if lhs.key.messagesEmpty != rhs.key.messagesEmpty { diffs.append("messagesEmpty") }
             if lhs.key.hasSession != rhs.key.hasSession { diffs.append("hasSession") }
             if lhs.key.isForcePulling != rhs.key.isForcePulling { diffs.append("isForcePulling") }
@@ -6854,6 +7014,7 @@ private final class ChatLegacyMenuButton: UIButton {
 }
 
 private struct ChatTrailingMenuButton: UIViewRepresentable {
+    let menuTitle: String
     let messagesEmpty: Bool
     let hasSession: Bool
     let isForcePulling: Bool
@@ -6890,6 +7051,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
 
     /// The displayed-state snapshot — the ONLY trigger for a menu rebuild.
     struct Key: Equatable {
+        let menuTitle: String
         let messagesEmpty: Bool
         let hasSession: Bool
         let isForcePulling: Bool
@@ -6904,7 +7066,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
     }
 
     private var key: Key {
-        Key(messagesEmpty: messagesEmpty, hasSession: hasSession,
+        Key(menuTitle: menuTitle, messagesEmpty: messagesEmpty, hasSession: hasSession,
             isForcePulling: isForcePulling, iCloudSyncEnabled: iCloudSyncEnabled,
             memoryEnabled: memoryEnabled, speakEnabled: speakEnabled,
             showEnhancedCacheToggle: showEnhancedCacheToggle,
@@ -7070,7 +7232,7 @@ private struct ChatTrailingMenuButton: UIViewRepresentable {
         })
         groups.append(UIMenu(options: .displayInline, children: tailGroup))
 
-        return UIMenu(children: groups)
+        return UIMenu(title: key.menuTitle, children: groups)
     }
 
     /// Renders the real UISwitch control at its natural size. `state: .off`

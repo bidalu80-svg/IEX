@@ -61,6 +61,9 @@
 		CNSB001 /* ContainerNetworkSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CNS001 /* ContainerNetworkSection.swift */; };
 		CDNSB01 /* ContainerDNS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDNS001 /* ContainerDNS.swift */; };
 		AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838CD2F3B941A00049557 /* StorageManagementView.swift */; };
+		E5197C010000000000000001 /* StorageCacheCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000002 /* StorageCacheCleaner.swift */; };
+		E5197C010000000000000003 /* StorageCacheFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000004 /* StorageCacheFiles.swift */; };
+		E5197C010000000000000005 /* StorageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000006 /* StorageAccounting.swift */; };
 		C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000002 /* MediaFavoritesStore.swift */; };
 		C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000004 /* MediaFavoritesView.swift */; };
 		AA0838D02F3B941A00049557 /* CurrentRoot.m in Sources */ = {isa = PBXBuildFile; fileRef = AA0838D12F3B941A00049557 /* CurrentRoot.m */; };
@@ -267,6 +270,7 @@
 		E5H000001 /* AgentWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5H000011 /* AgentWidgetBundle.swift */; };
 		E5H000002 /* AgentLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5H000012 /* AgentLiveActivityWidget.swift */; };
 		E5H000003 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5G000014 /* AgentActivityAttributes.swift */; };
+		E5H000004 /* AgentWidget Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E5H000015 /* AgentWidget Assets.xcassets */; };
 		E5H000009 /* AgentWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E5H000010 /* AgentWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E5I000001 /* SpeechRecognitionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5I000011 /* SpeechRecognitionManager.swift */; };
 		E5I000002 /* AudioWaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5I000012 /* AudioWaveformView.swift */; };
@@ -701,6 +705,9 @@
 		CDNS001 /* ContainerDNS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerDNS.swift; sourceTree = "<group>"; };
 		AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsResetButton.swift; sourceTree = "<group>"; };
 		AA0838CD2F3B941A00049557 /* StorageManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManagementView.swift; sourceTree = "<group>"; };
+		E5197C010000000000000002 /* StorageCacheCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageCacheCleaner.swift; sourceTree = "<group>"; };
+		E5197C010000000000000004 /* StorageCacheFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageCacheFiles.swift; sourceTree = "<group>"; };
+		E5197C010000000000000006 /* StorageAccounting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAccounting.swift; sourceTree = "<group>"; };
 		C0DEFA000000000000000002 /* MediaFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/MediaFavoritesStore.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEFA000000000000000004 /* MediaFavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MediaFavoritesView.swift"; sourceTree = SOURCE_ROOT; };
 		AA0838D12F3B941A00049557 /* CurrentRoot.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CurrentRoot.m; sourceTree = "<group>"; };
@@ -968,6 +975,7 @@
 		E5H000012 /* AgentLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiveActivityWidget.swift; sourceTree = "<group>"; };
 		E5H000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E5H000014 /* AgentWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AgentWidget.entitlements; sourceTree = "<group>"; };
+		E5H000015 /* AgentWidget Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E5I000011 /* SpeechRecognitionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognitionManager.swift; sourceTree = "<group>"; };
 		E5I000012 /* AudioWaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioWaveformView.swift; sourceTree = "<group>"; };
 		E5IP00011 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -1950,6 +1958,7 @@
 				E5H000012 /* AgentLiveActivityWidget.swift */,
 				E5H000013 /* Info.plist */,
 				E5H000014 /* AgentWidget.entitlements */,
+				E5H000015 /* AgentWidget Assets.xcassets */,
 			);
 			path = AgentWidget;
 			sourceTree = "<group>";
@@ -2388,6 +2397,9 @@
 				E5N0000142F3B941A00049557 /* MemoryManagementView.swift */,
 				E8A000013 /* OffloadPermissionSettingsView.swift */,
 				AA0838CD2F3B941A00049557 /* StorageManagementView.swift */,
+				E5197C010000000000000002 /* StorageCacheCleaner.swift */,
+				E5197C010000000000000004 /* StorageCacheFiles.swift */,
+				E5197C010000000000000006 /* StorageAccounting.swift */,
 				E5MNT0101 /* MountedFoldersManager.swift */,
 				E5MNT0102 /* MountedFolderCoordinator.swift */,
 				E5MNT0103 /* MountedFoldersSettingsView.swift */,
@@ -2758,6 +2770,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5H000004 /* AgentWidget Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2882,6 +2895,9 @@
 				CDNSB01 /* ContainerDNS.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
+				E5197C010000000000000001 /* StorageCacheCleaner.swift in Sources */,
+				E5197C010000000000000003 /* StorageCacheFiles.swift in Sources */,
+				E5197C010000000000000005 /* StorageAccounting.swift in Sources */,
 				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,
 				C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */,
 				C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */,
