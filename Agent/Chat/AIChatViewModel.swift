@@ -477,7 +477,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 let reason = event.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let detail = reason.isEmpty ? "" : "：\(reason)"
                 self.appendSystemInfo("模型请求你接管浏览器\(detail)。完成后模型会继续。",
-                                              icon: "hand.raised.fill", browserControl: true)
+                                              icon: "hand.raised.fill", browserControl: true, requiresAttention: true)
             case .handBack:
                 if event.requested {
                     self.appendSystemInfo("用户已完成浏览器接管请求\(page)。模型将继续操作浏览器。",
@@ -4843,7 +4843,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 fallthrough
             case .exhausted:
                 logger.info("[Context] In-loop exhausted — stopping loop with resumable notice (turnCount=\(turnCount))")
-                appendSystemInfo(String(localized: "Context is full and could not be compacted further. Start a new session or clear the chat to continue."), icon: "exclamationmark.triangle")
+                appendSystemInfo(String(localized: "Context is full and could not be compacted further. Start a new session or clear the chat to continue."), icon: "exclamationmark.triangle", requiresAttention: true)
                 canResume = true
                 hitTurnLimit = false
                 break loopLabel
@@ -6173,13 +6173,17 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     }
 
     /// Append an ephemeral system info message (not sent to LLM).
-    func appendSystemInfo(_ text: String, icon: String, browserControl: Bool = false) {
+    func appendSystemInfo(_ text: String, icon: String, browserControl: Bool = false, requiresAttention: Bool = false) {
         let msg = ChatMessage(role: .systemInfo, content: text)
         msg.systemIcon = icon
         if browserControl {
             msg.browserControlInfo = true
         }
         messages.append(msg)
+        if requiresAttention,
+           UserDefaults.standard.string(forKey: ChatTranscriptDisplayMode.preferenceKey) == ChatTranscriptDisplayMode.simple.rawValue {
+            transientNotice = text
+        }
     }
 
     /// Remove one browser-control systemInfo row from the visible list.

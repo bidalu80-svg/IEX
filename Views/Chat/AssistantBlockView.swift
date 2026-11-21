@@ -1040,12 +1040,16 @@ private struct QuestionAskAnswer {
 }
 
 @MainActor
-private struct QuestionCardView: View {
+struct QuestionCardView: View {
     @ObservedObject var block: AssistantBlock
     @State private var draft = QuestionCardDraft()
     @State private var requestIsLive = true
     @State private var isSubmitting = false
     private var coordinator: QuestionCardCoordinator { .shared }
+
+    init(block: AssistantBlock) {
+        self.block = block
+    }
 
     var body: some View {
         Group {

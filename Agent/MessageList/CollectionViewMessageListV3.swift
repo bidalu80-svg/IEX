@@ -24,7 +24,7 @@ private func reservesCompletionActionSpace(_ message: ChatMessage) -> Bool {
         }
 }
 
-private struct AssistantFooterPresentation: Equatable {
+struct AssistantFooterPresentation: Equatable {
     let messageObject: ObjectIdentifier
     let showsTyping: Bool
     let showsResume: Bool
@@ -35,16 +35,18 @@ private struct AssistantFooterPresentation: Equatable {
     let reservesActions: Bool
     let prominent: Bool
 
-    init(_ message: ChatMessage, isActive: Bool, canResume: Bool, showsUsage: Bool) {
+    @MainActor init(_ message: ChatMessage, isActive: Bool, canResume: Bool, showsUsage: Bool,
+                    mode: ChatTranscriptDisplayMode = .standard) {
         messageObject = ObjectIdentifier(message)
         let hasVisibleContent = message.blocks.contains { $0.kind != .text || !$0.content.isEmpty }
-        showsTyping = isActive && (!hasVisibleContent || message.isAwaitingModelResponse)
+        showsTyping = isActive && (mode == .simple ? SimpleTranscript.showsWaiting(message)
+                                   : (!hasVisibleContent || message.isAwaitingModelResponse))
         error = message.error
         showsResume = canResume && message.error == nil
-        interruptCount = message.streamInterruptCount
-        self.showsUsage = showsUsage
-        hasUsage = showsUsage && message.usage != nil
-        reservesActions = reservesCompletionActionSpace(message)
+        interruptCount = mode == .standard ? message.streamInterruptCount : 0
+        self.showsUsage = mode == .standard && showsUsage
+        hasUsage = self.showsUsage && message.usage != nil
+        reservesActions = mode == .standard && reservesCompletionActionSpace(message)
         prominent = message.error != nil || showsResume || isActive
     }
 
@@ -66,6 +68,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @ObservedObject var vm: AIChatViewModel
     var inputFocused: Bool
+    var transcriptDisplayMode: ChatTranscriptDisplayMode = .standard
     var onRetryMessage: ((UUID) -> Void)?
     var onRetryLast: (() -> Void)?
     var onReplyMessage: ((UUID) -> Void)?
@@ -97,6 +100,8 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
             context.coordinator.fallbackBottomInset = inputBarHeight + floatingBarHeight + 8
             context.coordinator.fallbackTopOverlayInset = max(0, topOverlayInset)
         }
+        context.coordinator.setInitialTranscriptMode(transcriptDisplayMode)
+        vm.chatSearch.updateTranscriptMode(transcriptDisplayMode)
         context.coordinator.attach(to: vc, vm: vm)
         context.coordinator.bindGeometry(geometryContext)
         // Drops are handled exclusively by the SwiftUI `.onDrop` on the chat
@@ -151,6 +156,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         }
         coord.refreshAfterForegroundIfNeeded()
         coord.applyViewportGeometry()
+        coord.requestTranscriptMode(transcriptDisplayMode)
 
         // [T-message-list-empty-on-foreground] Backstop: if a snapshot was
         // deferred during a load (bind1) but binding 3's true→false edge was
@@ -297,6 +303,7 @@ fileprivate struct BridgedAssistantBlockV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat
+    var simpleRow: SimpleTranscript.Row? = nil
 
     private var blockAccessibilityId: String {
         switch block.kind {
@@ -314,6 +321,24 @@ fileprivate struct BridgedAssistantBlockV3: View {
     }
 
     var body: some View {
+        Group {
+            if let simpleRow {
+                simpleContent(simpleRow)
+                    .contentShape(Rectangle())
+                    .contextMenu { simpleMessageActions }
+                    .accessibilityActions { simpleMessageActions }
+                    .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .opacity(message.isCompactedHistory ? 0.5 : 1.0)
+                    .accessibilityIdentifier(blockAccessibilityId)
+            } else {
+                standardContent
+            }
+        }
+    }
+
+    private var blockContent: some View {
         AssistantBlockView(
             block: block,
             message: message,
@@ -321,20 +346,78 @@ fileprivate struct BridgedAssistantBlockV3: View {
             thinkingLevel: bridge.thinkingLevel,
             commandStartTime: bridge.isActiveMessage ? bridge.commandStartTime : nil,
             onStop: bridge.isActiveMessage ? bridge.onStop : nil,
-            onTapBlank: { _ in
+            onTapBlank: simpleRow == nil ? { _ in
                 toggleUsage()
-            },
+            } : nil,
             onCopyScreenshot: { bridge.onCopyScreenshot?() },
             // [T-selection-menu-ze-tts] Selection-menu TTS: whole-reply
             // replay is suppressed while this reply is still streaming (same
             // rule as the overlay context menu); Read Selection stays available.
-            onReadAloud: bridge.isStreaming ? nil : bridge.onReadAloud,
+            onReadAloud: simpleRow == nil ? (bridge.isStreaming ? nil : bridge.onReadAloud) : simpleReadAloud,
             onSpeakText: bridge.onSpeakText,
             browserPool: bridge.browserPool,
             toolSnapshots: bridge.toolSnapshots,
             highlightedBlockId: .constant(nil),
             detailBlock: $bridge.detailBlock
         )
+    }
+
+    @ViewBuilder private func simpleContent(_ row: SimpleTranscript.Row) -> some View {
+        switch row {
+        case .text:
+            blockContent
+                .frame(maxWidth: shortReplyWidth, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+        case .question:
+            QuestionCardView(block: block).padding(.vertical, 4)
+        case .media(let urls):
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(urls, id: \.self) { url in
+                    if let image = UIImage(contentsOfFile: url.path) {
+                        Button { bridge.detailBlock = block } label: {
+                            Image(uiImage: image)
+                                .resizable().scaledToFit()
+                                .frame(maxHeight: 240)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Open attachment"))
+                    }
+                }
+            }
+        }
+    }
+
+    private var shortReplyWidth: CGFloat? {
+        let text = block.content
+        guard text.utf16.count <= 80, text.rangeOfCharacter(from: CharacterSet(charactersIn: "\n\r`*_[<>#!|~$\\")) == nil else { return nil }
+        let font = UIFont.systemFont(ofSize: FontSettings.shared.scaledMessage(16.5))
+        return ceil((text as NSString).size(withAttributes: [.font: font]).width) + 12
+    }
+
+    private var simpleReadAloud: (() -> Void)? {
+        guard !bridge.isStreaming, let read = bridge.onReadAloud,
+              message.blocks.contains(where: { $0.kind == .text && SimpleTranscript.hasText($0.content) }) else { return nil }
+        return read
+    }
+
+    @ViewBuilder private var simpleMessageActions: some View {
+        let text = message.blocks.filter { $0.kind == .text }.map(\.content).joined(separator: "\n\n")
+        if SimpleTranscript.hasText(text) {
+            Button("Copy All") { UIPasteboard.general.string = ZeVisualizationStreaming.prepare(text, readable: true) }
+            Button("Copy Markdown") { UIPasteboard.general.string = text }
+        }
+        if let share = bridge.onCopyScreenshot { Button("Copy Screenshot", action: share) }
+        if let retry = bridge.onRetry { Button("Retry", action: retry) }
+        if let reply = bridge.onReply { Button("回复", action: reply) }
+        if let read = simpleReadAloud { Button("Read from Start", action: read) }
+        if let sync = bridge.onForceSync { Button("Force Sync", action: sync) }
+        if let compact = bridge.onCompact { Button("Compact Above", role: .destructive, action: compact) }
+    }
+
+    private var standardContent: some View {
+        blockContent
         .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
@@ -437,6 +520,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
     @ObservedObject var message: ChatMessage
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat
+    var transcriptDisplayMode: ChatTranscriptDisplayMode = .standard
     @State private var transientCompletionAction: CompletionAction?
 
     private enum CompletionAction: Equatable {
@@ -458,8 +542,10 @@ fileprivate struct BridgedAssistantFooterV3: View {
     }
 
     var body: some View {
-        let footer = AssistantFooterPresentation(message, isActive: bridge.isActiveMessage,
-                                                 canResume: bridge.canResume, showsUsage: bridge.showUsage)
+        let footer = transcriptDisplayMode == .simple ? bridge.simpleFooter ?? AssistantFooterPresentation(
+            message, isActive: false, canResume: false, showsUsage: false, mode: .simple)
+            : AssistantFooterPresentation(message, isActive: bridge.isActiveMessage,
+                                          canResume: bridge.canResume, showsUsage: bridge.showUsage)
         VStack(alignment: .leading, spacing: 8) {
             // Typing indicator
             if footer.showsTyping {
@@ -1034,7 +1120,7 @@ extension CollectionViewMessageListV3 {
         private var viewportGeometryCommitDepth = 0
         private enum PositionReason: String, Hashable {
             case geometry, resize, keyboardEnd, snapshot, snapshotShrink, measurement, contentSize, contentGrowth
-            case signal, coalesced, foreground, attachment, disclosure, explicit, sendEnded
+            case signal, coalesced, foreground, attachment, disclosure, explicit, sendEnded, transcriptMode
 
             static let passiveMeasurement: Set<PositionReason> = [.measurement, .contentSize, .contentGrowth]
             static let streamingGrowth = passiveMeasurement.union([.signal])
@@ -1301,6 +1387,7 @@ extension CollectionViewMessageListV3 {
         }
 
         private func isPresentableBlock(_ item: MessageListItem) -> Bool {
+            if transcriptMode == .simple { return simpleRows[item] != nil }
             guard case .assistantBlock(let id, let blockID) = item,
                   let index = messageIndex[id], snapshotMessages.indices.contains(index),
                   let block = snapshotMessages[index].blocks.first(where: { $0.id == blockID }) else { return false }
@@ -1450,12 +1537,18 @@ extension CollectionViewMessageListV3 {
             } else if initial {
                 didRestoreScroll = true
                 if let key = scrollMemoryKey, let saved = ChatScrollMemory.shared.anchor(for: key) {
-                    let item = itemFrame(saved.item, in: cv) != nil ? saved.item
-                        : previousSnapshotIds.first(where: { $0.messageId == saved.item.messageId })
-                    if let frame = itemFrame(item, in: cv) {
+                    let savedFrame = itemFrame(saved.item, in: cv)
+                    let fallback = savedFrame == nil
+                        ? (transcriptMode == .simple ? transcriptFallback(for: saved.item, in: previousSnapshotIds, messages: snapshotMessages)
+                           : previousSnapshotIds.first(where: { $0.messageId == saved.item.messageId })) : nil
+                    if let frame = savedFrame ?? itemFrame(fallback, in: cv) {
                         scrollMode = .userBrowsing
                         useVisualBottom = false
-                        desired = frame.minY - (saved.offset.isFinite ? saved.offset : 0)
+                        if savedFrame == nil && transcriptMode == .simple {
+                            desired = frame.minY - cv.adjustedContentInset.top
+                        } else {
+                            desired = frame.minY - (saved.offset.isFinite ? saved.offset : 0)
+                        }
                     } else {
                         ChatScrollMemory.shared.clear(key)
                         scrollMode = .autoScrolling
@@ -1470,6 +1563,13 @@ extension CollectionViewMessageListV3 {
                     clampDeadline = Date().addingTimeInterval(8)
                     desired = scrollableBottom(in: cv)
                     useVisualBottom = false
+                }
+            } else if reasons.contains(.transcriptMode), !reasons.contains(.explicit) {
+                useVisualBottom = false
+                if followsBottom { desired = scrollableBottom(in: cv) }
+                else if let anchor, let frame = itemFrame(anchor.readingItem, in: cv) {
+                    let readingY = max(anchor.readingY, origin + cv.adjustedContentInset.top - max(0, frame.height - 1))
+                    desired = origin + frame.minY - readingY
                 }
             } else if reasons.contains(.foreground), let anchor {
                 useVisualBottom = false
@@ -1686,9 +1786,13 @@ extension CollectionViewMessageListV3 {
         /// Remember the top row while the reader browses. At the bottom the
         /// default behaviour is already correct, so the anchor is dropped.
         private func rememberScrollAnchor() {
+            rememberScrollAnchor(preservingBrowseIntent: transcriptMode == .simple)
+        }
+
+        private func rememberScrollAnchor(preservingBrowseIntent: Bool) {
             guard let key = scrollMemoryKey, didRestoreScroll, !isFlushing, !resolvingPosition else { return }
             guard let cv = viewController?.collectionView else { return }
-            if isNearBottom() {
+            if isNearBottom(), !(preservingBrowseIntent && scrollMode == .userBrowsing) {
                 ChatScrollMemory.shared.clear(key)
                 lastAnchorItem = nil
                 lastAnchorOffset = .nan
@@ -1716,6 +1820,7 @@ extension CollectionViewMessageListV3 {
             }
             (collectionView as? NoAnimationCollectionView)?.beginPositionLayout = { [weak self] in
                 guard let self else { return false }
+                self.scheduleTranscriptUpdate()
                 self.scheduleFooterReconciliation()
                 return self.beginPositionLayout()
             }
@@ -1833,6 +1938,7 @@ extension CollectionViewMessageListV3 {
 
         private func configureCell(_ cell: SelfSizingCell, item: MessageListItem, indexPath: IndexPath) {
             guard let vm else { return }
+            cell.transcriptGeneration = transcriptGeneration
             let configStart = CACurrentMediaTime()
             cellConfigCount += 1
             if cellConfigCount == 1 {
@@ -1868,6 +1974,7 @@ extension CollectionViewMessageListV3 {
                     // Suppress SwiftUI async display-link geometry observation
                     // to prevent use-after-free in ViewGraphGeometryObservers
                     // when UICollectionView recycles the cell.
+                    .environment(\.chatTranscriptDisplayMode, transcriptMode)
                     .transaction { $0.disablesAnimations = true }
                     // UIHostingConfiguration creates an independent SwiftUI
                     // environment — it does NOT inherit EnvironmentObjects
@@ -1930,7 +2037,8 @@ extension CollectionViewMessageListV3 {
                         block: block,
                         message: message,
                         bridge: bridge,
-                        maxWidth: width
+                        maxWidth: width,
+                        simpleRow: simpleRows[item]
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
@@ -1968,7 +2076,8 @@ extension CollectionViewMessageListV3 {
                     BridgedAssistantFooterV3(
                         message: message,
                         bridge: bridge,
-                        maxWidth: width
+                        maxWidth: width,
+                        transcriptDisplayMode: transcriptMode
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
@@ -1988,7 +2097,7 @@ extension CollectionViewMessageListV3 {
             // reused after rotation. No measurement is performed here.
             if let layout = viewController?.messageListLayout {
                 let cvW = viewController?.collectionView.bounds.width ?? 390
-                let key = Self.contentKey(for: item, messages: messages, messageIndex: messageIndex)
+                let key = transcriptContentKey(for: item, messages: messages, width: cvW)
 
                 // [T-ios-scroll-decel-height-drift] Register the index→key map
                 // on EVERY cell config, not just snapshot apply. The memo write
@@ -2070,7 +2179,7 @@ extension CollectionViewMessageListV3 {
                !layout.hasPrecalcHeight(at: indexPath.item) {
                 let est = Self.estimateItemHeight(item, messages: messages,
                                                   width: viewController?.collectionView.bounds.width ?? 390,
-                                                  maxContentWidth: maxContentWidth)
+                                                  maxContentWidth: maxContentWidth, simpleRow: simpleRows[item])
                 layout.setEstimatedHeight(est, at: indexPath.item)
             }
         }
@@ -2217,24 +2326,16 @@ extension CollectionViewMessageListV3 {
                     return
                 }
                 guard let userId else { return }
-                // [T-ios-copy-screenshot-diag-logs] Entry-trace from the
-                // menu callback so the user's grep of "ChatScreenshot"
-                // catches the FULL chain, including which message they
-                // long-pressed and the resolved user→assistant pair.
-                self.chatScreenshotLogger.info("[Entry-MenuCallback] anchor=\(message.id.uuidString.prefix(8)) role=\(anchor.role) anchorIdx=\(anchorIdx)/\(msgs.count) → userId=\(userId.uuidString.prefix(8)) assistantId=\(assistantId?.uuidString.prefix(8) ?? "nil")")
-                // [T-ios-user-collapse-contextmenu-screenshot] Let the context
-                // menu and its lifted source view finish dismissing before the
-                // capture scrolls and snapshots the live collection hierarchy.
-                // Capturing synchronously from a long user bubble containing
-                // an inline disclosure control could yield only that source
-                // bubble while the rest of the collection was mid-transition.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    guard let self else { return }
-                    if let image = self.captureScrollingTurnScreenshot(
-                        userMessageId: userId,
-                        assistantMessageId: assistantId
-                    ) {
-                        self.onScreenshotImage?(image)
+                let turn = msgs.filter { $0.id == userId || $0.id == assistantId }
+                let request = ChatShareSnapshot.request(messages: turn, title: "", vm: vm, messageId: userId)
+                let dark = self.viewController?.traitCollection.userInterfaceStyle == .dark
+                Task { @MainActor [weak self, weak vm] in
+                    guard let self, let vm, self.vm === vm else { return }
+                    do {
+                        let image = try await ChatShareSnapshot.renderTurnImage(request, dark: dark)
+                        if self.vm === vm { self.onScreenshotImage?(image) }
+                    } catch {
+                        self.chatScreenshotLogger.error("Frozen screenshot failed: \(error.localizedDescription)")
                     }
                 }
             }
@@ -2371,11 +2472,15 @@ extension CollectionViewMessageListV3 {
             let previousFooterTailID = footerTail?.id
             footerTailSub = nil
             footerTail = nil
+            simpleMessageSubs.removeAll()
+            simpleSnapshotSub = nil
+            simpleProjections.removeAll()
             footerUsageSubs.removeAll()
             pendingFooterIDs.removeAll()
             if let previousFooterTailID { pendingFooterIDs.insert(previousFooterTailID) }
             footerReconciliationScheduled = false
             vm = newVM
+            newVM.chatSearch.updateTranscriptMode(transcriptMode)
             for (messageID, bridge) in cellBridges {
                 observeFooterUsage(for: messageID, bridge: bridge)
             }
@@ -2874,9 +2979,9 @@ extension CollectionViewMessageListV3 {
             if let msgIdx = messageIndex[messageId], msgIdx < messages.count {
                 let message = messages[msgIdx]
                 if message.role == .user, !message.isQueued {
-                    let key = Self.contentKey(for: item, messages: messages, messageIndex: messageIndex)
-                    layout.setContentKey(key, at: index)
                     let cvW = cv.bounds.width
+                    let key = transcriptContentKey(for: item, messages: messages, width: cvW)
+                    layout.setContentKey(key, at: index)
                     let effWidth = maxContentWidth > 0 ? min(cvW, maxContentWidth) : cvW
                     if let h = Self.measureUserBubbleHeight(
                         for: message,
@@ -3201,6 +3306,7 @@ extension CollectionViewMessageListV3 {
             needsForegroundRefresh = false
             let anchor = foregroundAnchor ?? capturePosition(in: cv)
             foregroundAnchor = nil
+            let generation = transcriptGeneration
             // Rebuild and reconfigure before exposing the recovery target.
             performPositionBatch {
                 self.enqueuePosition(.foreground, anchor: anchor)
@@ -3210,6 +3316,7 @@ extension CollectionViewMessageListV3 {
             // the new bodies mount. Keep the measurement, not a second restore.
             DispatchQueue.main.async { [weak self, weak vm, weak cv] in
                 guard let self, let vm, let cv, self.vm === vm,
+                      self.transcriptGeneration == generation,
                       self.viewController?.collectionView === cv,
                       UIApplication.shared.applicationState == .active,
                       !vm.isLoadingSession, !vm.transitionSuspended, cv.window != nil,
@@ -3259,6 +3366,169 @@ extension CollectionViewMessageListV3 {
             reconfigureVisibleCells()
         }
 
+        private var transcriptMode: ChatTranscriptDisplayMode = .standard
+        private var requestedTranscriptMode: ChatTranscriptDisplayMode = .standard
+        private var transcriptGeneration: UInt = 0
+        private var transcriptUpdateScheduled = false
+        private var simpleRows: [MessageListItem: SimpleTranscript.Row] = [:]
+        private var simpleBlockObjects: [MessageListItem: ObjectIdentifier] = [:]
+        private var simpleProjections: [UUID: SimpleTranscript.Projection] = [:]
+        private var simpleProjectionDirty = false
+        private var simpleMessageSubs: [UUID: (ObjectIdentifier, AnyCancellable)] = [:]
+        private var simpleSnapshotSub: AnyCancellable?
+
+        func setInitialTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
+            transcriptMode = mode
+            requestedTranscriptMode = mode
+        }
+
+        func requestTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
+            requestedTranscriptMode = mode
+            scheduleTranscriptUpdate()
+        }
+
+        private func scheduleTranscriptUpdate() {
+            guard (requestedTranscriptMode != transcriptMode || simpleProjectionDirty), !transcriptUpdateScheduled,
+                  let vm, canReconcileFooters(vm), let cv = viewController?.collectionView,
+                  requestedTranscriptMode == transcriptMode || positionIsAvailable(in: cv) else { return }
+            transcriptUpdateScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.transcriptUpdateScheduled = false
+                guard let vm = self.vm, self.canReconcileFooters(vm), let cv = self.viewController?.collectionView else { return }
+                let changesMode = self.requestedTranscriptMode != self.transcriptMode
+                guard !changesMode || self.positionIsAvailable(in: cv) else { return }
+                guard changesMode || self.simpleProjectionDirty else { return }
+                self.simpleProjectionDirty = false
+                let before = changesMode ? self.capturePosition(in: cv) : nil
+                if changesMode {
+                    self.cancelSearchPlacement()
+                    self.searchPositionOwner = nil
+                    self.positionOwnerGeneration &+= 1
+                    self.positionGeneration &+= 1
+                    self.pendingScrollWork?.cancel()
+                    self.pendingScrollWork = nil
+                    self.pendingStreamingLayout?.cancel()
+                    self.pendingStreamingLayout = nil
+                    self.transcriptMode = self.requestedTranscriptMode
+                    self.transcriptGeneration &+= 1
+                    self.viewController?.messageListLayout?.beginTranscriptGeneration(self.transcriptGeneration)
+                    self.userBubbleHeightCache.removeAll()
+                    self.attrStringHeightCache.removeAll()
+                    self.appliedFooters.removeAll()
+                    for case let cell as SelfSizingCell in cv.visibleCells { cell.clearCachedHeight() }
+                }
+                self.applySnapshot(messages: vm.messages, caller: changesMode ? "transcript-mode" : "simple-projection",
+                                   modeChanged: changesMode, modeAnchor: before)
+                vm.chatSearch.updateTranscriptMode(self.transcriptMode)
+                if changesMode, !self.previousSnapshotIds.isEmpty { self.rememberScrollAnchor(preservingBrowseIntent: true) }
+            }
+        }
+
+        private func observeSimpleProjection(_ messages: [ChatMessage], vm: AIChatViewModel) {
+            let assistants = transcriptMode == .simple ? messages.filter { $0.role == .assistant } : []
+            let live = Set(assistants.map(\.id))
+            simpleMessageSubs = simpleMessageSubs.filter { live.contains($0.key) }
+            simpleProjections = simpleProjections.filter { live.contains($0.key) }
+            if transcriptMode == .standard { simpleSnapshotSub = nil; return }
+            if simpleSnapshotSub == nil {
+                simpleSnapshotSub = vm.$toolSnapshots.map { SimpleTranscript.snapshotImages($0) }
+                    .removeDuplicates().dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak vm] _ in
+                    guard let self, let vm, self.vm === vm else { return }
+                    self.markSimpleProjectionDirty()
+                }
+            }
+            for message in assistants where simpleMessageSubs[message.id]?.0 != ObjectIdentifier(message) {
+                let blocks = message.$blocks.removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
+                    .map { blocks -> AnyPublisher<Void, Never> in
+                        let edges = blocks.flatMap { block -> [AnyPublisher<Void, Never>] in
+                            let text = block.$kind.map { $0 == .text }.removeDuplicates()
+                                .map { isText -> AnyPublisher<Void, Never> in
+                                    guard isText else { return Empty().eraseToAnyPublisher() }
+                                    return block.$content.map { content in
+                                        (SimpleTranscript.hasText(content), SimpleTranscript.explicitMediaReferences(content))
+                                    }.removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+                                        .dropFirst().map { _ in () }.eraseToAnyPublisher()
+                                }.switchToLatest().eraseToAnyPublisher()
+                            return [text,
+                                    block.$kind.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                                    block.$questionCard.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                                    block.$imageFilePath.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                                    block.$toolStatus.map { status -> ToolBlockStatus? in
+                                        if case .streaming(_)? = status { return .streaming(bytes: 0) }
+                                        return status
+                                    }.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()]
+                        }
+                        return Publishers.MergeMany(edges).prepend(()).eraseToAnyPublisher()
+                    }.switchToLatest().dropFirst().eraseToAnyPublisher()
+                let sub = Publishers.Merge(blocks, message.$error.removeDuplicates().dropFirst().map { _ in () })
+                    .receive(on: DispatchQueue.main).sink { [weak self, weak vm, weak message] _ in
+                        guard let self, let vm, self.vm === vm, let message,
+                              self.simpleMessageSubs[message.id]?.0 == ObjectIdentifier(message) else { return }
+                        self.markSimpleProjectionDirty()
+                        self.markFooterDirty(message.id)
+                    }
+                simpleMessageSubs[message.id] = (ObjectIdentifier(message), sub)
+            }
+        }
+
+        private func markSimpleProjectionDirty() {
+            guard transcriptMode == .simple else { return }
+            simpleProjectionDirty = true
+            scheduleTranscriptUpdate()
+        }
+
+        private func transcriptContentKey(for item: MessageListItem, messages: [ChatMessage], width: CGFloat) -> String {
+            let key = Self.contentKey(for: item, messages: messages, messageIndex: messageIndex)
+            guard transcriptMode == .simple else { return key }
+            let contentWidth = min(max(0, width - 32), maxContentWidth > 0 ? maxContentWidth : width)
+            let role = simpleRows[item]
+            let width = role == .text ? max(0, contentWidth - 24) : contentWidth
+            return "\(key):simple:\(width):\(String(describing: role))"
+        }
+
+        private func transcriptFallback(for removed: MessageListItem, in items: [MessageListItem],
+                                        messages: [ChatMessage]) -> MessageListItem? {
+            if let current = messages.firstIndex(where: { $0.id == removed.messageId }) {
+                let sameTurn = items.filter { $0.messageId == removed.messageId }
+                if case .assistantBlock(_, let blockID) = removed {
+                    let order = Dictionary(uniqueKeysWithValues: messages[current].blocks.enumerated().map { ($0.element.id, $0.offset) })
+                    if let old = order[blockID] {
+                        let ranked = sameTurn.compactMap { item -> (MessageListItem, Int)? in
+                            guard case .assistantBlock(_, let id) = item, let index = order[id] else { return nil }
+                            return (item, abs(index - old))
+                        }
+                        if let nearest = ranked.min(by: { $0.1 < $1.1 }) { return nearest.0 }
+                    }
+                }
+                if let row = sameTurn.first { return row }
+                for message in messages[..<current].reversed() where message.role == .user {
+                    let item = MessageListItem.wholeMessage(message.id)
+                    if items.contains(item) { return item }
+                }
+                let prior = Set(messages[..<current].map(\.id))
+                if let item = items.last(where: { prior.contains($0.messageId) }) { return item }
+            }
+            return items.first
+        }
+
+        private func transcriptAnchor(_ before: PositionAnchor?, items: [MessageListItem],
+                                      messages: [ChatMessage], in cv: UICollectionView) -> PositionAnchor? {
+            guard let before, let window = cv.window, scrollMode == .userBrowsing else { return before }
+            let membership = Set(items)
+            let origin = cv.convert(cv.bounds, to: window).minY
+            let top = cv.contentOffset.y + cv.adjustedContentInset.top
+            for path in cv.indexPathsForVisibleItems.sorted() {
+                guard let item = dataSource.itemIdentifier(for: path), membership.contains(item),
+                      let frame = itemFrame(item, in: cv), frame.maxY > top else { continue }
+                return PositionAnchor(readingItem: item, readingY: origin + frame.minY - cv.contentOffset.y,
+                                      tailItem: before.tailItem, tailGap: before.tailGap, wasNearBottom: false)
+            }
+            let fallback = before.readingItem.flatMap { transcriptFallback(for: $0, in: items, messages: messages) }
+            return PositionAnchor(readingItem: fallback, readingY: origin + cv.adjustedContentInset.top,
+                                  tailItem: before.tailItem, tailGap: before.tailGap, wasNearBottom: false)
+        }
+
         // MARK: - Live Assistant Footers
 
         private weak var footerTail: ChatMessage?
@@ -3277,7 +3547,8 @@ extension CollectionViewMessageListV3 {
             let isLast = message.id == lastMessageID
             return AssistantFooterPresentation(message, isActive: isLast && vm.isProcessing,
                                                canResume: canResumeFooter(vm: vm, isLast: isLast),
-                                               showsUsage: cellBridges[message.id]?.showUsage == true)
+                                               showsUsage: cellBridges[message.id]?.showUsage == true,
+                                               mode: transcriptMode)
         }
 
         private func syncFooterBridge(_ bridge: CellStateBridgeV2, message: ChatMessage,
@@ -3286,6 +3557,10 @@ extension CollectionViewMessageListV3 {
             if bridge.isActiveMessage != (isLast && vm.isProcessing)
                 || bridge.canResume != canResumeFooter(vm: vm, isLast: isLast) {
                 updateBridge(bridge, message: message, lastMessageID: lastMessageID)
+            }
+            if transcriptMode == .simple {
+                let footer = footerPresentation(for: message, vm: vm, lastMessageID: lastMessageID)
+                if bridge.simpleFooter != footer { bridge.simpleFooter = footer }
             }
         }
 
@@ -3322,7 +3597,10 @@ extension CollectionViewMessageListV3 {
                 tail.$isCompactedHistory.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
                 tail.$error.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
                 tail.$streamInterruptCount.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
-                tail.$usage.map { $0 != nil }.removeDuplicates().map { _ in () }.eraseToAnyPublisher()
+                tail.$usage.map { $0 != nil }.removeDuplicates().map { _ in () }.eraseToAnyPublisher(),
+                tail.$taskDuration.map { $0 != nil }.removeDuplicates().dropFirst()
+                    .filter { [weak self] _ in self?.transcriptMode == .simple }
+                    .map { _ in () }.eraseToAnyPublisher()
             ])
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak vm, weak tail] _ in
@@ -3576,7 +3854,8 @@ extension CollectionViewMessageListV3 {
         /// set to true so we know to re-apply later.
         private var hasPendingSnapshot: Bool = false
 
-        private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?") {
+        private func applySnapshot(messages rawMessages: [ChatMessage], caller: String = "?",
+                                   modeChanged: Bool = false, modeAnchor: PositionAnchor? = nil) {
             guard let vm, !vm.isLoadingSession else { return }
             let before = (viewController?.collectionView).flatMap { capturePosition(in: $0) }
 
@@ -3598,6 +3877,8 @@ extension CollectionViewMessageListV3 {
                     .sink { [weak self] notification in
                         let alog = AppLogger(category: "AttachmentSize")
                         guard let self else { return }
+                        self.simpleProjections.removeAll()
+                        self.markSimpleProjectionDirty()
                         guard let cv = self.viewController?.collectionView,
                               let layout = cv.collectionViewLayout as? MessageListLayout else {
                             alog.warning("[AttachmentSize] infra missing")
@@ -3654,8 +3935,10 @@ extension CollectionViewMessageListV3 {
                         // turn first ensures the new attributedString is
                         // mounted in the hosting view before we re-measure.
                         let stamp = self.positionStamp()
+                        let generation = self.transcriptGeneration
                         DispatchQueue.main.async { [weak self, weak cv, weak layout] in
-                            guard let self, let cv, let layout, self.viewController?.collectionView === cv else { return }
+                            guard let self, let cv, let layout, self.viewController?.collectionView === cv,
+                                  self.transcriptGeneration == generation else { return }
                             // Clear cell-side caches AGAIN after the
                             // reconfigure has propagated, then ask UIKit to
                             // re-measure.
@@ -3688,6 +3971,10 @@ extension CollectionViewMessageListV3 {
                         guard let blockId = notification.object as? UUID else {
                             tlog.warning("[ThinkingCollapse] notif object not UUID: \(String(describing: notification.object))")
                             return
+                        }
+                        if self.transcriptMode == .simple, notification.name == .questionCardToggled,
+                           let tail = self.footerTail, tail.blocks.contains(where: { $0.id == blockId }) {
+                            self.markFooterDirty(tail.id)
                         }
                         guard let cv = self.viewController?.collectionView,
                               let layout = cv.collectionViewLayout as? MessageListLayout,
@@ -3767,12 +4054,37 @@ extension CollectionViewMessageListV3 {
             // Build items
             var newItems: [MessageListItem] = []
             var newFooters: [UUID: AssistantFooterPresentation] = [:]
+            let priorRoles = simpleRows
+            let priorObjects = simpleBlockObjects
+            simpleRows.removeAll(keepingCapacity: true)
+            simpleBlockObjects.removeAll(keepingCapacity: true)
+            observeSimpleProjection(messages, vm: vm)
+            let snapshotImages = transcriptMode == .simple ? SimpleTranscript.snapshotImages(vm.toolSnapshots) : [:]
             let lastMessageID = messages.last?.id
             for message in messages {
                 switch message.role {
-                case .user, .compactDivider, .systemInfo:
+                case .user:
                     newItems.append(.wholeMessage(message.id))
+                case .compactDivider, .systemInfo:
+                    if transcriptMode == .standard { newItems.append(.wholeMessage(message.id)) }
                 case .assistant:
+                    if transcriptMode == .simple {
+                        let rows = simpleProjections[message.id, default: SimpleTranscript.Projection()]
+                            .update(in: message, snapshots: snapshotImages)
+                        for block in message.blocks {
+                            guard let role = rows[block.id] else { continue }
+                            let item = MessageListItem.assistantBlock(message.id, block.id)
+                            newItems.append(item)
+                            simpleRows[item] = role
+                            simpleBlockObjects[item] = ObjectIdentifier(block)
+                        }
+                        let footer = footerPresentation(for: message, vm: vm, lastMessageID: lastMessageID)
+                        if footer.needsItem {
+                            newItems.append(.assistantFooter(message.id))
+                            newFooters[message.id] = footer
+                        }
+                        continue
+                    }
                     newItems.append(.assistantHeader(message.id))
                     // [T-collapse-steps] Folded behind the appearance setting
                     // "连续折叠工具调用". While it is on, a finished turn keeps only
@@ -3808,6 +4120,19 @@ extension CollectionViewMessageListV3 {
                 }
             }
 
+            let oldMembership = Set(previousSnapshotIds)
+            let reconfigured: [MessageListItem]
+            if modeChanged { reconfigured = newItems.filter(oldMembership.contains) }
+            else if transcriptMode == .simple {
+                reconfigured = newItems.filter { item in
+                    oldMembership.contains(item) && (priorRoles[item] != simpleRows[item] || priorObjects[item] != simpleBlockObjects[item])
+                }
+            } else { reconfigured = [] }
+            let reconfiguredSet = Set(reconfigured)
+            if modeChanged, let cv = viewController?.collectionView {
+                positionAnchor = transcriptAnchor(modeAnchor, items: newItems, messages: messages, in: cv)
+            }
+
             // Remap height cache + set accurate estimates for ALL item types
             if let layout = viewController?.messageListLayout {
                 layout.updateCacheForSnapshot(oldIds: previousSnapshotIds, newIds: newItems)
@@ -3823,7 +4148,8 @@ extension CollectionViewMessageListV3 {
                     // on every re-entry after the first measurement. NO new
                     // measurement happens here — we reuse the height UIKit
                     // already computed (see MessageListLayout.invalidationContext).
-                    let contentKey = Self.contentKey(for: item, messages: messages, messageIndex: messageIndex)
+                    let contentKey = transcriptContentKey(for: item, messages: messages, width: cvWidth)
+                    if reconfiguredSet.contains(item) { layout.invalidateContentHeight(at: i) }
                     layout.setContentKey(contentKey, at: i)
 
                     // [T-ios-footer-hug] Content-aware spacing policy — must run
@@ -3848,6 +4174,12 @@ extension CollectionViewMessageListV3 {
                     }
 
                     guard layout.cachedHeight(at: i) == nil else { continue }
+                    if let role = simpleRows[item] {
+                        let estimate = Self.estimateItemHeight(item, messages: messages, width: cvWidth,
+                                                              maxContentWidth: maxContentWidth, simpleRow: role)
+                        layout.setEstimatedHeight(estimate, at: i)
+                        continue
+                    }
 
                     // Re-entry seed: if we have a real measured height for this
                     // exact content key at this width, use it as precalc — the
@@ -4045,7 +4377,8 @@ extension CollectionViewMessageListV3 {
                 }
                 var ranges: [Range<Int>] = []
                 for id in streamingIds {
-                    guard let start = newItems.firstIndex(of: .assistantHeader(id)) else { continue }
+                    guard let start = (transcriptMode == .simple ? newItems.firstIndex(where: { $0.messageId == id })
+                                       : newItems.firstIndex(of: .assistantHeader(id))) else { continue }
                     var end = start + 1
                     while end < newItems.count, Self.item(newItems[end], belongsTo: id) {
                         end += 1
@@ -4079,7 +4412,7 @@ extension CollectionViewMessageListV3 {
             }
             // Skip diffable-data-source apply when items haven't changed —
             // avoids expensive UIKit cell creation/layout on redundant snapshots.
-            if newItems == previousSnapshotIds {
+            if newItems == previousSnapshotIds && reconfigured.isEmpty && !modeChanged {
                 AppLogger(category: "SnapshotDiag").info("[SnapshotDiag] SKIP caller=\(caller) items unchanged (count=\(newItems.count)) — no re-apply")
                 return
             }
@@ -4087,7 +4420,12 @@ extension CollectionViewMessageListV3 {
             let inserted = newItems.filter { !oldSet.contains($0) }
             appliedFooters = newFooters.merging(appliedFooters) { _, applied in applied }
                 .filter { newFooters[$0.key] != nil }
-            enqueuePosition(newItems.count < oldCount ? .snapshotShrink : .snapshot, anchor: before)
+            if modeChanged {
+                if newItems.count < oldCount { positionReasons.insert(.snapshotShrink) }
+                positionReasons.insert(.transcriptMode)
+            } else {
+                enqueuePosition(newItems.count < oldCount ? .snapshotShrink : .snapshot, anchor: before)
+            }
             if case .inserting(let acceptedID?, _)? = sendPosition,
                inserted.contains(.wholeMessage(acceptedID)) {
                 sendPosition = .reveal(.wholeMessage(acceptedID))
@@ -4108,6 +4446,7 @@ extension CollectionViewMessageListV3 {
             var snapshot = NSDiffableDataSourceSnapshot<Section, MessageListItem>()
             snapshot.appendSections([.main])
             snapshot.appendItems(newItems, toSection: .main)
+            if !reconfigured.isEmpty { snapshot.reconfigureItems(reconfigured) }
             // Suppress contentOffsetAdjustment during snapshot application so that
             // rapid cell self-sizing doesn't cause visible content jumps. After layout
             // settles, pin to bottom if autoScrolling.
@@ -4456,7 +4795,16 @@ extension CollectionViewMessageListV3 {
         }
 
         static func estimateItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat,
-                                       maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil) -> CGFloat {
+                                       maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil,
+                                       simpleRow: SimpleTranscript.Row? = nil) -> CGFloat {
+            if case .media(_)? = simpleRow { return 160 }
+            let estimate = baseItemHeight(item, messages: messages, width: width, maxContentWidth: maxContentWidth,
+                                          questionContainerWidth: questionContainerWidth)
+            return estimate + (simpleRow == .text ? 12 : 0)
+        }
+
+        private static func baseItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat,
+                                           maxContentWidth: CGFloat, questionContainerWidth: CGFloat?) -> CGFloat {
             let scale = FontSettings.shared.scaledMessage(16)
             let lineHeight = scale * 1.4
             let hPad: CGFloat = 80
@@ -4816,7 +5164,8 @@ extension CollectionViewMessageListV3 {
         func keepSearchAfterWidthChange(_ width: CGFloat) {
             let old = searchViewportWidth
             searchViewportWidth = width
-            guard old > 0, abs(old - width) > 1, let vm, vm.chatSearch.isActive,
+            guard old > 0, abs(old - width) > 1, requestedTranscriptMode == transcriptMode,
+                  let vm, vm.chatSearch.isActive,
                   let hit = vm.chatSearch.current, let item = searchItem(for: hit),
                   let owner = searchPositionOwner, owner.hit.match == hit.match, owner.hit.keyword == hit.keyword,
                   ownsDirectScroll(owner.stamp) else { return }
@@ -4826,13 +5175,15 @@ extension CollectionViewMessageListV3 {
         func revealSearchHit(_ hit: ChatSearchHit) {
             guard let vm, let cv = viewController?.collectionView, let ds = dataSource,
                   let message = vm.messages.first(where: { $0.id == hit.messageId }) else { return }
+            guard requestedTranscriptMode == transcriptMode, vm.chatSearch.transcriptMode == transcriptMode,
+                  transcriptMode == .standard || searchItem(for: hit) != nil else { return }
             scrollMode = .userBrowsing
             guard let owner = beginDirectScroll() else { return }
             searchPositionOwner = (hit, owner)
-            if message.role == .user, !message.isUserTextExpanded {
+            if message.role == .user, !message.isUserTextExpanded, transcriptMode == .standard || !message.isQueued {
                 toggleUserMessageExpansion(messageId: message.id)
             }
-            if let blockId = hit.blockId {
+            if transcriptMode == .standard, let blockId = hit.blockId {
                 if message.isStepsCollapsed { message.isStepsCollapsed = false }
                 for segment in AssistantBlockPresentationSegment.make(message.blocks, enabled: collapseConsecutiveToolCalls)
                 where segment.blocks.contains(where: { $0.id == blockId }) && segment.isToolGroup {
@@ -4855,7 +5206,8 @@ extension CollectionViewMessageListV3 {
             let preferred: MessageListItem?
             if hit.match.key.field == .footerError { preferred = .assistantFooter(hit.messageId) }
             else if let blockID = hit.blockId { preferred = .assistantBlock(hit.messageId, blockID) }
-            else { preferred = nil }
+            else { preferred = transcriptMode == .simple ? .wholeMessage(hit.messageId) : nil }
+            if transcriptMode == .simple { return items.first { $0 == preferred } }
             return items.first { $0 == preferred } ?? items.first { $0.messageId == hit.messageId }
         }
 
@@ -4888,6 +5240,7 @@ extension CollectionViewMessageListV3 {
                 self.pendingSearchPlacement = nil
                 guard self.ownsDirectScroll(placement.stamp),
                       let model = self.vm?.chatSearch, ObjectIdentifier(model) == placement.model, model.isActive,
+                      self.requestedTranscriptMode == self.transcriptMode, model.transcriptMode == self.transcriptMode,
                       model.current?.match == placement.hit.match, model.current?.keyword == placement.hit.keyword,
                       let cv = self.viewController?.collectionView, cv.window != nil,
                       !cv.isTracking, !cv.isDragging, !cv.isDecelerating else { return }
@@ -5725,7 +6078,8 @@ extension CollectionViewMessageListV3 {
                 let item = previousSnapshotIds[index]
                 let est = Self.estimateItemHeight(item, messages: messages, width: width,
                                                   maxContentWidth: maxContentWidth,
-                                                  questionContainerWidth: collectionView.bounds.width)
+                                                  questionContainerWidth: collectionView.bounds.width,
+                                                  simpleRow: simpleRows[item])
                 layout.setEstimatedHeight(est, at: index)
             }
         }
@@ -6005,6 +6359,7 @@ extension CollectionViewMessageListV3 {
         }
 
         private func settleAfterInteraction(_ scrollView: UIScrollView) {
+            defer { scheduleTranscriptUpdate() }
             // Re-acquire auto-scroll only when the user settled essentially at
             // the bottom (tight threshold), not merely "near" it. This stops
             // small trackpad scrolls on iPad from snapping back to the bottom

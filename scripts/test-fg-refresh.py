@@ -28,7 +28,9 @@ PATHS = [
 def prepare(work):
     work.mkdir(parents=True, exist_ok=True)
     sources = [(ROOT / name).read_text(encoding="utf-8") for name in PATHS]
-    cell_source = sources[1].split("// MARK: - NoAnimationCollectionView", 1)[0]
+    start = sources[1].index("// MARK: - MessageListItem")
+    end = sources[1].index("// MARK: - NoAnimationCollectionView", start)
+    cell_source = "import Combine\nimport SwiftUI\nimport UIKit\n\n" + sources[1][start:end]
     source = work / "ForegroundRefresh.swift"
     source.write_text("\n".join([sources[0], cell_source, sources[2], sources[3]]), encoding="utf-8")
     (work / "sources.json").write_text(json.dumps({

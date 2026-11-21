@@ -586,21 +586,29 @@ struct ChatSearchPendingUnit {
     var finalised: Bool = true
 }
 enum ChatSearchUnitBuilder {
-    @MainActor static func snapshot(messages: [ChatMessage], sessionId: String?) -> [ChatSearchPendingUnit] {
+    @MainActor static func snapshot(messages: [ChatMessage], sessionId: String?,
+                                    mode: ChatTranscriptDisplayMode = .standard,
+                                    snapshots: [ToolSnapshotItem] = []) -> [ChatSearchPendingUnit] {
         var units: [ChatSearchPendingUnit] = []
         func add(_ mid: UUID, _ bid: UUID?, _ field: ChatSearchField, _ text: String) {
             if !text.isEmpty { units.append(.init(key: .init(messageId: mid, blockId: bid, field: field), text: text)) }
         }
         for message in messages {
+            if mode == .simple, message.isInternalBridge { continue }
             let mid = message.id
             switch message.role {
             case .user:
                 for (index, meta) in message.attachments.enumerated() where !meta.isImage && !meta.isVideo { add(mid, nil, .attachmentName(index), meta.fileName) }
-                add(mid, nil, .body, ChatSearchDisplayText.userBubble(message.content))
-            case .compactDivider, .systemInfo: add(mid, nil, .body, message.content)
+                if mode == .standard || !message.isQueued {
+                    add(mid, nil, .body, ChatSearchDisplayText.userBubble(message.content))
+                }
+            case .compactDivider, .systemInfo:
+                if mode == .standard { add(mid, nil, .body, message.content) }
             case .assistant:
+                let rows = mode == .simple ? SimpleTranscript.rows(in: message, snapshots: snapshots) : [:]
                 for block in message.blocks {
                     let bid = block.id
+                    if mode == .simple, rows[bid] != .text && rows[bid] != .question { continue }
                     if let card = block.questionCard {
                         guard card.status != .pending else { continue }
                         add(mid, bid, .title, ChatSearchQuestionText.questionTopic(card)); add(mid, bid, .activity, ChatSearchQuestionText.questionDigest(card))
@@ -674,11 +682,25 @@ enum ChatSearchUnitBuilder {
     private var noticeWork: DispatchWorkItem?
     private var textCache: [UUID: ChatSearchTextCacheEntry] = [:]
     private var lastSnapshotSignature: Int?
+    private(set) var transcriptMode: ChatTranscriptDisplayMode = .standard
+    private var transcriptPreviousMatch: ChatSearchMatch?
+    private var transcriptPreviousIndex: Int?
     var normalizedQuery: String { ChatSearchMatcher.normalizedQuery(query) }
     var current: ChatSearchHit? { hits.indices.contains(currentIndex) ? hits[currentIndex] : nil }
     var counterText: String { ChatSearchNavigation.counterText(index: hits.isEmpty ? nil : currentIndex, count: hits.count, truncated: isTruncated) }
     func bind(viewModel: AIChatViewModel) { guard self.viewModel !== viewModel else { return }; self.viewModel = viewModel; messages = viewModel.messages }
     func bind(messages: [ChatMessage]) { self.messages = messages; if isActive { observeMessages(); contentChanged() } }
+    func updateTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
+        guard mode != transcriptMode else { return }
+        transcriptMode = mode
+        pending?.cancel(); pending = nil; searchTask?.cancel(); generation += 1
+        lastSnapshotSignature = nil
+        transcriptPreviousMatch = current?.match ?? transcriptPreviousMatch
+        transcriptPreviousIndex = hits.isEmpty ? transcriptPreviousIndex : currentIndex
+        hits = []; currentIndex = 0; isTruncated = false; highlights.clear()
+        isSearching = isActive && !normalizedQuery.isEmpty
+        if isSearching { run(landOnNewest: false) }
+    }
     func activate(prefill: String? = nil) {
         if !isActive {
             isActive = true
@@ -696,6 +718,7 @@ enum ChatSearchUnitBuilder {
     func clear() {
         pending?.cancel(); pending = nil; searchTask?.cancel(); searchTask = nil; generation += 1
         query = ""; hits = []; currentIndex = 0; isSearching = false; isTruncated = false; notice = nil; highlights.clear()
+        transcriptPreviousMatch = nil; transcriptPreviousIndex = nil
     }
     func step(_ delta: Int) {
         guard let result = ChatSearchNavigation.step(from: currentIndex, count: hits.count, forward: delta > 0) else { return }
@@ -728,6 +751,7 @@ enum ChatSearchUnitBuilder {
     }
     private func schedule() {
         pending?.cancel(); searchTask?.cancel(); generation += 1
+        transcriptPreviousMatch = nil; transcriptPreviousIndex = nil
         if normalizedQuery.isEmpty { pending = nil; hits = []; currentIndex = 0; isSearching = false; isTruncated = false; highlights.clear(); return }
         isSearching = true
         let work = DispatchWorkItem { [weak self] in self?.run(landOnNewest: true) }; pending = work
@@ -735,9 +759,10 @@ enum ChatSearchUnitBuilder {
     }
     private func run(landOnNewest: Bool) {
         pending = nil; guard isActive else { return }; searchTask?.cancel(); generation += 1
-        let token = generation, query = normalizedQuery
+        let token = generation, query = normalizedQuery, mode = transcriptMode
         if let vm = viewModel { messages = vm.messages }
-        let snapshot = ChatSearchUnitBuilder.snapshot(messages: messages, sessionId: viewModel?.sessionId)
+        let snapshot = ChatSearchUnitBuilder.snapshot(messages: messages, sessionId: viewModel?.sessionId,
+                                                       mode: mode, snapshots: viewModel?.toolSnapshots ?? [])
         var fingerprint = Hasher()
         for unit in snapshot { fingerprint.combine(unit.key); fingerprint.combine(unit.text); fingerprint.combine(unit.finalised) }
         let signature = fingerprint.finalize()
@@ -748,7 +773,10 @@ enum ChatSearchUnitBuilder {
             guard let resolved = ChatSearchUnitBuilder.resolve(snapshot, cache: cache, isCancelled: { Task.isCancelled }), let result = ChatSearchEngine.search(units: resolved.units, query: query, isCancelled: { Task.isCancelled }) else { return }
             let texts = Dictionary(resolved.units.map { ($0.key, $0.text) }, uniquingKeysWith: { first, _ in first })
             await MainActor.run {
-                guard let self, self.isActive, token == self.generation else { return }; let old = self.current?.match, oldIndex = self.currentIndex
+                guard let self, self.isActive, token == self.generation, mode == self.transcriptMode else { return }
+                let old = self.transcriptPreviousMatch ?? self.current?.match
+                let oldIndex = self.transcriptPreviousIndex ?? self.currentIndex
+                self.transcriptPreviousMatch = nil; self.transcriptPreviousIndex = nil
                 self.textCache = resolved.cache
                 self.hits = result.matches.map { .init(match: $0, text: texts[$0.key] ?? "", keyword: query) }
                 self.currentIndex = (landOnNewest ? ChatSearchNavigation.initialIndex(count: result.matches.count) : ChatSearchNavigation.relocate(previous: old, previousIndex: oldIndex, in: result.matches)) ?? 0

@@ -129,6 +129,7 @@ struct QuotedMessagePreviewSheet: View {
 
 struct ChatMessageRow: View {
     @Environment(\.chatSearchHighlights) private var searchCenter
+    @Environment(\.chatTranscriptDisplayMode) private var transcriptDisplayMode
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     @ObservedObject var message: ChatMessage
     /// Only the actively streaming message needs vm access (for typing indicator & stop button).
@@ -556,6 +557,18 @@ struct ChatMessageRow: View {
             // is RoundedRectangle(cornerRadius: 18). iOS 16+ lets us specify the
             // preview clip shape independently from the interaction shape.
             .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18))
+            .accessibilityActions {
+                if transcriptDisplayMode == .simple {
+                    Button("Copy") { UIPasteboard.general.string = message.content }
+                    if let onCopyScreenshot { Button("Copy Screenshot", action: onCopyScreenshot) }
+                    if let onReply { Button("回复", action: onReply) }
+                    if let onEdit { Button("Edit", action: onEdit) }
+                    if let onRetry { Button("Retry", action: onRetry) }
+                    if let onDelete { Button("Delete from here", role: .destructive, action: onDelete) }
+                    if let onCompact { Button("Compact Above", role: .destructive, action: onCompact) }
+                    if let onWithdraw { Button("Cancel", action: onWithdraw) }
+                }
+            }
             .contextMenu {
                 Button {} label: {
                     Text(userMessageTimestamp)

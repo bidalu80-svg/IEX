@@ -1,6 +1,22 @@
 import UIKit
 import os
 
+final class MessageListAttributes: UICollectionViewLayoutAttributes {
+    var transcriptGeneration: UInt = 0
+
+    override func copy(with zone: NSZone? = nil) -> Any {
+        let copy = super.copy(with: zone) as! MessageListAttributes
+        copy.transcriptGeneration = transcriptGeneration
+        return copy
+    }
+
+    override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? MessageListAttributes,
+              other.transcriptGeneration == transcriptGeneration else { return false }
+        return super.isEqual(object)
+    }
+}
+
 /// A custom UICollectionViewLayout for the chat message list that maintains
 /// cached cell heights across layout invalidation cycles.
 ///
@@ -13,6 +29,14 @@ import os
 /// Once a cell's height is known, it's cached and reused until explicitly
 /// invalidated (e.g., the streaming cell changes height).
 final class MessageListLayout: UICollectionViewLayout {
+    private var transcriptGeneration: UInt = 0
+
+    func beginTranscriptGeneration(_ generation: UInt) {
+        transcriptGeneration = generation
+        deferredHeights.removeAll()
+        clearHeightCache()
+    }
+
     /// Default estimated height for cells that haven't been measured yet.
     var estimatedItemHeight: CGFloat = 200
 
@@ -199,7 +223,14 @@ final class MessageListLayout: UICollectionViewLayout {
         var y: CGFloat = 0
         for i in 0..<itemCount {
             let ip = IndexPath(item: i, section: 0)
-            let attrs = UICollectionViewLayoutAttributes(forCellWith: ip)
+            let attrs: UICollectionViewLayoutAttributes
+            if transcriptGeneration == 0 {
+                attrs = UICollectionViewLayoutAttributes(forCellWith: ip)
+            } else {
+                let versioned = MessageListAttributes(forCellWith: ip)
+                versioned.transcriptGeneration = transcriptGeneration
+                attrs = versioned
+            }
             let h: CGFloat
             if let cached = heightCache[i] {
                 h = cached
@@ -371,6 +402,7 @@ final class MessageListLayout: UICollectionViewLayout {
         forPreferredLayoutAttributes preferredAttributes: UICollectionViewLayoutAttributes,
         withOriginalAttributes originalAttributes: UICollectionViewLayoutAttributes
     ) -> Bool {
+        guard acceptsTranscriptMeasurement(preferredAttributes), acceptsTranscriptMeasurement(originalAttributes) else { return false }
         let index = preferredAttributes.indexPath.item
         let preferred = preferredAttributes.size.height
         let original = originalAttributes.size.height
@@ -453,6 +485,7 @@ final class MessageListLayout: UICollectionViewLayout {
             forPreferredLayoutAttributes: preferredAttributes,
             withOriginalAttributes: originalAttributes
         )
+        guard acceptsTranscriptMeasurement(preferredAttributes), acceptsTranscriptMeasurement(originalAttributes) else { return ctx }
 
         let index = preferredAttributes.indexPath.item
         let oldHeight = originalAttributes.size.height
@@ -687,6 +720,10 @@ final class MessageListLayout: UICollectionViewLayout {
     }
 
     // MARK: - Height Cache Management
+
+    private func acceptsTranscriptMeasurement(_ attributes: UICollectionViewLayoutAttributes) -> Bool {
+        ((attributes as? MessageListAttributes)?.transcriptGeneration ?? 0) == transcriptGeneration
+    }
 
     /// Update the height cache when items are inserted, deleted, or moved.
     /// Called by the Coordinator before applying a new snapshot.

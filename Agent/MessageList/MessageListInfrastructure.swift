@@ -12,6 +12,276 @@
 import Combine
 import SwiftUI
 import UIKit
+import ImageIO
+
+enum ChatTranscriptDisplayMode: String, Hashable {
+    case standard, simple
+
+    static let preferenceKey = "chat.transcriptDisplayMode"
+}
+
+private struct ChatTranscriptDisplayModeKey: EnvironmentKey {
+    static let defaultValue = ChatTranscriptDisplayMode.standard
+}
+
+extension EnvironmentValues {
+    var chatTranscriptDisplayMode: ChatTranscriptDisplayMode {
+        get { self[ChatTranscriptDisplayModeKey.self] }
+        set { self[ChatTranscriptDisplayModeKey.self] = newValue }
+    }
+}
+
+@MainActor enum SimpleTranscript {
+    enum Row: Equatable {
+        case text
+        case question
+        case media([URL])
+    }
+
+    struct SnapshotImage: Equatable {
+        let ref: MediaRef
+        let url: URL
+    }
+
+    static func snapshotImages(_ snapshots: [ToolSnapshotItem]) -> [String: SnapshotImage] {
+        var seen: Set<String> = []
+        var images: [String: SnapshotImage] = [:]
+        for snapshot in snapshots where seen.insert(snapshot.id).inserted {
+            if snapshot.snapshot.type == .image, let ref = snapshot.snapshot.mediaRef {
+                images[snapshot.id] = SnapshotImage(ref: ref, url: snapshot.mediaResolver(ref))
+            }
+        }
+        return images
+    }
+
+    private struct TextInput: Equatable {
+        let nonblank: Bool
+        let references: Set<String>
+    }
+
+    private struct ToolImage: Equatable {
+        let toolID: String?
+        let original: String?
+        let readPath: String?
+        let snapshot: SnapshotImage?
+        let url: URL
+
+        init?(block: AssistantBlock, snapshots: [String: SnapshotImage]) {
+            guard block.kind.isToolCall else { return nil }
+            toolID = block.toolUseId
+            original = block.imageFilePath
+            if case .readImageTool(let path) = block.kind { readPath = path }
+            else { readPath = nil }
+            let image = block.toolUseId.flatMap { snapshots[$0] }
+            snapshot = image
+            if let image {
+                url = image.url
+            } else if let path = block.imageFilePath {
+                switch block.kind {
+                case .browserTool, .readImageTool: url = URL(fileURLWithPath: path)
+                default: return nil
+                }
+            } else {
+                return nil
+            }
+        }
+
+        @MainActor var aliases: Set<String> {
+            var paths = Set([original, readPath, snapshot?.ref.relativePath, snapshot?.ref.linuxPath]
+                .compactMap { $0 }.flatMap { pathAliases($0) })
+            if url.isFileURL { paths.insert(url.standardizedFileURL.path) }
+            return paths
+        }
+    }
+
+    private struct Member: Equatable {
+        let id: UUID
+        let block: ObjectIdentifier
+        let isQuestion: Bool
+        let text: TextInput?
+        let image: ToolImage?
+    }
+
+    private struct ImageProbes {
+        private var available: Set<URL> = []
+        private var pending: Set<URL> = []
+
+        mutating func retryPending() -> Bool {
+            let arrived = pending.filter(Self.isImage)
+            available.formUnion(arrived)
+            pending.subtract(arrived)
+            return !arrived.isEmpty
+        }
+
+        mutating func containsImage(at url: URL) -> Bool {
+            if available.contains(url) { return true }
+            if pending.contains(url) { return false }
+            if Self.isImage(url) {
+                available.insert(url)
+                return true
+            }
+            pending.insert(url)
+            return false
+        }
+
+        private static func isImage(_ url: URL) -> Bool {
+            guard let image = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+            return CGImageSourceGetCount(image) > 0
+        }
+    }
+
+    @MainActor struct Projection {
+        private var messageObject: ObjectIdentifier?
+        private var members: [Member] = []
+        private var scansReferences = false
+        private var textInputs: [ObjectIdentifier: (source: String, input: TextInput)] = [:]
+        private var rows: [UUID: Row] = [:]
+        private var imageProbes = ImageProbes()
+
+        mutating func update(in message: ChatMessage, snapshots: [String: SnapshotImage]) -> [UUID: Row] {
+            let identity = ObjectIdentifier(message)
+            let candidates = message.blocks.map { block in
+                (block: block, image: block.questionCard == nil ? ToolImage(block: block, snapshots: snapshots) : nil)
+            }
+            let needsReferences = candidates.contains { $0.image != nil }
+            var nextMembers: [Member] = []
+            var nextTextInputs: [ObjectIdentifier: (source: String, input: TextInput)] = [:]
+            for (block, image) in candidates {
+                let blockObject = ObjectIdentifier(block)
+                let isQuestion = block.questionCard != nil
+                let text: TextInput?
+                if block.kind == .text {
+                    let source = block.content
+                    let input: TextInput
+                    if scansReferences == needsReferences, let previous = textInputs[blockObject], previous.source == source {
+                        input = previous.input
+                    } else {
+                        input = TextInput(nonblank: hasText(source),
+                                          references: needsReferences ? explicitMediaReferences(source) : [])
+                    }
+                    nextTextInputs[blockObject] = (source, input)
+                    text = input
+                } else {
+                    text = nil
+                }
+                if isQuestion || text?.nonblank == true || image != nil {
+                    nextMembers.append(Member(id: block.id, block: blockObject, isQuestion: isQuestion, text: text, image: image))
+                }
+            }
+            scansReferences = needsReferences
+            textInputs = nextTextInputs
+            if messageObject == identity && members == nextMembers {
+                guard imageProbes.retryPending() else { return rows }
+            } else {
+                messageObject = identity
+                members = nextMembers
+                imageProbes = ImageProbes()
+            }
+            rows = project(nextMembers, imageProbes: &imageProbes)
+            return rows
+        }
+    }
+
+    static func rows(in message: ChatMessage, snapshots: [ToolSnapshotItem]) -> [UUID: Row] {
+        var projection = Projection()
+        return projection.update(in: message, snapshots: snapshotImages(snapshots))
+    }
+
+    private static func project(_ members: [Member], imageProbes: inout ImageProbes) -> [UUID: Row] {
+        let referenced = members.contains { $0.image != nil }
+            ? Set(members.flatMap { $0.text?.references.flatMap { pathAliases($0, markdown: true) } ?? [] }) : []
+        var rows: [UUID: Row] = [:]
+        var claimed: Set<URL> = []
+        for member in members {
+            if member.isQuestion {
+                rows[member.id] = .question
+            } else if member.text?.nonblank == true {
+                rows[member.id] = .text
+            } else if let media = member.image, media.url.isFileURL {
+                let local = media.url.standardizedFileURL
+                guard referenced.isDisjoint(with: media.aliases), !claimed.contains(local),
+                      imageProbes.containsImage(at: local) else { continue }
+                claimed.insert(local)
+                rows[member.id] = .media([local])
+            }
+        }
+        return rows
+    }
+
+    static func hasText(_ text: String) -> Bool {
+        text.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil
+    }
+
+    static func showsWaiting(_ message: ChatMessage) -> Bool {
+        guard message.error == nil, message.taskDuration == nil,
+              !message.blocks.contains(where: { block in
+                  guard let card = block.questionCard else { return false }
+                  return QuestionCardCoordinator.shared.isPending(requestId: card.requestId)
+              }) else { return false }
+        if message.isAwaitingModelResponse { return true }
+        guard let stage = message.blocks.last(where: { $0.kind != .info }) else { return true }
+        return stage.kind != .text || !hasText(stage.content)
+    }
+
+    static func explicitMediaReferences(_ content: String) -> Set<String> {
+        guard content.contains("[") else { return [] }
+        var result: Set<String> = []
+        func visitInlines(_ inlines: [InlineNode]) {
+            for inline in inlines {
+                switch inline {
+                case .image(let source, _), .link(let source, _): result.insert(source)
+                default: break
+                }
+                visitInlines(inline.children)
+            }
+        }
+        func visit(_ blocks: [BlockNode]) {
+            for block in blocks {
+                switch block {
+                case .paragraph(let inlines), .heading(_, let inlines): visitInlines(inlines)
+                case .table(_, let rows):
+                    for row in rows { for cell in row.cells { visitInlines(cell.content) } }
+                default: visit(block.children)
+                }
+            }
+        }
+        visit(MarkdownContent(prepareMarkdownForRender(content)).blocks)
+        return result
+    }
+
+    private static func pathAliases(_ path: String, markdown: Bool = false) -> Set<String> {
+        guard !path.isEmpty else { return [] }
+        var paths: Set<String> = []
+        if path.hasPrefix("/") {
+            paths.insert(path)
+            paths.insert(URL(fileURLWithPath: path).standardizedFileURL.path)
+        } else if !path.contains(":"), path.contains("/") {
+            paths.insert(path)
+        }
+        let linuxPrefix = "/var/ze/"
+        let url: URL?
+        if path.hasPrefix(linuxPrefix),
+           let slash = path.dropFirst(linuxPrefix.count).firstIndex(of: "/") {
+            var ze = URLComponents()
+            ze.scheme = "ze"
+            ze.host = String(path.dropFirst(linuxPrefix.count).prefix(upTo: slash))
+            ze.path = String(path[slash...])
+            url = ze.url
+        } else if markdown || path.hasPrefix("ze://") || path.hasPrefix("file:") {
+            url = URL(string: ImageAttachment.canonicalizeMarkdownImageSource(path))
+        } else {
+            url = nil
+        }
+        if let url {
+            if url.isFileURL { paths.insert(url.standardizedFileURL.path) }
+            if url.scheme == "ze", let host = url.host, let file = resolveZeFileURL(url: url) {
+                paths.insert("\(linuxPrefix)\(host)\(url.path)")
+                paths.insert(file.standardizedFileURL.path)
+            }
+        }
+        return paths
+    }
+}
 
 // MARK: - MessageListItem
 
@@ -45,6 +315,8 @@ enum MessageListItem: Hashable, Sendable {
 /// A plain UICollectionViewCell that correctly reports its preferred size
 /// for UIHostingConfiguration content with custom layouts.
 class SelfSizingCell: UICollectionViewCell {
+    var transcriptGeneration: UInt = 0
+
     /// Clip content to cell bounds so SwiftUI content doesn't visually overflow
     /// into adjacent cells during the brief window between content update and
     /// layout re-measurement (text drift onto tool capsule bug).
@@ -155,6 +427,9 @@ class SelfSizingCell: UICollectionViewCell {
     override func preferredLayoutAttributesFitting(
         _ layoutAttributes: UICollectionViewLayoutAttributes
     ) -> UICollectionViewLayoutAttributes {
+        if ((layoutAttributes as? MessageListAttributes)?.transcriptGeneration ?? 0) != transcriptGeneration {
+            return layoutAttributes
+        }
         // Short-window dedup BEFORE super: when UIKit fires repeated
         // self-sizing calls within `measureDedupWindow`, return the cached
         // height directly and skip both `super.preferredLayoutAttributesFitting`
@@ -1038,6 +1313,7 @@ final class CellStateBridgeV2: ObservableObject {
     @Published var usageContentVisible: Bool = false
     /// Set by the coordinator once this reply has fully completed.
     @Published var showsCompletionActions: Bool = false
+    @Published var simpleFooter: AssistantFooterPresentation?
     /// Compact summary — presented from overlay outside cell tree for animation.
     var onShowCompactSummary: ((String) -> Void)?
     /// [T-chat-quote-reply] Quote preview — also presented from the overlay

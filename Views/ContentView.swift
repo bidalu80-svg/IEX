@@ -4964,6 +4964,7 @@ private struct SteppedSlider: View {
 }
 
 private struct AppearanceSettingsView: View {
+    @AppStorage(ChatTranscriptDisplayMode.preferenceKey) private var transcriptDisplayMode = ChatTranscriptDisplayMode.standard
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
     /// [T-floating-window] Appearance → 后台终端悬浮窗口. Default OFF: turning it on
     /// swaps the Live Activity's task card for the conversation card, a visible
@@ -5159,6 +5160,15 @@ private struct AppearanceSettingsView: View {
                 Text("思考过程")
             } footer: {
                 Text("When on, a new thinking block expands automatically while the model is reasoning and collapses when it finishes. When off, thinking blocks stay collapsed — tap one to read it.")
+            }
+
+            Section {
+                Picker("正文显示", selection: $transcriptDisplayMode) {
+                    Text("标准").tag(ChatTranscriptDisplayMode.standard)
+                    Text("简洁").tag(ChatTranscriptDisplayMode.simple)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("chatTranscriptDisplayMode")
             }
 
             Section {

@@ -79,6 +79,17 @@ private func isShareCallback(_ message: ChatMessage) -> Bool {
         result.isStepsCollapsed = source.isStepsCollapsed
         return result
     }
+
+    static func renderTurnImage(_ request: ChatShareRequest, dark: Bool) async throws -> UIImage {
+        let groups = ChatShareCells.renderGroups(request.initialCells ?? request.cells, selected: request.initialSelection)
+        let renderer = try ChatExportRenderer(vm: request.vm)
+        let options = ChatExportOptions(dark: dark, hideHeader: true)
+        let result = try await renderer.render(groups: groups, messages: request.messages, title: request.title,
+                                               options: options, imageSelection: request.imageSelection) { _, _ in }
+        defer { try? FileManager.default.removeItem(at: result.url) }
+        guard let image = UIImage(data: try Data(contentsOf: result.url)) else { throw ChatExportError.writeFailed }
+        return image
+    }
 }
 
 extension TableAttachment {
@@ -581,6 +592,7 @@ final class ChatExportRenderer {
         let host = UIHostingController(rootView: AnyView(
             view.environment(\.colorScheme, style == .dark ? .dark : .light)
                 .environment(\.chatSnapshotRendering, true)
+                .environment(\.chatTranscriptDisplayMode, .standard)
                 .environment(\.markdownImageSelectionState, imageSelection)
                 .environment(\.chatSearchHighlights, nil)
                 .environment(\.chatSessionId, vm.sessionId)

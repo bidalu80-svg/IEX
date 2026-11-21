@@ -230,6 +230,7 @@ struct ChatShareSelectionView: View {
         let isOn = selection.contains(cell.id)
         return ChatShareCellContent(cell: cell, message: message,
                                     onToggleSteps: { toggleDisclosure(cell.messageId) })
+            .environment(\.chatTranscriptDisplayMode, .standard)
             // Text rows expose only thumbnail controls through the Markdown
             // hit-test filter. Other content still falls through to row selection.
             .allowsHitTesting(cell.kind == .taskHeader || cell.kind == .text)

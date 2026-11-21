@@ -382,6 +382,7 @@ struct AIChatView: View {
     private static let kSendSwipeArmFraction: CGFloat = 0.8
     @State private var floatingBarHeight: CGFloat = 0
     @AppStorage("toolStatusBarEnabled") private var toolStatusBarEnabled: Bool = true
+    @AppStorage(ChatTranscriptDisplayMode.preferenceKey) private var transcriptDisplayMode = ChatTranscriptDisplayMode.standard
     @AppStorage("toolPreviewEnabled") private var toolPreviewEnabled: Bool = true
     @AppStorage(ZeSubAgentPreferences.dockEnabledKey) private var subAgentDockEnabled: Bool = true
     @AppStorage(ZeSubAgentPreferences.enabledKey) private var subAgentsEnabled: Bool = true
@@ -644,6 +645,7 @@ struct AIChatView: View {
     private var chatViewportContentRenderKey: ChatViewportContentRenderKey {
         ChatViewportContentRenderKey(
             viewModelID: ObjectIdentifier(vm),
+            transcriptDisplayMode: transcriptDisplayMode,
             messageCount: vm.messages.count,
             firstMessageID: vm.messages.first?.id,
             lastMessageID: vm.messages.last?.id,
@@ -2738,6 +2740,7 @@ struct AIChatView: View {
             CollectionViewMessageListV3(
                 vm: vm,
                 inputFocused: inputFocused,
+                transcriptDisplayMode: transcriptDisplayMode,
                 onRetryMessage: { vm.retryFromMessage($0); vm.forceScrollToBottom.send() },
                 onRetryLast: { vm.retry(); vm.forceScrollToBottom.send() },
                 onReplyMessage: { [self] msgId in
@@ -6479,6 +6482,7 @@ private struct ChatVoiceCallPanelHost: View {
 /// inputs that require re-rooting the SwiftUI host.
 private struct ChatViewportContentRenderKey: Hashable {
     let viewModelID: ObjectIdentifier
+    let transcriptDisplayMode: ChatTranscriptDisplayMode
     let messageCount: Int
     let firstMessageID: UUID?
     let lastMessageID: UUID?
