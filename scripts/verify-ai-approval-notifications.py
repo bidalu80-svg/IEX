@@ -321,7 +321,46 @@ check("request data has no old serverName/operation/detail fallback and snapshot
       and "SoulStore.cachedMetadata.displayName.trimmingCharacters(in: .whitespacesAndNewlines)" in request
       and 'soulName: name.isEmpty ? "Ze" : name' in request
       and all(marker not in request + dialog + card for marker in ("request.detail", "request.operation", "request.serverName"))
-      and "SoulAvatarView(size: 48)" in card and "request.soulName" in card)
+      and "request.soulName" in card)
+identity = section(card, "private var identity:", "private func details(")
+soul = source("Agent/Session/SoulStore.swift")
+soul_avatar = section(soul, "struct SoulAvatarView:", "enum SoulAvatarMotion")
+soul_header_avatar = section(soul, "struct SoulHeaderAvatarSurface:", "private struct SoulAvatarAnimation:")
+check("the review identity uses the header's fitted personal avatar or its static idle poster",
+      'private static let avatarSize: CGFloat = 48' in card
+      and 'IdentityAvatar(size: Self.avatarSize).accessibilityHidden(true)' in identity
+      and 'Text(verbatim: request.soulName).font(.subheadline.weight(.semibold))' in identity
+      and 'Text("Review required").font(.footnote)' in identity
+      and re.search(r"if usesPersonalAvatar \{\s*SoulAvatarView\(size: size, fitsImage: true\)\s*\} else \{\s*Image\(SoulAvatarIdlePolicy\.posterAsset\)", identity)
+      and 'SoulAvatarStore.load() != nil || !SoulStore.cachedMetadata.emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty' in identity
+      and 'SoulAvatarIdlePolicy.darkPosterBackground : SoulAvatarIdlePolicy.lightPosterBackground' in identity
+      and "SoulAvatarView(size: size * 0.76, fitsImage: true)" in soul_header_avatar
+      and "SoulAvatarAnimation(motion:" in soul_header_avatar
+      and "fallback.image = UIImage(named: SoulAvatarIdlePolicy.posterAsset)" in soul
+      and "SoulAvatarStore.load()" in soul_avatar and "SoulStore.cachedMetadata.emoji" in soul_avatar
+      and soul_avatar.index("if let image") < soul_avatar.index("if trimmed.isEmpty"))
+card_layout = section(card, "var body: some View", "private func cardWithIdentity")
+card_surface = section(card, "private func cardWithIdentity", "private func bodyAndActions(")
+check("the identity occupies layout space while the card surface starts partway down its badge",
+      re.search(r"VStack\(spacing: 0\) \{\s*identity\s*content\(\)\s*\}\s*\.background \{", card_surface)
+      and "RoundedRectangle(cornerRadius: 20)" in card_surface
+      and ".padding(.top, Self.avatarSize + Self.identitySpacing + Self.badgeAboveCard)" in card_surface
+      and "private static let badgeAboveCard: CGFloat = 16" in card
+      and ".offset(" not in card_surface and ".clipShape(" not in card_surface + card_layout
+      and "identity" not in section(card, "private func details(", "@ViewBuilder private func field("))
+check("the centered card tries intrinsic height before its constrained scroll layouts",
+      re.search(r"ViewThatFits\(in: \.vertical\) \{\s*cardWithIdentity \{ bodyAndActions\(summary, width: width\) \}\s*\.fixedSize\(horizontal: false, vertical: true\)", card_layout)
+      and "let height = geometry.size.height * 0.85" in card_layout
+      and "ScrollView { cardWithIdentity { bodyAndActions(summary, width: width) } }" in card_layout
+      and re.search(r"cardWithIdentity \{\s*VStack\(spacing: 0\) \{\s*ScrollView \{ paddedDetails\(summary, width: width\) \}\s*Divider\(\)\s*paddedActions", card_layout)
+      and re.search(r"\.frame\(maxWidth: \.infinity, maxHeight: \.infinity\)\s*\.padding\(\.vertical, \(geometry\.size\.height - height\) / 2\)", card_layout)
+      and card_layout.rindex("cardWithIdentity") < card_layout.index(".frame(maxWidth: .infinity, maxHeight: .infinity)"))
+action_style = section(card, "private struct ActionStyle:", "private func decide(")
+check("both decisions use full-width capsule styling with at least 48 points of height",
+      ".buttonStyle(ActionStyle(prominent: true))" in actions and ".buttonStyle(ActionStyle(prominent: false))" in actions
+      and ".frame(maxWidth: .infinity, minHeight: 48)" in action_style
+      and "Capsule().fill(LinearGradient(" in action_style
+      and "Capsule().fill(Color(uiColor: .secondarySystemBackground))" in action_style)
 check("the card selects an operation-specific rendering for every presentation case",
       re.findall(r"^    case (\w+)\(", presentation, re.M)
       == re.findall(r"^        case \.(\w+)\(", section(card, "init(_ presentation:", "private static func localized"), re.M))

@@ -12,30 +12,33 @@ struct AIApprovalCard: View {
     @State private var submitted = false
     @State private var showsAllFiles = false
 
+    private static let avatarSize: CGFloat = 48
+    private static let identitySpacing: CGFloat = 4
+    private static let badgeAboveCard: CGFloat = 16
+
     var body: some View {
         GeometryReader { geometry in
             let width = min(520, max(0, geometry.size.width - 32))
             let height = geometry.size.height * 0.85
             let summary = ApprovalCardContent(request.presentation, soul: request.soulName)
-            Group {
+            ViewThatFits(in: .vertical) {
+                cardWithIdentity { bodyAndActions(summary, width: width) }
+                    .fixedSize(horizontal: false, vertical: true)
                 if dynamicType.isAccessibilitySize || geometry.size.width > geometry.size.height || height < 380 {
-                    ScrollView { bodyAndActions(summary, width: width) }
+                    ScrollView { cardWithIdentity { bodyAndActions(summary, width: width) } }
                 } else {
-                    ViewThatFits(in: .vertical) {
-                        bodyAndActions(summary, width: width).fixedSize(horizontal: false, vertical: true)
+                    cardWithIdentity {
                         VStack(spacing: 0) {
-                            ScrollView { details(summary, width: width).padding(20) }
+                            ScrollView { paddedDetails(summary, width: width) }
                             Divider()
-                            actions.padding(20)
+                            paddedActions
                         }
                     }
                 }
             }
             .frame(width: width)
-            .frame(maxHeight: height)
-            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 8))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.vertical, (geometry.size.height - height) / 2)
         }
         .background(Color.black.opacity(0.45).ignoresSafeArea().accessibilityHidden(true))
         .accessibilityElement(children: .contain)
@@ -43,58 +46,126 @@ struct AIApprovalCard: View {
         .onAppear { questionFocused = true }
     }
 
-    private func bodyAndActions(_ summary: ApprovalCardContent, width: CGFloat) -> some View {
-        VStack(spacing: 20) {
-            details(summary, width: width)
-            actions
+    private func cardWithIdentity<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            identity
+            content()
         }
-        .padding(20)
+        .background {
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(uiColor: .systemBackground))
+                .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
+                .padding(.top, Self.avatarSize + Self.identitySpacing + Self.badgeAboveCard)
+        }
     }
 
-    private func details(_ summary: ApprovalCardContent, width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(spacing: 5) {
-                SoulAvatarView(size: 48).accessibilityHidden(true)
-                Text(verbatim: request.soulName).font(.headline)
-                Text("Review required").font(.subheadline.weight(.semibold)).foregroundStyle(Color(uiColor: .systemBlue))
-            }
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .combine)
-            .accessibilitySortPriority(1)
+    private func bodyAndActions(_ summary: ApprovalCardContent, width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            paddedDetails(summary, width: width)
+            Divider()
+            paddedActions
+        }
+    }
 
-            HStack(alignment: .top, spacing: 10) {
+    private func paddedDetails(_ summary: ApprovalCardContent, width: CGFloat) -> some View {
+        details(summary, labelWidth: min(120, max(0, (width - 56) * 0.30)))
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+    }
+
+    private var paddedActions: some View {
+        actions.padding(.horizontal, 16).padding(.vertical, 12)
+    }
+
+    private var identity: some View {
+        VStack(spacing: Self.identitySpacing) {
+            IdentityAvatar(size: Self.avatarSize).accessibilityHidden(true)
+            VStack(spacing: 2) {
+                Text(verbatim: request.soulName).font(.subheadline.weight(.semibold))
+                Text("Review required").font(.footnote).foregroundStyle(Color(uiColor: .systemBlue))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilitySortPriority(1)
+    }
+
+    @MainActor private struct IdentityAvatar: View {
+        let size: CGFloat
+        @Environment(\.colorScheme) private var colorScheme
+        @State private var usesPersonalAvatar = Self.hasPersonalAvatar()
+
+        var body: some View {
+            Group {
+                if usesPersonalAvatar {
+                    SoulAvatarView(size: size, fitsImage: true)
+                } else {
+                    Image(SoulAvatarIdlePolicy.posterAsset)
+                        .resizable()
+                        .scaledToFit()
+                        .background(posterBackground)
+                }
+            }
+            .frame(width: size, height: size)
+            .clipShape(Circle())
+            .onAppear { usesPersonalAvatar = Self.hasPersonalAvatar() }
+            .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
+                usesPersonalAvatar = Self.hasPersonalAvatar()
+            }
+        }
+
+        private var posterBackground: Color {
+            let rgb = colorScheme == .dark ? SoulAvatarIdlePolicy.darkPosterBackground : SoulAvatarIdlePolicy.lightPosterBackground
+            return Color(red: Double(rgb.red) / 255, green: Double(rgb.green) / 255, blue: Double(rgb.blue) / 255)
+        }
+
+        private static func hasPersonalAvatar() -> Bool {
+            SoulAvatarStore.load() != nil || !SoulStore.cachedMetadata.emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func details(_ summary: ApprovalCardContent, labelWidth: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
                 Group {
                     if let symbol = summary.symbol {
-                        Image(systemName: symbol).font(.system(size: 22, weight: .medium))
+                        Image(systemName: symbol).font(.system(size: 18, weight: .medium))
                     } else {
-                        GitHubMark(size: 28)
+                        GitHubMark(size: 22)
                     }
                 }
-                .frame(width: 28, height: 28)
+                .frame(width: 26, height: 26)
                 .accessibilityHidden(true)
-                Text(verbatim: summary.title).font(.title3.weight(.semibold))
+                Text(verbatim: summary.title).font(.headline)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($questionFocused)
             }
             .accessibilitySortPriority(2)
-            Text(verbatim: summary.message)
+            Text(verbatim: summary.message).font(.subheadline)
             if let impact = summary.impact {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: request.isDestructive ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
                         .foregroundStyle(Color(uiColor: .systemOrange)).accessibilityHidden(true)
-                    Text(verbatim: impact).fontWeight(.semibold)
+                    Text(verbatim: impact).fontWeight(.medium)
                 }
+                .font(.footnote)
             }
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(summary.fields.indices, id: \.self) { index in
-                    field(summary.fields[index], labelWidth: max(0, (width - 68) / 3))
+                    field(summary.fields[index], labelWidth: labelWidth)
                 }
                 if !summary.files.isEmpty { files(summary.files) }
             }
+            .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -104,7 +175,7 @@ struct AIApprovalCard: View {
             VStack(alignment: .leading, spacing: 4) { fieldLabel(field.label); fieldValue(field) }
                 .accessibilityElement(children: .combine)
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 fieldLabel(field.label).frame(width: labelWidth, alignment: .leading)
                 fieldValue(field)
             }
@@ -125,8 +196,8 @@ struct AIApprovalCard: View {
     }
 
     private func files(_ files: [AIApprovalPresentation.FileChange]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Files in this commit").font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Files in this commit").fontWeight(.semibold).accessibilityAddTraits(.isHeader)
             ForEach(0..<(showsAllFiles ? files.count : min(3, files.count)), id: \.self) { index in
                 Divider()
                 switch files[index] {
@@ -158,18 +229,43 @@ struct AIApprovalCard: View {
     private var actions: some View {
         VStack(spacing: 8) {
             Button { decide(true) } label: {
-                Text("Allow").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 48)
+                Text("Allow")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color(uiColor: .systemBlue))
+            .buttonStyle(ActionStyle(prominent: true))
             Button { decide(false) } label: {
-                Text("Deny").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 48)
+                Text("Deny")
             }
-            .buttonStyle(.bordered)
-            .tint(.primary)
+            .buttonStyle(ActionStyle(prominent: false))
             .keyboardShortcut(.cancelAction)
         }
         .disabled(submitted)
+    }
+
+    private struct ActionStyle: ButtonStyle {
+        let prominent: Bool
+        @Environment(\.isEnabled) private var isEnabled
+
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .foregroundStyle(prominent ? Color.white : Color.primary)
+                .background {
+                    if prominent {
+                        Capsule().fill(LinearGradient(
+                            colors: [Color(uiColor: .systemBlue), Color(uiColor: .systemIndigo)],
+                            startPoint: .leading, endPoint: .trailing))
+                    } else {
+                        Capsule().fill(Color(uiColor: .secondarySystemBackground))
+                    }
+                }
+                .contentShape(Capsule())
+                .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.5)
+        }
     }
 
     private func decide(_ allowed: Bool) {
@@ -370,7 +466,7 @@ private struct ApprovalExpandableText: View {
 
     private func text(through end: String.Index) -> some View {
         Text(verbatim: String(value[..<end]))
-            .font(.body.monospaced())
+            .font(.footnote.monospaced())
             .fixedSize(horizontal: false, vertical: true)
     }
 }
