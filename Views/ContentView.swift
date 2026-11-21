@@ -1,4 +1,5 @@
 import SwiftUI
+import QuartzCore
 
 private let shareLog = AppLogger(category: "Share")
 private let draftLog = AppLogger(category: "DraftSession")
@@ -133,6 +134,7 @@ struct ContentView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var shareCoordinator: ShareCoordinator
+    @AppStorage("lastLocalShareSessionID") private var lastLocalShareSessionID = ""
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     /// Subscribe to the router so changes to its `@Published` fields are
     /// observed by SwiftUI — without this, `onChange(of: router.newChatTrigger)`
@@ -757,9 +759,10 @@ struct ContentView: View {
             await RemoteSSHConnectionService.shared.restoreConnectionsIfNeeded()
         }
         .task {
+            guard !didInitialLoad else { return }
             sessions = await ChatStore.shared.listSessions()
             chatFolders = await ChatStore.shared.listChatFolders()
-            let shareAlreadyHandled = shareCoordinator.bufferVersion > 0
+            shareCoordinator.checkForPendingShare()
             // A Home Screen Quick Action that fired during launch will
             // open the right session itself via `quickActionRouter.newChatTrigger`.
             // Skip the Launch Session logic so we don't open a second,
@@ -779,7 +782,6 @@ struct ContentView: View {
                 return true
             }()
             let quickActionPending = quickActionRouter.newChatTrigger != consumedQuickActionTrigger || workflowActive
-            shareLog.info("[Share] .task: hasPendingShare=\(shareCoordinator.hasPendingShare) launchScreen=\(launchScreen) sessions=\(sessions.count) bufferVersion=\(shareCoordinator.bufferVersion) shareAlreadyHandled=\(shareAlreadyHandled) quickActionPending=\(quickActionPending) workflowActive=\(workflowActive)")
 
             // [T-notification-tap-vs-launch-session] A notification tap's
             // explicit target session outranks every launch-screen default.
@@ -798,22 +800,14 @@ struct ContentView: View {
                 shareLog.info("[Share] .task: notification navigation just handled — skipping launchScreen logic")
             } else if quickActionPending {
                 shareLog.info("[Share] .task: quick action pending — deferring launchScreen logic to QuickActionRouter")
-            } else if shareAlreadyHandled {
-                // onChange(hasPendingShare) already processed the share and
-                // opened a new session before .task ran. Skip normal launch
-                // screen logic so we don't clobber it with a different session.
-                shareLog.info("[Share] .task: share already handled by onChange — skipping launchScreen logic")
-            } else if shareCoordinator.hasPendingShare {
-                // onChange hasn't fired yet (e.g. onOpenURL arrived during await).
-                // Process share here and open a new session for it.
-                shareLog.info("[Share] .task: processing pending share")
-                processPendingShare()
-                shareLog.info("[Share] .task: buffer stored, bufferVersion=\(shareCoordinator.bufferVersion) buffer=\(shareCoordinator.pendingShareBuffer != nil)")
-                var tx = Transaction()
-                tx.disablesAnimations = true
-                withTransaction(tx) { openSession(Self.makeNewSessionId()) }
             } else if ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") {
                 // The cold-start verifier owns navigation; launch defaults must not warm the keyboard.
+            } else if shareCoordinator.hasIncomingShares {
+                if incomingShareTargetID == nil, let target = shareLaunchSessionID {
+                    var tx = Transaction()
+                    tx.disablesAnimations = true
+                    withTransaction(tx) { openSession(target) }
+                }
             } else {
                 // No share — normal launch screen behavior
                 switch launchScreen {
@@ -968,17 +962,14 @@ struct ContentView: View {
             }
             fetchAlarmsIfNeeded()
         }
-        .onChange(of: shareCoordinator.hasPendingShare) { hasPending in
-            if hasPending {
-                processPendingShare()
-                // If currently on home screen, navigate to new session for the share
-                if navigationPath.isEmpty {
-                    shareLog.info("[Share] onChange: Home screen — opening new session for share")
-                    var tx = Transaction()
-                    tx.disablesAnimations = true
-                    withTransaction(tx) { openSession(Self.makeNewSessionId()) }
-                }
-            }
+        .onChange(of: incomingShareTargetID) { _ in
+            rememberShareSession()
+        }
+        .onChange(of: didInitialLoad) { _ in
+            if incomingShareTargetID != nil { rememberShareSession() }
+        }
+        .onChange(of: newSessionRealId) { _ in
+            rememberShareSession()
         }
         .onChange(of: deepLink.showEnvironmentVariables) { show in
             if show {
@@ -1106,6 +1097,7 @@ struct ContentView: View {
         // injection is not its cause), so per-column injection is safe here.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sessionList(useNavigationLinks: false)
+                .safeAreaInset(edge: .bottom) { incomingShareBanner }
                 .appFontScale()
         } detail: {
             detailView
@@ -1118,6 +1110,7 @@ struct ContentView: View {
     private var stackLayout: some View {
         NavigationStack(path: $navigationPath) {
             sessionList(useNavigationLinks: true)
+                .safeAreaInset(edge: .bottom) { incomingShareBanner }
                 .navigationDestination(for: String.self) { id in
                     // `.id(id)` mirrors detailView (iPad): navigationDestination
                     // views are identified by stack depth, not path value, so
@@ -1129,9 +1122,10 @@ struct ContentView: View {
                         if parts.count == 3 {
                             AIChatView(sessionId: String(parts[2]), remoteDeviceId: String(parts[1]))
                                 .id(id)
+                                .onAppear { currentStackSessionId = id }
                         }
                     } else {
-                        AIChatView(sessionId: Self.isNewSessionId(id) ? nil : id, draftId: Self.isNewSessionId(id) ? id : nil, initialGroupId: Self.extractGroupId(from: id))
+                        AIChatView(sessionId: Self.isNewSessionId(id) ? nil : id, draftId: Self.isNewSessionId(id) ? id : nil, initialGroupId: Self.extractGroupId(from: id), receivesIncomingShares: didInitialLoad && !isWideLayout && incomingShareTargetID == id)
                             .id(id)
                             .onAppear {
                                 if currentStackSessionId != id { currentStackSessionId = id }
@@ -1153,7 +1147,7 @@ struct ContentView: View {
             // on first send. The .id() ensures each draft gets its own View lifecycle.
             let isDraft = Self.isNewSessionId(id)
             let effectiveId: String? = isDraft ? nil : id
-            AIChatView(sessionId: effectiveId, draftId: isDraft ? id : nil, initialGroupId: Self.extractGroupId(from: id))
+            AIChatView(sessionId: effectiveId, draftId: isDraft ? id : nil, initialGroupId: Self.extractGroupId(from: id), receivesIncomingShares: didInitialLoad && isWideLayout && incomingShareTargetID == id)
                 .id(id)
                 .onAppear {
                     draftLog.info("🔑DRAFT detailView APPEAR id=\(id) effectiveId=\(effectiveId ?? "nil") isDraft=\(isDraft)")
@@ -2323,25 +2317,56 @@ struct ContentView: View {
 
     // MARK: - Share Extension Handling
 
-    private func processPendingShare() {
-        shareLog.info("[Share] processPendingShare called")
+    private var incomingShareTargetID: String? {
+        let target = isWideLayout ? selectedSessionId : (navigationPath.isEmpty ? nil : currentStackSessionId)
+        guard let target, !target.hasPrefix("remote:") else { return nil }
+        return target
+    }
 
-        guard let pending = SharedContainerStore.loadPendingShare() else {
-            shareLog.warning("[Share] loadPendingShare returned nil — no data from extension")
-            shareCoordinator.hasPendingShare = false
-            return
+    private var shareLaunchSessionID: String? {
+        guard launchScreen == 0 || launchScreen == 1 else { return nil }
+        let localSessions = sessions.filter { !$0.isArchived && $0.source != "subagent" }
+        return localSessions.first { $0.id == lastLocalShareSessionID }?.id ??
+            (launchScreen == 1 ? localSessions.first?.id : nil)
+    }
+
+    private func rememberShareSession() {
+        guard didInitialLoad else { return }
+        if let target = incomingShareTargetID, !Self.isNewSessionId(target) {
+            lastLocalShareSessionID = target
+        } else {
+            lastLocalShareSessionID = incomingShareTargetID == nil ? "" : (newSessionRealId ?? "")
         }
+    }
 
-        shareLog.info("[Share] Loaded \(pending.items.count) items into buffer — launch flow unchanged")
-        for (i, item) in pending.items.enumerated() {
-            shareLog.info("[Share]   item[\(i)] kind=\(item.kind.rawValue) value=\(String(item.value.prefix(100)))")
+    @ViewBuilder
+    private var incomingShareBanner: some View {
+        if didInitialLoad, incomingShareTargetID == nil, !shareCoordinator.pending.isEmpty {
+            ViewThatFits {
+                HStack {
+                    incomingShareBannerLabel
+                    Spacer()
+                    newShareDraftButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    incomingShareBannerLabel
+                    newShareDraftButton
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial)
         }
+    }
 
-        SharedContainerStore.clearPendingShare()
-        shareCoordinator.hasPendingShare = false
-        shareCoordinator.storeBuffer(pending)
-        // Navigation is NOT touched here. The normal launch screen logic runs independently.
-        // AIChatView will consume the buffer when a new chat session is created (cached.isNew=true).
+    private var incomingShareBannerLabel: some View {
+        Label("Shared items ready", systemImage: "tray.and.arrow.down")
+            .font(.subheadline)
+    }
+
+    private var newShareDraftButton: some View {
+        Button("New Chat") { openSession(Self.makeNewSessionId()) }
+            .buttonStyle(.borderedProminent)
     }
 
     // MARK: - Empty State
@@ -4256,7 +4281,7 @@ private struct SessionRow: View, Equatable {
     /// contradict the row's live activity.
     ///
     /// [T-ios-session-running-shows-pause-badge] A session that is actively
-    /// running its agent loop (`isActive`, drawn with the SpinningRing) is by
+    /// running its agent loop (`isActive`, drawn with the running ring) is by
     /// definition NOT paused — yet a transient `canResume=true` flip mid-run
     /// (interrupted-tail detection at load, a Stop case that then resumes, a
     /// background-suspend that's already back in-flight) can leave a stale
@@ -4290,8 +4315,12 @@ private struct SessionRow: View, Equatable {
                         SuspendedRing(color: .yellow)
                             .frame(width: 42, height: 42)
                     } else if isActive {
-                        SpinningRing(color: iconBackgroundColor)
-                            .frame(width: 42, height: 42)
+                        SessionRunningRing()
+                            .frame(width: 48, height: 48)
+                            .id(session.id)
+                            .transition(.identity)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -4679,6 +4708,154 @@ private struct SuspendedRing: View {
     }
 }
 
+private struct SessionRunningRing: UIViewRepresentable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    func makeUIView(context: Context) -> RingView { RingView() }
+
+    func updateUIView(_ uiView: RingView, context: Context) {
+        uiView.configure(active: scenePhase == .active, reduceMotion: reduceMotion)
+    }
+
+    static func dismantleUIView(_ uiView: RingView, coordinator: ()) {
+        uiView.stop()
+    }
+
+    final class RingView: UIView {
+        private let gradient = CAGradientLayer()
+        private let stroke = CAShapeLayer()
+        private weak var scrollView: UIScrollView?
+        private var scrollObservations: [NSKeyValueObservation] = []
+        private var sceneActive = false
+        private var reduceMotion = false
+        private static let rotationKey = "sessionRunningRing"
+
+        init() {
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+            gradient.type = .conic
+            gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+            gradient.endPoint = CGPoint(x: 1, y: 0.5)
+            gradient.isHidden = true
+            stroke.fillColor = nil
+            stroke.strokeColor = UIColor.white.cgColor
+            stroke.lineWidth = 1.25
+            gradient.mask = stroke
+            layer.addSublayer(gradient)
+            updateColors()
+        }
+
+        required init?(coder: NSCoder) { return nil }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            gradient.frame = bounds
+            stroke.frame = gradient.bounds
+            stroke.path = UIBezierPath(ovalIn: stroke.bounds.insetBy(dx: stroke.lineWidth / 2, dy: stroke.lineWidth / 2)).cgPath
+            CATransaction.commit()
+            updateVisibility()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            observeScrollView()
+            updateVisibility()
+        }
+
+        override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+            super.traitCollectionDidChange(previousTraitCollection)
+            updateColors()
+        }
+
+        func configure(active: Bool, reduceMotion: Bool) {
+            sceneActive = active
+            if self.reduceMotion != reduceMotion {
+                self.reduceMotion = reduceMotion
+                updateColors()
+            }
+            observeScrollView()
+            updateVisibility()
+        }
+
+        func stop() {
+            sceneActive = false
+            scrollObservations.removeAll()
+            scrollView = nil
+            updateVisibility()
+        }
+
+        private func updateColors() {
+            let blue = UIColor.systemBlue.resolvedColor(with: traitCollection)
+            let opacities: [CGFloat] = reduceMotion ? [0.24, 0.24] : [0.05, 0.17, 0.48, 0.24, 0.05, 0.05]
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            gradient.colors = opacities.map { blue.withAlphaComponent($0).cgColor }
+            gradient.locations = reduceMotion ? nil : [0, 0.08, 0.16, 0.22, 0.32, 1]
+            CATransaction.commit()
+        }
+
+        private func observeScrollView() {
+            var ancestor = window == nil ? nil : superview
+            while let view = ancestor, !(view is UIScrollView) {
+                ancestor = view.superview
+            }
+            let enclosingScrollView = ancestor as? UIScrollView
+            guard enclosingScrollView !== scrollView else { return }
+            scrollObservations.removeAll()
+            scrollView = enclosingScrollView
+            guard let enclosingScrollView else { return }
+            scrollObservations = [
+                enclosingScrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateVisibility() }
+                },
+                enclosingScrollView.observe(\.bounds, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateVisibility() }
+                },
+            ]
+        }
+
+        private func updateVisibility() {
+            let visible = sceneActive && isInViewport
+            if gradient.isHidden == visible {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                gradient.isHidden = !visible
+                CATransaction.commit()
+            }
+            guard visible, !reduceMotion else {
+                gradient.removeAnimation(forKey: Self.rotationKey)
+                return
+            }
+            guard gradient.animation(forKey: Self.rotationKey) == nil else { return }
+            let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+            rotation.fromValue = 0
+            rotation.toValue = Double.pi * 2
+            rotation.duration = 2.8
+            rotation.repeatCount = .infinity
+            rotation.timingFunction = CAMediaTimingFunction(name: .linear)
+            gradient.add(rotation, forKey: Self.rotationKey)
+        }
+
+        private var isInViewport: Bool {
+            guard let window, let scrollView, !bounds.isEmpty else { return false }
+            let viewport = scrollView.bounds.inset(by: scrollView.adjustedContentInset)
+            var visibleBounds = convert(bounds, to: window).intersection(scrollView.convert(viewport, to: window))
+            var ancestor: UIView? = self
+            while let view = ancestor, !visibleBounds.isEmpty {
+                guard !view.isHidden, view.alpha > 0 else { return false }
+                if view.clipsToBounds || view === window {
+                    visibleBounds = visibleBounds.intersection(view.convert(view.bounds, to: window))
+                }
+                ancestor = view.superview
+            }
+            return !visibleBounds.isEmpty
+        }
+    }
+}
+
 // MARK: - Session Edit Sheet
 
 struct SessionEditSheet: View {
@@ -4981,6 +5158,7 @@ private struct SteppedSlider: View {
 private struct AppearanceSettingsView: View {
     @AppStorage(ChatTranscriptDisplayMode.preferenceKey) private var transcriptDisplayMode = ChatTranscriptDisplayMode.standard
     @AppStorage(ConsecutiveToolCallsPolicy.preferenceKey) private var collapseConsecutiveToolCalls = ConsecutiveToolCallsPolicy.defaultEnabled
+    @AppStorage(ComposerTextPasteMode.preferenceKey) private var textPasteMode = ComposerTextPasteMode.ask
     /// [T-floating-window] Appearance → 后台终端悬浮窗口. Default OFF: turning it on
     /// swaps the Live Activity's task card for the conversation card, a visible
     /// change existing installs did not ask for. `@AppStorage` persists the
@@ -5137,6 +5315,17 @@ private struct AppearanceSettingsView: View {
                 Text("Return Key")
             } footer: {
                 Text("Choose whether the Return key in the chat input inserts a newline or sends the message. Hardware Shift+Return always inserts a newline.")
+            }
+
+            Section {
+                Picker("粘贴为文件", selection: $textPasteMode) {
+                    Text("总是询问").tag(ComposerTextPasteMode.ask)
+                    Text("总是附加为文件").tag(ComposerTextPasteMode.file)
+                    Text("总是粘贴为文本").tag(ComposerTextPasteMode.text)
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("文件附件")
             }
 
             Section {

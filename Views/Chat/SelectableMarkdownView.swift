@@ -172,6 +172,7 @@ final class NativeMediaImageCache {
 
     func image(for key: String) -> UIImage? { cache.object(forKey: key as NSString) }
     func set(_ image: UIImage, for key: String) { cache.setObject(image, forKey: key as NSString) }
+    func clearCachedImages() { cache.removeAllObjects() }
 
     // MARK: - [T-ios-failed-image-refetch-storm] Negative (failure) cache
     //
