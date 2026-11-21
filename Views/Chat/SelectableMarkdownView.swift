@@ -35,6 +35,10 @@ func percentEncodePathSegmentIdempotent(_ seg: String) -> String {
     return decoded.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? seg
 }
 
+func normalizedMarkdownLinkURL(from destination: String) -> URL? {
+    MarkdownNSRenderer.normalizedLinkURL(from: destination)
+}
+
 // MARK: - ZeToast
 
 /// [T-toast-feedback] Lightweight, self-dismissing toast for one-shot action
@@ -792,13 +796,15 @@ fileprivate final class MarkdownNSRenderer {
 
         for item in items {
             let itemResult = NSMutableAttributedString()
-            itemResult.append(NSAttributedString(string: bulletGlyph, attributes: bulletAttrs))
-            itemResult.append(NSAttributedString(string: "  ", attributes: baseAttributes(quoteDepth: quoteDepth)))
+            if !item.continuesPrevious {
+                itemResult.append(NSAttributedString(string: bulletGlyph, attributes: bulletAttrs))
+                itemResult.append(NSAttributedString(string: "  ", attributes: baseAttributes(quoteDepth: quoteDepth)))
+            }
             let child = renderListItemChildren(item.children, listDepth: listDepth + 1, quoteDepth: quoteDepth, isTight: isTight)
             itemResult.append(child.attributed)
             applyListIndent(
                 to: itemResult,
-                firstLineIndent: itemStartIndent,
+                firstLineIndent: item.continuesPrevious ? itemContentIndent : itemStartIndent,
                 continuationIndent: itemContentIndent
             )
             renderedItems.append(
@@ -825,13 +831,13 @@ fileprivate final class MarkdownNSRenderer {
         let itemContentIndent = itemStartIndent + Self.listIndentPerLevel
 
         for (i, item) in items.enumerated() {
-            let number = "\(start + i). "
+            let number = item.continuesPrevious ? "" : "\(start + i). "
             let itemResult = NSMutableAttributedString(string: number, attributes: baseAttributes(quoteDepth: quoteDepth))
             let child = renderListItemChildren(item.children, listDepth: listDepth + 1, quoteDepth: quoteDepth, isTight: isTight)
             itemResult.append(child.attributed)
             applyListIndent(
                 to: itemResult,
-                firstLineIndent: itemStartIndent,
+                firstLineIndent: item.continuesPrevious ? itemContentIndent : itemStartIndent,
                 continuationIndent: itemContentIndent
             )
             renderedItems.append(
@@ -858,13 +864,13 @@ fileprivate final class MarkdownNSRenderer {
         let itemContentIndent = itemStartIndent + Self.listIndentPerLevel
 
         for item in items {
-            let checkbox = item.isCompleted ? "☑ " : "☐ "
+            let checkbox = item.continuesPrevious ? "" : item.isCompleted ? "☑ " : "☐ "
             let itemResult = NSMutableAttributedString(string: checkbox, attributes: baseAttributes(quoteDepth: quoteDepth))
             let child = renderListItemChildren(item.children, listDepth: listDepth + 1, quoteDepth: quoteDepth, isTight: isTight)
             itemResult.append(child.attributed)
             applyListIndent(
                 to: itemResult,
-                firstLineIndent: itemStartIndent,
+                firstLineIndent: item.continuesPrevious ? itemContentIndent : itemStartIndent,
                 continuationIndent: itemContentIndent
             )
             renderedItems.append(
@@ -1235,7 +1241,7 @@ fileprivate final class MarkdownNSRenderer {
     /// decode one extra layer before building the URL, so the `.link` carries
     /// the correct singly-encoded URL the tap handler / resolver expects. The
     /// resolver-side `subPathCandidates` tolerance stays as a backstop.
-    private func normalizedLinkURL(from destination: String) -> URL? {
+    static func normalizedLinkURL(from destination: String) -> URL? {
         let fallback = URL(string: destination)
         // Only ze:// links are affected; everything else is untouched.
         guard destination.hasPrefix("ze://") else {
@@ -1371,7 +1377,7 @@ fileprivate final class MarkdownNSRenderer {
 
         case .link(let destination, let children):
             var linkAttrs = attrs
-            if let url = normalizedLinkURL(from: destination) {
+            if let url = Self.normalizedLinkURL(from: destination) {
                 linkAttrs[.link] = url
             }
             linkAttrs[.foregroundColor] = theme.linkColor
@@ -2611,7 +2617,7 @@ final class TableAttachment: NSTextAttachment {
         return false
     }
 
-    func makeView(width: CGFloat) -> UIView {
+    func makeView(width: CGFloat, cornerRadius: CGFloat = 8, bindCell: ((UIView, Int, Int) -> Void)? = nil) -> UIView {
         let wrapper = UIView()
         wrapper.backgroundColor = .clear
 
@@ -2803,6 +2809,7 @@ final class TableAttachment: NSTextAttachment {
                     let textSize = tv.sizeThatFits(CGSize(width: cellFrame.width, height: .greatestFiniteMagnitude))
                     tv.frame.origin.y = (rowHeight - textSize.height) / 2
                     rowView.addSubview(tv)
+                    bindCell?(tv, rowIdx, colIdx)
 
                     Self.wireMathAttachments(mathAttachments, cellWidth: cellFrame.width, rowHeight: rowHeight, attrStr: attrStr) { [weak tv] in
                         guard let tv else { return }
@@ -2823,6 +2830,7 @@ final class TableAttachment: NSTextAttachment {
                     label.frame.size.height = textSize.height
                     label.frame.origin.y = (rowHeight - textSize.height) / 2
                     rowView.addSubview(label)
+                    bindCell?(label, rowIdx, colIdx)
 
                     Self.wireMathAttachments(mathAttachments, cellWidth: cellFrame.width, rowHeight: rowHeight, attrStr: attrStr) { [weak label] in
                         guard let label else { return }
@@ -2872,7 +2880,7 @@ final class TableAttachment: NSTextAttachment {
         // traitCollectionDidChange via `borderColorProvider`, so dark-mode
         // hosts always get the right resolved color even when the view was
         // initially created off-window.
-        scrollView.layer.cornerRadius = 8
+        scrollView.layer.cornerRadius = cornerRadius
         scrollView.layer.borderWidth = 0.5
         scrollView.applyBorderColorForCurrentTraits()
         scrollView.clipsToBounds = true
@@ -5071,6 +5079,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
     private var lastSizedTableGenSum: UInt64 = 0
     /// Raw markdown source for "Copy Markdown" action.
     var rawMarkdown: String = ""
+    var copyMarkdownSource: (() -> String)?
 
     // MARK: Attachment-layout re-entry guards (defensive — image-attachment hang)
     /// Set while `refreshAttachmentViews` is executing. Same-runloop re-entry
@@ -5631,6 +5640,10 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
     /// Copies the raw Markdown source to the pasteboard.
     @objc func copyMarkdown(_ sender: Any?) {
+        if let copyMarkdownSource {
+            UIPasteboard.general.string = copyMarkdownSource()
+            return
+        }
         // [T-ios-math-copy-latex-delimiters] Normalize LaTeX delimiters to the
         // $...$ / $$...$$ form that most LaTeX editors expect. LLM output often
         // uses the \(...\) / \[...\] alternate delimiters which are valid LaTeX
@@ -6932,6 +6945,125 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 // MARK: - SelectableMarkdownView (UIViewRepresentable)
 
 /// SwiftUI wrapper for the UITextView-based selectable Markdown renderer.
+struct SimpleStandaloneTable: View {
+    let alignments: [RawTableColumnAlignment]
+    let rows: [RawTableRow]
+    let width: CGFloat
+    let key: ChatSearchUnitKey
+    let bodyModel: SimpleTranscript.Body
+    @Environment(\.chatSearchHighlights) private var search
+    @Environment(\.chatSearchDimmed) private var dimmed
+
+    var body: some View {
+        if let search {
+            Observed(token: search.token(for: key), table: self)
+        } else {
+            grid(nil)
+        }
+    }
+
+    private func grid(_ highlight: ChatSearchUnitHighlight?) -> some View {
+        Grid(alignments: alignments, rows: rows, width: width, segmentID: key.segmentID, bodyModel: bodyModel,
+             highlight: highlight, dimmed: dimmed)
+            .frame(width: width)
+            .modifier(ZeOpenURLHandler())
+    }
+
+    private struct Observed: View {
+        @ObservedObject var token: ChatSearchHighlightToken
+        let table: SimpleStandaloneTable
+        var body: some View { table.grid(token.state) }
+    }
+
+    private struct Grid: UIViewRepresentable {
+        let alignments: [RawTableColumnAlignment]
+        let rows: [RawTableRow]
+        let width: CGFloat
+        let segmentID: SimpleSegmentID?
+        let bodyModel: SimpleTranscript.Body
+        let highlight: ChatSearchUnitHighlight?
+        let dimmed: Bool
+        @Environment(\.openURL) private var openURL
+
+        final class Host: UIView {
+            var table: TableAttachment?
+            var grid: UIView?
+            var cells: [CellAddress: UIView] = [:]
+            var gridWidth: CGFloat = 0
+        }
+
+        struct CellAddress: Hashable {
+            let row: Int
+            let column: Int
+        }
+
+        func makeUIView(context: Context) -> Host { Host() }
+
+        func updateUIView(_ host: Host, context: Context) {
+            let table = attachment(for: host)
+            let open = openURL
+            table.onOpenURL = { open($0) }
+            if host.grid == nil || host.gridWidth != width || table.needsViewRebuild {
+                host.grid?.removeFromSuperview()
+                host.cells.removeAll()
+                if let segmentID { table.preservedScrollOffset = bodyModel.tableOffsets[segmentID] }
+                let grid = table.makeView(width: width, cornerRadius: ChatBubbleStyle.cornerRadius) { cell, row, column in
+                    host.cells[.init(row: row, column: column)] = cell
+                }
+                if let segmentID, let scroll = TableAttachment.tableScrollView(in: grid) {
+                    scroll.onUserScroll = { [weak bodyModel] offset in bodyModel?.tableOffsets[segmentID] = offset }
+                }
+                host.addSubview(grid)
+                host.grid = grid
+                host.gridWidth = width
+                table.needsViewRebuild = false
+            }
+            highlightCells(in: host)
+        }
+
+        func sizeThatFits(_ proposal: ProposedViewSize, uiView: Host, context: Context) -> CGSize? {
+            let layout = attachment(for: uiView).computeLayout(for: width)
+            return CGSize(width: width, height: layout.rowHeights.reduce(0, +))
+        }
+
+        private func attachment(for host: Host) -> TableAttachment {
+            if let table = host.table {
+                if table.alignments != alignments || table.rows != rows { table.update(alignments: alignments, rows: rows) }
+                return table
+            }
+            let table = TableAttachment(alignments: alignments, rows: rows, theme: SelectableMarkdownTheme())
+            host.table = table
+            return table
+        }
+
+        private func highlightCells(in host: Host) {
+            for cell in host.cells.values {
+                cell.backgroundColor = .clear
+                cell.accessibilityIdentifier = nil
+            }
+            guard let highlight else { return }
+            let text = ChatSearchMarkdownText.tableText(rows: rows, columnCount: alignments.count)
+            let matches = ChatSearchMatcher.ranges(of: highlight.query, in: text, limit: highlight.drawLimit).map { NSRange($0, in: text) }
+            var offset = 0
+            for (rowIndex, row) in rows.enumerated() {
+                for (columnIndex, cell) in row.cells.prefix(alignments.count).enumerated() {
+                    let length = ChatSearchMarkdownText.tableCellText(cell).utf16.count
+                    let range = NSRange(location: offset, length: length)
+                    offset += length + 1
+                    guard let view = host.cells[.init(row: rowIndex, column: columnIndex)] else { continue }
+                    if let current = highlight.current, matches.indices.contains(current), NSIntersectionRange(matches[current], range).length > 0 {
+                        view.backgroundColor = ChatSearchHighlightStyle.currentColor(dimmed: dimmed)
+                        view.accessibilityIdentifier = "simpleTableCurrentMatch"
+                    } else if matches.contains(where: { NSIntersectionRange($0, range).length > 0 }) {
+                        view.backgroundColor = ChatSearchHighlightStyle.matchColor(dimmed: dimmed)
+                    }
+                }
+                if row.cells.isEmpty { offset += 1 }
+            }
+        }
+    }
+}
+
 struct SelectableMarkdownView: UIViewRepresentable {
     @Environment(\.chatSearchHighlights) private var searchCenter
     @Environment(\.chatSearchDimmed) private var searchDimmed
@@ -6966,6 +7098,8 @@ struct SelectableMarkdownView: UIViewRepresentable {
     var allowsSearchHighlight: Bool = false
     var visualizationOwner: AssistantBlock?
     var fitTextWidth = false
+    var searchSegmentID: SimpleSegmentID? = nil
+    var copyMarkdownSource: (() -> String)? = nil
     @Environment(\.openURL) private var openURL
 
     func makeCoordinator() -> Coordinator {
@@ -7029,6 +7163,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: SelectableMarkdownTextView, context: Context) {
+        textView.copyMarkdownSource = copyMarkdownSource
         textView.markdownImageSelectionOnly = imageSelectionOnly
         if context.coordinator.renderer.imageSelectionState !== imageSelectionState {
             context.coordinator.renderer.imageSelectionState = imageSelectionState
@@ -7046,7 +7181,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // [T-chat-search] Runs before the markdown-unchanged early return so a
         // query change re-colours the visible text without re-rendering it.
         textView.allowsSearchHighlight = allowsSearchHighlight
-        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body) } : nil
+        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body, segmentID: searchSegmentID) } : nil
         textView.searchCenter = snapshotRendering ? nil : searchCenter
         textView.bindSearchHighlight(center: allowsSearchHighlight && !snapshotRendering ? searchCenter : nil, key: textView.searchUnitKey, dimmed: searchDimmed)
         textView.scheduleSearchHighlightRefresh()
@@ -7445,7 +7580,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // [T-chat-search] Repaint after either path: the fast path mutates
         // textStorage directly, so the highlight would otherwise be dropped on
         // the next streaming tick.
-        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body) } : nil
+        textView.searchUnitKey = allowsSearchHighlight ? messageId.map { ChatSearchUnitKey(messageId: $0, blockId: blockId, field: .body, segmentID: searchSegmentID) } : nil
         textView.searchCenter = snapshotRendering ? nil : searchCenter
         textView.bindSearchHighlight(center: allowsSearchHighlight && !snapshotRendering ? searchCenter : nil, key: textView.searchUnitKey, dimmed: searchDimmed)
         textView.scheduleSearchHighlightRefresh()
@@ -7929,7 +8064,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                     ? (prefix: markdown, plainSuffix: "")
                     : splitStreamingTableTail(markdown)
                 let preparedPrefix = prepareMarkdownForRender(split.prefix)
-                let blocks = MarkdownContent(preparedPrefix).blocks
+                let blocks = searchSegmentID == nil ? MarkdownContent(preparedPrefix).blocks : (cachedContent?.blocks ?? [])
                 coord.renderer.imageSelectionState = imageSelectionState
                 coord.renderer.messageId = messageId
                 coord.renderer.blockId = blockId

@@ -505,7 +505,6 @@ struct AIChatView: View {
     @ObservedObject private var lockStore = SessionLockStore.shared
     /// Server commands and mutations proposed by a model pause here until the
     /// user explicitly allows or denies the individual remote operation.
-    @ObservedObject private var remoteServerAIGate = RemoteServerAIConfirmationGate.shared
     /// A model may only prepare non-secret server metadata. This store drives
     /// the native review form where the user controls every persisted field.
     @ObservedObject private var remoteServerAIDraftStore = RemoteServerAIDraftStore.shared
@@ -526,8 +525,7 @@ struct AIChatView: View {
     @State private var titlePillEditSession: ChatSession?
     /// Default chat title for sessions without a generated title. Sourced
     /// from SOUL.md (`name`), falls back to "Ze". Refreshed on .soulMdChanged.
-    @State private var soulName: String = SoulStore.cachedMetadata.name.isEmpty
-        ? "Ze" : SoulStore.cachedMetadata.name
+    @State private var soulName: String = SoulStore.cachedMetadata.displayName
 
     /// True when any sheet or fullScreenCover is presented (suppress auto-focus to avoid keyboard bugs).
     private var hasOverlayPresented: Bool {
@@ -1085,27 +1083,8 @@ struct AIChatView: View {
         } message: {
             Text(String(localized: "This will delete all local messages for this chat and re-download them from iCloud. Local changes that haven't synced yet will be lost. Continue?"))
         }
-        .confirmationDialog(
-            "允许 AI 执行此操作？",
-            isPresented: Binding(
-                get: { remoteServerAIGate.pending != nil },
-                set: { if !$0 { remoteServerAIGate.resolve(allowed: false) } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let request = remoteServerAIGate.pending {
-                Button(request.isDestructive ? "确认执行" : "允许") {
-                    remoteServerAIGate.resolve(allowed: true)
-                }
-                Button("拒绝", role: .cancel) {
-                    remoteServerAIGate.resolve(allowed: false)
-                }
-            }
-        } message: {
-            if let request = remoteServerAIGate.pending {
-                Text("对象：\(request.serverName)\n操作：\(request.operation)\n\n\(request.detail)")
-            }
-        }
+        .modifier(AIApprovalDialogModifier(sessionID: vm.sessionId,
+                                           hostReady: isChatViewVisible && !vm.isLoadingSession && !titleIsVisuallyLocked))
         .modifier(RemoteServerAIDraftPresentationModifier())
         .modifier(RemoteDiskAIDraftPresentationModifier())
         // [T-ios-json-open-provider-import-prompt] Shared/opened Provider-export
@@ -1267,6 +1246,20 @@ struct AIChatView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: MarkdownImageTapRouter.tappedNotification)) { note in
             handleMarkdownImageTap(note)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SimpleTranscriptMediaRouter.notification)) { note in
+            guard transcriptDisplayMode == .simple, let message = note.object as? ChatMessage,
+                  vm.messages.contains(where: { $0 === message }),
+                  let payload = note.userInfo?["payload"] as? SimpleTranscriptMediaRouter.Payload else { return }
+            switch payload {
+            case .gallery(let presentation): imageGallery = presentation
+            case .file(let url):
+                if url.isFileURL { presentChatFile(url, resolved: FileManager.default.isReadableFile(atPath: url.path) ? url : nil) }
+                else { _ = handleZeURLTap(url) }
+            case .link(let url):
+                if ["ze", "http", "https"].contains(url.scheme ?? "") { _ = handleZeURLTap(url) }
+                else { UIApplication.shared.open(url) }
+            }
         }
         .modifier(DismissImmersiveCoversListener(onDismiss: dismissAllOwnedImmersiveCovers))
         .onReceive(vm.requestComposerFocusSignal) {
@@ -1608,14 +1601,12 @@ struct AIChatView: View {
         AnyView(
         chatMediaPresentation
         .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
-            let name = SoulStore.cachedMetadata.name
-            soulName = name.isEmpty ? "Ze" : name
+            soulName = SoulStore.cachedMetadata.displayName
         }
         .onAppear {
             // Refresh after returning from Soul Settings, including changes
             // made while this page was not observing notifications.
-            let name = SoulStore.cachedMetadata.name
-            soulName = name.isEmpty ? "Ze" : name
+            soulName = SoulStore.cachedMetadata.displayName
             let sinceInit = (CFAbsoluteTimeGetCurrent() - AIChatViewModel.onAppearTimestamp) * 1000
             zeLogger.info("[SessionLoad] onAppear T+\(String(format: "%.0f", sinceInit))ms isNew=\(cached.isNew) msgs=\(vm.messages.count)")
             // [T-inputbar-stale-across-reentry] Re-arm the leading-edge seed on
@@ -2795,7 +2786,8 @@ struct AIChatView: View {
                 // the -40 landing, so the trim is -10. The voice panel
                 // keeps the untrimmed value (it must clear the status row).
                 topOverlayInset: chatListTopOverlayInset,
-                geometryContext: listGeometryContext
+                geometryContext: listGeometryContext,
+                allowsCompletionGlow: isChatViewVisible && !titleIsVisuallyLocked
             )
             // Empty/loading overlay for tap-to-dismiss-keyboard.
             // Placed BEFORE the directory timeline in the ZStack so the
@@ -3135,7 +3127,12 @@ struct AIChatView: View {
             DeepLinkRouter.handle(url: url, shareCoordinator: shareCoordinator)
             return .handled
         }
-        if let fileURL = resolveZeFileURL(url: url) {
+        presentChatFile(url, resolved: resolveZeFileURL(url: url))
+        return .handled
+    }
+
+    private func presentChatFile(_ url: URL, resolved fileURL: URL?) {
+        if let fileURL {
             let ext = url.pathExtension.lowercased()
             withAnimation {
                 if zeImageExtensions.contains(ext) {
@@ -3163,7 +3160,6 @@ struct AIChatView: View {
             let name = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
             missingZeFileName = name.isEmpty ? url.absoluteString : name
         }
-        return .handled
     }
 
     private func handleDropProviders(_ providers: [NSItemProvider]) {
@@ -7360,6 +7356,100 @@ private extension UIView {
 // `__swift_instantiateConcreteTypeFromMangledNameV2` into runtime
 // metadata recursion and crashed with EXC_BAD_ACCESS at the stack
 // guard region on iOS 26.
+@MainActor
+struct AIApprovalDialogModifier: ViewModifier {
+    let sessionID: String?
+    let hostReady: Bool
+
+    @ObservedObject private var gate = RemoteServerAIConfirmationGate.shared
+    @ObservedObject private var lockStore = SessionLockStore.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content.background {
+            if let request = gate.pending, request.sessionID == nil || request.sessionID == sessionID,
+               gate.notificationPresentationID == nil || gate.notificationPresentationID == request.id {
+                Color.clear
+                    .confirmationDialog(
+                        "允许 AI 执行此操作？",
+                        isPresented: Binding(
+                            get: { gate.pending?.id == request.id && canPresent },
+                            set: { presented in
+                                if !presented {
+                                    DispatchQueue.main.async { reject(id: request.id) }
+                                }
+                            }
+                        ),
+                        titleVisibility: .visible,
+                        presenting: request
+                    ) { shown in
+                        Button(shown.isDestructive ? "确认执行" : "允许") {
+                            if canPresent {
+                                gate.presentationReady(id: shown.id)
+                                gate.resolve(id: shown.id, allowed: true)
+                            }
+                        }
+                        Button("拒绝", role: .cancel) {
+                            reject(id: shown.id)
+                        }
+                    } message: { shown in
+                        Text("对象：\(shown.serverName)\n操作：\(shown.operation)\n\n\(shown.detail)")
+                    }
+                    .task(id: canPresent ? gate.notificationPresentationID : nil) {
+                        if !Task.isCancelled && canPresent { gate.presentationReady(id: request.id) }
+                    }
+                    .id(request.id)
+            }
+        }
+        .overlay(alignment: .top) {
+            if let target = pendingNavigationTarget {
+                Button {
+                    guard let current = pendingNavigationTarget, current.approvalID == target.approvalID else { return }
+                    NotificationNavigationStore.shared.navigate(to: current)
+                } label: {
+                    SessionNoticeBanner(text: String(localized: "Review pending operation"),
+                                        systemImage: "exclamationmark.shield", showsChevron: true)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+            }
+        }
+    }
+
+    private var pendingNavigationTarget: NotificationNavigationStore.Target? {
+        guard canPresent, let request = gate.pending, let origin = request.sessionID, origin != sessionID else { return nil }
+        return .init(sessionId: origin, approvalID: request.id)
+    }
+
+    private var canPresent: Bool {
+        hostReady && scenePhase == .active && UIApplication.shared.applicationState == .active
+            && !gate.showsExpiredNotice && !lockStore.appIsLocked
+            && sessionID.map { !lockStore.isVisuallyLocked($0) } != false
+    }
+
+    private func reject(id: UUID) {
+        guard canPresent else { return }
+        gate.presentationReady(id: id)
+        gate.resolve(id: id, allowed: false)
+    }
+}
+
+@MainActor
+struct AIApprovalExpiredNoticeModifier: ViewModifier {
+    @ObservedObject private var gate = RemoteServerAIConfirmationGate.shared
+    @ObservedObject private var lockStore = SessionLockStore.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content.alert("此审核已失效", isPresented: Binding(
+            get: { gate.showsExpiredNotice && scenePhase == .active && !lockStore.appIsLocked },
+            set: { if !$0 { gate.dismissExpiredNotice() } }
+        )) {
+            Button("确定", role: .cancel) { gate.dismissExpiredNotice() }
+        }
+    }
+}
+
 private struct SessionLockGateOverlay: View {
     let sessionId: String?
 
