@@ -381,6 +381,12 @@ check("standalone file URLs enter the existing preview and share dispatch withou
       and "presentChatFile(url, resolved: resolveZeFileURL(url: url))" in file_preview
       and "previewDocumentFile = fileURL" in file_preview and "shareFile = fileURL" in file_preview)
 gallery = section(media, "private static func openImageGallery(", "private struct SimpleThumbnailImage")
+standalone_media = section(media, "struct SimpleStandaloneMedia:", "private struct SimpleThumbnailImage")
+check("standalone image opening passes the owning block's non-optional ID rather than the search key",
+      "SimpleStandaloneMedia(media: media, blockID: block.id, segmentID: id" in segment_view
+      and re.search(r"(?m)^    let blockID: UUID$", standalone_media)
+      and "Self.openImage(message: message, blockID: blockID, segmentID: segmentID, media: media)" in standalone_media
+      and "key.blockId" not in standalone_media)
 check("the gallery keeps body order and opens at the selected block/segment occurrence even when URLs repeat",
       "let segments = block.simpleBody.segments" in gallery
       and "entries.firstIndex(where: { $0.0 == blockID && $0.1 == segmentID })" in gallery

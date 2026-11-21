@@ -532,7 +532,8 @@ private struct SimpleAssistantSegmentView: View {
             let key = ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: id)
             let copyMarkdown = { bodyModel.markdownForCopy(segment) }
             if let media = segment.media {
-                SimpleStandaloneMedia(media: media, segmentID: id, key: key, width: width, bodyModel: bodyModel, message: message) { onResize?($0) }
+                SimpleStandaloneMedia(media: media, blockID: block.id, segmentID: id, key: key, width: width,
+                                      bodyModel: bodyModel, message: message) { onResize?($0) }
                     .id(media)
             } else if case .table(let alignments, let rows)? = segment.blocks.first, id.kind == .table {
                 SimpleStandaloneTable(alignments: alignments, rows: rows, width: width, key: key, bodyModel: bodyModel)

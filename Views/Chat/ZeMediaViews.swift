@@ -538,6 +538,7 @@ struct ZeOpenURLHandler: ViewModifier {
 
 struct SimpleStandaloneMedia: View {
     let media: SimpleBodySegment.Media
+    let blockID: UUID
     let segmentID: SimpleSegmentID
     let key: ChatSearchUnitKey
     let width: CGFloat
@@ -641,7 +642,7 @@ struct SimpleStandaloneMedia: View {
             if let resource {
                 Button {
                     if kind == .video { videoURL = resource.url }
-                    else { Self.openImage(message: message, blockID: key.blockId, segmentID: segmentID, media: media) }
+                    else { Self.openImage(message: message, blockID: blockID, segmentID: segmentID, media: media) }
                 } label: {
                     ZStack {
                         if let thumbnail = resource.thumbnail {
