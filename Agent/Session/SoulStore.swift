@@ -1292,6 +1292,8 @@ struct SoulHeaderAvatar: View {
     let assistantName: String
     let providerName: String
     let modelName: String
+    let maxPillWidth: CGFloat
+    let headerActivityText: String?
     let onActivityChange: (String?) -> Void
     @StateObject private var activity = SoulHeaderActivityModel()
     @State private var showsModelName = false
@@ -1305,6 +1307,22 @@ struct SoulHeaderAvatar: View {
             return providerName
         }
         return modelName
+    }
+
+    private var pillWidth: CGFloat {
+        let nameFont = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        let heading = headerActivityText == nil ? displayedName : assistantName
+        let headingWidth = ceil((heading as NSString).size(withAttributes: [.font: nameFont]).width)
+        let contentWidth = headerActivityText.map { status in
+            let statusWidth = ceil((status as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 12)]).width)
+            let modelWidth = ceil((modelName as NSString).size(withAttributes: [.font: nameFont]).width)
+            return max(headingWidth, statusWidth, modelWidth)
+        } ?? headingWidth
+        return min(maxPillWidth, contentWidth + 28)
+    }
+
+    private var nameAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.3)
     }
 
     private var rotationKey: RotationKey {
@@ -1329,7 +1347,7 @@ struct SoulHeaderAvatar: View {
                     insertion: .opacity.combined(with: .offset(y: 3)),
                     removal: .opacity.combined(with: .offset(y: -3))
                 ))
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: displayedName)
+                .animation(nameAnimation, value: displayedName)
             if let text = activity.text {
                 Text(text)
                     .font(.system(size: 12))
@@ -1354,9 +1372,10 @@ struct SoulHeaderAvatar: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled else { return }
-                showsModelName.toggle()
+                withAnimation(nameAnimation) { showsModelName.toggle() }
             }
         }
+        .frame(width: pillWidth - 24)
     }
 }
 
