@@ -4483,6 +4483,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
         guard AppFeedbackPreferences.shouldComplete(hasError: message.error != nil, isCancelled: cancelled,
                                                     canResume: canResume, hasReply: hasReply) else { return }
         feedbackCompletedReplyID = message.id
+        if let sessionId, let block = message.blocks.last(where: { SimpleTranscript.row(for: $0) == .text }) {
+            ReplyCompletionGlowEvents.shared.send(.init(sessionID: sessionId, messageID: message.id, blockID: block.id))
+        }
         if AppFeedback.completedReply(hasError: false, isCancelled: false, canResume: false, hasReply: true) {
             feedbackAudibleReplyID = message.id
         }
@@ -5621,9 +5624,11 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                                 snapshotEntry: nil, snapshotItem: nil, cancelled: true
                             ))
                         }
-                        let outcome = await self.executeSingleToolUse(
-                            tu: tu, msgIdx: msgIdx, tools: toolsSnapshot, batchBudget: imageBudgetActor
-                        )
+                        let outcome = await AIApprovalContext.$sessionID.withValue(self.sessionId) {
+                            await self.executeSingleToolUse(
+                                tu: tu, msgIdx: msgIdx, tools: toolsSnapshot, batchBudget: imageBudgetActor
+                            )
+                        }
                         return (idx, outcome)
                     }
                     added += 1

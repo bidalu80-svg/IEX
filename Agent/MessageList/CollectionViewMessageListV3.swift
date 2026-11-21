@@ -92,6 +92,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     /// Height of the floating chat header below the native navigation bar.
     var topOverlayInset: CGFloat = 0
     var geometryContext: ChatListGeometryContext? = nil
+    var allowsCompletionGlow = false
 
     func makeUIViewController(context: Context) -> MessageListViewController {
         let vc = MessageListViewController()
@@ -114,6 +115,8 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ vc: MessageListViewController, coordinator: Coordinator) {
+        coordinator.setAllowsCompletionGlow(false)
+        coordinator.stopSimpleProjection()
         coordinator.detachGeometry()
     }
 
@@ -131,6 +134,7 @@ struct CollectionViewMessageListV3: UIViewControllerRepresentable {
         // the buttons stayed hidden at diff≈2700pt from the bottom).
         coord.updateScrollMemoryKey(scrollMemoryKey)
         coord.rebindViewModelIfNeeded(vm)
+        coord.setAllowsCompletionGlow(allowsCompletionGlow)
         coord.onRetryMessage = onRetryMessage
         coord.onRetryLast = onRetryLast
         coord.onReplyMessage = onReplyMessage
@@ -304,6 +308,9 @@ fileprivate struct BridgedAssistantBlockV3: View {
     @ObservedObject var bridge: CellStateBridgeV2
     var maxWidth: CGFloat
     var simpleRow: SimpleTranscript.Row? = nil
+    var segmentID: SimpleSegmentID? = nil
+    var glow: CompletionGlow? = nil
+    var onSegmentResize: ((SimpleSegmentID) -> Void)? = nil
 
     private var blockAccessibilityId: String {
         switch block.kind {
@@ -327,9 +334,8 @@ fileprivate struct BridgedAssistantBlockV3: View {
                     .contentShape(Rectangle())
                     .contextMenu { simpleMessageActions }
                     .accessibilityActions { simpleMessageActions }
-                    .frame(minWidth: simpleRow == .text ? 0 : nil,
-                           maxWidth: maxWidth > 0 ? maxWidth : (simpleRow == .text ? .infinity : nil),
-                           alignment: .leading)
+                    .frame(width: segmentID == nil ? nil : max(1, maxWidth), alignment: .leading)
+                    .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
                     .opacity(message.isCompactedHistory ? 0.5 : 1.0)
@@ -361,17 +367,19 @@ fileprivate struct BridgedAssistantBlockV3: View {
             toolSnapshots: bridge.toolSnapshots,
             highlightedBlockId: .constant(nil),
             detailBlock: $bridge.detailBlock,
-            fitTextWidth: simpleRow == .text
+            fitTextWidth: false
         )
     }
 
     @ViewBuilder private func simpleContent(_ row: SimpleTranscript.Row) -> some View {
         switch row {
-        case .text:
-            blockContent
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+        case .text, .standalone:
+            if let segmentID {
+                SimpleAssistantSegmentView(bodyModel: block.simpleBody, message: message, block: block,
+                                           id: segmentID, width: max(1, maxWidth), bridge: bridge, glow: glow,
+                                           onResize: onSegmentResize)
+                    .id(ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: segmentID))
+            }
         case .question:
             QuestionCardView(block: block).padding(.vertical, 4)
         }
@@ -387,7 +395,14 @@ fileprivate struct BridgedAssistantBlockV3: View {
         let text = message.blocks.filter { $0.kind == .text }.map(\.content).joined(separator: "\n\n")
         if SimpleTranscript.hasText(text) {
             Button("Copy All") { UIPasteboard.general.string = ZeVisualizationStreaming.prepare(text, readable: true) }
-            Button("Copy Markdown") { UIPasteboard.general.string = text }
+            if let segmentID, let segment = block.simpleBody.segments.first(where: { $0.id == segmentID }), let media = segment.media {
+                Button("Copy Markdown") { UIPasteboard.general.string = block.simpleBody.markdownForCopy(segment) }
+                if let link = media.linkDestination {
+                    Button("Copy Link") { UIPasteboard.general.string = link }
+                }
+            } else {
+                Button("Copy Markdown") { UIPasteboard.general.string = text }
+            }
         }
         if let share = bridge.onCopyScreenshot { Button("Copy Screenshot", action: share) }
         if let retry = bridge.onRetry { Button("Retry", action: retry) }
@@ -494,6 +509,49 @@ fileprivate struct BridgedAssistantBlockV3: View {
     }
 }
 
+private struct SimpleAssistantSegmentView: View {
+    @ObservedObject var bodyModel: SimpleTranscript.Body
+    let message: ChatMessage
+    let block: AssistantBlock
+    let id: SimpleSegmentID
+    let width: CGFloat
+    let bridge: CellStateBridgeV2
+    let glow: CompletionGlow?
+    let onResize: ((SimpleSegmentID) -> Void)?
+
+    var body: some View {
+        if let segment = bodyModel.segments.first(where: { $0.id == id }) {
+            let key = ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: id)
+            let copyMarkdown = { bodyModel.markdownForCopy(segment) }
+            if let media = segment.media {
+                SimpleStandaloneMedia(media: media, segmentID: id, key: key, width: width, bodyModel: bodyModel, message: message) { onResize?($0) }
+                    .id(media)
+            } else if case .table(let alignments, let rows)? = segment.blocks.first, id.kind == .table {
+                SimpleStandaloneTable(alignments: alignments, rows: rows, width: width, key: key, bodyModel: bodyModel)
+            } else {
+                SelectableMarkdownView(markdown: "\(segment.hashValue):\(segment.searchText)", cachedContent: MarkdownContent(blocks: segment.blocks),
+                                       messageId: message.id, blockId: block.id,
+                                       onCopyScreenshot: bridge.onCopyScreenshot,
+                                       onReadAloud: bridge.isStreaming ? nil : bridge.onReadAloud, onSpeakText: bridge.onSpeakText,
+                                       allowsSearchHighlight: true, visualizationOwner: block, fitTextWidth: true,
+                                       searchSegmentID: id, copyMarkdownSource: copyMarkdown)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: ChatBubbleStyle.cornerRadius))
+                    .overlay {
+                        if let glow {
+                            CompletionGlowAnchor(glow: glow)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .modifier(ZeOpenURLHandler())
+            }
+        }
+    }
+}
+
 /// Footer: typing indicator, error, resume banner, token usage, reply actions.
 /// V3: No GeometryReader. Sheet moved to zero-size overlay to prevent
 /// inflated self-sizing from sheet-capable view modifiers.
@@ -530,7 +588,7 @@ fileprivate struct BridgedAssistantFooterV3: View {
         VStack(alignment: .leading, spacing: 8) {
             // Typing indicator
             if footer.showsTyping {
-                TypingIndicator()
+                AssistantReplyWaitingIndicator()
             }
 
             // Inline error
@@ -949,8 +1007,105 @@ struct SessionExportAssistantTurn: View {
 
 private final class WholeMessageCellV3: SelfSizingCell {}
 private final class AssistantHeaderCellV3: SelfSizingCell {}
-private final class AssistantBlockCellV3: SelfSizingCell {}
+private final class AssistantBlockCellV3: SelfSizingCell {
+    let completionGlow = CompletionGlow()
+    var glowItem: MessageListItem?
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        glowItem = nil
+        completionGlow.reset()
+    }
+}
 private final class AssistantFooterCellV3: SelfSizingCell {}
+
+private struct CompletionGlowAnchor: UIViewRepresentable {
+    let glow: CompletionGlow
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        glow.anchor = view
+    }
+}
+
+@MainActor
+fileprivate final class CompletionGlow {
+    weak var anchor: UIView?
+    private weak var pulse: CALayer?
+
+    func reset() {
+        clear()
+        anchor = nil
+    }
+
+    func clear() {
+        pulse?.removeFromSuperlayer()
+        pulse = nil
+    }
+
+    func play(in cell: UICollectionViewCell, collectionView: UICollectionView) {
+        guard let anchor, anchor.window != nil, anchor.isDescendant(of: cell), !anchor.bounds.isEmpty,
+              anchor.convert(anchor.bounds, to: collectionView).intersects(collectionView.bounds.inset(by: collectionView.adjustedContentInset)) else { return }
+        clear()
+        let frame = anchor.convert(anchor.bounds, to: cell)
+        let outline = UIBezierPath(roundedRect: frame, cornerRadius: ChatBubbleStyle.cornerRadius).cgPath
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        let rise = NSNumber(value: 100.0 / 550.0)
+        let pulse = CALayer()
+        pulse.frame = cell.bounds
+        pulse.opacity = 0
+        let stroke = CAShapeLayer()
+        stroke.frame = pulse.bounds
+        stroke.path = outline
+        stroke.fillColor = nil
+        stroke.strokeColor = UIColor.systemBlue.cgColor
+        stroke.lineWidth = 1
+        pulse.addSublayer(stroke)
+
+        if !reduceMotion {
+            let haze = CAShapeLayer()
+            haze.frame = pulse.bounds
+            haze.path = outline
+            haze.fillColor = nil
+            haze.strokeColor = UIColor.systemBlue.cgColor
+            haze.lineWidth = 1
+            haze.shadowColor = UIColor.systemBlue.cgColor
+            haze.shadowOpacity = 1
+            haze.shadowOffset = .zero
+            haze.shadowRadius = 2
+            pulse.addSublayer(haze)
+
+            let expanded = UIBezierPath(roundedRect: frame.insetBy(dx: -3, dy: -3),
+                                        cornerRadius: ChatBubbleStyle.cornerRadius + 3).cgPath
+            let expansion = CAKeyframeAnimation(keyPath: "path")
+            expansion.values = [outline, outline, expanded]
+            expansion.keyTimes = [0, rise, 1]
+            expansion.duration = 0.55
+            haze.add(expansion, forKey: "path")
+            let blur = CAKeyframeAnimation(keyPath: "shadowRadius")
+            blur.values = [2, 2, 5]
+            blur.keyTimes = expansion.keyTimes
+            blur.duration = expansion.duration
+            haze.add(blur, forKey: "shadowRadius")
+        }
+
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = reduceMotion ? [0.18, 0] : [0, 0.35, 0]
+        opacity.keyTimes = reduceMotion ? [0, 1] : [0, rise, 1]
+        opacity.duration = 0.55
+        self.pulse = pulse
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { pulse.removeFromSuperlayer() }
+        cell.layer.addSublayer(pulse)
+        pulse.add(opacity, forKey: "opacity")
+        CATransaction.commit()
+    }
+}
 
 // MARK: - V3 Coordinator
 
@@ -1199,7 +1354,7 @@ extension CollectionViewMessageListV3 {
             }
             let items = source.snapshot().itemIdentifiers
             let hasBody = items.contains { item in
-                if case .assistantBlock(let id, _) = item { return id == messageID }
+                if case .assistantBlock(let id, _, _) = item { return id == messageID }
                 return false
             }
             let footerHeight = source.indexPath(for: .assistantFooter(messageID))
@@ -1369,7 +1524,7 @@ extension CollectionViewMessageListV3 {
 
         private func isPresentableBlock(_ item: MessageListItem) -> Bool {
             if transcriptMode == .simple { return simpleRows[item] != nil }
-            guard case .assistantBlock(let id, let blockID) = item,
+            guard case .assistantBlock(let id, let blockID, _) = item,
                   let index = messageIndex[id], snapshotMessages.indices.contains(index),
                   let block = snapshotMessages[index].blocks.first(where: { $0.id == blockID }) else { return false }
             switch block.kind {
@@ -1754,6 +1909,7 @@ extension CollectionViewMessageListV3 {
         /// anchor, and this instance starts at the bottom again.
         func updateScrollMemoryKey(_ key: String?) {
             guard key != scrollMemoryKey else { return }
+            clearCompletionGlows()
             let promotingDraft = didRestoreScroll && vm?.sessionId == key && scrollMemoryKey == vm?.draftId && sendPosition != nil
             let activeSend = sendPosition
             invalidatePositionRequests()
@@ -1795,6 +1951,13 @@ extension CollectionViewMessageListV3 {
             vc.loadViewIfNeeded()
             guard let collectionView = vc.collectionView else { return }
             collectionView.delegate = self
+            vc.onListDisappearance = { [weak self] in self?.clearCompletionGlows() }
+            ReplyCompletionGlowEvents.shared.events
+                .sink { [weak self] event in self?.showCompletionGlow(event) }
+                .store(in: &completionGlowSubscriptions)
+            NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+                .sink { [weak self] _ in self?.clearCompletionGlows() }
+                .store(in: &completionGlowSubscriptions)
             collectionView.prefetchDataSource = self
             (collectionView as? NoAnimationCollectionView)?.viewportWillResize = { [weak self] in
                 self?.enqueuePosition(.resize)
@@ -2000,7 +2163,7 @@ extension CollectionViewMessageListV3 {
                 }.minSize(width: 0, height: 0).margins(.all, 0)
                 cell.applyContentConfiguration(config)
 
-            case .assistantBlock(let msgId, let blockId):
+            case .assistantBlock(let msgId, let blockId, let segmentID):
                 guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else {
                     AppLogger(category: "SnapshotDiag").warning("[SnapshotDiag] configureCell MISS msgId=\(msgId.uuidString.prefix(8)) — messageIndex miss or OOB")
                     return
@@ -2013,13 +2176,29 @@ extension CollectionViewMessageListV3 {
                 let bridge = getOrCreateBridge(for: message, in: messages)
                 if block.kind.isSubAgentTool { observeInlineSubAgentRows(in: message) }
                 cell.backgroundColor = .clear
+                let simpleRow = simpleRows[item]
+                let blockCell = cell as? AssistantBlockCellV3
+                let glowItem = simpleRow == .text ? item : nil
+                if blockCell?.glowItem != glowItem {
+                    blockCell?.completionGlow.reset()
+                    blockCell?.glowItem = glowItem
+                }
+                let glow = glowItem == nil ? nil : blockCell?.completionGlow
+                let columnWidth = segmentID == nil ? width : max(1, min(width > 0 ? width : .greatestFiniteMagnitude,
+                                                                        (viewController?.collectionView.bounds.width ?? 390) - 32))
                 let config = UIHostingConfiguration {
                     BridgedAssistantBlockV3(
                         block: block,
                         message: message,
                         bridge: bridge,
-                        maxWidth: width,
-                        simpleRow: simpleRows[item]
+                        maxWidth: columnWidth,
+                        simpleRow: simpleRow,
+                        segmentID: segmentID,
+                        glow: glow,
+                        onSegmentResize: { [weak self, weak block] id in
+                            guard let block else { return }
+                            self?.invalidateSimpleSegment(.assistantBlock(msgId, blockId, id), ownedBy: block)
+                        }
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
@@ -2438,6 +2617,7 @@ extension CollectionViewMessageListV3 {
         /// initial defaults nobody would otherwise ever update.
         func rebindViewModelIfNeeded(_ newVM: AIChatViewModel) {
             if let current = vm, current === newVM { return }
+            clearCompletionGlows()
             let hadOld = vm != nil
             invalidatePositionRequests()
             #if DEBUG
@@ -2453,7 +2633,7 @@ extension CollectionViewMessageListV3 {
             let previousFooterTailID = footerTail?.id
             footerTailSub = nil
             footerTail = nil
-            simpleMessageSubs.removeAll()
+            stopSimpleProjection()
             footerUsageSubs.removeAll()
             pendingFooterIDs.removeAll()
             if let previousFooterTailID { pendingFooterIDs.insert(previousFooterTailID) }
@@ -3353,6 +3533,45 @@ extension CollectionViewMessageListV3 {
         private var simpleBlockObjects: [MessageListItem: ObjectIdentifier] = [:]
         private var simpleProjectionDirty = false
         private var simpleMessageSubs: [UUID: (ObjectIdentifier, AnyCancellable)] = [:]
+        private var simpleContentSubs: [UUID: AnyCancellable] = [:]
+        private var completionGlowSubscriptions = Set<AnyCancellable>()
+        private var allowsCompletionGlow = false
+
+        func setAllowsCompletionGlow(_ allowed: Bool) {
+            allowsCompletionGlow = allowed
+            if !allowed { clearCompletionGlows() }
+        }
+
+        private func showCompletionGlow(_ event: ReplyCompletionGlowEvent) {
+            guard allowsCompletionGlow, vm?.sessionId == event.sessionID,
+                  transcriptMode == .simple, requestedTranscriptMode == .simple,
+                  UIApplication.shared.applicationState == .active,
+                  !SessionLockStore.shared.appIsLocked, !SessionLockStore.shared.isVisuallyLocked(event.sessionID),
+                  let vc = viewController, vc.isListOnScreen, let cv = vc.collectionView,
+                  let window = cv.window, window.isKeyWindow, window.windowScene?.activationState == .foregroundActive,
+                  let message = vm?.messages.first(where: { $0.id == event.messageID }) else { return }
+            let target = message.blocks.reversed().lazy.compactMap { block -> MessageListItem? in
+                guard SimpleTranscript.row(for: block) == .text,
+                      let id = SimpleBodySegment.parse(block.content, finalised: true).last(where: \.hasVisibleText)?.id else { return nil }
+                return .assistantBlock(message.id, block.id, id)
+            }.first
+            guard let item = target, simpleRows[item] == .text,
+                  let indexPath = dataSource?.indexPath(for: item),
+                  cv.indexPathsForVisibleItems.contains(indexPath),
+                  let cell = cv.cellForItem(at: indexPath) as? AssistantBlockCellV3,
+                  cell.glowItem == item else { return }
+            cell.completionGlow.play(in: cell, collectionView: cv)
+        }
+
+        private func clearCompletionGlows() {
+            for case let cell as AssistantBlockCellV3 in viewController?.collectionView?.visibleCells ?? [] {
+                cell.completionGlow.clear()
+            }
+        }
+
+        func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+            (cell as? AssistantBlockCellV3)?.completionGlow.clear()
+        }
 
         func setInitialTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
             transcriptMode = mode
@@ -3360,6 +3579,7 @@ extension CollectionViewMessageListV3 {
         }
 
         func requestTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
+            if mode != requestedTranscriptMode { clearCompletionGlows() }
             requestedTranscriptMode = mode
             scheduleTranscriptUpdate()
         }
@@ -3388,6 +3608,7 @@ extension CollectionViewMessageListV3 {
                     self.pendingStreamingLayout?.cancel()
                     self.pendingStreamingLayout = nil
                     self.transcriptMode = self.requestedTranscriptMode
+                    if self.transcriptMode == .standard { self.stopSimpleProjection() }
                     self.transcriptGeneration &+= 1
                     self.viewController?.messageListLayout?.beginTranscriptGeneration(self.transcriptGeneration)
                     self.userBubbleHeightCache.removeAll()
@@ -3405,8 +3626,109 @@ extension CollectionViewMessageListV3 {
         private typealias Edge = AnyPublisher<Void, Never>
 
         private static func contentEdges(_ block: AssistantBlock) -> Edge {
-            let states: AnyPublisher<Bool, Never> = block.$content.map { SimpleTranscript.hasText($0) }.eraseToAnyPublisher()
-            return states.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+            let body = block.simpleBody
+            let updates = body.observe(block)
+            let states = body.$segments.map { $0.map(\.id) }.removeDuplicates().dropFirst().map { _ in () }
+            return Publishers.Merge(states, updates).eraseToAnyPublisher()
+        }
+
+        private func invalidateSimpleSegment(_ item: MessageListItem, ownedBy block: AssistantBlock) {
+            guard transcriptMode == .simple, simpleBlockObjects[item] == ObjectIdentifier(block),
+                  let path = dataSource?.indexPath(for: item), let vc = viewController,
+                  let layout = vc.messageListLayout else { return }
+            enqueuePosition(.attachment, scheduleLayout: false)
+            (vc.collectionView.cellForItem(at: path) as? SelfSizingCell)?.clearCachedHeight()
+            layout.invalidateContentHeight(at: path.item)
+            layout.setContentKey(transcriptContentKey(for: item, messages: snapshotMessages, width: vc.collectionView.bounds.width), at: path.item)
+            layout.setEstimatedHeight(Self.estimateItemHeight(item, messages: snapshotMessages, width: vc.collectionView.bounds.width,
+                                                              maxContentWidth: maxContentWidth, simpleRow: simpleRows[item]), at: path.item)
+            layout.invalidateLayout()
+        }
+
+        private func itemsReferencingAttachment(_ source: String, in items: [MessageListItem]) -> [MessageListItem] {
+            let canonical = ImageAttachment.canonicalizeMarkdownImageSource(source)
+            func matches(_ candidate: String) -> Bool {
+                ImageAttachment.canonicalizeMarkdownImageSource(candidate) == canonical
+            }
+            func containsImage(_ inline: InlineNode) -> Bool {
+                if case .image(let source, _) = inline { return matches(source) }
+                return inline.children.contains(where: containsImage)
+            }
+            func containsImageBlock(_ block: BlockNode) -> Bool {
+                switch block {
+                case .heading(_, let content), .paragraph(let content): return content.contains(where: containsImage)
+                default: return block.children.contains(where: containsImageBlock)
+                }
+            }
+            return items.filter { item in
+                guard let index = messageIndex[item.messageId], snapshotMessages.indices.contains(index) else { return false }
+                let message = snapshotMessages[index]
+                switch item {
+                case .wholeMessage:
+                    return message.attachments.contains { matches($0.zeURL) }
+                case .assistantBlock(_, let blockID, let segmentID):
+                    guard let block = message.blocks.first(where: { $0.id == blockID }) else { return false }
+                    if let segmentID {
+                        guard transcriptMode == .simple, let segment = block.simpleBody.segments.first(where: { $0.id == segmentID }),
+                              let media = segment.media else { return false }
+                        return matches(media.source)
+                    }
+                    guard transcriptMode == .standard, block.content.contains("![") else { return false }
+                    let markdown = block.cachedMarkdown ?? MarkdownContent(prepareMarkdownForRender(block.content))
+                    return markdown.blocks.contains(where: containsImageBlock)
+                default: return false
+                }
+            }
+        }
+
+        private func attachmentSizeChanged(_ source: String) {
+            guard !source.isEmpty, let dataSource, let vc = viewController,
+                  let cv = vc.collectionView, let layout = vc.messageListLayout else { return }
+            var snapshot = dataSource.snapshot()
+            let affected = itemsReferencingAttachment(source, in: snapshot.itemIdentifiers)
+            guard !affected.isEmpty else { return }
+            enqueuePosition(.attachment, scheduleLayout: false)
+            for item in affected {
+                guard let path = dataSource.indexPath(for: item) else { continue }
+                (cv.cellForItem(at: path) as? SelfSizingCell)?.clearCachedHeight()
+                layout.invalidateContentHeight(at: path.item)
+            }
+            snapshot.reconfigureItems(affected)
+            dataSource.apply(snapshot, animatingDifferences: false)
+            let stamp = positionStamp()
+            let generation = transcriptGeneration
+            DispatchQueue.main.async { [weak self, weak cv, weak layout] in
+                guard let self, let cv, let layout, self.viewController?.collectionView === cv,
+                      self.transcriptGeneration == generation else { return }
+                for item in affected {
+                    guard let path = self.dataSource?.indexPath(for: item) else { continue }
+                    (cv.cellForItem(at: path) as? SelfSizingCell)?.clearCachedHeight()
+                    layout.invalidateContentHeight(at: path.item)
+                }
+                layout.invalidateLayout()
+                if let stamp, self.positionStamp() == stamp, self.consumeSessionLoadClamp() { self.enqueuePosition(.attachment) }
+            }
+        }
+
+        private func observeSimpleContent(_ message: ChatMessage) -> AnyCancellable {
+            message.$blocks.removeDuplicates { $0.elementsEqual($1, by: { $0 === $1 }) }
+                .map { blocks -> AnyPublisher<(AssistantBlock, [SimpleSegmentID]), Never> in
+                    Publishers.MergeMany(blocks.map { block in
+                        block.$kind.removeDuplicates().map { kind -> AnyPublisher<(AssistantBlock, [SimpleSegmentID]), Never> in
+                            guard kind == .text else { return Empty().eraseToAnyPublisher() }
+                            return block.simpleBody.contentChanges.compactMap { [weak block] changes in
+                                block.map { ($0, changes) }
+                            }.eraseToAnyPublisher()
+                        }.switchToLatest()
+                    }).eraseToAnyPublisher()
+                }
+                .switchToLatest()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self, weak message] change in
+                    guard let self, let message, self.simpleMessageSubs[message.id]?.0 == ObjectIdentifier(message) else { return }
+                    let (block, ids) = change
+                    for id in ids { self.invalidateSimpleSegment(.assistantBlock(message.id, block.id, id), ownedBy: block) }
+                }
         }
 
         private static func textEdges(_ block: AssistantBlock) -> Edge {
@@ -3445,10 +3767,17 @@ extension CollectionViewMessageListV3 {
             return sources.switchToLatest().dropFirst().eraseToAnyPublisher()
         }
 
+        func stopSimpleProjection() {
+            simpleMessageSubs.removeAll()
+            simpleContentSubs.removeAll()
+        }
+
         private func observeSimpleProjection(_ messages: [ChatMessage], vm: AIChatViewModel) {
-            let assistants = transcriptMode == .simple ? messages.filter { $0.role == .assistant } : []
+            guard transcriptMode == .simple else { return }
+            let assistants = messages.filter { $0.role == .assistant }
             let live = Set(assistants.map(\.id))
             simpleMessageSubs = simpleMessageSubs.filter { live.contains($0.key) }
+            simpleContentSubs = simpleContentSubs.filter { live.contains($0.key) }
             for message in assistants where simpleMessageSubs[message.id]?.0 != ObjectIdentifier(message) {
                 let blocks: Edge = Self.messageBlockEdges(message)
                 let errors: Edge = message.$error.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
@@ -3460,6 +3789,7 @@ extension CollectionViewMessageListV3 {
                         self.markFooterDirty(message.id)
                     }
                 simpleMessageSubs[message.id] = (ObjectIdentifier(message), sub)
+                simpleContentSubs[message.id] = observeSimpleContent(message)
             }
         }
 
@@ -3478,21 +3808,32 @@ extension CollectionViewMessageListV3 {
             return "\(key):simple:\(width):\(String(describing: role))"
         }
 
+        private func sameMessageTranscriptRow(for removed: MessageListItem, in items: [MessageListItem],
+                                              messages: [ChatMessage]) -> MessageListItem? {
+            let sameTurn = items.filter { $0.messageId == removed.messageId }
+            if sameTurn.contains(removed) { return removed }
+            if case .assistantBlock(_, let blockID, _) = removed {
+                if let sameBlock = sameTurn.first(where: {
+                    if case .assistantBlock(_, let id, _) = $0 { return id == blockID }
+                    return false
+                }) { return sameBlock }
+                let blocks = messages.first(where: { $0.id == removed.messageId })?.blocks ?? []
+                let order = Dictionary(uniqueKeysWithValues: blocks.enumerated().map { ($0.element.id, $0.offset) })
+                if let old = order[blockID] {
+                    let ranked = sameTurn.compactMap { item -> (MessageListItem, Int)? in
+                        guard case .assistantBlock(_, let id, _) = item, let index = order[id] else { return nil }
+                        return (item, abs(index - old))
+                    }
+                    if let nearest = ranked.min(by: { $0.1 < $1.1 }) { return nearest.0 }
+                }
+            }
+            return sameTurn.first
+        }
+
         private func transcriptFallback(for removed: MessageListItem, in items: [MessageListItem],
                                         messages: [ChatMessage]) -> MessageListItem? {
+            if let sameTurn = sameMessageTranscriptRow(for: removed, in: items, messages: messages) { return sameTurn }
             if let current = messages.firstIndex(where: { $0.id == removed.messageId }) {
-                let sameTurn = items.filter { $0.messageId == removed.messageId }
-                if case .assistantBlock(_, let blockID) = removed {
-                    let order = Dictionary(uniqueKeysWithValues: messages[current].blocks.enumerated().map { ($0.element.id, $0.offset) })
-                    if let old = order[blockID] {
-                        let ranked = sameTurn.compactMap { item -> (MessageListItem, Int)? in
-                            guard case .assistantBlock(_, let id) = item, let index = order[id] else { return nil }
-                            return (item, abs(index - old))
-                        }
-                        if let nearest = ranked.min(by: { $0.1 < $1.1 }) { return nearest.0 }
-                    }
-                }
-                if let row = sameTurn.first { return row }
                 for message in messages[..<current].reversed() where message.role == .user {
                     let item = MessageListItem.wholeMessage(message.id)
                     if items.contains(item) { return item }
@@ -3507,6 +3848,12 @@ extension CollectionViewMessageListV3 {
                                       messages: [ChatMessage], in cv: UICollectionView) -> PositionAnchor? {
             guard let before, let window = cv.window, scrollMode == .userBrowsing else { return before }
             let membership = Set(items)
+            if let original = before.readingItem,
+               let sameTurn = sameMessageTranscriptRow(for: original, in: items, messages: messages) {
+                if sameTurn == original { return before }
+                return PositionAnchor(readingItem: sameTurn, readingY: before.readingY, tailItem: before.tailItem,
+                                      tailGap: before.tailGap, wasNearBottom: false)
+            }
             let origin = cv.convert(cv.bounds, to: window).minY
             let top = cv.contentOffset.y + cv.adjustedContentInset.top
             for path in cv.indexPathsForVisibleItems.sorted() {
@@ -3866,84 +4213,8 @@ extension CollectionViewMessageListV3 {
                 attachmentSizeChangedSub = NotificationCenter.default.publisher(for: .zeAttachmentSizeChanged)
                     .receive(on: DispatchQueue.main)
                     .sink { [weak self] notification in
-                        let alog = AppLogger(category: "AttachmentSize")
-                        guard let self else { return }
-                        guard let cv = self.viewController?.collectionView,
-                              let layout = cv.collectionViewLayout as? MessageListLayout else {
-                            alog.warning("[AttachmentSize] infra missing")
-                            return
-                        }
-                        let urlStr = (notification.object as? String) ?? "<nil>"
-                        let visibleIPs = cv.indexPathsForVisibleItems.sorted()
-                        var cleared = 0
-                        for ip in visibleIPs {
-                            if let cell = cv.cellForItem(at: ip) as? SelfSizingCell {
-                                let before = cell.frame.size.height
-                                cell.clearCachedHeight()
-                                layout.invalidateHeight(at: ip.item)
-                                cleared += 1
-                                alog.info("[AttachmentSize] clear idx=\(ip.item) frameH=\(String(format: "%.1f", before))")
-                            }
-                        }
-                        // [T-attachment-cell-offscreen 2026-05-24]
-                        // A markdown-inline video/image whose initial estimate
-                        // was too small (e.g. text-only block estimator
-                        // returning ~50pt) is pushed off-screen by the cold
-                        // scroll-to-bottom — the visible-cells-only invalidate
-                        // above then misses it, and the cell stays at the
-                        // 200pt placeholder until an unrelated reconfigure
-                        // runs many seconds later. Always invalidate the
-                        // layout's height cache for ALL items so the next
-                        // measurement pass picks up the new attachmentBounds.
-                        let totalItems = self.dataSource?.snapshot().itemIdentifiers.count ?? 0
-                        for idx in 0..<totalItems {
-                            layout.invalidateHeight(at: idx)
-                        }
-                        if let snapshot = self.dataSource?.snapshot() {
-                            // Reconfigure every item — cheap (no diff), forces
-                            // every cell that gets re-displayed to re-measure.
-                            // We still see a visible reflow only on cells in
-                            // viewport; off-screen cells just get a corrected
-                            // cached height for next display.
-                            var snap = snapshot
-                            snap.reconfigureItems(snapshot.itemIdentifiers)
-                            self.dataSource?.apply(snap, animatingDifferences: false)
-                        }
-                        // [T-attachment-defer-invalidate 2026-05-24]
-                        // Defer invalidateLayout to the next runloop. reconfigureItems
-                        // schedules a SwiftUI hosting-config update on the next
-                        // runloop tick; calling invalidateLayout synchronously
-                        // makes UIKit re-query PLAF while the cell's
-                        // UIHostingConfiguration still wraps the STALE
-                        // attributedString (with the 200pt video placeholder),
-                        // so systemLayoutSizeFitting returns the old 375pt
-                        // height, caches it as lastComputedHeight, and locks
-                        // the cell at the wrong size until something else
-                        // triggers another reconfigure (10+ seconds later
-                        // when the user navigates back). Letting the runloop
-                        // turn first ensures the new attributedString is
-                        // mounted in the hosting view before we re-measure.
-                        let stamp = self.positionStamp()
-                        let generation = self.transcriptGeneration
-                        DispatchQueue.main.async { [weak self, weak cv, weak layout] in
-                            guard let self, let cv, let layout, self.viewController?.collectionView === cv,
-                                  self.transcriptGeneration == generation else { return }
-                            // Clear cell-side caches AGAIN after the
-                            // reconfigure has propagated, then ask UIKit to
-                            // re-measure.
-                            for ip in cv.indexPathsForVisibleItems {
-                                (cv.cellForItem(at: ip) as? SelfSizingCell)?.clearCachedHeight()
-                            }
-                            layout.invalidateLayout()
-                            // While we're still in the session-load clamp
-                            // window, re-pin to bottom — the corrected
-                            // heights shift the content offset and otherwise
-                            // leave the user looking at the wrong region.
-                            if let stamp, stamp == self.positionStamp(), self.consumeSessionLoadClamp() {
-                                self.enqueuePosition(.attachment)
-                            }
-                        }
-                        alog.info("[AttachmentSize] url=\(urlStr) cleared=\(cleared)/\(visibleIPs.count) totalInvalidated=\(totalItems) clamp=\(self.clampAfterSessionLoad)")
+                        guard let source = notification.object as? String else { return }
+                        self?.attachmentSizeChanged(source)
                     }
             }
 
@@ -3987,7 +4258,7 @@ extension CollectionViewMessageListV3 {
                         // future report can be diagnosed from logs alone.
                         var matched = false
                         for (i, item) in snapshot.itemIdentifiers.enumerated() {
-                            if case .assistantBlock(_, let bid) = item, bid == blockId {
+                            if case .assistantBlock(_, let bid, _) = item, bid == blockId {
                                 matched = true
                                 let beforeLayout = layout.cachedHeight(at: i)
                                 let beforePrecalc = layout.precalcHeight(at: i)
@@ -4059,10 +4330,13 @@ extension CollectionViewMessageListV3 {
                     if transcriptMode == .simple {
                         for block in message.blocks {
                             guard let role = SimpleTranscript.row(for: block) else { continue }
-                            let item = MessageListItem.assistantBlock(message.id, block.id)
-                            newItems.append(item)
-                            simpleRows[item] = role
-                            simpleBlockObjects[item] = ObjectIdentifier(block)
+                            let ids: [SimpleSegmentID?] = role == .question ? [nil] : block.simpleBody.segments.map { $0.id }
+                            for id in ids {
+                                let item = MessageListItem.assistantBlock(message.id, block.id, id)
+                                newItems.append(item)
+                                simpleRows[item] = id.map { $0.kind == .text ? .text : .standalone } ?? role
+                                simpleBlockObjects[item] = ObjectIdentifier(block)
+                            }
                         }
                         let footer = footerPresentation(for: message, vm: vm, lastMessageID: lastMessageID)
                         if footer.needsItem {
@@ -4122,6 +4396,10 @@ extension CollectionViewMessageListV3 {
             // Remap height cache + set accurate estimates for ALL item types
             if let layout = viewController?.messageListLayout {
                 layout.updateCacheForSnapshot(oldIds: previousSnapshotIds, newIds: newItems)
+                layout.simpleSegmentGaps = Set(newItems.indices.dropLast().filter { index in
+                    newItems[index].segmentID != nil && newItems[index + 1].segmentID != nil
+                        && newItems[index].messageId == newItems[index + 1].messageId
+                })
 
                 let cvWidth = viewController?.collectionView.bounds.width ?? 390
                 for (i, item) in newItems.enumerated() {
@@ -4186,7 +4464,7 @@ extension CollectionViewMessageListV3 {
                     case .assistantFooter:
                         break
 
-                    case .assistantBlock(let msgId, let blockId):
+                    case .assistantBlock(let msgId, let blockId, _):
                         guard let msgIdx = messageIndex[msgId], msgIdx < messages.count else { continue }
                         let msg = messages[msgIdx]
                         guard let block = msg.blocks.first(where: { $0.id == blockId }) else { continue }
@@ -4452,7 +4730,7 @@ extension CollectionViewMessageListV3 {
                 let suspended = vm.streamingUIUpdatesSuspended
                 let processing = vm.isProcessing
                 for item in inserted {
-                    if case .assistantBlock(let msgId, let blockId) = item,
+                    if case .assistantBlock(let msgId, let blockId, _) = item,
                        let msgIdx = messageIndex[msgId],
                        msgIdx < messages.count,
                        let block = messages[msgIdx].blocks.first(where: { $0.id == blockId }),
@@ -4703,7 +4981,7 @@ extension CollectionViewMessageListV3 {
             case .wholeMessage(let id): return id
             case .assistantHeader(let id): return id
             case .assistantFooter(let id): return id
-            case .assistantBlock(let mid, _), .assistantToolGroup(let mid, _): return mid
+            case .assistantBlock(let mid, _, _), .assistantToolGroup(let mid, _): return mid
             }
         }
 
@@ -4746,7 +5024,8 @@ extension CollectionViewMessageListV3 {
                 return "f#\(digest(c))"
             case .assistantToolGroup(let mid, let bid):
                 return "g#\(mid.uuidString)#\(bid.uuidString)"
-            case .assistantBlock(let mid, let bid):
+            case .assistantBlock(let mid, let bid, let segmentID):
+                if let segmentID { return "s#\(bid)#\(segmentID)" }
                 guard let b = msg(mid)?.blocks.first(where: { $0.id == bid }) else { return "b#?" }
                 let c = b.content
                 return "b#\(digest(c))#\(c.count)#\(b.kind)"
@@ -4773,8 +5052,12 @@ extension CollectionViewMessageListV3 {
             case .assistantToolGroup(let mid, let bid):
                 let blocks = AssistantBlockPresentationSegment.tools(startingAt: bid, in: msg(mid)?.blocks ?? [])
                 return "g:\(mid.uuidString):\(bid.uuidString):\(blocks.count):\(blocks.first?.isToolGroupExpanded == true)"
-            case .assistantBlock(let mid, let bid):
+            case .assistantBlock(let mid, let bid, let segmentID):
                 let block = msg(mid)?.blocks.first(where: { $0.id == bid })
+                if let segmentID, let segment = block?.simpleBody.segments.first(where: { $0.id == segmentID }) {
+                    let size = segment.media.flatMap { block?.simpleBody.mediaSize(for: segmentID, media: $0) }
+                    return "s:\(mid):\(bid):\(segmentID):\(segment.hashValue):\(String(describing: size))"
+                }
                 let n = block?.content.count ?? 0
                 return "b:\(mid.uuidString):\(bid.uuidString):\(n)"
             }
@@ -4783,6 +5066,24 @@ extension CollectionViewMessageListV3 {
         static func estimateItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat,
                                        maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil,
                                        simpleRow: SimpleTranscript.Row? = nil) -> CGFloat {
+            if case .assistantBlock(let mid, let bid, let id?) = item,
+               let block = messages.first(where: { $0.id == mid })?.blocks.first(where: { $0.id == bid }),
+               let segment = block.simpleBody.segments.first(where: { $0.id == id }) {
+                let column = max(1, min(width - 32, maxContentWidth > 0 ? maxContentWidth : width))
+                switch id.kind {
+                case .image, .video:
+                    let size = segment.media.flatMap { block.simpleBody.mediaSize(for: id, media: $0) }
+                    return SimpleStandaloneMedia.coverSize(width: column, kind: id.kind, natural: size).height
+                case .audio: return SimpleStandaloneMedia.audioHeight
+                case .file: return 56
+                case .table:
+                    if case .table(_, let rows)? = segment.blocks.first { return CGFloat(rows.count) * TableAttachment.minRowHeight }
+                    return TableAttachment.minRowHeight
+                case .text:
+                    let scale = FontSettings.shared.scaledMessage(16)
+                    return Self.estimateTextBlockHeight(segment.searchText, width: max(1, column - 24), scale: scale, lineHeight: scale * 1.4) + 12
+                }
+            }
             let estimate = baseItemHeight(item, messages: messages, width: width, maxContentWidth: maxContentWidth,
                                           questionContainerWidth: questionContainerWidth)
             return estimate + (simpleRow == .text ? 12 : 0)
@@ -4835,7 +5136,7 @@ extension CollectionViewMessageListV3 {
                 }
             case .assistantHeader:
                 return 28
-            case .assistantBlock(let msgId, let blockId):
+            case .assistantBlock(let msgId, let blockId, _):
                 guard let msg = messages.first(where: { $0.id == msgId }),
                       let block = msg.blocks.first(where: { $0.id == blockId }) else { return 44 }
                 switch block.kind {
@@ -5112,7 +5413,7 @@ extension CollectionViewMessageListV3 {
         /// separately). [T-stream-hover-earlier-streaming]
         static func item(_ item: MessageListItem, belongsTo messageId: UUID) -> Bool {
             switch item {
-            case .assistantBlock(let mid, _), .assistantToolGroup(let mid, _): return mid == messageId
+            case .assistantBlock(let mid, _, _), .assistantToolGroup(let mid, _): return mid == messageId
             case .assistantFooter(let mid): return mid == messageId
             case .wholeMessage, .assistantHeader: return false
             }
@@ -5190,7 +5491,7 @@ extension CollectionViewMessageListV3 {
             guard let items = dataSource?.snapshot().itemIdentifiers else { return nil }
             let preferred: MessageListItem?
             if hit.match.key.field == .footerError { preferred = .assistantFooter(hit.messageId) }
-            else if let blockID = hit.blockId { preferred = .assistantBlock(hit.messageId, blockID) }
+            else if let blockID = hit.blockId { preferred = .assistantBlock(hit.messageId, blockID, hit.match.key.segmentID) }
             else { preferred = transcriptMode == .simple ? .wholeMessage(hit.messageId) : nil }
             if transcriptMode == .simple { return items.first { $0 == preferred } }
             return items.first { $0 == preferred } ?? items.first { $0.messageId == hit.messageId }
@@ -5239,7 +5540,14 @@ extension CollectionViewMessageListV3 {
             guard ownsDirectScroll(owner), let cv = viewController?.collectionView, let ip = dataSource?.indexPath(for: item),
                   let frame = cv.layoutAttributesForItem(at: ip)?.frame else { return }
             var rect = frame
-            if let cell = cv.cellForItem(at: ip), let textView = Self.searchTextViews(in: cell.contentView).first(where: { $0.searchUnitKey == hit.match.key }),
+            if let cell = cv.cellForItem(at: ip), let tableCell = Self.currentSimpleTableCell(in: cell.contentView) {
+                var parent = tableCell.superview
+                while let view = parent, !(view is TableScrollView) { parent = view.superview }
+                if let scroll = parent as? TableScrollView {
+                    scroll.scrollRectToVisible(tableCell.convert(tableCell.bounds, to: scroll), animated: false)
+                }
+                rect = tableCell.convert(tableCell.bounds, to: cv)
+            } else if let cell = cv.cellForItem(at: ip), let textView = Self.searchTextViews(in: cell.contentView).first(where: { $0.searchUnitKey == hit.match.key }),
                let local = textView.searchMatchRect(ordinal: hit.match.ordinal) { rect = textView.convert(local, to: cv) }
             else if hit.blockId == nil, hit.match.key.field == .body, frame.height > cv.bounds.height * 0.8 {
                 let ranges = ChatSearchMatcher.ranges(of: hit.keyword, in: hit.text, limit: hit.match.ordinal + 1)
@@ -5261,6 +5569,11 @@ extension CollectionViewMessageListV3 {
         }
         private static func searchTextViews(in view: UIView) -> [SelectableMarkdownTextView] {
             (view as? SelectableMarkdownTextView).map { [$0] } ?? view.subviews.flatMap { searchTextViews(in: $0) }
+        }
+
+        private static func currentSimpleTableCell(in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "simpleTableCurrentMatch" { return view }
+            return view.subviews.lazy.compactMap { currentSimpleTableCell(in: $0) }.first
         }
 
         /// [T-chat-search] The transient ring drawn around the row a search hit
@@ -6061,7 +6374,7 @@ extension CollectionViewMessageListV3 {
                       !layout.hasPrecalcHeight(at: index) else { continue }
                 guard index < previousSnapshotIds.count else { continue }
                 let item = previousSnapshotIds[index]
-                let est = Self.estimateItemHeight(item, messages: messages, width: width,
+                let est = Self.estimateItemHeight(item, messages: messages, width: item.segmentID == nil ? width : collectionView.bounds.width,
                                                   maxContentWidth: maxContentWidth,
                                                   questionContainerWidth: collectionView.bounds.width,
                                                   simpleRow: simpleRows[item])
