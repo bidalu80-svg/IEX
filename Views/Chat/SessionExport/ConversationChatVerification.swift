@@ -1246,12 +1246,12 @@ import Darwin
                 let role: String?
                 switch item {
                 case .wholeMessage(let id): role = id == newUser ? "bubble" : nil
-                case .assistantBlock(let id, _): role = id == oldReply ? "oldBody" : nil
+                case .assistantBlock(let id, _, _): role = id == oldReply ? "oldBody" : nil
                 case .assistantHeader(let id): role = id == newAssistant ? "newHeader" : nil
                 default: role = nil
                 }
                 if let role { frame[role] = rectData(display) }
-                if let bottom, case .assistantBlock(let id, let blockID) = item, id == newAssistant,
+                if let bottom, case .assistantBlock(let id, let blockID, _) = item, id == newAssistant,
                    let block = vm?.messages.last(where: { $0.id == id })?.blocks.first(where: { $0.id == blockID }),
                    (!block.content.isEmpty || (block.kind != .text && block.kind != .thinking)),
                    display.minY < bottom && display.maxY > top && display.height > 0.5 {

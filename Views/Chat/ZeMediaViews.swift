@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import CryptoKit
 import Photos
 import QuickLook
 
@@ -377,7 +378,6 @@ struct AsyncImageTile: View {
 struct AsyncVideoTile: View {
     let meta: AttachmentMeta
     let tileSize: CGFloat
-    @Environment(\.openURL) private var openURL
     @State private var thumbnail: UIImage?
 
     var body: some View {
@@ -532,6 +532,355 @@ struct ZeOpenURLHandler: ViewModifier {
                 openZeURL(url)
             })
     }
+}
+
+struct SimpleStandaloneMedia: View {
+    let media: SimpleBodySegment.Media
+    let segmentID: SimpleSegmentID
+    let key: ChatSearchUnitKey
+    let width: CGFloat
+    let bodyModel: SimpleTranscript.Body
+    let message: ChatMessage
+    var onResize: (SimpleSegmentID) -> Void
+    @Environment(\.openURL) private var openURL
+    @State private var resource: Resource?
+    @State private var failure: Failure?
+    @State private var retry = 0
+    @State private var videoURL: URL?
+    @State private var audioURL: URL?
+
+    private enum Failure: Error {
+        case unavailable, unsupported
+
+        static func classify(_ error: Error, remaining: Int = 4) -> Self {
+            if let failure = error as? Self { return failure }
+            let error = error as NSError
+            if error.domain == NSURLErrorDomain {
+                switch URLError.Code(rawValue: error.code) {
+                case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+                     .dnsLookupFailed, .notConnectedToInternet, .resourceUnavailable: return .unavailable
+                default: return .unsupported
+                }
+            }
+            if error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoSuchFileError { return .unavailable }
+            if remaining > 0, let underlying = error.userInfo[NSUnderlyingErrorKey] as? Error {
+                return classify(underlying, remaining: remaining - 1)
+            }
+            return .unsupported
+        }
+    }
+    private struct Resource {
+        let url: URL
+        var thumbnail: UIImage? = nil
+        var imageSize: CGSize? = nil
+        var duration: Double? = nil
+        var bytes: Int? = nil
+    }
+
+    private var kind: SimpleSegmentID.Kind { segmentID.kind }
+
+    static func coverSize(width: CGFloat, kind: SimpleSegmentID.Kind, natural: CGSize?) -> CGSize {
+        let maxWidth = min(400, width)
+        let size = natural ?? CGSize(width: maxWidth, height: maxWidth * (kind == .video ? 9.0 / 16 : 1))
+        let scale = min(1, maxWidth / max(1, size.width), UIScreen.main.bounds.height / 2 / max(1, size.height))
+        return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+
+    var body: some View {
+        Group {
+            switch kind {
+            case .image, .video: cover
+            case .audio:
+                if let resource { SimpleAudioControls(name: media.name, key: key, url: resource.url, duration: resource.duration) { audioURL = resource.url } }
+                else { fileLabel(icon: "waveform", detail: nil, ready: false) }
+            default:
+                fileLabel(icon: zeFileIcon(for: media.url?.pathExtension.lowercased() ?? ""), detail: fileDetail, ready: resource != nil)
+                    .frame(minHeight: 56)
+                    .onTapGesture(perform: openFile)
+                    .accessibilityAction { openFile() }
+            }
+        }
+        .frame(width: kind == .audio || kind == .file ? min(width, 360) : nil)
+        .frame(height: kind == .audio ? Self.audioHeight : nil)
+        .background(ChatColors.secondaryBg)
+        .clipShape(RoundedRectangle(cornerRadius: ChatBubbleStyle.cornerRadius))
+        .task(id: retry) { await load() }
+        .fullScreenCover(item: $videoURL) { ZeVideoFullscreenPlayer(fileURL: $0, startsAutomatically: false) }
+        .sheet(item: $audioURL) { ZeAudioPreviewView(fileURL: $0).presentationDetents([.large]).presentationDragIndicator(.hidden) }
+    }
+
+    private var sourceURL: URL? { URL(string: ImageAttachment.canonicalizeMarkdownImageSource(media.source)) }
+
+    fileprivate static func audioFont(_ size: CGFloat) -> CGFloat {
+        UIFontMetrics(forTextStyle: .body).scaledValue(for: FontSettings.shared.scaledMessage(size), compatibleWith: UIScreen.main.traitCollection)
+    }
+
+    static var audioHeight: CGFloat {
+        let title = ceil(UIFont.systemFont(ofSize: audioFont(15)).lineHeight)
+        let controls = max(31, ceil(UIFont.systemFont(ofSize: audioFont(20)).lineHeight))
+        return max(70, title + controls + 14)
+    }
+
+    private func openFile() {
+        guard resource != nil, let sourceURL else { return }
+        SimpleTranscriptMediaRouter.post(message: message, payload: .file(sourceURL))
+    }
+
+    private var cover: some View {
+        let size = Self.coverSize(width: width, kind: kind, natural: bodyModel.mediaSize(for: segmentID, media: media))
+        return ZStack(alignment: .bottomTrailing) {
+            if let resource {
+                Button {
+                    if kind == .video { videoURL = resource.url }
+                    else if let destination = media.linkDestination, let url = normalizedMarkdownLinkURL(from: destination) {
+                        SimpleTranscriptMediaRouter.post(message: message, payload: .link(url))
+                    }
+                    else { openImageGallery() }
+                } label: {
+                    ZStack {
+                        if let thumbnail = resource.thumbnail {
+                            Image(uiImage: thumbnail).resizable().aspectRatio(contentMode: .fit)
+                        }
+                        if kind == .video {
+                            Image(systemName: "play.circle.fill").font(.system(size: 38)).foregroundStyle(.white).shadow(radius: 4)
+                        }
+                    }
+                    .frame(width: size.width, height: size.height)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(media.name)
+                if kind == .video, let duration = resource.duration {
+                    Text(simpleMediaTime(duration)).font(.caption.monospacedDigit()).foregroundStyle(.white)
+                        .padding(5).background(.black.opacity(0.65), in: Capsule()).padding(7)
+                        .allowsHitTesting(false)
+                }
+            } else {
+                status.frame(width: size.width, height: size.height)
+            }
+        }
+    }
+
+    private var fileDetail: String? {
+        if let bytes = resource?.bytes { return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) }
+        guard let ext = sourceURL?.pathExtension, !ext.isEmpty else { return nil }
+        return ext.uppercased()
+    }
+
+    private func fileLabel(icon: String, detail: String?, ready: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).foregroundStyle(ChatColors.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                SearchHighlightText(media.name, key: key).font(kind == .audio ? .system(size: Self.audioFont(15)) : .subheadline).lineLimit(1)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 0)
+            if !ready { status }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    @ViewBuilder private var status: some View {
+        switch failure {
+        case nil: ProgressView().controlSize(.small)
+        case .unavailable:
+            Button { retry += 1 } label: { Image(systemName: "arrow.clockwise.circle") }
+                .buttonStyle(.plain).accessibilityLabel(Text("Retry"))
+        case .unsupported: Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
+        }
+    }
+
+    private func load() async {
+        failure = nil
+        guard let sourceURL else { failure = .unsupported; return }
+        guard ["ze", "file", "http", "https"].contains(sourceURL.scheme?.lowercased() ?? "") else { failure = .unsupported; return }
+        do {
+            let loaded = try await Self.fetch(sourceURL, kind: kind)
+            guard !Task.isCancelled else { return }
+            if var size = loaded.imageSize {
+                if kind == .video, size.width > 0, size.height > 0 { size = CGSize(width: 400, height: 400 * size.height / size.width) }
+                if size.width > 0, size.height > 0, bodyModel.recordMediaSize(size, for: segmentID, media: media) {
+                    onResize(segmentID)
+                }
+            }
+            resource = loaded
+        } catch {
+            if !Task.isCancelled { failure = Failure.classify(error) }
+        }
+    }
+
+    private static func fetch(_ source: URL, kind: SimpleSegmentID.Kind) async throws -> Resource {
+        let url: URL
+        if source.scheme == "ze" || source.isFileURL {
+            var available: URL?
+            for attempt in 0..<12 {
+                let candidate = source.isFileURL ? source : resolveZeFileURLCached(url: source)
+                if let candidate, FileManager.default.isReadableFile(atPath: candidate.path),
+                   let size = try? candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 {
+                    available = candidate
+                    break
+                }
+                if attempt < 11 { try await Task.sleep(nanoseconds: 500_000_000) }
+            }
+            guard let available else { throw Failure.unavailable }
+            url = available
+        } else {
+            url = source
+        }
+        switch kind {
+        case .image:
+            let cacheKey = "simple-image:\(zeMediaCacheKey(for: source))"
+            if let cached = NativeMediaImageCache.shared.image(for: cacheKey) { return Resource(url: url, thumbnail: cached, imageSize: cached.size) }
+            let data: Data
+            if url.isFileURL {
+                data = try await Task.detached(priority: .utility) { try Data(contentsOf: url) }.value
+            } else {
+                let (body, response) = try await URLSession.shared.data(from: url)
+                try checkResponse(response)
+                data = body
+            }
+            let image = await Task.detached(priority: .utility) { downsampleImageData(data, maxPixelSize: 2048) }.value
+            guard let image else { throw Failure.unsupported }
+            NativeMediaImageCache.shared.set(image, for: cacheKey)
+            return Resource(url: url, thumbnail: image, imageSize: image.size)
+        case .video:
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.loadTracks(withMediaType: .video)
+            guard let track = tracks.first else { throw Failure.unsupported }
+            let natural = try await track.load(.naturalSize)
+            let transform = try await track.load(.preferredTransform)
+            let transformed = natural.applying(transform)
+            let duration = (try? await asset.load(.duration))?.seconds
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 800, height: 800)
+            let frame = try? await generator.image(at: .zero)
+            let image = frame?.0
+            return Resource(url: url, thumbnail: image.map { UIImage(cgImage: $0) },
+                            imageSize: CGSize(width: abs(transformed.width), height: abs(transformed.height)), duration: duration)
+        case .audio:
+            let local: URL
+            if url.isFileURL { local = url }
+            else {
+                let digest = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent("simple-audio", isDirectory: true)
+                    .appendingPathComponent(digest, isDirectory: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                local = folder.appendingPathComponent(url.lastPathComponent.isEmpty ? "audio" : url.lastPathComponent)
+                if !FileManager.default.fileExists(atPath: local.path) {
+                    let (download, response) = try await URLSession.shared.download(from: url)
+                    try checkResponse(response)
+                    do { try FileManager.default.moveItem(at: download, to: local) }
+                    catch { if !FileManager.default.fileExists(atPath: local.path) { throw error } }
+                }
+            }
+            let asset = AVURLAsset(url: local)
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            guard !tracks.isEmpty else { throw Failure.unsupported }
+            return Resource(url: local, duration: (try? await asset.load(.duration))?.seconds)
+        default:
+            if url.isFileURL { return Resource(url: url, bytes: try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) }
+            var request = URLRequest(url: url)
+            request.httpMethod = "HEAD"
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 405 { return Resource(url: url) }
+            try checkResponse(response)
+            let length = response.expectedContentLength
+            return Resource(url: url, bytes: length >= 0 ? Int(exactly: length) : nil)
+        }
+    }
+
+    private static func checkResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else { return }
+        if [408, 425, 429].contains(http.statusCode) || http.statusCode >= 500 { throw Failure.unavailable }
+        throw Failure.unsupported
+    }
+
+    private func openImageGallery() {
+        let entries = message.blocks.filter { SimpleTranscript.row(for: $0) == .text }.flatMap { block -> [(UUID, SimpleSegmentID, SimpleBodySegment.Media, String)] in
+            let segments = block.simpleBody.segments
+            guard segments.contains(where: { $0.id.kind == .image }) else { return [] }
+            let titles = block.simpleBody.imageGalleryTitles()
+            return segments.compactMap { segment -> (UUID, SimpleSegmentID, SimpleBodySegment.Media, String)? in
+                guard segment.id.kind == .image, let media = segment.media else { return nil }
+                return (block.id, segment.id, media, titles[segment.id] ?? media.galleryTitle)
+            }
+        }
+        guard let start = entries.firstIndex(where: { $0.0 == key.blockId && $0.1 == segmentID }) else { return }
+        let items = entries.map { blockID, id, entry, title in
+            let source = URL(string: ImageAttachment.canonicalizeMarkdownImageSource(entry.source))
+            return GalleryItem(id: "\(blockID):\(id)", title: title, sourceURL: source, onFavorite: {
+                guard let source, let fileURL = source.isFileURL ? source : resolveZeFileURLCached(url: source) else {
+                    throw MediaFavoriteActionError.missingFile
+                }
+                _ = try MediaFavoritesStore.shared.addChecked(fileURL: fileURL, kind: .image, fileName: title)
+            }) {
+                guard let source else { return nil }
+                return (try? await Self.fetch(source, kind: .image))?.thumbnail
+            }
+        }
+        SimpleTranscriptMediaRouter.post(message: message, payload: .gallery(.init(items: items, startIndex: start)))
+    }
+}
+
+@MainActor enum SimpleTranscriptMediaRouter {
+    enum Payload {
+        case gallery(GalleryPresentation)
+        case file(URL)
+        case link(URL)
+    }
+
+    static let notification = Notification.Name("SimpleTranscriptMediaRequested")
+
+    static func post(message: ChatMessage, payload: Payload) {
+        NotificationCenter.default.post(name: notification, object: message, userInfo: ["payload": payload])
+    }
+}
+
+private struct SimpleAudioControls: View {
+    let name: String
+    let key: ChatSearchUnitKey
+    let url: URL
+    let duration: Double?
+    let preview: () -> Void
+    @ObservedObject private var player = GlobalAudioPlayer.shared
+
+    var body: some View {
+        let active = player.isActive(url: url)
+        let playing = active && player.isPlaying
+        let seekable = active && player.duration.isFinite && player.duration > 0
+        VStack(spacing: 4) {
+            HStack {
+                SearchHighlightText(name, key: key).font(.system(size: SimpleStandaloneMedia.audioFont(15))).lineLimit(1)
+                Spacer(minLength: 0)
+                Button(action: preview) { Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: SimpleStandaloneMedia.audioFont(15))) }
+                    .accessibilityLabel(Text("Open Audio Preview"))
+            }
+            HStack(spacing: 8) {
+                Button { if playing { player.togglePlayPause() } else { player.play(url: url) } } label: {
+                    Image(systemName: playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: SimpleStandaloneMedia.audioFont(20)))
+                }
+                .accessibilityLabel(playing ? Text("Pause") : Text("Play"))
+                Slider(value: Binding(get: { seekable ? min(player.currentTime, player.duration) : 0 },
+                                      set: { if seekable { player.debouncedSeek(to: $0) } }), in: 0...(seekable ? player.duration : 1))
+                    .disabled(!seekable)
+                Text("\(simpleMediaTime(active ? player.currentTime : 0)) / \(simpleMediaTime(active ? player.duration : duration))")
+                    .font(.system(size: SimpleStandaloneMedia.audioFont(11)).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+    }
+}
+
+private func simpleMediaTime(_ time: Double?) -> String {
+    guard let time, time.isFinite, time >= 0, time < Double(Int.max) else { return "--:--" }
+    let seconds = Int(time)
+    return String(format: "%d:%02d", seconds / 60, seconds % 60)
 }
 
 

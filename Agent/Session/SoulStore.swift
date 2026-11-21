@@ -21,6 +21,12 @@ enum SoulAppearancePreferences {
 /// SOUL.md frontmatter; its name and emoji drive assistant identity.
 struct SoulMetadata: Equatable {
     var name: String
+
+    var displayName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Ze" : trimmed
+    }
+
     /// User-selected emoji value parsed from SOUL.md. Empty means the built-in
     /// ZeAssistantAvatar logo is used by the shared avatar renderer.
     var emoji: String
@@ -288,7 +294,17 @@ enum SoulStore {
     /// re-read the file (e.g. cell builders running off the main thread).
     /// Refreshed after every Settings save via `notifyChanged()`.
     @MainActor
-    static var cachedMetadata: SoulMetadata = .default
+    static var cachedMetadata: SoulMetadata {
+        get { metadataCache.metadata }
+        set { metadataCache.metadata = newValue }
+    }
+
+    @MainActor
+    final class MetadataCache: ObservableObject {
+        @Published fileprivate(set) var metadata = SoulMetadata.default
+    }
+
+    @MainActor static let metadataCache = MetadataCache()
 
     /// Re-read SOUL.md into `cachedMetadata` and post a notification so
     /// observers (chat bubble header, prompt builder, etc.) can refresh.

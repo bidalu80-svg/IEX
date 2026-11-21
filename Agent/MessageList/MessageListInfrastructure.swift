@@ -30,10 +30,113 @@ extension EnvironmentValues {
     }
 }
 
+struct ReplyCompletionGlowEvent {
+    let sessionID: String
+    let messageID: UUID
+    let blockID: UUID
+}
+
+@MainActor
+final class ReplyCompletionGlowEvents {
+    static let shared = ReplyCompletionGlowEvents()
+
+    private let subject = PassthroughSubject<ReplyCompletionGlowEvent, Never>()
+    private var completed: [String: Set<UUID>] = [:]
+
+    var events: AnyPublisher<ReplyCompletionGlowEvent, Never> { subject.eraseToAnyPublisher() }
+
+    private init() {}
+
+    func send(_ event: ReplyCompletionGlowEvent) {
+        guard completed[event.sessionID, default: []].insert(event.messageID).inserted else { return }
+        subject.send(event)
+    }
+}
+
 @MainActor enum SimpleTranscript {
     enum Row: Equatable {
         case text
         case question
+        case standalone
+    }
+
+    @MainActor final class Body: ObservableObject {
+        @Published private(set) var segments: [SimpleBodySegment]
+        let contentChanges = PassthroughSubject<[SimpleSegmentID], Never>()
+        var tableOffsets: [SimpleSegmentID: CGPoint] = [:]
+        private var mediaSizes: [SimpleSegmentID: (media: SimpleBodySegment.Media, size: CGSize)] = [:]
+        private var parsedContent: String
+        private var parsedFinalised: Bool
+
+        init(block: AssistantBlock) {
+            parsedContent = block.content
+            parsedFinalised = Self.isFinalised(block)
+            segments = SimpleBodySegment.parse(parsedContent, finalised: parsedFinalised)
+        }
+
+        func observe(_ block: AssistantBlock) -> AnyPublisher<Void, Never> {
+            refresh(block)
+            return Publishers.Merge3(
+                block.$content.dropFirst().map { _ in () },
+                block.$cachedMarkdown.dropFirst().map { _ in () },
+                block.$cachedAttributedString.dropFirst().map { _ in () }
+            )
+            .receive(on: DispatchQueue.main)
+            .throttle(for: .milliseconds(32), scheduler: DispatchQueue.main, latest: true)
+            .compactMap { [weak self, weak block] _ -> Void? in
+                guard let self, let block else { return nil }
+                self.refresh(block)
+                return nil
+            }
+            .eraseToAnyPublisher()
+        }
+
+        private func refresh(_ block: AssistantBlock) {
+            let finalised = Self.isFinalised(block)
+            guard parsedContent != block.content || parsedFinalised != finalised else { return }
+            parsedContent = block.content
+            parsedFinalised = finalised
+            let next = SimpleBodySegment.parse(parsedContent, finalised: parsedFinalised)
+            guard next != segments else { return }
+            let previous = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let changed = next.compactMap { segment in
+                previous[segment.id].map { $0 != segment } == true ? segment.id : nil
+            }
+            let currentMedia = Dictionary(next.compactMap { segment in segment.media.map { (segment.id, $0) } },
+                                          uniquingKeysWith: { first, _ in first })
+            mediaSizes = mediaSizes.filter { currentMedia[$0.key] == $0.value.media }
+            segments = next
+            if !changed.isEmpty { contentChanges.send(changed) }
+        }
+
+        func segmentsForSearch(_ block: AssistantBlock) -> [SimpleBodySegment] {
+            let finalised = Self.isFinalised(block)
+            if parsedContent == block.content, parsedFinalised == finalised { return segments }
+            return SimpleBodySegment.parse(block.content, finalised: finalised)
+        }
+
+        func imageGalleryTitles() -> [SimpleSegmentID: String] {
+            SimpleBodySegment.imageGalleryTitles(in: parsedContent, segments: segments, finalised: parsedFinalised)
+        }
+
+        func markdownForCopy(_ segment: SimpleBodySegment) -> String {
+            segment.markdownForCopy(in: parsedContent, segments: segments, finalised: parsedFinalised)
+        }
+
+        func mediaSize(for id: SimpleSegmentID, media: SimpleBodySegment.Media) -> CGSize? {
+            guard let entry = mediaSizes[id], entry.media == media else { return nil }
+            return entry.size
+        }
+
+        func recordMediaSize(_ size: CGSize, for id: SimpleSegmentID, media: SimpleBodySegment.Media) -> Bool {
+            guard segments.contains(where: { $0.id == id && $0.media == media }), mediaSize(for: id, media: media) == nil else { return false }
+            mediaSizes[id] = (media, size)
+            return true
+        }
+
+        private static func isFinalised(_ block: AssistantBlock) -> Bool {
+            block.cachedMarkdown != nil || block.cachedAttributedString != nil
+        }
     }
 
     static func row(for block: AssistantBlock) -> Row? {
@@ -69,7 +172,7 @@ enum MessageListItem: Hashable, Sendable {
     /// The "sparkles Ze" label row at the top of an assistant turn.
     case assistantHeader(UUID)
     /// A single AssistantBlock within an assistant turn.
-    case assistantBlock(UUID, UUID)  // (messageId, blockId)
+    case assistantBlock(UUID, UUID, SimpleSegmentID? = nil)
     /// Disclosure header for a strict contiguous run of two or more tool blocks.
     case assistantToolGroup(UUID, UUID) // (messageId, firstToolBlockId)
     /// Footer area: typing indicator, error, resume, usage.
@@ -80,8 +183,13 @@ enum MessageListItem: Hashable, Sendable {
         switch self {
         case .wholeMessage(let id), .assistantHeader(let id),
              .assistantFooter(let id): return id
-        case .assistantBlock(let msgId, _), .assistantToolGroup(let msgId, _): return msgId
+        case .assistantBlock(let msgId, _, _), .assistantToolGroup(let msgId, _): return msgId
         }
+    }
+
+    var segmentID: SimpleSegmentID? {
+        if case .assistantBlock(_, _, let id) = self { return id }
+        return nil
     }
 }
 
@@ -939,6 +1047,19 @@ final class NoAnimationCollectionView: UICollectionView {
 // MARK: - MessageListViewController
 
 final class MessageListViewController: UIViewController {
+    var onListDisappearance: (() -> Void)?
+    private(set) var isListOnScreen = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        isListOnScreen = true
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        isListOnScreen = false
+        onListDisappearance?()
+    }
     var collectionView: UICollectionView!
     var messageListLayout: MessageListLayout!
 

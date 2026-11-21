@@ -153,6 +153,7 @@ final class MessageListLayout: UICollectionViewLayout {
 
     /// Vertical spacing between cells.
     var itemSpacing: CGFloat = 0
+    var simpleSegmentGaps: Set<Int> = []
 
     /// Cached heights keyed by item index. Persists across invalidation cycles.
     private var heightCache: [Int: CGFloat] = [:]
@@ -268,7 +269,7 @@ final class MessageListLayout: UICollectionViewLayout {
             // cell is zero-height (an empty text block renders nothing — its
             // trailing gap would double the spacing between its neighbors).
             // [T-ios-empty-textblock-gap]
-            if !isLast, !nextIsFooter, h > 0 { y += itemSpacing }
+            if !isLast, !nextIsFooter, h > 0 { y += simpleSegmentGaps.contains(i) ? 6 : itemSpacing }
         }
         totalHeight = y
         lastItemCount = itemCount

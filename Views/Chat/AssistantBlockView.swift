@@ -253,7 +253,7 @@ private struct SearchableToolLabel: View {
 
 // MARK: - Shimmer Overlay (continuous leading-to-trailing shine)
 
-/// Shared sweep timing for the compact chat status rows and the "Ze正在思考中"
+/// Shared sweep timing for the compact chat status rows and the reply waiting
 /// indicator. Keeping one value prevents the two animations from drifting apart.
 private enum ChatShimmerStyle {
     static let sweepDuration: TimeInterval = 1.65
@@ -2736,6 +2736,15 @@ private struct ThinkingDurationLabel: View {
     }
 }
 
+@MainActor
+struct AssistantReplyWaitingIndicator: View {
+    @ObservedObject private var soul = SoulStore.metadataCache
+
+    var body: some View {
+        TypingIndicator(assistantName: soul.metadata.displayName)
+    }
+}
+
 // MARK: - Typing Indicator
 
 /// The complete recorded entrance and six observed layer turns, in cube-local
@@ -2912,9 +2921,10 @@ private struct CubeThinkingGlyphFrame: View {
 /// Deterministic production row: the icon and label share one elapsed time.
 private struct TypingIndicatorFrame: View {
     let elapsed: TimeInterval
+    let assistantName: String
     var reducedMotion: Bool = false
 
-    private static let label = "Ze正在思考中"
+    private var label: String { String(localized: "\(assistantName) 正在处理中") }
 
     var body: some View {
         let entry = TypingIndicatorAnimation.labelState(elapsed: elapsed, reducedMotion: reducedMotion)
@@ -2934,14 +2944,13 @@ private struct TypingIndicatorFrame: View {
             .opacity(entry.opacity)
             .offset(y: entry.offsetY)
         }
-        .fixedSize(horizontal: true, vertical: false)
         .frame(minHeight: 24, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Ze正在思考中"))
+        .accessibilityLabel(Text(label))
     }
 
     private var labelText: some View {
-        Text(Self.label)
+        Text(label)
             .font(.callout.weight(.medium))
             .lineLimit(1)
     }
@@ -2961,6 +2970,7 @@ private struct TypingIndicatorFrame: View {
 }
 
 struct TypingIndicator: View {
+    let assistantName: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var startedAt: Date?
@@ -2969,7 +2979,7 @@ struct TypingIndicator: View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0,
                                 paused: reduceMotion || scenePhase != .active)) { timeline in
             let elapsed = startedAt.map { max(0, timeline.date.timeIntervalSince($0)) } ?? 0
-            TypingIndicatorFrame(elapsed: elapsed, reducedMotion: reduceMotion)
+            TypingIndicatorFrame(elapsed: elapsed, assistantName: assistantName, reducedMotion: reduceMotion)
         }
         .onAppear {
             if startedAt == nil { startedAt = Date() }

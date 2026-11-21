@@ -354,6 +354,9 @@ struct ContentView: View {
 
     var body: some View {
         remainingLifecycle(presentation(eventLifecycle(pageLayout)))
+            .modifier(AIApprovalDialogModifier(sessionID: nil,
+                                               hostReady: isWideLayout ? selectedSessionId == nil : navigationPath.isEmpty))
+            .modifier(AIApprovalExpiredNoticeModifier())
     }
 
     /// Keep the geometry/layout expression separate from the presentation and
@@ -380,7 +383,7 @@ struct ContentView: View {
             }
             .overlay(alignment: .top) {
                 if let toast = forceSyncToast {
-                    ForceSyncToastBanner(text: toast)
+                    SessionNoticeBanner(text: toast, systemImage: "icloud.and.arrow.up")
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .padding(.top, 8)
                 }
@@ -554,7 +557,9 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSessionFromIntent)) { note in
-            guard let sessionId = (note.userInfo as? [String: String])?["sessionId"] else { return }
+            guard let info = note.userInfo as? [String: String], let sessionId = info["sessionId"] else { return }
+            let approvalID = info["approvalID"].flatMap(UUID.init(uuidString:))
+            guard approvalTargetIsCurrent(approvalID) else { return }
             // [T-notification-tap-vs-launch-session] Warm path owns this
             // navigation: drop the cold-launch buffer copy and stamp the
             // handling time so an in-flight launch `.task` (the post can land
@@ -566,10 +571,15 @@ struct ContentView: View {
                 guard selectedSessionId != sessionId && newSessionRealId != sessionId else { return }
                 openSession(sessionId)
             } else {
+                if approvalID != nil && navigationPath.isEmpty {
+                    openSession(sessionId)
+                    return
+                }
                 guard currentStackSessionId != sessionId else { return }
                 // Pop entire stack back to root first, then push the target session
                 navigationPath.removeLast(navigationPath.count)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    guard approvalTargetIsCurrent(approvalID), approvalID == nil || navigationPath.isEmpty else { return }
                     openSession(sessionId)
                 }
             }
@@ -779,11 +789,11 @@ struct ContentView: View {
             // post arrived while this .task was awaiting listSessions() and
             // .onReceive already navigated — handledRecently suppresses the
             // launch-screen default so it can't clobber that navigation.
-            if let notificationTarget = NotificationNavigationStore.shared.takePending() {
-                shareLog.info("[Share] .task: notification tap target=\(notificationTarget.prefix(8)) — overriding launchScreen logic")
+            if let notificationTarget = NotificationNavigationStore.shared.takePending(), approvalTargetIsCurrent(notificationTarget.approvalID) {
+                shareLog.info("[Share] .task: notification tap target=\(notificationTarget.sessionId.prefix(8)) — overriding launchScreen logic")
                 var tx = Transaction()
                 tx.disablesAnimations = true
-                withTransaction(tx) { openSession(notificationTarget) }
+                withTransaction(tx) { openSession(notificationTarget.sessionId) }
             } else if NotificationNavigationStore.shared.handledRecently {
                 shareLog.info("[Share] .task: notification navigation just handled — skipping launchScreen logic")
             } else if quickActionPending {
@@ -2084,6 +2094,11 @@ struct ContentView: View {
     }
 
     /// Opens a session in the appropriate layout mode.
+    private func approvalTargetIsCurrent(_ id: UUID?) -> Bool {
+        guard let id else { return true }
+        return RemoteServerAIConfirmationGate.shared.pendingRequest(forNotification: id) != nil
+    }
+
     private func openSession(_ id: String) {
         draftLog.info("🔑DRAFT openSession id=\(id) isWide=\(isWideLayout) prevSel=\(selectedSessionId ?? "nil") prevReal=\(newSessionRealId ?? "nil") prevDraft=\(activeDraftId ?? "nil")")
         // Dismiss keyboard when navigating to a session
@@ -6128,14 +6143,14 @@ private struct PulseRotateIcon: View {
     }
 }
 
-/// Transient confirmation banner shown after a Force Sync runs against
-/// a multi-session selection. Floats at the top of the home view, fades
-/// in and out over ~4s. Mirrors the iOS system "Now playing" pill.
-private struct ForceSyncToastBanner: View {
+struct SessionNoticeBanner: View {
     let text: String
+    let systemImage: String
+    var showsChevron = false
+
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "icloud.and.arrow.up")
+            Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
             Text(text)
@@ -6143,6 +6158,12 @@ private struct ForceSyncToastBanner: View {
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
+            if showsChevron {
+                Image(systemName: "chevron.forward")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
