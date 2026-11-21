@@ -378,6 +378,7 @@ struct AsyncImageTile: View {
 struct AsyncVideoTile: View {
     let meta: AttachmentMeta
     let tileSize: CGFloat
+    @Environment(\.openURL) private var openURL
     @State private var thumbnail: UIImage?
 
     var body: some View {

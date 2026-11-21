@@ -358,6 +358,7 @@ extension AIChatViewModel {
                         currentTextBlockIdx = idx
                     }
                 case .toolUse(let rawTuId, let name):
+                    if let kind = RemoteAICredentialKind(rawValue: name) { await self.useCredentialSessionTitle(kind) }
                     // [T-dedupe-toolcallid] Rewrite duplicate id ASAP — the
                     // renamed value is what gets persisted to the
                     // AssistantBlock.toolUseId, which is the source of
@@ -553,7 +554,7 @@ extension AIChatViewModel {
 
             case .toolInputDelta(let name, let accumulated):
                 // Credential JSON must never reach previews, chunk diagnostics or titles.
-                if name == "remote_disk_configure_credentials" { continue }
+                if CredentialToolDiagnostics.isCredentialTool(name) { continue }
                 // Maintain a per-tool ring buffer of the most recent `accumulated`
                 // snapshots. Cheap (a single Array append + drop-first) and lives
                 // outside the throttle so even a fast-truncating stream still
@@ -671,9 +672,15 @@ extension AIChatViewModel {
                 }
 
             case .toolCallComplete(let rawId, let name, let rawArgs, let metadata):
-                let args: [String: Any] = if name == "remote_disk_configure_credentials" {
-                    await MainActor.run { RemoteDiskAICredentialInbox.stage(rawArgs) }
-                } else { rawArgs }
+                let args: [String: Any]
+                if let kind = RemoteAICredentialKind(rawValue: name) {
+                    await self.useCredentialSessionTitle(kind)
+                    args = await MainActor.run {
+                        RemoteAICredentialInbox.stage(rawArgs, kind: kind)
+                    }
+                } else {
+                    args = rawArgs
+                }
                 // [T-dedupe-toolcallid] Mirror the rewrite applied at
                 // contentBlockStart so the block-by-toolUseId lookup
                 // below finds the renamed block (the FIRST tool keeps
@@ -780,7 +787,8 @@ extension AIChatViewModel {
                     default: break
                     }
                     // Store serialized tool input args for introspection
-                    if let argsData = try? JSONSerialization.data(withJSONObject: args),
+                    let historyInput = RemoteAICredentialKind.historyInput(name: name, arguments: args)
+                    if let argsData = try? JSONSerialization.data(withJSONObject: historyInput),
                        let argsStr = String(data: argsData, encoding: .utf8) {
                         messages[msgIdx].blocks[blockIdx].toolInputArgs = argsStr
                     }
@@ -802,7 +810,9 @@ extension AIChatViewModel {
                         let blk = messages[msgIdx].blocks[blockIdx]
                         speakDesc = blk.toolSummary ?? blk.toolDescription
                         #if DEBUG
-                        logger.debug("[TOOL:RUNNING] \(name) id:\(id.prefix(8)) displayText=\"\(speakDesc)\" content=\"\(blk.content.prefix(120))\"")
+                        if !CredentialToolDiagnostics.isCredentialTool(name) {
+                            logger.debug("[TOOL:RUNNING] \(name) id:\(id.prefix(8)) displayText=\"\(speakDesc)\" content=\"\(blk.content.prefix(120))\"")
+                        }
                         #endif
                     }
                     if !remainingTextForTool.isEmpty { self.speakQueued(remainingTextForTool) }

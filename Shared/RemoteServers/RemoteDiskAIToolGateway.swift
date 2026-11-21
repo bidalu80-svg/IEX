@@ -1,4 +1,3 @@
-import Citadel
 import Foundation
 import SwiftUI
 
@@ -22,12 +21,35 @@ final class RemoteDiskAIDraftStore: ObservableObject {
     func dismiss() { pending = nil }
 }
 
+extension RemoteAICredentialKind {
+    var sessionTitle: String { self == .disk ? "网络磁盘配置" : "SSH 服务器配置" }
+    private var toolTitle: String { self == .disk ? "保存网络磁盘凭据" : "保存 SSH 服务器凭据" }
+    private var targetKey: String { self == .disk ? "disk_id" : "server_id" }
+
+    func targetID(in arguments: [String: Any]) -> UUID? {
+        guard let raw = arguments[targetKey] as? String else { return nil }
+        return UUID(uuidString: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func summary(of arguments: [String: Any]) -> [String: Any] {
+        var summary: [String: Any] = ["tool_title": toolTitle]
+        if let id = targetID(in: arguments) { summary[targetKey] = id.uuidString }
+        return summary
+    }
+
+    static func historyInput(name: String, arguments: [String: Any]) -> [String: Any] {
+        Self(rawValue: name)?.summary(of: arguments) ?? arguments
+    }
+}
+
 /// Strip credentials before tool introspection, history, title generation,
 /// preflight diagnostics or loop detection. Only an expiring, single-use random
 /// handle travels through the ordinary tool pipeline. Never serialize Payload.
 @MainActor
-enum RemoteDiskAICredentialInbox {
+enum RemoteAICredentialInbox {
     struct Payload {
+        let kind: RemoteAICredentialKind
+        let targetID: UUID
         let password: String?
         let secretKey: String?
         let privateKey: String?
@@ -35,26 +57,26 @@ enum RemoteDiskAICredentialInbox {
     }
     private static var pending: [String: Payload] = [:]
 
-    static func stage(_ arguments: [String: Any]) -> [String: Any] {
+    static func stage(_ arguments: [String: Any], kind: RemoteAICredentialKind) -> [String: Any] {
+        var safe = kind.summary(of: arguments)
+        guard let targetID = kind.targetID(in: safe) else { return safe }
         let token = UUID().uuidString
-        pending[token] = Payload(password: arguments["password"] as? String,
-                                 secretKey: arguments["secret_key"] as? String,
+        pending[token] = Payload(kind: kind, targetID: targetID, password: arguments["password"] as? String,
+                                 secretKey: kind == .disk ? arguments["secret_key"] as? String : nil,
                                  privateKey: arguments["private_key"] as? String,
                                  passphrase: arguments["passphrase"] as? String)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000_000)
             pending.removeValue(forKey: token)
         }
-        // Do not trust a model-supplied title or unknown fields on this path.
-        var safe: [String: Any] = ["tool_title": "保存网络磁盘凭据", "_credential_request": token]
-        if let raw = arguments["disk_id"] as? String, let id = UUID(uuidString: raw) {
-            safe["disk_id"] = id.uuidString
-        }
+        safe["_credential_request"] = token
         return safe
     }
 
-    static func take(_ arguments: [String: Any]) -> Payload? {
-        guard let token = arguments["_credential_request"] as? String else { return nil }
+    static func take(_ arguments: [String: Any], kind: RemoteAICredentialKind) -> Payload? {
+        guard let token = arguments["_credential_request"] as? String,
+              let payload = pending[token], payload.kind == kind,
+              kind.targetID(in: arguments) == payload.targetID else { return nil }
         return pending.removeValue(forKey: token)
     }
 }
@@ -158,31 +180,29 @@ enum RemoteDiskAIToolGateway {
 
     private static func configureCredentials(_ args: [String: Any]) async -> RemoteServerAIToolResult {
         // Consume even an invalid/denied request. Replayed history cannot write.
-        guard let payload = RemoteDiskAICredentialInbox.take(args) else { return failure("Credential request expired or was already consumed. Ask the user to supply it again only if they still want to save it.") }
+        guard let payload = RemoteAICredentialInbox.take(args, kind: .disk) else { return failure("Credential request expired or was already consumed. Ask the user to supply it again only if they still want to save it.") }
         guard let disk = disk(args), store.loadError == nil else { return failure("Disk configuration is unavailable. Refresh remote_disk_list.") }
         let server = disk.sshServerID.flatMap { RemoteServerStore.shared.server(id: $0) }
-        let kind: String
+        let credential: AIApprovalPresentation.DiskCredential
         if disk.profile.proto == .sftp {
             guard let server else { return failure("The linked SSH server is missing. Review the disk in Settings.") }
             switch server.authentication {
             case .password:
                 guard let password = payload.password, !password.isEmpty else { return failure("This SSH server requires a user-supplied password.") }
-                kind = "SSH 密码"
+                credential = .sharedSSH(server: server.approvalTarget, credential: .password)
             case .privateKey:
                 guard let key = payload.privateKey, !key.isEmpty else { return failure("This SSH server requires a user-supplied private key.") }
                 do { _ = try SSHKeyDetection.detectPrivateKeyType(from: key) }
                 catch { return failure("Unsupported private key format; use an OpenSSH RSA or Ed25519 key.") }
-                kind = "SSH 私钥及可选口令"
+                credential = .sharedSSH(server: server.approvalTarget, credential: .privateKey(hasPassphrase: payload.passphrase?.isEmpty == false))
             case .none: return failure("The linked SSH server stores no credential.")
             }
         } else {
             let secret = disk.profile.proto == .s3 ? payload.secretKey : payload.password
             guard let secret, !secret.isEmpty else { return failure("Supply the user-provided password or S3 Secret Key for this protocol.") }
-            kind = disk.profile.proto == .s3 ? "S3 Secret Key" : "密码"
+            credential = disk.profile.proto == .s3 ? .s3SecretKey : .password
         }
-        let sharedWarning = disk.profile.proto == .sftp ? "\n将更新关联 SSH 服务器的共享凭据，使其旧连接及所有关联磁盘验证失效。" : ""
-        let approved = await RemoteServerAIConfirmationGate.shared.request(serverName: disk.profile.name,
-            operation: "保存网络磁盘凭据", detail: "磁盘：\(disk.profile.name)\n地址：\(disk.profile.host):\(disk.profile.port)\n凭据类型：\(kind)\(sharedWarning)", isDestructive: false)
+        let approved = await RemoteServerAIConfirmationGate.shared.request(.diskCredential(disk: approvalTarget(disk), credential: credential), isDestructive: false)
         guard approved, !Task.isCancelled else { return failure("User denied or cancelled saving the disk credential. Do not retry unless asked.") }
         guard (try? store.disk(id: disk.id)) == disk,
               server == disk.sshServerID.flatMap({ RemoteServerStore.shared.server(id: $0) }) else { return failure("Configuration changed while awaiting confirmation. Refresh and request a new confirmation.") }
@@ -214,8 +234,8 @@ enum RemoteDiskAIToolGateway {
 
     private static func deleteDisk(_ args: [String: Any]) async -> RemoteServerAIToolResult {
         guard let disk = disk(args), store.loadError == nil else { return failure("Disk configuration is unavailable. Refresh remote_disk_list.") }
-        let approved = await RemoteServerAIConfirmationGate.shared.request(serverName: disk.profile.name,
-            operation: "删除网络磁盘配置", detail: "磁盘：\(disk.profile.name)\n地址：\(disk.profile.host):\(disk.profile.port)\n将删除磁盘配置及其独立 Keychain 凭据；保留远程文件、关联 SSH 服务器及其共享凭据。此操作不可撤销。", isDestructive: true)
+        let approved = await RemoteServerAIConfirmationGate.shared.request(
+            .diskDelete(disk: approvalTarget(disk), retainsSharedSSH: disk.sshServerID != nil), isDestructive: true)
         guard approved, !Task.isCancelled else { return failure("User denied or cancelled deleting the disk. Do not retry unless asked.") }
         guard (try? store.disk(id: disk.id)) == disk else { return failure("Disk changed while awaiting confirmation. Refresh and request a new confirmation.") }
         do {
@@ -227,6 +247,12 @@ enum RemoteDiskAIToolGateway {
     private static func disk(_ args: [String: Any]) -> RemoteDisk? {
         guard let raw = args["disk_id"] as? String, let id = UUID(uuidString: raw) else { return nil }
         return try? store.disk(id: id)
+    }
+
+    private static func approvalTarget(_ disk: RemoteDisk) -> AIApprovalPresentation.Disk {
+        let proto = disk.profile.proto
+        return .init(name: disk.profile.name, protocolName: proto == .webdav ? "WebDAV" : proto.rawValue.uppercased(),
+                     address: "\(disk.profile.host):\(disk.profile.port)")
     }
 
     private static func string(_ key: String, _ args: [String: Any]) -> String? {

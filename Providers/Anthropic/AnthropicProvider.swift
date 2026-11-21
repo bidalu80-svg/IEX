@@ -346,7 +346,7 @@ final class AnthropicProvider: LLMProvider {
     func logRequestParameter(_ parameter: MessageParameter) {
         // Do not preview user text or request JSON on credential-capable turns.
         if let data = try? JSONEncoder().encode(parameter),
-           String(decoding: data, as: UTF8.self).contains("remote_disk_configure_credentials") { return }
+           CredentialToolDiagnostics.containsToolName(in: String(decoding: data, as: UTF8.self)) { return }
         var parts: [String] = []
         parts.append("📤 Anthropic Request")
         parts.append("  model: \(parameter.model)")
@@ -430,7 +430,7 @@ final class AnthropicProvider: LLMProvider {
                 let preview = String(text.prefix(200))
                 parts.append("    [\(i)] text(\(text.count) chars): \"\(preview)\"" + (text.count > 200 ? "..." : ""))
             case .toolUse(let toolUse):
-                let inputStr = "\(toolUse.input)"
+                let inputStr = CredentialToolDiagnostics.isCredentialTool(toolUse.name) ? "<redacted>" : "\(toolUse.input)"
                 parts.append("    [\(i)] tool_use: \(toolUse.name) (id: \(toolUse.id)) input: \(String(inputStr.prefix(200)))")
             default:
                 parts.append("    [\(i)] \(block)")

@@ -32,6 +32,21 @@ struct AgentToolDefinition {
     }
 }
 
+enum RemoteAICredentialKind: String, CaseIterable, Sendable {
+    case disk = "remote_disk_configure_credentials"
+    case server = "remote_server_configure_credentials"
+}
+
+enum CredentialToolDiagnostics {
+    static func isCredentialTool(_ name: String) -> Bool {
+        RemoteAICredentialKind(rawValue: name) != nil
+    }
+
+    static func containsToolName(in text: String) -> Bool {
+        RemoteAICredentialKind.allCases.contains { text.contains($0.rawValue) }
+    }
+}
+
 struct AgentToolParam {
     let type: AgentParamType
     let description: String

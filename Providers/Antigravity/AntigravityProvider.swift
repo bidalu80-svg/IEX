@@ -601,7 +601,7 @@ final class AntigravityProvider: LLMProvider {
         var parts: [String] = ["📥 Antigravity Response"]
         if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
            let str = String(data: data, encoding: .utf8) {
-            parts.append(String(str.prefix(2000)))
+            parts.append(Self.containsCredentialToolName(in: data) ? "<redacted: credential tool payload>" : String(str.prefix(2000)))
         }
         logger.debug("\(parts.joined(separator: "\n"))")
     }

@@ -1020,13 +1020,10 @@ final class ICloudBackupManager: ObservableObject {
     }
 
     private func restoreSessionFiles(from dir: URL) async throws {
-        var databaseClosed = false
-        do {
         let dbSrc = dir.appendingPathComponent("ze.db")
         if fm.fileExists(atPath: dbSrc.path) {
             // Close existing DB connection before replacing
             await ChatStore.shared.closeDatabase()
-            databaseClosed = true
 
             // Also remove WAL and SHM files
             let walPath = zeDBURL.path + "-wal"
@@ -1034,7 +1031,13 @@ final class ICloudBackupManager: ObservableObject {
             try? fm.removeItem(atPath: walPath)
             try? fm.removeItem(atPath: shmPath)
 
-            try replaceRestoredItem(at: zeDBURL, with: dbSrc)
+            do {
+                try replaceRestoredItem(at: zeDBURL, with: dbSrc)
+            } catch {
+                await ChatStore.shared.reloadDatabase()
+                throw error
+            }
+            await ChatStore.shared.reloadDatabase(replacingDatabase: true)
         }
 
         let mediaSrc = dir.appendingPathComponent("media")
@@ -1045,10 +1048,6 @@ final class ICloudBackupManager: ObservableObject {
         let zeSrc = dir.appendingPathComponent("ze")
         if fm.fileExists(atPath: zeSrc.path) {
             try replaceRestoredItem(at: sessionZeURL, with: zeSrc)
-        }
-        } catch {
-            if databaseClosed { await ChatStore.shared.reloadDatabase() }
-            throw error
         }
     }
 

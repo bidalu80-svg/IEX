@@ -69,8 +69,14 @@ extension AIChatViewModel {
             case "media_favorite_delete":
                 guard let raw = arguments["favorite_id"] as? String, let id = UUID(uuidString: raw),
                       let item = store.items.first(where: { $0.id == id }) else { throw MediaFavoriteToolError.message("找不到收藏 ID，请先调用 media_favorite_list。") }
-                guard await RemoteServerAIConfirmationGate.shared.request(serverName: "收藏夹", operation: "删除媒体收藏",
-                    detail: "删除收藏：\(item.fileName)\n分类：\(item.kind.title)\n收藏 ID：\(item.id.uuidString)\n仅删除收藏副本，原会话文件保持不变。", isDestructive: true) else {
+                let kind: AIApprovalPresentation.FavoriteKind
+                switch item.kind {
+                case .image: kind = .image
+                case .video: kind = .video
+                case .audio: kind = .audio
+                }
+                guard await RemoteServerAIConfirmationGate.shared.request(
+                    .favoriteDelete(name: item.fileName, kind: kind, id: item.id), isDestructive: true) else {
                     return .init(output: "用户未确认，收藏没有删除。", success: false)
                 }
                 try Task.checkCancellation()

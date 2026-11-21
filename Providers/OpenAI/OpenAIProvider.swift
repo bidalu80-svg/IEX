@@ -838,6 +838,22 @@ final class OpenAIProvider: LLMProvider {
 
     #if DEBUG
     private func logOutgoingRequest(url: URL, headers: [String: String]?, body: [String: Any]) {
+        let messages = body["messages"] as? [[String: Any]] ?? []
+        let hasChatCredentialCall = messages.contains { message in
+            let calls = message["tool_calls"] as? [[String: Any]] ?? []
+            return calls.contains { call in
+                guard let function = call["function"] as? [String: Any], let name = function["name"] as? String else { return false }
+                return CredentialToolDiagnostics.isCredentialTool(name)
+            }
+        }
+        let input = body["input"] as? [[String: Any]] ?? []
+        let hasResponsesCredentialCall = input.contains { item in
+            guard item["type"] as? String == "function_call", let name = item["name"] as? String else { return false }
+            return CredentialToolDiagnostics.isCredentialTool(name)
+        }
+        guard !hasChatCredentialCall, !hasResponsesCredentialCall else { return }
+        let bodyJSON = (try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) }
         var parts: [String] = []
         parts.append("📤 OpenAI Request")
         parts.append("  url: \(url.absoluteString)")
@@ -883,8 +899,7 @@ final class OpenAIProvider: LLMProvider {
         // Full body as pretty JSON (for the debug logger preview only; the raw on-wire
         // body is captured separately in streamRaw so debug.llmRequests reflects
         // exactly what hit the network).
-        if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]),
-           let str = String(data: data, encoding: .utf8) {
+        if let str = bodyJSON {
             let truncated = String(str.prefix(3000))
             parts.append("  Full Body:")
             parts.append(truncated)

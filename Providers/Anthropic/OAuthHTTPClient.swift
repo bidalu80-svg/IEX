@@ -280,9 +280,9 @@ final class LastAPIRequestBody: @unchecked Sendable {
     /// cache keep-alive warmup) may have shifted in the interim.
     /// [T-ios-llmcapture-entry-crosstalk]
     @discardableResult
-    func set(_ body: String?, provider: String = "Anthropic", tag: String? = nil) -> CapturedAPIRequest? {
+    func set(_ body: String?, provider: String = "Anthropic", tag: String? = nil, suppressCredentialBodies: Bool = false) -> CapturedAPIRequest? {
         guard var body else { return nil }
-        let suppressBodyCapture = body.contains("remote_disk_configure_credentials")
+        let suppressBodyCapture = suppressCredentialBodies || CredentialToolDiagnostics.containsToolName(in: body)
         if body.utf8.count > Self.maxStoredBodySize {
             body = String(body.prefix(Self.maxStoredBodySize))
                 + "\n... [truncated: \(body.utf8.count) bytes total]"
@@ -602,7 +602,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
         AgentRequestTrace.shared.step("urlprotocol.intercept", detail: "httpBody=\(mutable.httpBody?.count ?? -1) httpBodyStream=\(mutable.httpBodyStream != nil)")
         #endif
         RequestBodyPatcher.materializeBodyStream(mutable)
-        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
+        suppressCredentialBodies = CredentialToolDiagnostics.containsToolName(in: String(decoding: mutable.httpBody ?? Data(), as: UTF8.self))
         #if DEBUG
         AgentRequestTrace.shared.step("urlprotocol.afterMaterialize", detail: "httpBody=\(mutable.httpBody?.count ?? -1) httpBodyStream=\(mutable.httpBodyStream != nil)")
         #endif
@@ -683,7 +683,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
                 let prettyCap = 256 * 1024
                 let formatted: String
                 if suppressCredentialBodies {
-                    formatted = "[Body omitted: remote_disk_configure_credentials]"
+                    formatted = "[Body omitted: write-only credential tools are available]"
                 } else if capturedBody.count > prettyCap {
                     // The cut may land mid-way through a UTF-8 multi-byte
                     // character; back off a few bytes until decoding succeeds.
@@ -701,7 +701,7 @@ private final class OAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
                 } else {
                     formatted = String(data: capturedBody, encoding: .utf8) ?? "(binary \(capturedBody.count) bytes)"
                 }
-                captureToken = LastAPIRequestBody.shared.set(formatted)
+                captureToken = LastAPIRequestBody.shared.set(formatted, suppressCredentialBodies: suppressCredentialBodies)
                 LastAPIRequestBody.shared.setRequestMeta(
                     url: mutable.url?.absoluteString,
                     method: mutable.httpMethod,
@@ -1357,7 +1357,7 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
         let mutable = (request as NSURLRequest).mutableCopy() as! NSMutableURLRequest
         URLProtocol.setProperty(true, forKey: "EagerHandled", in: mutable)
         RequestBodyPatcher.materializeBodyStream(mutable)
-        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
+        suppressCredentialBodies = CredentialToolDiagnostics.containsToolName(in: String(decoding: mutable.httpBody ?? Data(), as: UTF8.self))
         RequestBodyPatcher.normalizeKeyOrder(in: mutable)
         RequestBodyPatcher.injectToolsCacheControl(into: mutable)
         RequestBodyPatcher.injectEagerInputStreaming(into: mutable)
@@ -1549,7 +1549,7 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
 
         // Apply same patching as EagerStreamingURLProtocol
         RequestBodyPatcher.materializeBodyStream(mutable)
-        suppressCredentialBodies = String(decoding: mutable.httpBody ?? Data(), as: UTF8.self).contains("remote_disk_configure_credentials")
+        suppressCredentialBodies = CredentialToolDiagnostics.containsToolName(in: String(decoding: mutable.httpBody ?? Data(), as: UTF8.self))
         RequestBodyPatcher.normalizeKeyOrder(in: mutable)
         RequestBodyPatcher.injectToolsCacheControl(into: mutable)
         RequestBodyPatcher.injectEagerInputStreaming(into: mutable)

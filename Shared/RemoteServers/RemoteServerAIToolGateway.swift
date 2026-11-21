@@ -16,14 +16,19 @@ struct RemoteServerAIToolResult {
 struct RemoteServerAIConfirmationRequest: Identifiable {
     let id: UUID
     let sessionID: String?
-    let serverName: String
-    let operation: String
-    let detail: String
+    let soulName: String
+    let presentation: AIApprovalPresentation
     let isDestructive: Bool
 }
 
 enum AIApprovalContext {
     @TaskLocal static var sessionID: String?
+}
+
+extension RemoteServerProfile {
+    var approvalTarget: AIApprovalPresentation.Server {
+        .init(name: name, address: endpointDescription, user: username)
+    }
 }
 
 /// Non-secret connection details proposed by a model. A draft is never
@@ -90,29 +95,25 @@ final class RemoteServerAIConfirmationGate: ObservableObject {
         }
     }
 
-    func request(
-        serverName: String,
-        operation: String,
-        detail: String,
-        isDestructive: Bool
-    ) async -> Bool {
+    func request(_ presentation: AIApprovalPresentation, isDestructive: Bool) async -> Bool {
         guard pending == nil, !Task.isCancelled else { return false }
-        let request = RemoteServerAIConfirmationRequest(
-            id: UUID(), sessionID: AIApprovalContext.sessionID,
-            serverName: serverName, operation: operation, detail: detail, isDestructive: isDestructive
-        )
+        let id = UUID()
+        let sessionID = AIApprovalContext.sessionID
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 guard pending == nil, !Task.isCancelled else {
                     continuation.resume(returning: false)
                     return
                 }
+                let name = SoulStore.cachedMetadata.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let request = RemoteServerAIConfirmationRequest(id: id, sessionID: sessionID,
+                    soulName: name.isEmpty ? "Ze" : name, presentation: presentation, isDestructive: isDestructive)
                 self.continuation = continuation
                 self.pending = request
                 notifyIfBackgrounded()
             }
         } onCancel: {
-            Task { @MainActor in self.resolve(id: request.id, allowed: false) }
+            Task { @MainActor in self.resolve(id: id, allowed: false) }
         }
     }
 
@@ -437,9 +438,7 @@ enum RemoteServerAIToolGateway {
             approved = true
         } else {
             approved = await RemoteServerAIConfirmationGate.shared.request(
-                serverName: server.name,
-                operation: "执行远程命令",
-                detail: command,
+                .serverCommand(server: server.approvalTarget, command: command),
                 isDestructive: true
             )
         }
@@ -491,12 +490,16 @@ enum RemoteServerAIToolGateway {
             return .init(output: "Error: Missing action or path.", success: false)
         }
 
-        let detail: String
+        let change: AIApprovalPresentation.SFTPChange
         switch action {
-        case "write": detail = "写入文件：\(path)"
-        case "mkdir": detail = "新建文件夹：\(path)"
-        case "rename": detail = "重命名：\(path) → \(string("new_path", from: arguments) ?? "")"
-        case "delete": detail = "删除：\(path)"
+        case "write":
+            guard let content = arguments["content"] as? String else { return .init(output: "Error: Missing content for write.", success: false) }
+            change = .write(path: path, content: content)
+        case "mkdir": change = .mkdir(path: path)
+        case "rename":
+            guard let newPath = string("new_path", from: arguments) else { return .init(output: "Error: Missing new_path for rename.", success: false) }
+            change = .rename(path: path, to: newPath)
+        case "delete": change = .delete(path: path, isDirectory: arguments["is_directory"] as? Bool ?? false)
         default: return .init(output: "Error: Unsupported SFTP mutation '\(action)'.", success: false)
         }
         let approved: Bool
@@ -504,48 +507,49 @@ enum RemoteServerAIToolGateway {
             approved = true
         } else {
             approved = await RemoteServerAIConfirmationGate.shared.request(
-                serverName: server.name,
-                operation: "修改远程文件",
-                detail: detail,
+                .sftp(server: server.approvalTarget, change: change),
                 isDestructive: action == "delete" || action == "write"
             )
         }
         guard approved else { return .init(output: "User denied the remote file operation. Do not retry unless the user asks again.", success: false) }
 
         do {
-            switch action {
-            case "write":
-                guard let content = arguments["content"] as? String else { return .init(output: "Error: Missing content for write.", success: false) }
+            let result: String
+            switch change {
+            case .write(let path, let content):
                 try await connection.uploadFile(Data(content.utf8), to: path, on: server.id, maximumBytes: 1_024 * 1_024)
-            case "mkdir":
+                result = "写入文件：\(path)"
+            case .mkdir(let path):
                 try await connection.createDirectory(at: path, on: server.id)
-            case "rename":
-                guard let newPath = string("new_path", from: arguments) else { return .init(output: "Error: Missing new_path for rename.", success: false) }
+                result = "新建文件夹：\(path)"
+            case .rename(let path, let newPath):
                 try await connection.renameItem(at: path, to: newPath, on: server.id)
-            case "delete":
-                try await connection.deleteItem(at: path, isDirectory: arguments["is_directory"] as? Bool ?? false, on: server.id)
-            default: break
+                result = "重命名：\(path) → \(newPath)"
+            case .delete(let path, let isDirectory):
+                try await connection.deleteItem(at: path, isDirectory: isDirectory, on: server.id)
+                result = "删除：\(path)"
             }
-            return .init(output: "Success: \(detail)", success: true)
+            return .init(output: "Success: \(result)", success: true)
         } catch {
             return .init(output: "Error: \(error.localizedDescription)", success: false)
         }
     }
 
     private static func configureCredentials(_ arguments: [String: Any]) async -> RemoteServerAIToolResult {
+        guard let payload = RemoteAICredentialInbox.take(arguments, kind: .server) else {
+            return .init(output: "Credential request expired or was already consumed. Ask the user to supply it again only if they still want to save it.", success: false)
+        }
         guard let server = authorizedServer(from: arguments) else {
             return .init(output: "Error: Server is not authorized for AI. Ask the user to grant AI access in Settings → 服务器与连接 first.", success: false)
         }
 
         switch server.authentication {
         case .password:
-            guard let password = arguments["password"] as? String, !password.isEmpty else {
+            guard let password = payload.password, !password.isEmpty else {
                 return .init(output: "Error: This server uses password authentication. Provide the user-supplied password in the password parameter.", success: false)
             }
             let approved = await RemoteServerAIConfirmationGate.shared.request(
-                serverName: server.name,
-                operation: "保存服务器密码",
-                detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n凭据类型：密码",
+                .serverCredential(server: server.approvalTarget, credential: .password),
                 isDestructive: false
             )
             guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
@@ -562,7 +566,7 @@ enum RemoteServerAIToolGateway {
             }
 
         case .privateKey:
-            guard let privateKey = arguments["private_key"] as? String,
+            guard let privateKey = payload.privateKey,
                   !privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .init(output: "Error: This server uses private-key authentication. Provide the user-supplied private key in the private_key parameter.", success: false)
             }
@@ -571,11 +575,9 @@ enum RemoteServerAIToolGateway {
             } catch {
                 return .init(output: "Error: Unsupported private key format. Only OpenSSH RSA and Ed25519 keys are accepted.", success: false)
             }
-            let passphrase = (arguments["passphrase"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let passphrase = payload.passphrase.flatMap { $0.isEmpty ? nil : $0 }
             let approved = await RemoteServerAIConfirmationGate.shared.request(
-                serverName: server.name,
-                operation: "保存服务器私钥",
-                detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n凭据类型：私钥\(passphrase == nil ? "" : "及私钥口令")",
+                .serverCredential(server: server.approvalTarget, credential: .privateKey(hasPassphrase: passphrase != nil)),
                 isDestructive: false
             )
             guard approved else { return .init(output: "User denied saving the server credential. Do not retry unless the user asks again.", success: false) }
@@ -605,9 +607,7 @@ enum RemoteServerAIToolGateway {
             return .init(output: "Error: Server is not authorized for AI. Ask the user to grant AI access in Settings → 服务器与连接 first.", success: false)
         }
         let approved = await RemoteServerAIConfirmationGate.shared.request(
-            serverName: server.name,
-            operation: "删除服务器",
-            detail: "服务器：\(server.name)\n地址：\(server.endpointDescription)\n将断开当前连接并永久删除服务器配置及其 Keychain 中的密码、私钥和口令。此操作不可撤销。",
+            .serverDelete(server: server.approvalTarget),
             isDestructive: true
         )
         guard approved else {

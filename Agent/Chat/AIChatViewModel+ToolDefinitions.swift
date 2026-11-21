@@ -363,11 +363,8 @@ extension AIChatViewModel {
             }
 
             let title = session.title ?? "未命名会话"
-            let detail = "会话：\(title)\n会话 ID：\(id)\n将永久删除聊天消息、媒体文件、会话目录和浏览器持久化数据。此操作不可撤销。"
             guard await RemoteServerAIConfirmationGate.shared.request(
-                serverName: "本机 Ze 会话",
-                operation: "删除会话",
-                detail: detail,
+                .sessionDelete(title: session.title, targetID: id),
                 isDestructive: true
             ) else {
                 return .init(output: "用户拒绝了删除会话操作。除非用户再次明确要求，不要重试。", success: false)

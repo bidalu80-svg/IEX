@@ -197,20 +197,13 @@ enum SubAgentAIToolGateway {
             }
         }
 
-        var changes: [String] = []
+        let model: AIApprovalPresentation.SubagentModel?
         if let targetEntry {
-            changes.append("模型：\(targetEntry.model.displayName)（\(ZeSubAgentModelCatalog.providerLabel(for: targetEntry))）")
-        } else if clearModel {
-            changes.append("模型：跟随当前对话")
-        }
-        if let thinkingValue {
-            changes.append("思考：\(thinkingValue ? "开启（中等档）" : "关闭")")
-        }
+            model = .model(name: targetEntry.model.displayName, provider: ZeSubAgentModelCatalog.providerLabel(for: targetEntry))
+        } else { model = clearModel ? .followConversation : nil }
 
         let approved = await RemoteServerAIConfirmationGate.shared.request(
-            serverName: "Ze 子代理设置",
-            operation: "修改子代理配置",
-            detail: changes.joined(separator: "\n"),
+            .subagentConfigure(model: model, thinking: thinkingValue),
             isDestructive: false
         )
         guard approved else {

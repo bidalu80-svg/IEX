@@ -696,8 +696,19 @@ final class GeminiProvider: LLMProvider {
 
     /// Log the full outgoing URLRequest (URL, headers, body as pretty JSON).
     private func logFullRequest(_ request: URLRequest) {
-        if let body = request.httpBody,
-           String(decoding: body, as: UTF8.self).contains("remote_disk_configure_credentials") { return }
+        let body = request.httpBody
+        let json = body.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+        let root = json as? [String: Any]
+        let payload = (root?["request"] as? [String: Any]) ?? root
+        let contents = payload?["contents"] as? [[String: Any]] ?? []
+        let hasCredentialCall = contents.contains { content in
+            let parts = content["parts"] as? [[String: Any]] ?? []
+            return parts.contains { part in
+                guard let call = part["functionCall"] as? [String: Any], let name = call["name"] as? String else { return false }
+                return CredentialToolDiagnostics.isCredentialTool(name)
+            }
+        }
+        guard !hasCredentialCall else { return }
         var parts: [String] = ["📤 Gemini HTTP Request"]
         // Mask `key=` query parameter to avoid logging API keys
         let urlDisplay: String = {
@@ -729,9 +740,9 @@ final class GeminiProvider: LLMProvider {
         }
 
         // Body as pretty JSON
-        if let body = request.httpBody {
+        if let body {
             parts.append("  Body (\(body.count) bytes):")
-            if let json = try? JSONSerialization.jsonObject(with: body),
+            if let json,
                let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
                let str = String(data: pretty, encoding: .utf8) {
                 LastAPIRequestBody.shared.set(str, provider: "Gemini")

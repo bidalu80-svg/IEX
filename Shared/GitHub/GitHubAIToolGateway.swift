@@ -190,30 +190,35 @@ enum GitHubAIToolGateway {
             return missing("account_id、owner、repository、branch")
         }
         do {
-            let changes: [GitHubRepositoryClient.Change]
+            let target = AIApprovalPresentation.Repository(account: account.login, owner: owner, name: repository)
+            let presentation: AIApprovalPresentation
+            let perform: () async throws -> [String: Any]
             if name == "github_commit_push" {
                 guard let raw = arguments["changes_json"] as? String,
-                      string("expected_head", arguments) != nil, string("message", arguments) != nil else { return missing("changes_json、expected_head、message") }
-                changes = try JSONDecoder().decode([GitHubRepositoryClient.Change].self, from: Data(raw.utf8))
+                      let expectedHead = string("expected_head", arguments), let message = string("message", arguments) else { return missing("changes_json、expected_head、message") }
+                let changes = try JSONDecoder().decode([GitHubRepositoryClient.Change].self, from: Data(raw.utf8))
+                var files: [AIApprovalPresentation.FileChange] = []
+                for change in changes {
+                    if change.delete == true {
+                        guard change.content == nil else { throw GitHubConnectorError.http(400, "修改路径须唯一且位于仓库内；写入传 content，删除只传 delete:true。") }
+                        files.append(.delete(path: change.path))
+                    } else {
+                        guard let content = change.content else { throw GitHubConnectorError.http(400, "修改路径须唯一且位于仓库内；写入传 content，删除只传 delete:true。") }
+                        files.append(.write(path: change.path, content: content))
+                    }
+                }
+                presentation = .githubCommit(repository: target, branch: branch, expectedHead: expectedHead, message: message, changes: files)
+                perform = { try await repositories.commit(owner: owner, repository: repository, branch: branch,
+                    expectedHead: expectedHead, message: message, changes: changes, token: token) }
             } else {
-                guard string("from_sha", arguments) != nil else { return missing("from_sha") }
-                changes = []
+                guard let fromSHA = string("from_sha", arguments) else { return missing("from_sha") }
+                presentation = .githubBranch(repository: target, branch: branch, fromSHA: fromSHA)
+                perform = { try await repositories.createBranch(owner: owner, repository: repository, branch: branch, fromSHA: fromSHA, token: token) }
             }
-            let detail = name == "github_commit_push"
-                ? "账号 \(account.login) 将向 \(owner)/\(repository) 的 \(branch) 分支推送一个提交。\n提交说明：\(string("message", arguments) ?? "")\n" + changes.map { ($0.delete == true ? "删除 " : "写入 ") + $0.path }.joined(separator: "\n")
-                : "账号 \(account.login) 将在 \(owner)/\(repository) 从 \(string("from_sha", arguments) ?? "") 创建分支 \(branch)。"
-            guard await RemoteServerAIConfirmationGate.shared.request(serverName: "GitHub / \(account.login)",
-                operation: name == "github_commit_push" ? "提交并推送" : "创建分支", detail: detail, isDestructive: true) else {
+            guard await RemoteServerAIConfirmationGate.shared.request(presentation, isDestructive: true) else {
                 return .init(output: "用户取消了 GitHub 操作；等待新的明确指令。", success: false)
             }
-            let result: [String: Any]
-            if name == "github_commit_push" {
-                result = try await repositories.commit(owner: owner, repository: repository, branch: branch,
-                    expectedHead: string("expected_head", arguments)!, message: string("message", arguments)!, changes: changes, token: token)
-            } else {
-                result = try await repositories.createBranch(owner: owner, repository: repository, branch: branch,
-                    fromSHA: string("from_sha", arguments)!, token: token)
-            }
+            let result = try await perform()
             return .init(output: json(result), success: true)
         } catch { return failure(error) }
     }
@@ -239,13 +244,15 @@ enum GitHubAIToolGateway {
         do { endpoint = try GitHubRepositoryClient.contentsPath(owner: owner, repository: repository, path: filePath) }
         catch { return failure(error) }
         let branch = string("branch", arguments)
-        let detail = "账号 \(account.login) 将写入 \(owner)/\(repository)/\(filePath)，创建提交并推送\(branch.map { "到分支 \($0)" } ?? "")。提交说明：\(message)"
-        guard await RemoteServerAIConfirmationGate.shared.request(serverName: "GitHub / \(account.login)", operation: "写入并推送 GitHub 文件", detail: detail, isDestructive: true) else {
+        let originalSHA = string("file_sha", arguments)
+        let target = AIApprovalPresentation.Repository(account: account.login, owner: owner, name: repository)
+        guard await RemoteServerAIConfirmationGate.shared.request(.githubWrite(repository: target, branch: branch,
+            path: filePath, message: message, originalSHA: originalSHA, content: content), isDestructive: true) else {
             return .init(output: "用户拒绝了 GitHub 写入操作。除非用户再次明确要求，不要重试。", success: false)
         }
         var body: [String: Any] = ["message": message, "content": Data(content.utf8).base64EncodedString()]
         if let branch { body["branch"] = branch }
-        if let sha = string("file_sha", arguments) { body["sha"] = sha }
+        if let originalSHA { body["sha"] = originalSHA }
         do {
             let data = try JSONSerialization.data(withJSONObject: body, options: [])
             let (responseData, _) = try await api.raw(path: endpoint, token: token, method: "PUT", body: data)
@@ -263,8 +270,9 @@ enum GitHubAIToolGateway {
         do { endpoint = try GitHubRepositoryClient.contentsPath(owner: owner, repository: repository, path: filePath) }
         catch { return failure(error) }
         let branch = string("branch", arguments)
-        let detail = "账号 \(account.login) 将删除 \(owner)/\(repository)/\(filePath)，创建提交并推送。提交说明：\(message)"
-        guard await RemoteServerAIConfirmationGate.shared.request(serverName: "GitHub / \(account.login)", operation: "删除并推送 GitHub 文件", detail: detail, isDestructive: true) else {
+        let target = AIApprovalPresentation.Repository(account: account.login, owner: owner, name: repository)
+        guard await RemoteServerAIConfirmationGate.shared.request(.githubDelete(repository: target, branch: branch,
+            path: filePath, message: message, fileSHA: sha), isDestructive: true) else {
             return .init(output: "用户拒绝了 GitHub 删除操作。除非用户再次明确要求，不要重试。", success: false)
         }
         var body: [String: Any] = ["message": message, "sha": sha]

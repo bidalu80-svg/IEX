@@ -32,19 +32,29 @@ extension AIChatViewModel {
         return t
     }
 
+    func useCredentialSessionTitle(_ kind: RemoteAICredentialKind) async {
+        guard let sessionId else { return }
+        let ownerID = credentialTitleOwnerID ?? UUID().uuidString
+        credentialTitleOwnerID = ownerID
+        isTitleGenerating = false
+        titleGenAttempts = 3
+        if let title = await ChatStore.shared.recordCredentialSessionTitle(kind, sessionId: sessionId, ownerID: ownerID) {
+            SessionActivityTracker.shared.updateSessionTitle(sessionId, title: title)
+        }
+    }
+
     /// Call after each LLM stream completes to asynchronously generate a session title.
     /// Retries up to 3 times across agent loop iterations if the title is still missing.
     /// Skips if a generation request is already in-flight to avoid wasting tokens.
-    func generateSessionTitleIfNeeded(toolEntries: [(name: String, args: [String: Any])] = []) {
+    func generateSessionTitleIfNeeded(toolEntries: [(name: String, args: [String: Any])] = []) async {
         guard let sessionId else { return }
-        if toolEntries.contains(where: { $0.name == "remote_disk_configure_credentials" }) {
-            remoteDiskCredentialSessions.insert(sessionId)
-            isTitleGenerating = false
-            titleGenAttempts = 3
-            Task { await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil) }
+        if let kind = toolEntries.lazy.compactMap({ RemoteAICredentialKind(rawValue: $0.name) }).first {
+            await useCredentialSessionTitle(kind)
             return
         }
         guard titleGenAttempts < 3, !isTitleGenerating else { return }
+        guard await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil,
+              titleGenAttempts < 3, !isTitleGenerating else { return }
 
         let userMessages = messages.filter { $0.role == .user }
         let assistantMessages = messages.filter { $0.role == .assistant }
@@ -69,6 +79,7 @@ extension AIChatViewModel {
         // If no assistant text anywhere yet, build a summary from tool call args
         if responseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !toolEntries.isEmpty {
             let toolSummaries = toolEntries.prefix(3).map { entry in
+                if CredentialToolDiagnostics.isCredentialTool(entry.name) { return entry.name }
                 let argsPreview = (try? JSONSerialization.data(withJSONObject: entry.args))
                     .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                 return "\(entry.name)(\(String(argsPreview.prefix(200))))"
@@ -105,6 +116,7 @@ extension AIChatViewModel {
         let subEntry = resolveSubEntry()
         logger.info("[TitleGen] Starting title generation attempt \(attempt)/3 for session \(sessionId ?? "nil"), subEntry: \(subEntry?.model.id ?? "nil")")
         Task { [weak self, sessionId, subEntry, firstUserRaw, summary] in
+            defer { self?.isTitleGenerating = false }
             do {
                 // If title already exists (e.g. set by a previous async Task), stop trying
                 if let session = await ChatStore.shared.getSession(sessionId), session.title != nil {
@@ -115,24 +127,26 @@ extension AIChatViewModel {
                     return
                 }
 
+                guard await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
                 logger.info("[TitleGen] Summary length: \(summary.count) chars, userTurns=\(userTurnCount)")
                 let (title, category) = try await Self.callSubModelForTitle(
                     conversationSummary: summary,
                     subEntry: subEntry
                 )
-                guard self?.remoteDiskCredentialSessions.contains(sessionId) != true else { return }
+                guard await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 guard !trimmed.isEmpty else {
                     logger.error("[TitleGen] FAILED attempt \(attempt)/3 — reason=empty-response (model returned no usable title after trimming, raw: \"\(title.prefix(80))\")")
-                    await Self.applyFallbackTitle(sessionId: sessionId, firstUserRaw: firstUserRaw, attempt: attempt)
+                    await self?.applyFallbackTitle(sessionId: sessionId, firstUserRaw: firstUserRaw, attempt: attempt)
                     await MainActor.run {
                         self?.titleGenAttempts = 3
                         self?.isTitleGenerating = false
                     }
                     return
                 }
-                await ChatStore.shared.updateSessionTitle(sessionId, title: trimmed, category: category)
+                guard await ChatStore.shared.updateGeneratedSessionTitle(sessionId, title: trimmed, category: category),
+                      await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
                 await MainActor.run {
                     self?.titleGenAttempts = 3
                     self?.isTitleGenerating = false
@@ -140,7 +154,7 @@ extension AIChatViewModel {
                 }
                 logger.info("[TitleGen] Attempt \(attempt): saved session title: \(trimmed), category: \(category ?? "nil")")
             } catch {
-                guard self?.remoteDiskCredentialSessions.contains(sessionId) != true else { return }
+                guard await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
                 // Classify the failure so logs show WHY (request error / timeout /
                 // model-unavailable / parse failure all funnel here via thrown
                 // NSError or LLMError).
@@ -154,7 +168,7 @@ extension AIChatViewModel {
                 }
                 logger.error("[TitleGen] FAILED attempt \(attempt)/3 — reason=\(reason)")
                 // Fallback so the session never stays untitled.
-                await Self.applyFallbackTitle(sessionId: sessionId, firstUserRaw: firstUserRaw, attempt: attempt)
+                await self?.applyFallbackTitle(sessionId: sessionId, firstUserRaw: firstUserRaw, attempt: attempt)
                 await MainActor.run {
                     self?.titleGenAttempts = 3
                     self?.isTitleGenerating = false
@@ -166,33 +180,33 @@ extension AIChatViewModel {
     /// [T-title-gen-fallback-first-message-ios] Apply a first-user-message
     /// fallback title, but only if the session is still untitled (another
     /// attempt / regenerate may have set one in the meantime).
-    private static func applyFallbackTitle(sessionId: String, firstUserRaw: String, attempt: Int) async {
-        if let session = await ChatStore.shared.getSession(sessionId), session.title != nil {
+    private func applyFallbackTitle(sessionId: String, firstUserRaw: String, attempt: Int) async {
+        let session = await ChatStore.shared.getSession(sessionId)
+        guard await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
+        if let session, session.title != nil {
             logger.info("[TitleGen] Fallback skipped — session already titled: \(session.title ?? "")")
             return
         }
-        guard let fallback = fallbackTitle(fromFirstUserMessage: firstUserRaw) else {
+        guard let fallback = Self.fallbackTitle(fromFirstUserMessage: firstUserRaw) else {
             logger.warning("[TitleGen] Fallback unavailable — first user message empty after cleanup; session stays untitled (attempt \(attempt))")
             return
         }
-        await ChatStore.shared.updateSessionTitle(sessionId, title: fallback, category: nil)
+        guard await ChatStore.shared.updateGeneratedSessionTitle(sessionId, title: fallback, category: nil),
+              await ChatStore.shared.pendingCredentialSessionTitle(for: sessionId) == nil else { return }
         logger.info("[TitleGen] Applied fallback title from first user message: \"\(fallback)\" (attempt \(attempt))")
+    }
+
+    private static func restoreCredentialSessionTitle(for sessionId: String, messages: [RawMessage] = []) async -> Bool {
+        await ChatStore.shared.restoreCredentialSessionTitle(sessionId, messages: messages)
     }
 
     /// Build a lightweight provider for the sub model and call it to generate a title and category.
     /// Regenerate the title and category for a session using its stored messages.
     /// Uses the first user/assistant pair + last user/assistant pair for better context.
     static func regenerateSessionTitle(sessionId: String) async throws {
+        if await restoreCredentialSessionTitle(for: sessionId) { return }
         let rawMessages = await ChatStore.shared.loadMessages(sessionId: sessionId)
-        if rawMessages.contains(where: { message in
-            message.parts.contains { part in
-                if case .toolUse(let tool) = part { return tool.name == "remote_disk_configure_credentials" }
-                return false
-            }
-        }) {
-            await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil)
-            return
-        }
+        if await restoreCredentialSessionTitle(for: sessionId, messages: rawMessages) { return }
 
         let userMessages = rawMessages.filter { $0.role == .user }
         let assistantMessages = rawMessages.filter { $0.role == .assistant }
@@ -266,21 +280,9 @@ extension AIChatViewModel {
             conversationSummary: summary,
             subEntry: subEntry
         )
-        // A credential call may have completed while the naming model ran.
-        let latestMessages = await ChatStore.shared.loadMessages(sessionId: sessionId)
-        if latestMessages.contains(where: { message in
-            message.parts.contains { part in
-                if case .toolUse(let tool) = part { return tool.name == "remote_disk_configure_credentials" }
-                return false
-            }
-        }) {
-            await ChatStore.shared.updateSessionTitle(sessionId, title: "网络磁盘配置", category: nil)
-            return
-        }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        guard !trimmed.isEmpty else { return }
-        await ChatStore.shared.updateSessionTitle(sessionId, title: trimmed, category: category)
+        await ChatStore.shared.updateGeneratedSessionTitle(sessionId, title: trimmed, category: category, checkingHistory: true)
     }
 
     // MARK: - AI folder suggestion
