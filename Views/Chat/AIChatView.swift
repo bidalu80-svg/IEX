@@ -7364,42 +7364,13 @@ struct AIApprovalDialogModifier: ViewModifier {
     @ObservedObject private var gate = RemoteServerAIConfirmationGate.shared
     @ObservedObject private var lockStore = SessionLockStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var visibleApprovalID: UUID?
+    @State private var endedApprovalID: UUID?
 
     func body(content: Content) -> some View {
         content.background {
-            if let request = gate.pending, request.sessionID == nil || request.sessionID == sessionID,
-               gate.notificationPresentationID == nil || gate.notificationPresentationID == request.id {
-                Color.clear
-                    .confirmationDialog(
-                        "允许 AI 执行此操作？",
-                        isPresented: Binding(
-                            get: { gate.pending?.id == request.id && canPresent },
-                            set: { presented in
-                                if !presented {
-                                    DispatchQueue.main.async { reject(id: request.id) }
-                                }
-                            }
-                        ),
-                        titleVisibility: .visible,
-                        presenting: request
-                    ) { shown in
-                        Button(shown.isDestructive ? "确认执行" : "允许") {
-                            if canPresent {
-                                gate.presentationReady(id: shown.id)
-                                gate.resolve(id: shown.id, allowed: true)
-                            }
-                        }
-                        Button("拒绝", role: .cancel) {
-                            reject(id: shown.id)
-                        }
-                    } message: { shown in
-                        Text("对象：\(shown.serverName)\n操作：\(shown.operation)\n\n\(shown.detail)")
-                    }
-                    .task(id: canPresent ? gate.notificationPresentationID : nil) {
-                        if !Task.isCancelled && canPresent { gate.presentationReady(id: request.id) }
-                    }
-                    .id(request.id)
-            }
+            AIApprovalModalHost(request: presentableRequest, notificationID: gate.notificationPresentationID,
+                                onReady: presentationReady, onDecision: resolve)
         }
         .overlay(alignment: .top) {
             if let target = pendingNavigationTarget {
@@ -7412,8 +7383,30 @@ struct AIApprovalDialogModifier: ViewModifier {
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 8)
+            } else if canPresent, let endedApprovalID, gate.pending == nil {
+                SessionNoticeBanner(text: String(localized: "This review has ended"), systemImage: "info.circle")
+                    .padding(.top, 8)
+                    .allowsHitTesting(false)
+                    .task(id: endedApprovalID) {
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        if !Task.isCancelled, self.endedApprovalID == endedApprovalID { self.endedApprovalID = nil }
+                    }
             }
         }
+        .onReceive(gate.$pending) { pending in
+            if let visibleApprovalID, pending?.id != visibleApprovalID {
+                if gate.notificationPresentationID != visibleApprovalID { endedApprovalID = visibleApprovalID }
+                self.visibleApprovalID = nil
+            }
+            if pending != nil { endedApprovalID = nil }
+        }
+    }
+
+    private var presentableRequest: RemoteServerAIConfirmationRequest? {
+        guard canPresent, let request = gate.pending,
+              request.sessionID == nil || request.sessionID == sessionID,
+              gate.notificationPresentationID == nil || gate.notificationPresentationID == request.id else { return nil }
+        return request
     }
 
     private var pendingNavigationTarget: NotificationNavigationStore.Target? {
@@ -7427,10 +7420,17 @@ struct AIApprovalDialogModifier: ViewModifier {
             && sessionID.map { !lockStore.isVisuallyLocked($0) } != false
     }
 
-    private func reject(id: UUID) {
-        guard canPresent else { return }
+    private func presentationReady(id: UUID) {
+        guard presentableRequest?.id == id else { return }
+        visibleApprovalID = id
         gate.presentationReady(id: id)
-        gate.resolve(id: id, allowed: false)
+    }
+
+    private func resolve(id: UUID, allowed: Bool) {
+        guard presentableRequest?.id == id else { return }
+        visibleApprovalID = nil
+        gate.presentationReady(id: id)
+        gate.resolve(id: id, allowed: allowed)
     }
 }
 

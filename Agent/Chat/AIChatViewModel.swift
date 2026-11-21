@@ -492,6 +492,9 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
 
     deinit {
         let vmId = vmInstanceId
+        if let ownerID = credentialTitleOwnerID {
+            Task { await ChatStore.shared.releaseCredentialSessionTitles(ownedBy: ownerID) }
+        }
         // Snapshot tracker-relevant state at deinit so we can spot leaks: if
         // isProcessing was still true when the vm is about to die, the
         // corresponding sessionId/draftId keys will remain stuck in
@@ -2005,7 +2008,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     var titleGenAttempts = 0
     /// Whether a title generation request is currently in-flight.
     var isTitleGenerating = false
-    var remoteDiskCredentialSessions = Set<String>()
+    var credentialTitleOwnerID: String?
 
     /// Unified conversation history used by both Anthropic and Gemini agent loops.
     var agentHistory: [AgentMessage] = [] {
@@ -5301,7 +5304,7 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             #endif
 
             // Generate session title early — after first LLM response (text or tool call)
-            generateSessionTitleIfNeeded(toolEntries: toolEntries.map { (name: $0.name, args: $0.args) })
+            await generateSessionTitleIfNeeded(toolEntries: toolEntries.map { (name: $0.name, args: $0.args) })
 
             // Re-check bounds — messages may have been mutated during streaming.
             guard msgIdx >= 0, msgIdx < messages.count else {
@@ -5336,7 +5339,8 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 }
             }
             for tu in toolEntries {
-                assistantParts.append(.toolUse(id: tu.id, name: tu.name, input: tu.args))
+                let input = RemoteAICredentialKind.historyInput(name: tu.name, arguments: tu.args)
+                assistantParts.append(.toolUse(id: tu.id, name: tu.name, input: input))
             }
             self.prevCommittedBlockCount = self.committedBlockCount
             committedBlockCount = allBlocks.count
