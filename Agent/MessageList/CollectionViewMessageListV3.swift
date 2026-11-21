@@ -327,7 +327,9 @@ fileprivate struct BridgedAssistantBlockV3: View {
                     .contentShape(Rectangle())
                     .contextMenu { simpleMessageActions }
                     .accessibilityActions { simpleMessageActions }
-                    .frame(maxWidth: maxWidth > 0 ? maxWidth : nil, alignment: .leading)
+                    .frame(minWidth: simpleRow == .text ? 0 : nil,
+                           maxWidth: maxWidth > 0 ? maxWidth : (simpleRow == .text ? .infinity : nil),
+                           alignment: .leading)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
                     .opacity(message.isCompactedHistory ? 0.5 : 1.0)
@@ -358,7 +360,8 @@ fileprivate struct BridgedAssistantBlockV3: View {
             browserPool: bridge.browserPool,
             toolSnapshots: bridge.toolSnapshots,
             highlightedBlockId: .constant(nil),
-            detailBlock: $bridge.detailBlock
+            detailBlock: $bridge.detailBlock,
+            fitTextWidth: simpleRow == .text
         )
     }
 
@@ -366,34 +369,12 @@ fileprivate struct BridgedAssistantBlockV3: View {
         switch row {
         case .text:
             blockContent
-                .frame(maxWidth: shortReplyWidth, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
         case .question:
             QuestionCardView(block: block).padding(.vertical, 4)
-        case .media(let urls):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(urls, id: \.self) { url in
-                    if let image = UIImage(contentsOfFile: url.path) {
-                        Button { bridge.detailBlock = block } label: {
-                            Image(uiImage: image)
-                                .resizable().scaledToFit()
-                                .frame(maxHeight: 240)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(Text("Open attachment"))
-                    }
-                }
-            }
         }
-    }
-
-    private var shortReplyWidth: CGFloat? {
-        let text = block.content
-        guard text.utf16.count <= 80, text.rangeOfCharacter(from: CharacterSet(charactersIn: "\n\r`*_[<>#!|~$\\")) == nil else { return nil }
-        let font = UIFont.systemFont(ofSize: FontSettings.shared.scaledMessage(16.5))
-        return ceil((text as NSString).size(withAttributes: [.font: font]).width) + 12
     }
 
     private var simpleReadAloud: (() -> Void)? {
@@ -2473,8 +2454,6 @@ extension CollectionViewMessageListV3 {
             footerTailSub = nil
             footerTail = nil
             simpleMessageSubs.removeAll()
-            simpleSnapshotSub = nil
-            simpleProjections.removeAll()
             footerUsageSubs.removeAll()
             pendingFooterIDs.removeAll()
             if let previousFooterTailID { pendingFooterIDs.insert(previousFooterTailID) }
@@ -3372,10 +3351,8 @@ extension CollectionViewMessageListV3 {
         private var transcriptUpdateScheduled = false
         private var simpleRows: [MessageListItem: SimpleTranscript.Row] = [:]
         private var simpleBlockObjects: [MessageListItem: ObjectIdentifier] = [:]
-        private var simpleProjections: [UUID: SimpleTranscript.Projection] = [:]
         private var simpleProjectionDirty = false
         private var simpleMessageSubs: [UUID: (ObjectIdentifier, AnyCancellable)] = [:]
-        private var simpleSnapshotSub: AnyCancellable?
 
         func setInitialTranscriptMode(_ mode: ChatTranscriptDisplayMode) {
             transcriptMode = mode
@@ -3426,15 +3403,10 @@ extension CollectionViewMessageListV3 {
         }
 
         private typealias Edge = AnyPublisher<Void, Never>
-        private typealias TextState = (hasText: Bool, refs: Set<String>)
 
         private static func contentEdges(_ block: AssistantBlock) -> Edge {
-            let states: AnyPublisher<TextState, Never> = block.$content.map { content -> TextState in
-                (hasText: SimpleTranscript.hasText(content), refs: SimpleTranscript.explicitMediaReferences(content))
-            }.eraseToAnyPublisher()
-            return states.removeDuplicates { previous, current in
-                previous.hasText == current.hasText && previous.refs == current.refs
-            }.dropFirst().map { _ in () }.eraseToAnyPublisher()
+            let states: AnyPublisher<Bool, Never> = block.$content.map { SimpleTranscript.hasText($0) }.eraseToAnyPublisher()
+            return states.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
         }
 
         private static func textEdges(_ block: AssistantBlock) -> Edge {
@@ -3455,10 +3427,9 @@ extension CollectionViewMessageListV3 {
             let text: Edge = Self.textEdges(block)
             let kind: Edge = block.$kind.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
             let question: Edge = block.$questionCard.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
-            let image: Edge = block.$imageFilePath.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
             let status: Edge = block.$toolStatus.map { Self.normalizedStatus($0) }
                 .removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
-            return [text, kind, question, image, status]
+            return [text, kind, question, status]
         }
 
         private static func edgesForBlocks(_ blocks: [AssistantBlock]) -> Edge {
@@ -3478,15 +3449,6 @@ extension CollectionViewMessageListV3 {
             let assistants = transcriptMode == .simple ? messages.filter { $0.role == .assistant } : []
             let live = Set(assistants.map(\.id))
             simpleMessageSubs = simpleMessageSubs.filter { live.contains($0.key) }
-            simpleProjections = simpleProjections.filter { live.contains($0.key) }
-            if transcriptMode == .standard { simpleSnapshotSub = nil; return }
-            if simpleSnapshotSub == nil {
-                simpleSnapshotSub = vm.$toolSnapshots.map { SimpleTranscript.snapshotImages($0) }
-                    .removeDuplicates().dropFirst().receive(on: DispatchQueue.main).sink { [weak self, weak vm] _ in
-                    guard let self, let vm, self.vm === vm else { return }
-                    self.markSimpleProjectionDirty()
-                }
-            }
             for message in assistants where simpleMessageSubs[message.id]?.0 != ObjectIdentifier(message) {
                 let blocks: Edge = Self.messageBlockEdges(message)
                 let errors: Edge = message.$error.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
@@ -3906,8 +3868,6 @@ extension CollectionViewMessageListV3 {
                     .sink { [weak self] notification in
                         let alog = AppLogger(category: "AttachmentSize")
                         guard let self else { return }
-                        self.simpleProjections.removeAll()
-                        self.markSimpleProjectionDirty()
                         guard let cv = self.viewController?.collectionView,
                               let layout = cv.collectionViewLayout as? MessageListLayout else {
                             alog.warning("[AttachmentSize] infra missing")
@@ -4088,7 +4048,6 @@ extension CollectionViewMessageListV3 {
             simpleRows.removeAll(keepingCapacity: true)
             simpleBlockObjects.removeAll(keepingCapacity: true)
             observeSimpleProjection(messages, vm: vm)
-            let snapshotImages = transcriptMode == .simple ? SimpleTranscript.snapshotImages(vm.toolSnapshots) : [:]
             let lastMessageID = messages.last?.id
             for message in messages {
                 switch message.role {
@@ -4098,10 +4057,8 @@ extension CollectionViewMessageListV3 {
                     if transcriptMode == .standard { newItems.append(.wholeMessage(message.id)) }
                 case .assistant:
                     if transcriptMode == .simple {
-                        let rows = simpleProjections[message.id, default: SimpleTranscript.Projection()]
-                            .update(in: message, snapshots: snapshotImages)
                         for block in message.blocks {
-                            guard let role = rows[block.id] else { continue }
+                            guard let role = SimpleTranscript.row(for: block) else { continue }
                             let item = MessageListItem.assistantBlock(message.id, block.id)
                             newItems.append(item)
                             simpleRows[item] = role
@@ -4826,7 +4783,6 @@ extension CollectionViewMessageListV3 {
         static func estimateItemHeight(_ item: MessageListItem, messages: [ChatMessage], width: CGFloat,
                                        maxContentWidth: CGFloat, questionContainerWidth: CGFloat? = nil,
                                        simpleRow: SimpleTranscript.Row? = nil) -> CGFloat {
-            if case .media(_)? = simpleRow { return 160 }
             let estimate = baseItemHeight(item, messages: messages, width: width, maxContentWidth: maxContentWidth,
                                           questionContainerWidth: questionContainerWidth)
             return estimate + (simpleRow == .text ? 12 : 0)

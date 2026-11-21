@@ -6465,7 +6465,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             // Also reset the invalidateCellSizeIfNeeded fingerprint so it
             // doesn't short-circuit when the storage length is unchanged.
             if let coord = (self.delegate as? SelectableMarkdownView.Coordinator) {
-                coord.cachedSizes.removeAll(keepingCapacity: true)
+                coord.clearSizeCache()
             }
             lastSizedStorageLen = -1
             lastSizedWidth = -1
@@ -6752,7 +6752,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
             // otherwise be copied back over this authoritative TextKit height
             // by sizeThatFits' near-width reuse, re-pinning the cell short.
             let widthKey = Int(measureWidth.rounded())
-            coord.cachedSizes.removeAll(keepingCapacity: true)
+            coord.clearSizeCache()
             coord.cachedSizes[widthKey] = newHeight
             // [T-ios-lastcell-clip-defer-lost] Key the cache generation by the
             // RAW MARKDOWN length — sizeThatFits gates hits on
@@ -6965,6 +6965,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
     /// never indexed.
     var allowsSearchHighlight: Bool = false
     var visualizationOwner: AssistantBlock?
+    var fitTextWidth = false
     @Environment(\.openURL) private var openURL
 
     func makeCoordinator() -> Coordinator {
@@ -7097,7 +7098,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                     }
                 }
             }
-            context.coordinator.cachedSizes.removeAll(keepingCapacity: true)
+            context.coordinator.clearSizeCache()
             textView.updateAttachmentViews()
             textView.invalidateIntrinsicContentSize()
             textView.setNeedsLayout()
@@ -7182,7 +7183,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         context.coordinator.lastMarkdown = markdown
         // Real content changes (including same-length replacements) invalidate
         // width-bucket sizes; a character count alone is not a content version.
-        context.coordinator.cachedSizes.removeAll(keepingCapacity: true)
+        context.coordinator.clearSizeCache()
 
         if fontChanged {
             context.coordinator.renderer.updateFontSize(currentFontSize)
@@ -7697,6 +7698,32 @@ struct SelectableMarkdownView: UIViewRepresentable {
         return ceil(size.height)
     }
 
+    private static func fittedTextWidth(for text: NSAttributedString, limit: CGFloat, using view: UITextView) -> CGFloat {
+        let insets = view.textContainerInset.left + view.textContainerInset.right
+        guard text.length > 0, text.length <= 8000, limit.isFinite, limit > insets else { return limit }
+        let container = NSTextContainer(size: CGSize(width: limit - insets, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = view.textContainer.lineFragmentPadding
+        container.lineBreakMode = view.textContainer.lineBreakMode
+        let manager = NSLayoutManager()
+        let storage = NSTextStorage(attributedString: text)
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
+        let glyphs = manager.glyphRange(for: container)
+        let string = text.string as NSString
+        var longest: CGFloat = 0
+        var wraps = false
+        manager.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, line, stop in
+            let end = NSMaxRange(manager.characterRange(forGlyphRange: line, actualGlyphRange: nil))
+            if end > 0, end < string.length,
+               string.rangeOfCharacter(from: .newlines, range: NSRange(location: end - 1, length: 1)).location == NSNotFound {
+                wraps = true
+                stop.pointee = true
+            }
+            longest = max(longest, used.maxX + container.lineFragmentPadding)
+        }
+        return wraps || longest <= 0 ? limit : min(limit, ceil(longest + insets))
+    }
+
     @available(iOS 16.0, *)
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableMarkdownTextView, context: Context) -> CGSize? {
         let width = proposal.width ?? UIScreen.main.bounds.width
@@ -7711,6 +7738,18 @@ struct SelectableMarkdownView: UIViewRepresentable {
         let storageLen = uiView.textStorage.length
 
         let coord = context.coordinator
+        if fitTextWidth, coord.lastMarkdown == markdown, coord.cachedSizeMarkdownCount == bindingLen,
+           let size = coord.fittedTextSizes[width] { return size }
+        func result(height: CGFloat, text: NSAttributedString? = nil) -> CGSize {
+            guard fitTextWidth else { return CGSize(width: width, height: height) }
+            let fittedWidth = text.map { Self.fittedTextWidth(for: $0, limit: width, using: uiView) } ?? width
+            let size = CGSize(width: fittedWidth, height: height)
+            if coord.lastMarkdown == markdown {
+                if coord.fittedTextSizes.count >= 4 { coord.fittedTextSizes.removeAll(keepingCapacity: true) }
+                coord.fittedTextSizes[width] = size
+            }
+            return size
+        }
         coord.sizeThatFitsCallCount &+= 1
         let callIdx = coord.sizeThatFitsCallCount
         let t0 = CFAbsoluteTimeGetCurrent()
@@ -7720,7 +7759,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // probing where the same view is measured at 2–3 nearby widths during
         // a single preferredLayoutAttributesFitting pass.
         let widthKey = Int(width.rounded())
-        if bindingLen == coord.cachedSizeMarkdownCount,
+        if !fitTextWidth, bindingLen == coord.cachedSizeMarkdownCount,
            let cachedHeight = coord.cachedSizes[widthKey] {
             coord.sizeThatFitsCacheHitCount &+= 1
             if callIdx % 50 == 0 {
@@ -7744,7 +7783,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // measurement happens — we return a height the SAME content already
         // produced — so this cannot reintroduce the historical
         // sizeThatFits→fillLayoutHole typesetter loop.
-        if bindingLen == coord.cachedSizeMarkdownCount,
+        if !fitTextWidth, bindingLen == coord.cachedSizeMarkdownCount,
            bindingLen == storageLen,
            !coord.cachedSizes.isEmpty {
             var nearestHeight: CGFloat?
@@ -7784,7 +7823,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // estimate is bounded by an absolute cap, and the estimate is NOT
         // written back to cachedSizes so a later sizeThatFits at the same
         // length doesn't reuse it.
-        let useMeasureTextView = bindingLen != storageLen
+        let useMeasureTextView = bindingLen != storageLen || (fitTextWidth && coord.lastMarkdown != markdown)
         // [T-ios-streaming-est-attachment-clip] STREAM-EST disabled again.
         // It was restored in de4d3df6 to kill visible-streaming hangs, but the
         // linear pxPerChar extrapolation under-measures cells that contain
@@ -7824,7 +7863,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         // If the binding length changed, the old cache is invalid — flush all
         // width buckets. Otherwise we're just adding a new width bucket.
         if bindingLen != coord.cachedSizeMarkdownCount {
-            coord.cachedSizes.removeAll(keepingCapacity: true)
+            coord.clearSizeCache()
             coord.cachedSizeMarkdownCount = bindingLen
         }
 
@@ -7966,7 +8005,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                 if _renderW <= 0 || abs(width - _renderW) < 0.5 {
                     uiView.lastComputedHeight = h
                 }
-                return CGSize(width: width, height: h)
+                return result(height: h, text: pending)
             }
             // Fallback: pending has attachments — use mtv path so
             // attachmentBounds is invoked through TextKit.
@@ -8050,7 +8089,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
                     #if DEBUG
                     Self.recordSTF(elapsedMs: totalMs, msgId: messageId, attrLen: bindingLen)
                     #endif
-                    return CGSize(width: width, height: h)
+                    return result(height: h, text: liveStorage)
                 }
             }
         }
@@ -8181,7 +8220,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
         )
         #endif
 
-        return CGSize(width: width, height: size.height)
+        return result(height: size.height)
     }
 
     private static let stfLogger = AppLogger(category: "SelectableMarkdownSTF")
@@ -8337,7 +8376,7 @@ struct SelectableMarkdownView: UIViewRepresentable {
             // that has to clear previously rendered text.
             forceNextRender = true
             lastRenderedContentHash = nil
-            cachedSizes.removeAll(keepingCapacity: true)
+            clearSizeCache()
             replay()
         }
 
@@ -8357,6 +8396,12 @@ struct SelectableMarkdownView: UIViewRepresentable {
         /// CollectionView self-sizing pass. A single-width cache was being
         /// bypassed on every probe, triggering full TextKit1 relayouts.
         var cachedSizes: [Int: CGFloat] = [:]
+        var fittedTextSizes: [CGFloat: CGSize] = [:]
+
+        func clearSizeCache() {
+            cachedSizes.removeAll(keepingCapacity: true)
+            fittedTextSizes.removeAll(keepingCapacity: true)
+        }
         var cachedSizeMarkdownCount: Int = 0
         /// Last textContainer width at which `updateUIView` ran. Used so that
         /// a rotation that arrives as `(markdown unchanged, width changed)`

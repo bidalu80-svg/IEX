@@ -587,8 +587,7 @@ struct ChatSearchPendingUnit {
 }
 enum ChatSearchUnitBuilder {
     @MainActor static func snapshot(messages: [ChatMessage], sessionId: String?,
-                                    mode: ChatTranscriptDisplayMode = .standard,
-                                    snapshots: [ToolSnapshotItem] = []) -> [ChatSearchPendingUnit] {
+                                    mode: ChatTranscriptDisplayMode = .standard) -> [ChatSearchPendingUnit] {
         var units: [ChatSearchPendingUnit] = []
         func add(_ mid: UUID, _ bid: UUID?, _ field: ChatSearchField, _ text: String) {
             if !text.isEmpty { units.append(.init(key: .init(messageId: mid, blockId: bid, field: field), text: text)) }
@@ -605,10 +604,9 @@ enum ChatSearchUnitBuilder {
             case .compactDivider, .systemInfo:
                 if mode == .standard { add(mid, nil, .body, message.content) }
             case .assistant:
-                let rows = mode == .simple ? SimpleTranscript.rows(in: message, snapshots: snapshots) : [:]
                 for block in message.blocks {
                     let bid = block.id
-                    if mode == .simple, rows[bid] != .text && rows[bid] != .question { continue }
+                    if mode == .simple, SimpleTranscript.row(for: block) == nil { continue }
                     if let card = block.questionCard {
                         guard card.status != .pending else { continue }
                         add(mid, bid, .title, ChatSearchQuestionText.questionTopic(card)); add(mid, bid, .activity, ChatSearchQuestionText.questionDigest(card))
@@ -762,7 +760,7 @@ enum ChatSearchUnitBuilder {
         let token = generation, query = normalizedQuery, mode = transcriptMode
         if let vm = viewModel { messages = vm.messages }
         let snapshot = ChatSearchUnitBuilder.snapshot(messages: messages, sessionId: viewModel?.sessionId,
-                                                       mode: mode, snapshots: viewModel?.toolSnapshots ?? [])
+                                                       mode: mode)
         var fingerprint = Hasher()
         for unit in snapshot { fingerprint.combine(unit.key); fingerprint.combine(unit.text); fingerprint.combine(unit.finalised) }
         let signature = fingerprint.finalize()

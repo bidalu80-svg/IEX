@@ -23,6 +23,7 @@ struct AssistantBlockView: View {
     @Binding var highlightedBlockId: UUID?
     @Binding var detailBlock: AssistantBlock?
     private var isHighlighted: Bool { highlightedBlockId == block.id }
+    var fitTextWidth = false
 
     var body: some View {
         switch block.kind {
@@ -145,7 +146,8 @@ struct AssistantBlockView: View {
             onReadAloud: onReadAloud,
             onSpeakText: onSpeakText,
             allowsSearchHighlight: true,
-            visualizationOwner: block
+            visualizationOwner: block,
+            fitTextWidth: fitTextWidth
         )
         .fixedSize(horizontal: false, vertical: true)
         .modifier(ZeOpenURLHandler())
