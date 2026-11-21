@@ -243,6 +243,8 @@
 		E5F100003 /* ZeUserAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100013 /* ZeUserAgent.swift */; };
 		E5F200001 /* MarkdownPrepRegex.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200011 /* MarkdownPrepRegex.swift */; };
 		E5F200002 /* ZeMediaViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200012 /* ZeMediaViews.swift */; };
+		A91C00000000000000000001 /* AIApprovalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91C00000000000000000003 /* AIApprovalCard.swift */; };
+		A91C00000000000000000002 /* AIApprovalPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A91C00000000000000000004 /* AIApprovalPresentation.swift */; };
 		E5F200003 /* AssistantBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200013 /* AssistantBlockView.swift */; };
 		E5F200004 /* ChatMessageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200014 /* ChatMessageViews.swift */; };
 		E5F200005 /* ChatInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F200015 /* ChatInputBar.swift */; };
@@ -939,6 +941,8 @@
 		E5F100013 /* ZeUserAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeUserAgent.swift; sourceTree = "<group>"; };
 		E5F200011 /* MarkdownPrepRegex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPrepRegex.swift; sourceTree = "<group>"; };
 		E5F200012 /* ZeMediaViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZeMediaViews.swift; sourceTree = "<group>"; };
+		A91C00000000000000000003 /* AIApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIApprovalCard.swift; sourceTree = "<group>"; };
+		A91C00000000000000000004 /* AIApprovalPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIApprovalPresentation.swift; sourceTree = "<group>"; };
 		E5F200013 /* AssistantBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantBlockView.swift; sourceTree = "<group>"; };
 		E5F200014 /* ChatMessageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessageViews.swift; sourceTree = "<group>"; };
 		E5F200015 /* ChatInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatInputBar.swift; sourceTree = "<group>"; };
@@ -1915,6 +1919,7 @@
 				D8D180000000000000000001 /* RemoteServerCredentialChange.swift */,
 				D7A900000000000000000014 /* RemoteSSHConnectionService.swift */,
 				D7A900000000000000000018 /* RemoteServerAIToolGateway.swift */,
+				A91C00000000000000000004 /* AIApprovalPresentation.swift */,
 				D7A900000000000000000019 /* RemoteStorageClients.swift */,
 				D8D160000000000000000003 /* RemoteDiskService.swift */,
 				D8D160000000000000000002 /* RemoteDiskStore.swift */,
@@ -2344,6 +2349,7 @@
 				ZESA0012 /* ZeSubAgentViews.swift */,
 				E5F200011 /* MarkdownPrepRegex.swift */,
 				E5F200012 /* ZeMediaViews.swift */,
+				A91C00000000000000000003 /* AIApprovalCard.swift */,
 				E5F200013 /* AssistantBlockView.swift */,
 				E5F200014 /* ChatMessageViews.swift */,
 				E5F2009B1 /* EquatableContextMenu.swift */,
@@ -2950,6 +2956,7 @@
 				E5CAL0001 /* CookieAuditLogger.swift in Sources */,
 				E5F200001 /* MarkdownPrepRegex.swift in Sources */,
 				E5F200002 /* ZeMediaViews.swift in Sources */,
+				A91C00000000000000000001 /* AIApprovalCard.swift in Sources */,
 				E5F200003 /* AssistantBlockView.swift in Sources */,
 				E5F200004 /* ChatMessageViews.swift in Sources */,
 				E5F2009A1 /* EquatableContextMenu.swift in Sources */,
@@ -3208,6 +3215,7 @@
 				D7A90000000000000000000A /* RemoteSFTPBrowserView.swift in Sources */,
 				D7A90000000000000000000B /* RemoteCommandConsoleView.swift in Sources */,
 				D7A90000000000000000000C /* RemoteServerAIToolGateway.swift in Sources */,
+				A91C00000000000000000002 /* AIApprovalPresentation.swift in Sources */,
 				D7A90000000000000000000F /* RemoteStorageClients.swift in Sources */,
 				D8D150000000000000000006 /* RemoteDiskBrowserView.swift in Sources */,
 				D8D150000000000000000005 /* AIChatViewModel+RemoteDisks.swift in Sources */,

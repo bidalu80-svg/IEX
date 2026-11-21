@@ -485,10 +485,10 @@ actor ChatStore {
         }
     }
 
-    func reloadDatabase() {
+    func reloadDatabase(replacingDatabase: Bool = false) {
         closeDatabase()
         openDatabase()
-        createTables()
+        createTables(clearCredentialTitleOwners: replacingDatabase)
     }
 
     // MARK: - Database Setup
@@ -503,7 +503,7 @@ actor ChatStore {
         exec("PRAGMA foreign_keys=ON")
     }
 
-    private func createTables() {
+    private func createTables(clearCredentialTitleOwners: Bool = true) {
         exec("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id          TEXT PRIMARY KEY,
@@ -846,6 +846,7 @@ actor ChatStore {
             )
         """)
         exec("CREATE INDEX IF NOT EXISTS idx_webapp_shortcuts_created ON webapp_shortcuts(created_at DESC)")
+        setupCredentialTitleOwners(clearExisting: clearCredentialTitleOwners)
     }
 
     private func exec(_ sql: String) {
@@ -6719,4 +6720,80 @@ private func extractStringParam(_ key: String, from json: String) -> String {
         return ""
     }
     return value
+}
+
+extension ChatStore {
+    private func setupCredentialTitleOwners(clearExisting: Bool) {
+        exec("""
+            CREATE TABLE IF NOT EXISTS credential_title_owners (
+                session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                owner_id    TEXT NOT NULL,
+                tool_name   TEXT NOT NULL,
+                PRIMARY KEY (session_id, owner_id)
+            )
+        """)
+        if clearExisting { exec("DELETE FROM credential_title_owners") }
+    }
+
+    func recordCredentialSessionTitle(_ kind: RemoteAICredentialKind, sessionId: String, ownerID: String) -> String? {
+        let sql = "INSERT INTO credential_title_owners (session_id, owner_id, tool_name) VALUES (?, ?, ?) ON CONFLICT(session_id, owner_id) DO NOTHING"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(stmt, 1, sessionId, -1, transient)
+        sqlite3_bind_text(stmt, 2, ownerID, -1, transient)
+        sqlite3_bind_text(stmt, 3, kind.rawValue, -1, transient)
+        guard sqlite3_step(stmt) == SQLITE_DONE, sqlite3_changes(db) > 0,
+              let title = pendingCredentialSessionTitle(for: sessionId) else { return nil }
+        updateSessionTitle(sessionId, title: title, category: nil)
+        return title
+    }
+
+    func releaseCredentialSessionTitles(ownedBy ownerID: String) {
+        let sql = "DELETE FROM credential_title_owners WHERE owner_id = ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, ownerID, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_step(stmt)
+    }
+
+    func pendingCredentialSessionTitle(for sessionId: String) -> String? {
+        let sql = "SELECT tool_name FROM credential_title_owners WHERE session_id = ? ORDER BY rowid LIMIT 1"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, sessionId, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW, let name = sqlite3_column_text(stmt, 0) else { return nil }
+        return RemoteAICredentialKind(rawValue: String(cString: name))?.sessionTitle
+    }
+
+    private static func credentialSessionTitle(in messages: [RawMessage]) -> String? {
+        messages.lazy.flatMap(\.parts).compactMap { part -> String? in
+            guard case .toolUse(let tool) = part else { return nil }
+            return RemoteAICredentialKind(rawValue: tool.name)?.sessionTitle
+        }.first
+    }
+
+    func restoreCredentialSessionTitle(_ id: String, messages: [RawMessage] = []) -> Bool {
+        guard let title = pendingCredentialSessionTitle(for: id) ?? Self.credentialSessionTitle(in: messages) else { return false }
+        updateSessionTitle(id, title: title, category: nil)
+        return true
+    }
+
+    @discardableResult
+    func updateGeneratedSessionTitle(_ id: String, title: String, category: String?, checkingHistory: Bool = false) -> Bool {
+        if let fixedTitle = pendingCredentialSessionTitle(for: id)
+            ?? (checkingHistory ? Self.credentialSessionTitle(in: loadMessages(sessionId: id)) : nil) {
+            if checkingHistory { updateSessionTitle(id, title: fixedTitle, category: nil) }
+            return false
+        }
+        guard !title.isEmpty else { return false }
+        if !checkingHistory {
+            guard let session = getSession(id), session.title == nil else { return false }
+        }
+        updateSessionTitle(id, title: title, category: category)
+        return true
+    }
 }

@@ -1385,8 +1385,9 @@ extension AIChatViewModel {
                 if let quote = msg.quote, s == quote.modelFacingText { continue }
                 parts.append(.text(s))
             case .toolUse(let id, let name, let input):
+                let historyInput = RemoteAICredentialKind.historyInput(name: name, arguments: input)
                 let inputJSON: String
-                if let data = try? JSONSerialization.data(withJSONObject: input),
+                if let data = try? JSONSerialization.data(withJSONObject: historyInput),
                    let str = String(data: data, encoding: .utf8) {
                     inputJSON = str
                 } else {
@@ -1394,7 +1395,7 @@ extension AIChatViewModel {
                 }
                 parts.append(.toolUse(ToolUse(
                     toolUseId: id, name: name, input: inputJSON,
-                    description: input["tool_title"] as? String,
+                    description: historyInput["tool_title"] as? String,
                     thoughtSignature: thoughtSignatures[id]
                 )))
             case .toolResult(let id, let name, let content, let isError, let imgData, _, let pageURL, _):
