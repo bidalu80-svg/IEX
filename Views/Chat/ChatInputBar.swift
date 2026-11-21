@@ -804,9 +804,38 @@ struct QueuedAttachmentPreview: View {
 // MARK: - PastableTextView (paste image/file support)
 
 
+enum ComposerTextPasteMode: String {
+    case ask, file, text
+
+    static let preferenceKey = "chat.textPasteMode"
+
+    static var current: Self {
+        UserDefaults.standard.string(forKey: preferenceKey).flatMap(Self.init(rawValue:)) ?? .ask
+    }
+}
+
+struct ComposerTextPasteChoice {
+    let pasteAsText: () -> Void
+    let attachAsFile: () -> Void
+
+    static func attach(_ text: String, using addFile: (URL) -> Void) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pasted_\(UUID().uuidString.prefix(8)).txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            addFile(url)
+        } catch {
+            pasteLog.error("[Paste] could not write text attachment")
+        }
+    }
+}
+
 class PastableUITextView: UITextView, UIDropInteractionDelegate {
     var onPasteImage: ((UIImage) -> Void)?
     var onPasteFile: ((URL) -> Void)?
+    var onPasteTextChoice: ((ComposerTextPasteChoice) -> Void)?
+    private(set) var isPastingText = false
     var onCaretChange: ((Int) -> Void)?
     var onReturnKey: (() -> Void)?
     /// Returns true if the arrow key was consumed (slash menu active).
@@ -1262,35 +1291,51 @@ class PastableUITextView: UITextView, UIDropInteractionDelegate {
             return
         }
 
-        // Priority 5: Long text → convert to text file attachment
-        // English-dominant (>50% ASCII letters): threshold = 1000 words
-        // Otherwise (CJK / mixed): threshold = 1200 characters
-        if let text = pb.string {
-            let asciiLetters = text.unicodeScalars.filter { ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A) }.count
-            let isEnglishDominant = asciiLetters > text.count / 2
-            let isLong: Bool
-            if isEnglishDominant {
-                let wordCount = text.components(separatedBy: .whitespacesAndNewlines)
-                    .filter { !$0.isEmpty }.count
-                isLong = wordCount > 1000
-            } else {
-                isLong = text.count > 1200
-            }
-            if isLong {
-                pasteLog.debug("[Paste] long text (\(text.count) chars) → file attachment")
-                let tmp = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("pasted_\(UUID().uuidString.prefix(8)).txt")
-                if let data = text.data(using: .utf8) {
-                    try? data.write(to: tmp)
-                    onPasteFile?(tmp)
-                    return
-                }
-            }
+        guard let pastedText = pb.string else {
+            pasteNatively(sender)
+            return
         }
+        guard !pastedText.isEmpty else { return }
 
-        // Priority 6: Normal text paste
-        pasteLog.debug("[Paste] pasting text fallback")
+        switch ComposerTextPasteMode.current {
+        case .text:
+            pasteNatively(sender)
+        case .file:
+            attachPastedText(pastedText)
+        case .ask:
+            guard let onPasteTextChoice else {
+                pasteNatively(sender)
+                return
+            }
+            let draftText = text ?? ""
+            let selection = selectedRange
+            onPasteTextChoice(ComposerTextPasteChoice(
+                pasteAsText: { [weak self] in
+                    guard let self, self.window != nil, self.text == draftText,
+                          selection.location <= self.textStorage.length,
+                          selection.length <= self.textStorage.length - selection.location else { return }
+                    self.isPastingText = true
+                    defer { self.isPastingText = false }
+                    self.selectedRange = selection
+                    self.insertText(pastedText)
+                },
+                attachAsFile: { [weak self] in
+                    guard let self, self.window != nil else { return }
+                    self.attachPastedText(pastedText)
+                }
+            ))
+        }
+    }
+
+    private func pasteNatively(_ sender: Any?) {
+        isPastingText = true
+        defer { isPastingText = false }
         super.paste(sender)
+    }
+
+    private func attachPastedText(_ text: String) {
+        guard let onPasteFile else { return }
+        ComposerTextPasteChoice.attach(text, using: onPasteFile)
     }
 }
 
@@ -1309,6 +1354,7 @@ struct PastableTextView: UIViewRepresentable {
     var placeholder: String
     var onPasteImage: (UIImage) -> Void
     var onPasteFile: (URL) -> Void
+    var onPasteTextChoice: (ComposerTextPasteChoice) -> Void
     var onReturnKey: (() -> Void)?
     var onArrowUp: (() -> Bool)?
     var onArrowDown: (() -> Bool)?
@@ -1367,6 +1413,7 @@ struct PastableTextView: UIViewRepresentable {
         tv.setContentHuggingPriority(.defaultHigh, for: .vertical)
         tv.onPasteImage = onPasteImage
         tv.onPasteFile = onPasteFile
+        tv.onPasteTextChoice = onPasteTextChoice
         tv.onReturnKey = onReturnKey
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
@@ -1480,6 +1527,7 @@ struct PastableTextView: UIViewRepresentable {
         }
         tv.onPasteImage = onPasteImage
         tv.onPasteFile = onPasteFile
+        tv.onPasteTextChoice = onPasteTextChoice
         tv.onReturnKey = onReturnKey
         tv.onArrowUp = onArrowUp
         tv.onArrowDown = onArrowDown
@@ -1671,6 +1719,7 @@ struct PastableTextView: UIViewRepresentable {
             }
 
             guard text == "\n" else { return true }
+            if (textView as? PastableUITextView)?.isPastingText == true { return true }
             // Don't hijack Return while an IME composition is active —
             // the Return key is confirming the composition, not submitting.
             if textView.markedTextRange != nil { return true }

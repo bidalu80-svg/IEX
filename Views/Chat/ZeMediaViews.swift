@@ -51,6 +51,14 @@ final class ZeMediaCache {
     }
 }
 
+extension ZeMediaCache {
+    func clearCachedObjects() {
+        imageCache.removeAllObjects()
+        thumbnailCache.removeAllObjects()
+        resolvedURLCache.removeAllObjects()
+    }
+}
+
 /// Downsample an image from data using ImageIO to avoid decoding the full bitmap.
 func downsampleImage(data: Data, maxPixelSize: CGFloat = 2048) -> UIImage? {
     let options: [CFString: Any] = [
@@ -550,7 +558,7 @@ struct SimpleStandaloneMedia: View {
     @State private var failure: Failure?
     @State private var retry = 0
     @State private var videoURL: URL?
-    @State private var audioURL: URL?
+    @State private var audioPreview: Resource?
 
     fileprivate enum Failure: Error {
         case unavailable, unsupported
@@ -572,11 +580,13 @@ struct SimpleStandaloneMedia: View {
             return .unsupported
         }
     }
-    fileprivate struct Resource {
+    fileprivate struct Resource: Identifiable {
         let url: URL
+        var id: URL { url }
         var thumbnail: UIImage? = nil
         var duration: Double? = nil
         var bytes: Int? = nil
+        var cacheLease: StorageMediaFileLease? = nil
     }
 
     private var kind: SimpleSegmentID.Kind { segmentID.kind }
@@ -586,7 +596,7 @@ struct SimpleStandaloneMedia: View {
             switch kind {
             case .image, .video: cover
             case .audio:
-                if let resource { SimpleAudioControls(name: media.name, key: key, url: resource.url, duration: resource.duration) { audioURL = resource.url } }
+                if let resource { SimpleAudioControls(name: media.name, key: key, url: resource.url, duration: resource.duration) { audioPreview = resource } }
                 else { fileLabel(icon: "waveform", detail: nil, ready: false) }
             default:
                 fileLabel(icon: zeFileIcon(for: media.url?.pathExtension.lowercased() ?? ""), detail: fileDetail, ready: resource != nil)
@@ -601,7 +611,7 @@ struct SimpleStandaloneMedia: View {
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: retry) { await load() }
         .fullScreenCover(item: $videoURL) { ZeVideoFullscreenPlayer(fileURL: $0, startsAutomatically: false) }
-        .sheet(item: $audioURL) { ZeAudioPreviewView(fileURL: $0).presentationDetents([.large]).presentationDragIndicator(.hidden) }
+        .sheet(item: $audioPreview) { ZeAudioPreviewView(fileURL: $0.url).presentationDetents([.large]).presentationDragIndicator(.hidden) }
     }
 
     private var sourceURL: URL? { URL(string: ImageAttachment.canonicalizeMarkdownImageSource(media.source)) }
@@ -763,13 +773,19 @@ struct SimpleStandaloneMedia: View {
             return Resource(url: url, thumbnail: image.map { UIImage(cgImage: $0) }, duration: duration)
         case .audio:
             let local: URL
-            if url.isFileURL { local = url }
-            else {
+            let lease: StorageMediaFileLease?
+            if url.isFileURL {
+                local = url
+                lease = StorageMediaFileLease.audio(for: local)
+            } else {
                 let digest = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
                 let folder = FileManager.default.temporaryDirectory.appendingPathComponent("simple-audio", isDirectory: true)
                     .appendingPathComponent(digest, isDirectory: true)
+                let name = url.lastPathComponent
+                local = folder.appendingPathComponent(name.isEmpty || name == "." || name == ".." || name.contains("/") ? "audio" : name)
+                guard let reservation = StorageMediaFileLease.audio(for: local) else { throw Failure.unavailable }
+                lease = reservation
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                local = folder.appendingPathComponent(url.lastPathComponent.isEmpty ? "audio" : url.lastPathComponent)
                 if !FileManager.default.fileExists(atPath: local.path) {
                     let (download, response) = try await URLSession.shared.download(from: url)
                     try checkResponse(response)
@@ -780,7 +796,7 @@ struct SimpleStandaloneMedia: View {
             let asset = AVURLAsset(url: local)
             let tracks = try await asset.loadTracks(withMediaType: .audio)
             guard !tracks.isEmpty else { throw Failure.unsupported }
-            return Resource(url: local, duration: (try? await asset.load(.duration))?.seconds)
+            return Resource(url: local, duration: (try? await asset.load(.duration))?.seconds, cacheLease: lease)
         default:
             if url.isFileURL { return Resource(url: url, bytes: try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) }
             var request = URLRequest(url: url)

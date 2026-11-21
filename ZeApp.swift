@@ -178,12 +178,10 @@ struct ZeApp: App {
                 }
             }
                 .onReceive(SessionLockStore.shared.$appIsLocked) { locked in
-                    guard !locked, let url = pendingURLWhileLocked else { return }
+                    guard !locked else { return }
+                    shareCoordinator.checkForPendingShare()
+                    guard let url = pendingURLWhileLocked else { return }
                     pendingURLWhileLocked = nil
-                    if ExternalFileImporter.canIngest(url) {
-                        ExternalFileImporter.ingest(url, into: shareCoordinator)
-                        return
-                    }
                     DeepLinkRouter.handle(url: url, shareCoordinator: shareCoordinator)
                 }
                 // Force a full ContentView rebuild whenever the user-selected
@@ -217,14 +215,13 @@ struct ZeApp: App {
                 .environment(\.locale, appLanguage.isEmpty ? .current : Locale(identifier: appLanguage))
                 .dynamicTypeSize(fontSettings.appBaseScale.dynamicTypeSize)
                 .onOpenURL { url in
-                    shareLog.info("[Share] onOpenURL: \(url.absoluteString)")
+                    if ExternalFileImporter.canIngest(url) {
+                        ExternalFileImporter.ingest(url, into: shareCoordinator)
+                        return
+                    }
                     guard !SessionLockStore.shared.appIsLocked else {
                         shareLog.info("[Share] onOpenURL deferred — app is locked")
                         pendingURLWhileLocked = url
-                        return
-                    }
-                    if ExternalFileImporter.canIngest(url) {
-                        ExternalFileImporter.ingest(url, into: shareCoordinator)
                         return
                     }
                     DeepLinkRouter.handle(url: url, shareCoordinator: shareCoordinator)
@@ -386,6 +383,7 @@ struct ZeApp: App {
                 ViewModelCache.shared.resumeAllStreamingUI()
 
                 SessionLockStore.shared.evaluateAppLock()
+                shareCoordinator.checkForPendingShare()
 
                 CrashReporter.shared.onAppLaunch()
                 CrashReporter.shared.updateMarkerPhase(phase: "active")
@@ -497,7 +495,6 @@ struct ZeApp: App {
             let remaining = UIApplication.shared.backgroundTimeRemaining
             lifecycleLog.info("[Lifecycle] → Background (remaining: \(Self.formatTimeRemaining(remaining)))")
             CrashReporter.shared.updateMarkerPhase(phase: "background")
-            shareCoordinator.clearBufferIfStale()
             // Sync the app-icon badge to the current running-task count
             // on the way out — covers the case where the publisher in
             // BackgroundKeepAliveManager last fired while we were still

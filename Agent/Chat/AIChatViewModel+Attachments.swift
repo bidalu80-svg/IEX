@@ -203,7 +203,8 @@ extension AIChatViewModel {
     }
 
     /// Save a file picked via document picker to Caches and add as attachment.
-    func addFileAttachment(from sourceURL: URL, originalDate: Date? = nil) {
+    @discardableResult
+    func addFileAttachment(from sourceURL: URL, originalDate: Date? = nil, isInboxFile: Bool = false) -> Bool {
         let fm = FileManager.default
         let dir = attachmentCacheDir
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -211,8 +212,16 @@ extension AIChatViewModel {
         let fileName = sourceURL.lastPathComponent
         let destURL = dir.appendingPathComponent("\(UUID().uuidString.prefix(8))_\(fileName)")
         do {
-            try SecurityScopedDocumentAccess.read(from: sourceURL) { readableURL in
-                try fm.copyItem(at: readableURL, to: destURL)
+            if isInboxFile {
+                do {
+                    try fm.linkItem(at: sourceURL, to: destURL)
+                } catch {
+                    try fm.copyItem(at: sourceURL, to: destURL)
+                }
+            } else {
+                try SecurityScopedDocumentAccess.read(from: sourceURL) { readableURL in
+                    try fm.copyItem(at: readableURL, to: destURL)
+                }
             }
 
             if let date = originalDate {
@@ -243,8 +252,10 @@ extension AIChatViewModel {
                 kind = .document
             }
             attachments.append(InputAttachment(fileName: fileName, cacheURL: destURL, kind: kind))
+            return true
         } catch {
             logger.error("Failed to cache file attachment: \(error.localizedDescription)")
+            return false
         }
     }
 

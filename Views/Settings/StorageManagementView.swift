@@ -2,21 +2,21 @@ import SwiftUI
 
 // MARK: - View Model
 
+@MainActor
 class StorageManagementViewModel: ObservableObject {
     struct SessionStorage: Identifiable {
         let id: String
         let title: String?
-        var zeSize: Int64 = 0
-        var totalSize: Int64 { zeSize }
+        let usage: StorageAccounting.Usage
+        var zeSize: Int64 { usage.bytes }
     }
 
-    @Published var shellContainerSize: Int64 = 0
-    @Published var chatDatabaseSize: Int64 = 0
+    @Published private(set) var snapshot: StorageAccounting.Snapshot?
     @Published var sessions: [SessionStorage] = []
     @Published var isLoading = true
     @Published private(set) var deletingSessionIDs = Set<String>()
 
-    private let fm = FileManager.default
+    private var loadTask: Task<Void, Never>?
     private let formatter: ByteCountFormatter = {
         let f = ByteCountFormatter()
         f.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
@@ -28,111 +28,93 @@ class StorageManagementViewModel: ObservableObject {
         formatter.string(fromByteCount: bytes)
     }
 
-    var totalSessionSize: Int64 {
-        sessions.reduce(0) { $0 + $1.totalSize }
+    func format(_ usage: StorageAccounting.Usage) -> String {
+        guard usage.isIncomplete else { return format(usage.bytes) }
+        return usage.bytes > 0 ? "至少 \(format(usage.bytes))" : "大小未知"
     }
 
     func load() {
+        loadTask?.cancel()
         isLoading = true
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-
-            let libraryURL = self.fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-            let documentsURL = self.fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-
-            // Shell container
-            let rootfsURL = documentsURL.appendingPathComponent("alpine-rootfs", isDirectory: true)
-            let shellSize = self.directorySize(at: rootfsURL)
-
-            // Chat database
-            let dbURL = libraryURL.appendingPathComponent("ZeChat/ze.db")
-            let dbSize = self.fileSize(at: dbURL)
-
-            // Per-session ze files: Library/ZeChat/ze/<sessionId>/
-            let zeBaseURL = libraryURL.appendingPathComponent("ZeChat/ze", isDirectory: true)
-            // Get all chat sessions
+        loadTask = Task { [weak self] in
             let chatSessions = await ChatStore.shared.listSessions()
-
-            // Build a set of session IDs
-            let sessionIds = Set(chatSessions.map(\.id))
-
-            // Enumerate ze directories
-            var zeSizes: [String: Int64] = [:]
-            if let contents = try? self.fm.contentsOfDirectory(at: zeBaseURL, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
-                for dir in contents {
-                    let sid = dir.lastPathComponent
-                    if sessionIds.contains(sid) {
-                        zeSizes[sid] = self.directorySize(at: dir)
-                    }
-                }
+            guard !Task.isCancelled else { return }
+            let sessionIDs = chatSessions.map(\.id)
+            let scan = Task.detached(priority: .utility) {
+                let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                return try StorageAccounting.scan(home: home, sessionIDs: sessionIDs)
             }
-
-            // Build session storage entries
-            let sorted: [SessionStorage] = chatSessions.map { session in
+            let result = await withTaskCancellationHandler {
+                try? await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.snapshot = result
+            self.sessions = chatSessions.map { session in
                 SessionStorage(
                     id: session.id,
                     title: session.title,
-                    zeSize: zeSizes[session.id] ?? 0
+                    usage: result?.sessions[session.id] ?? .unknown
                 )
-            }.sorted { $0.totalSize > $1.totalSize }
-
-            await MainActor.run {
-                self.shellContainerSize = shellSize
-                self.chatDatabaseSize = dbSize
-                self.sessions = sorted
-                self.isLoading = false
-            }
+            }.sorted { $0.zeSize > $1.zeSize }
+            self.isLoading = false
         }
     }
 
-    private func directorySize(at url: URL) -> Int64 {
-        guard let enumerator = fm.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
-            if values?.isDirectory == false {
-                total += Int64(values?.fileSize ?? 0)
-            }
-        }
-        return total
-    }
-
-    private func fileSize(at url: URL) -> Int64 {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        return Int64(values?.fileSize ?? 0)
+    func cancelLoad() {
+        loadTask?.cancel()
     }
 }
 
 // MARK: - Storage Management View
 
+@MainActor
 struct StorageManagementView: View {
+    private struct StorageRow: Identifiable {
+        let entry: StorageAccounting.Entry
+        let depth: Int
+
+        var id: String { entry.id }
+    }
+
+    private enum StorageAlert: Identifiable {
+        case deleteSession(StorageManagementViewModel.SessionStorage)
+        case clearCaches(StorageCacheCleaner.Selection, StorageCacheUsage)
+        case cacheResult(StorageCacheCleaner.Completion)
+
+        var id: Int {
+            switch self {
+            case .deleteSession: return 0
+            case .clearCaches: return 1
+            case .cacheResult: return 2
+            }
+        }
+    }
+
     @StateObject private var vm = StorageManagementViewModel()
-    @State private var sessionToDelete: StorageManagementViewModel.SessionStorage?
-    @State private var visualizationCacheBytes = ZeVisualizationCache.shared.statistics.cost
+    @StateObject private var caches = StorageCacheCleaner()
+    @State private var storageAlert: StorageAlert?
+    @State private var expandedStoragePaths = Set<String>()
 
     var body: some View {
         List {
-            Section("概览") {
-                storageRow(icon: "terminal", color: .gray, label: "Shell 容器", value: vm.format(vm.shellContainerSize))
-                storageRow(icon: "cylinder", color: .blue, label: "聊天数据库", value: vm.format(vm.chatDatabaseSize))
-                storageRow(icon: "doc", color: .indigo, label: "会话文件", value: vm.format(vm.totalSessionSize))
+            overviewSection
+
+            if let snapshot = vm.snapshot {
+                Section {
+                    storageRow(icon: "terminal", color: .gray, label: "Shell 容器", value: vm.format(snapshot.shell))
+                    storageRow(icon: "cylinder", color: .blue, label: "聊天数据库", value: vm.format(snapshot.database))
+                    let sessionUsage = StorageAccounting.Usage.sum(Array(snapshot.sessions.values))
+                    storageRow(icon: "doc", color: .indigo, label: "会话文件", value: vm.format(sessionUsage))
+                } header: {
+                    Text("对话与 Shell")
+                } footer: {
+                    Text("以上明细已计入概览。")
+                }
             }
 
-            Section {
-                storageRow(icon: "chart.bar", color: .teal, label: String(localized: "Visualization cache"), value: vm.format(Int64(visualizationCacheBytes)))
-                Button(String(localized: "Clear visualization cache")) {
-                    ZeVisualizationCache.shared.clear()
-                    SelectableMarkdownView.clearVisualizationCaches()
-                    visualizationCacheBytes = 0
-                }
-            } footer: {
-                Text("Temporary decoded data only. Chat history is preserved. The cache is also released in the background or on memory pressure.")
-            }
+            cacheSection
 
             Section("会话") {
                 if vm.isLoading {
@@ -153,13 +135,13 @@ struct StorageManagementView: View {
                                 Text(session.title ?? "未命名")
                                     .lineLimit(1)
                                 Spacer()
-                                Text(vm.format(session.totalSize))
+                                Text(vm.format(session.usage))
                                     .foregroundStyle(.secondary)
                             }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
-                                sessionToDelete = session
+                                storageAlert = .deleteSession(session)
                             } label: {
                                 Label("删除", systemImage: "trash")
                             }
@@ -170,9 +152,115 @@ struct StorageManagementView: View {
         }
         .navigationTitle("存储")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { vm.load(); visualizationCacheBytes = ZeVisualizationCache.shared.statistics.cost }
-        .alert(item: $sessionToDelete) { session in
-            Alert(
+        .onAppear { vm.load() }
+        .onDisappear { vm.cancelLoad() }
+        .task { await caches.load() }
+        .alert(item: $storageAlert, content: makeAlert)
+    }
+
+    private var overviewSection: some View {
+        Section {
+            if let snapshot = vm.snapshot {
+                storageRow(icon: "internaldrive", color: .blue, label: "存储总计", value: vm.format(snapshot.total))
+                ForEach(visibleRows(in: snapshot.regions)) { row in
+                    accountingRow(row)
+                }
+            } else if !vm.isLoading {
+                Text("大小未知")
+                    .foregroundStyle(.secondary)
+            }
+            if vm.isLoading {
+                ProgressView("统计中…")
+            }
+        } header: {
+            Text("概览")
+        } footer: {
+            Text("仅统计应用沙盒内的文件，不含 App 本体。")
+        }
+    }
+
+    private func visibleRows(in entries: [StorageAccounting.Entry], depth: Int = 0) -> [StorageRow] {
+        var rows: [StorageRow] = []
+        for entry in entries {
+            rows.append(StorageRow(entry: entry, depth: depth))
+            if expandedStoragePaths.contains(entry.id), let children = entry.children {
+                rows.append(contentsOf: visibleRows(in: children, depth: depth + 1))
+            }
+        }
+        return rows
+    }
+
+    private func accountingRow(_ row: StorageRow) -> some View {
+        let entry = row.entry
+        let expanded = expandedStoragePaths.contains(entry.id)
+        let label = storageRow(
+            icon: entry.children != nil || row.depth == 0 ? "folder" : "doc",
+            color: row.depth == 0 ? .blue : .gray,
+            label: entry.name,
+            value: vm.format(entry.usage)
+        )
+        return Group {
+            if let children = entry.children, !children.isEmpty {
+                Button {
+                    if expanded {
+                        expandedStoragePaths.remove(entry.id)
+                    } else {
+                        expandedStoragePaths.insert(entry.id)
+                    }
+                } label: {
+                    HStack {
+                        label
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(expanded ? "已展开" : "已收起")
+            } else {
+                label
+            }
+        }
+        .padding(.leading, CGFloat(min(row.depth, 5)) * 12)
+    }
+
+    private var cacheSection: some View {
+        Section {
+            ForEach(StorageCacheCategory.allCases) { category in
+                cacheRow(.category(category), icon: category.icon, label: category.title)
+            }
+            cacheRow(.all, icon: "internaldrive", label: "缓存总计")
+        } header: {
+            Text("缓存")
+        } footer: {
+            Text("总计只含实测大小，不含可视化估算。WebKit 和部分内存缓存不提供大小。正在使用的文件会保留。")
+        }
+    }
+
+    private func cacheRow(_ selection: StorageCacheCleaner.Selection, icon: String, label: String) -> some View {
+        let usage = caches.usage(for: selection)
+        return VStack(alignment: .leading, spacing: 8) {
+            storageRow(icon: icon, color: .teal, label: label, value: usage?.label(format: vm.format) ?? "统计中…")
+            if selection == .category(.browser), let records = usage?.websiteRecords {
+                Text("WebKit 缓存记录：\(records) 条")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button(selection.actionTitle) {
+                Task { @MainActor in
+                    guard let current = await caches.refresh(selection), storageAlert == nil else { return }
+                    storageAlert = .clearCaches(selection, current)
+                }
+            }
+            .disabled(caches.isBusy || usage?.canClear != true)
+        }
+    }
+
+    private func makeAlert(_ alert: StorageAlert) -> Alert {
+        switch alert {
+        case .deleteSession(let session):
+            return Alert(
                 title: Text("删除会话？"),
                 message: Text("将删除“\(session.title ?? "未命名")”的聊天内容和会话文件，此操作无法撤销。"),
                 primaryButton: .destructive(Text("删除")) {
@@ -180,6 +268,28 @@ struct StorageManagementView: View {
                 },
                 secondaryButton: .cancel(Text("取消"))
             )
+        case .clearCaches(let selection, let usage):
+            let size = usage.label(format: vm.format)
+            let label = selection == .all ? "当前缓存总大小" : "当前分类缓存大小"
+            return Alert(
+                title: Text("\(selection.actionTitle)？"),
+                message: Text("\(label)：\(size)。聊天、网站登录数据和正在使用的文件会保留。"),
+                primaryButton: .destructive(Text("清理")) {
+                    Task { @MainActor in
+                        guard let result = await caches.clear(selection) else { return }
+                        vm.load()
+                        storageAlert = .cacheResult(result)
+                    }
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        case .cacheResult(let result):
+            var message = "重新统计：\(result.remaining.label(format: vm.format))。"
+            if result.inUse > 0 { message += "保留了 \(result.inUse) 个正在使用的文件。" }
+            if result.failed > 0 { message += "有 \(result.failed) 项未能清理。" }
+            if result.remaining.failed > 0 { message += "部分文件无法统计。" }
+            if let records = result.remaining.websiteRecords { message += "WebKit 剩余缓存记录：\(records) 条。" }
+            return Alert(title: Text(result.failed > 0 ? "部分缓存未能清理" : "清理完成"), message: Text(message), dismissButton: .default(Text("好")))
         }
     }
 

@@ -53,10 +53,7 @@ enum DeepLinkRouter {
 
         switch host {
         case "share":
-            // Funnel through ShareCoordinator so any leftover
-            // fullScreenCover (gallery / WebApp / camera) is dismissed
-            // before the share UI tries to surface.
-            shareCoordinator.raisePendingShare()
+            shareCoordinator.checkForPendingShare()
 
         case "views":
             // Only one view route today; future ones land here.

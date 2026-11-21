@@ -100,7 +100,7 @@ struct RemoteDiskBrowserView: View {
         }
         .sheet(item: $preview, onDismiss: {
             // Preview copies have no persistent identity and may be reclaimed.
-        }) { file in RemoteDiskQuickLook(url: file.url) }
+        }) { file in RemoteDiskQuickLook(file: file) }
         .alert("网络磁盘", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
             Button("好") {}
         } message: { Text(actionError ?? "") }
@@ -124,12 +124,12 @@ struct RemoteDiskBrowserView: View {
         Task { @MainActor in
             defer { downloading = false }
             do {
-                let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("RemoteDiskPreviews")
-                let url = try await RemoteDiskService.shared.cache(entry.address, in: directory)
+                let lease = try StorageMediaFileLease.remotePreview()
+                let url = try await RemoteDiskService.shared.cache(entry.address, in: lease.folder)
                 if attach, let onSelect {
-                    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+                    defer { try? FileManager.default.removeItem(at: lease.folder) }
                     try onSelect(url)
-                } else { preview = RemoteDiskPreviewFile(url: url) }
+                } else { preview = RemoteDiskPreviewFile(url: url, lease: lease) }
             } catch { actionError = "读取失败：" + error.localizedDescription }
         }
     }
@@ -153,19 +153,24 @@ struct RemoteDiskBrowserView: View {
     }
 }
 
-private struct RemoteDiskPreviewFile: Identifiable { let id = UUID(); let url: URL }
-private struct RemoteDiskQuickLook: UIViewControllerRepresentable {
+private struct RemoteDiskPreviewFile: Identifiable {
+    let id = UUID()
     let url: URL
-    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+    let lease: StorageMediaFileLease
+}
+
+private struct RemoteDiskQuickLook: UIViewControllerRepresentable {
+    let file: RemoteDiskPreviewFile
+    func makeCoordinator() -> Coordinator { Coordinator(file: file) }
     func makeUIViewController(context: Context) -> QLPreviewController {
         let controller = QLPreviewController(); controller.dataSource = context.coordinator; return controller
     }
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        let url: URL
-        init(url: URL) { self.url = url }
+        let file: RemoteDiskPreviewFile
+        init(file: RemoteDiskPreviewFile) { self.file = file }
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
-        deinit { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { file.url as NSURL }
+        deinit { try? FileManager.default.removeItem(at: file.lease.folder) }
     }
 }

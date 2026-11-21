@@ -168,18 +168,17 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
     /// (which detects Provider-export JSON and prompts import-vs-attach), and
     /// anything else falls through to `DeepLinkRouter`. Uses
     /// `ShareCoordinator.shared` — the exact instance ZeApp injects into the
-    /// environment — so `raisePendingShare()` drives the same SwiftUI flow.
+    /// environment, so both paths publish to the same inbox.
+    @MainActor
     private static func handleURLContexts(_ contexts: Set<UIOpenURLContext>, phase: String) {
         for context in contexts {
             let url = context.url
-            logger.info("[Share] scene \(phase) URL: \(url.absoluteString)")
-            Task { @MainActor in
-                let coordinator = ShareCoordinator.shared
-                if ExternalFileImporter.canIngest(url) {
-                    ExternalFileImporter.ingest(url, into: coordinator)
-                } else {
-                    DeepLinkRouter.handle(url: url, shareCoordinator: coordinator)
-                }
+            logger.info("[Share] scene \(phase) received URL scheme \(url.scheme ?? "unknown")")
+            let coordinator = ShareCoordinator.shared
+            if ExternalFileImporter.canIngest(url) {
+                ExternalFileImporter.ingest(url, into: coordinator)
+            } else {
+                Task { @MainActor in DeepLinkRouter.handle(url: url, shareCoordinator: coordinator) }
             }
         }
     }

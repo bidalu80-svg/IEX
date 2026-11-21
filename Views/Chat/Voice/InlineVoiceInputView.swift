@@ -15,6 +15,7 @@ struct InlineVoiceInputView: View {
     @Binding var inputText: String
     var onPasteImage: ((UIImage) -> Void)?
     var onPasteFile: ((URL) -> Void)?
+    var onPasteTextChoice: ((ComposerTextPasteChoice) -> Void)?
     /// [voice-correction §6] Supplies the current conversation's recent turns as the
     /// third correction signal.
     ///
@@ -194,33 +195,7 @@ struct InlineVoiceInputView: View {
                     if UIPasteboard.general.hasStrings {
                         Button {
                             guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
-                            let asciiLetters = text.unicodeScalars.filter { ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A) }.count
-                            let isEnglishDominant = asciiLetters > text.count / 2
-                            let isLong: Bool
-                            if isEnglishDominant {
-                                let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
-                                isLong = wordCount > 1000
-                            } else {
-                                isLong = text.count > 1200
-                            }
-                            if isLong, let onPasteFile {
-                                let tmp = FileManager.default.temporaryDirectory
-                                    .appendingPathComponent("pasted_\(UUID().uuidString.prefix(8)).txt")
-                                if let data = text.data(using: .utf8) {
-                                    try? data.write(to: tmp)
-                                    onPasteFile(tmp)
-                                    VoiceLog.log("voice panel paste: long text → file (\(text.count) chars)")
-                                    return
-                                }
-                            }
-                            let base = viewModel.transcript
-                            let joined = base.isEmpty ? text : (base + text)
-                            viewModel.setTranscript(joined)
-                            if !expanded {
-                                VoiceLog.log("paste → expand")
-                                withAnimation(.easeInOut(duration: 0.28)) { expanded = true }
-                            }
-                            VoiceLog.log("voice panel paste: +\(text.count) chars")
+                            pasteTranscriptText(text)
                         } label: {
                             Label("Paste", systemImage: "doc.on.clipboard")
                         }
@@ -514,6 +489,27 @@ struct InlineVoiceInputView: View {
             NavigationStack {
                 UnifiedModelPicker(config: .voiceInput())
             }
+        }
+    }
+
+    private func pasteTranscriptText(_ text: String) {
+        let pasteAsText = {
+            viewModel.setTranscript(viewModel.transcript + text)
+            if !expanded {
+                VoiceLog.log("paste → expand")
+                withAnimation(.easeInOut(duration: 0.28)) { expanded = true }
+            }
+            VoiceLog.log("voice panel paste: +\(text.count) chars")
+        }
+        guard let onPasteTextChoice, let onPasteFile else {
+            pasteAsText()
+            return
+        }
+        let attachAsFile = { ComposerTextPasteChoice.attach(text, using: onPasteFile) }
+        switch ComposerTextPasteMode.current {
+        case .text: pasteAsText()
+        case .file: attachAsFile()
+        case .ask: onPasteTextChoice(ComposerTextPasteChoice(pasteAsText: pasteAsText, attachAsFile: attachAsFile))
         }
     }
 

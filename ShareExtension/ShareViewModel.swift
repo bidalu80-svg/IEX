@@ -1,212 +1,165 @@
 import Foundation
-import UIKit
 import UniformTypeIdentifiers
 
-/// Processes NSExtensionItems from the share sheet, saves files to the shared
-/// container, and writes a PendingShare for the main app to consume.
 final class ShareViewModel {
-    private var pendingItems: [PendingShare.Item] = []
-    private let inlineTextLimit = 1000
-
-    /// Process all extension items from the share context.
-    func processExtensionItems(_ extensionItems: [NSExtensionItem]) async {
-        pendingItems.removeAll()
-
-        let fm = FileManager.default
-        if let dir = SharedContainerStore.sharedFileDirectory {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-
-        for extensionItem in extensionItems {
-            guard let attachments = extensionItem.attachments else { continue }
-
-            for provider in attachments {
-                if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                    await processURL(provider)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                    await processText(provider)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    await processImage(provider)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
-                    await processVideo(provider)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.item.identifier) {
-                    await processFile(provider)
-                }
-            }
-        }
+    struct Result {
+        var saved = 0
+        var failed = 0
     }
 
-    /// Save pending share and return true on success.
-    /// [T-share-buffer-merge] MERGE with any unconsumed previous share instead
-    /// of overwriting it. Rapid consecutive shares (user shares screenshot A,
-    /// then B a few seconds later, before the main app ran
-    /// processPendingShare) used to silently lose A: this save() replaced the
-    /// App Group record wholesale. Attachment file names are UUID-suffixed so
-    /// the merged item lists never collide on disk. The 300s window matches
-    /// checkForPendingShare's staleness cutoff; anything older is abandoned
-    /// content whose files the main app will clean up.
-    func save() -> Bool {
-        guard !pendingItems.isEmpty else { return false }
-        var items = pendingItems
-        if let existing = SharedContainerStore.loadPendingShare(),
-           Date().timeIntervalSince(existing.timestamp) < 300 {
-            NSLog("[ShareExt] save: merging %d existing unconsumed items with %d new",
-                  existing.items.count, pendingItems.count)
-            items = existing.items + items
-        }
-        let share = PendingShare(items: items, timestamp: Date())
-        SharedContainerStore.savePendingShare(share)
-        return true
+    private enum LoadedItem {
+        case file(saved: Bool)
+        case text(String, isLink: Bool)
     }
 
-    // MARK: - Processors
-
-    /// Reads a file-provider URL while its temporary share-sheet grant is
-    /// active and gives the provider a chance to materialize cloud content.
-    private func readSharedFile<T>(from url: URL, _ body: (URL) throws -> T) throws -> T {
-        let startedScope = url.startAccessingSecurityScopedResource()
-        defer {
-            if startedScope {
-                url.stopAccessingSecurityScopedResource()
+    func receive(_ items: [NSExtensionItem], in inbox: PendingShareInbox) async -> Result {
+        var result = Result()
+        for provider in items.flatMap({ $0.attachments ?? [] }) {
+            if await receive(provider, in: inbox) {
+                result.saved += 1
+            } else {
+                result.failed += 1
             }
         }
-
-        var coordinationError: NSError?
-        var result: Result<T, Error>?
-        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
-            do {
-                result = .success(try body(readableURL))
-            } catch {
-                result = .failure(error)
-            }
-        }
-
-        if let coordinationError {
-            throw coordinationError
-        }
-        guard let result else {
-            throw CocoaError(.fileReadUnknown)
-        }
-        return try result.get()
+        return result
     }
 
-    /// Copies an externally owned file before the share extension releases it.
-    private func stageSharedFile(from sourceURL: URL, named fileName: String) -> Bool {
-        guard let dir = SharedContainerStore.sharedFileDirectory else { return false }
-        let destination = dir.appendingPathComponent(fileName)
-        do {
-            try readSharedFile(from: sourceURL) { readableURL in
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: readableURL, to: destination)
+    private func receive(_ provider: NSItemProvider, in inbox: PendingShareInbox) async -> Bool {
+        let types = provider.registeredTypeIdentifiers
+        let suggestedName = provider.suggestedName.map { ($0 as NSString).lastPathComponent }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let canLoadPlainText = provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+        let suggestedFileName: String? = suggestedName.flatMap { name in
+            canLoadPlainText || !(name as NSString).pathExtension.isEmpty ? name : nil
+        }
+        var fileFailed = false
+        var deferredText: LoadedItem?
+        func record(_ item: LoadedItem?) -> Bool {
+            switch item {
+            case .file(let saved):
+                if !saved { fileFailed = true }
+                return saved
+            case .text:
+                if deferredText == nil { deferredText = item }
+            case nil:
+                break
             }
-            pendingItems.append(.init(kind: .attachment, value: fileName))
-            return true
-        } catch {
-            NSLog("[ShareExt] failed to stage %@: %@", sourceURL.lastPathComponent, error.localizedDescription)
             return false
         }
-    }
 
-    private func processURL(_ provider: NSItemProvider) async {
-        guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier),
-              let url = item as? URL else { return }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+           record(await loadItem(from: provider, type: .fileURL, onFailure: .file(saved: false), receive: { item in
+               guard let url = Self.representedURL(item), url.isFileURL else { return .file(saved: false) }
+               return .file(saved: (try? Self.copyFileURL(url, suggestedFileName: suggestedFileName, into: inbox)) != nil)
+           })) { return true }
 
-        // file:// URLs are local files — treat as file attachment, not inline text
-        if url.isFileURL {
-            await copyFileToShared(from: url)
-            return
+        let generic = Set([UTType.item.identifier, UTType.content.identifier, UTType.data.identifier])
+        let inlineTextTypes: [UTType] = [.text, .plainText, .utf8PlainText, .utf16PlainText, .utf16ExternalPlainText]
+        let inlineTextIdentifiers = Set(inlineTextTypes.map(\.identifier))
+        let openInPlaceIdentifiers = Set(provider.registeredTypeIdentifiers(fileOptions: .openInPlace))
+        let fileTypes = types.filter { identifier in
+            if openInPlaceIdentifiers.contains(identifier) { return true }
+            guard UTType(identifier)?.conforms(to: .url) != true else { return false }
+            return !inlineTextIdentifiers.contains(identifier) || suggestedFileName != nil
+        }
+        let rankedFileTypes = fileTypes.filter { !generic.contains($0) } + fileTypes.filter { generic.contains($0) }
+        func fileFailure(for identifier: String) -> LoadedItem? {
+            openInPlaceIdentifiers.contains(identifier) ? .file(saved: false) : nil
+        }
+        for identifier in rankedFileTypes {
+            if record(await loadFile(from: provider, identifier: identifier, suggestedFileName: suggestedFileName,
+                                     onFailure: fileFailure(for: identifier), into: inbox)) { return true }
         }
 
-        pendingItems.append(.init(kind: .inlineText, value: url.absoluteString))
-    }
+        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
+           record(await loadItem(from: provider, type: .url, receive: { item in
+               guard let url = Self.representedURL(item) else { return nil }
+               if url.isFileURL {
+                   return .file(saved: (try? Self.copyFileURL(url, suggestedFileName: suggestedFileName, into: inbox)) != nil)
+               }
+               return .text(url.absoluteString, isLink: true)
+           })) { return true }
 
-    /// Copy a local file URL to the shared container as an attachment.
-    private func copyFileToShared(from url: URL) async {
-        // If it's an image, process through image pipeline for JPEG conversion
-        let ext = url.pathExtension.lowercased()
-        if ["jpg", "jpeg", "png", "gif", "webp", "heic"].contains(ext),
-           let data = try? readSharedFile(from: url) { try Data(contentsOf: $0) },
-           let image = UIImage(data: data) {
-            let fileName = "shared-image-\(UUID().uuidString.prefix(8)).jpg"
-            if let dir = SharedContainerStore.sharedFileDirectory,
-               let jpegData = image.jpegData(compressionQuality: 0.85) {
-                let fileURL = dir.appendingPathComponent(fileName)
-                do {
-                    try jpegData.write(to: fileURL, options: .atomic)
-                    pendingItems.append(.init(kind: .attachment, value: fileName))
-                } catch {
-                    NSLog("[ShareExt] failed to write image %@: %@", url.lastPathComponent, error.localizedDescription)
+        if canLoadPlainText,
+           record(await loadItem(from: provider, type: .plainText, receive: { item in
+               if let url = item as? URL, url.isFileURL {
+                   return .file(saved: (try? Self.copyFileURL(url, suggestedFileName: suggestedFileName, into: inbox)) != nil)
+               }
+               guard let text = item as? String, !text.isEmpty else { return nil }
+               return .text(text, isLink: false)
+           })) { return true }
+
+        for identifier in rankedFileTypes {
+            let onFailure = fileFailure(for: identifier)
+            if record(await loadItem(from: provider, identifier: identifier, onFailure: onFailure, receive: { item in
+                if let url = item as? URL, url.isFileURL {
+                    return .file(saved: (try? Self.copyFileURL(url, suggestedFileName: suggestedFileName, into: inbox)) != nil)
                 }
-            }
-            return
+                guard let data = item as? Data else { return nil }
+                let baseName = suggestedName ?? "Shared File"
+                let suffix = UTType(identifier)?.preferredFilenameExtension
+                let name = suggestedFileName ?? suffix.map { "\(baseName).\($0)" } ?? baseName
+                let saved = try? inbox.storeFile(named: name) { try data.write(to: $0) }
+                return saved != nil ? .file(saved: true) : onFailure
+            })) { return true }
         }
 
-        // General file copy
-        let fileName = "shared-\(UUID().uuidString.prefix(8))_\(url.lastPathComponent)"
-        _ = stageSharedFile(from: url, named: fileName)
+        guard !fileFailed, case .text(let text, let isLink)? = deferredText else { return false }
+        if isLink || text.count <= 1000 { return (try? inbox.storeText(text)) != nil }
+        return (try? inbox.storeFile(named: "Shared Text.txt") { destination in
+            try text.write(to: destination, atomically: true, encoding: .utf8)
+        }) != nil
     }
 
-    private func processText(_ provider: NSItemProvider) async {
-        guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier),
-              let text = item as? String else { return }
-
-        if text.count <= inlineTextLimit {
-            pendingItems.append(.init(kind: .inlineText, value: text))
-        } else {
-            let fileName = "shared-text-\(UUID().uuidString.prefix(8)).txt"
-            if let dir = SharedContainerStore.sharedFileDirectory {
-                let fileURL = dir.appendingPathComponent(fileName)
-                try? text.write(to: fileURL, atomically: true, encoding: .utf8)
-                pendingItems.append(.init(kind: .attachment, value: fileName))
-            }
-        }
-    }
-
-    private func processImage(_ provider: NSItemProvider) async {
-        if let item = try? await provider.loadItem(forTypeIdentifier: UTType.image.identifier) {
-            var image: UIImage?
-            if let uiImage = item as? UIImage {
-                image = uiImage
-            } else if let imageData = item as? Data {
-                image = UIImage(data: imageData)
-            } else if let url = item as? URL,
-                      let data = try? readSharedFile(from: url) { try Data(contentsOf: $0) } {
-                image = UIImage(data: data)
-            }
-
-            if let image {
-                let fileName = "shared-image-\(UUID().uuidString.prefix(8)).jpg"
-                if let dir = SharedContainerStore.sharedFileDirectory,
-                   let jpegData = image.jpegData(compressionQuality: 0.85) {
-                    let fileURL = dir.appendingPathComponent(fileName)
-                    do {
-                        try jpegData.write(to: fileURL, options: .atomic)
-                        pendingItems.append(.init(kind: .attachment, value: fileName))
-                    } catch {
-                        NSLog("[ShareExt] failed to write shared image: %@", error.localizedDescription)
-                    }
+    private func loadFile(from provider: NSItemProvider, identifier: String, suggestedFileName: String?,
+                          onFailure: LoadedItem?, into inbox: PendingShareInbox) async -> LoadedItem? {
+        await withCheckedContinuation { continuation in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: identifier) { url, error in
+                guard error == nil, let url, url.isFileURL else {
+                    continuation.resume(returning: onFailure)
+                    return
                 }
+                let name = suggestedFileName ?? url.lastPathComponent
+                let saved = try? inbox.storeFile(named: name) { destination in
+                    try PendingShareInbox.copyRegularFile(at: url, to: destination)
+                }
+                continuation.resume(returning: saved != nil ? .file(saved: true) : onFailure)
             }
         }
     }
 
-    private func processVideo(_ provider: NSItemProvider) async {
-        guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.movie.identifier),
-              let url = item as? URL else { return }
-
-        let ext = url.pathExtension.lowercased()
-        let suffix = ext.isEmpty ? "mov" : ext
-        let fileName = "shared-video-\(UUID().uuidString.prefix(8)).\(suffix)"
-        _ = stageSharedFile(from: url, named: fileName)
+    private func loadItem(from provider: NSItemProvider, type: UTType, onFailure: LoadedItem? = nil,
+                          receive: @escaping (NSSecureCoding?) -> LoadedItem?) async -> LoadedItem? {
+        await loadItem(from: provider, identifier: type.identifier, onFailure: onFailure, receive: receive)
     }
 
-    private func processFile(_ provider: NSItemProvider) async {
-        guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.item.identifier),
-              let url = item as? URL else { return }
+    private func loadItem(from provider: NSItemProvider, identifier: String, onFailure: LoadedItem? = nil,
+                          receive: @escaping (NSSecureCoding?) -> LoadedItem?) async -> LoadedItem? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, error in
+                continuation.resume(returning: error == nil ? receive(item) : onFailure)
+            }
+        }
+    }
 
-        let fileName = "shared-\(UUID().uuidString.prefix(8))_\(url.lastPathComponent)"
-        _ = stageSharedFile(from: url, named: fileName)
+    private static func copyFileURL(_ url: URL, suggestedFileName: String?, into inbox: PendingShareInbox) throws -> PendingShare {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        return try inbox.storeFile(named: suggestedFileName ?? url.lastPathComponent) { destination in
+            var coordinationError: NSError?
+            var copyResult: Swift.Result<Void, Error>?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+                copyResult = Swift.Result { try PendingShareInbox.copyRegularFile(at: readableURL, to: destination) }
+            }
+            if let coordinationError { throw coordinationError }
+            guard let copyResult else { throw CocoaError(.fileReadUnknown) }
+            try copyResult.get()
+        }
+    }
+
+    private static func representedURL(_ item: NSSecureCoding?) -> URL? {
+        if let url = item as? URL { return url }
+        if let data = item as? Data { return URL(dataRepresentation: data, relativeTo: nil) }
+        return nil
     }
 }

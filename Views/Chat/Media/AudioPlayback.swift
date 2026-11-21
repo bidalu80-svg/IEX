@@ -59,6 +59,7 @@ class GlobalAudioPlayer: ObservableObject {
     var isPiPActive: Bool { isLoaded }
 
     private var player: AVAudioPlayer?
+    private var cacheLease: StorageMediaFileLease?
     private var timer: Timer?
     private var seekWorkItem: DispatchWorkItem?
 
@@ -87,6 +88,7 @@ class GlobalAudioPlayer: ObservableObject {
         BackgroundKeepAliveManager.shared.suspendSilentAudioForMedia()
         // Load new file
         let loadURL = url
+        let lease = StorageMediaFileLease.audio(for: loadURL)
         Task.detached(priority: .userInitiated) {
             guard let p = try? AVAudioPlayer(contentsOf: loadURL) else {
                 await MainActor.run {
@@ -100,6 +102,7 @@ class GlobalAudioPlayer: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.player = p
+                self.cacheLease = lease
                 self.activeFileURL = loadURL
                 self.fileName = loadURL.deletingPathExtension().lastPathComponent
                 self.duration = dur
@@ -183,6 +186,7 @@ class GlobalAudioPlayer: ObservableObject {
         timer = nil
         player?.stop()
         player = nil
+        cacheLease = nil
         activeFileURL = nil
         fileName = ""
         isPlaying = false

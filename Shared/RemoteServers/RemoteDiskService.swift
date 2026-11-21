@@ -97,9 +97,8 @@ final class RemoteDiskService: RemoteDiskReading {
         return data
     }
 
-    func cache(_ address: RemoteDiskAddress, in directory: URL) async throws -> URL {
+    func cache(_ address: RemoteDiskAddress, in folder: URL) async throws -> URL {
         let data = try await download(address)
-        let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appendingPathComponent(address.components.last ?? "file")
         do { try data.write(to: file, options: .atomic); return file }

@@ -52,6 +52,13 @@ final class BrowserTabPoolRegistry {
         pools.removeValue(forKey: ObjectIdentifier(pool))
     }
 
+    func clearPreviewCache() {
+        compactPools()
+        for entry in Array(pools.values) {
+            entry.pool?.clearPreviewCache()
+        }
+    }
+
     /// Total live tabs across all registered pools (drops stale weak refs).
     func totalLiveTabs() -> Int {
         compactPools()
@@ -1881,6 +1888,11 @@ final class BrowserTabPool: ObservableObject {
         guard tabSnapshots[id] != nil || tabSnapshotOrder.contains(id) else { return }
         tabSnapshots.removeValue(forKey: id)
         tabSnapshotOrder.removeAll { $0 == id }
+    }
+
+    fileprivate func clearPreviewCache() {
+        tabSnapshots.removeAll()
+        tabSnapshotOrder.removeAll()
     }
 
     /// Called after `didFinish`. A short delay lets the first frame paint and

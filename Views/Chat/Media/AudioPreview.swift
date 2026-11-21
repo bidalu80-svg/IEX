@@ -15,12 +15,18 @@ import UIKit
 
 struct ZeAudioPreviewView: View {
     let fileURL: URL
+    private let cacheLease: StorageMediaFileLease?
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var player = GlobalAudioPlayer.shared
     @State private var showShareSheet = false
     @State private var showSavePicker = false
     @State private var artworkImage: UIImage? = nil
     @State private var dominantColor: Color = Color(UIColor.secondarySystemBackground)
+
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+        cacheLease = StorageMediaFileLease.audio(for: fileURL)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {

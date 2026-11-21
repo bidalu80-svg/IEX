@@ -14,9 +14,7 @@ struct AgentLiveActivityWidget: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 3) {
-                        Image(systemName: "cpu.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
+                        IslandAvatar(size: 24)
                         Text(context.state.soulName.isEmpty ? "Ze" : context.state.soulName)
                             .font(.caption.bold())
                             .foregroundStyle(.green)
@@ -152,12 +150,12 @@ struct AgentLiveActivityWidget: Widget {
                 }
             } compactLeading: {
                 HStack(spacing: 3) {
-                    Image(systemName: context.state.floatingWindow
-                          ? "bubble.left.and.text.bubble.right.fill"
-                          : "list.bullet.circle")
-                        .font(.callout)
-                        .foregroundStyle(.green)
-                    if !context.state.floatingWindow {
+                    if context.state.floatingWindow {
+                        Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                    } else {
+                        IslandAvatar(size: 18)
                         Text("\(context.state.activeSessionCount)")
                             .font(.callout.bold())
                             .foregroundStyle(.green)
@@ -170,6 +168,18 @@ struct AgentLiveActivityWidget: Widget {
                 MinimalIconView(state: context.state)
             }
         }
+    }
+}
+
+private struct IslandAvatar: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(decorative: "IslandAvatar", bundle: .main)
+            .renderingMode(.original)
+            .resizable()
+            .frame(width: size, height: size)
+            .clipShape(Circle())
     }
 }
 
@@ -373,8 +383,7 @@ struct MinimalIconView: View {
                 .transition(.opacity.animation(.easeInOut(duration: 0.35)))
         } else {
             ZStack {
-                Image(systemName: "list.bullet.circle")
-                    .font(.caption)
+                IslandAvatar(size: 18)
                 Text("\(state.activeSessionCount)")
                     .font(.system(size: 7, weight: .bold).monospacedDigit())
                     .offset(x: 6, y: -6)

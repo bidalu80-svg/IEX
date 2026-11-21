@@ -170,6 +170,14 @@ final class FaviconService: ObservableObject {
         await diskCache.usage()
     }
 
+    func storageCacheFiles(clear: Bool) async -> StorageCacheFileResult {
+        if clear {
+            memory.removeAll()
+            memoryLRU.removeAll()
+        }
+        return await diskCache.storageCacheFiles(clear: clear)
+    }
+
     // MARK: - Resolution
 
     private func resolve(domain: String, pageURL: URL?) async -> LoadedIcon? {
