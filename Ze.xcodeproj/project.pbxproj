@@ -61,9 +61,7 @@
 		CNSB001 /* ContainerNetworkSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CNS001 /* ContainerNetworkSection.swift */; };
 		CDNSB01 /* ContainerDNS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDNS001 /* ContainerDNS.swift */; };
 		AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0838CD2F3B941A00049557 /* StorageManagementView.swift */; };
-		E5197C010000000000000001 /* StorageCacheCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000002 /* StorageCacheCleaner.swift */; };
-		E5197C010000000000000003 /* StorageCacheFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000004 /* StorageCacheFiles.swift */; };
-		E5197C010000000000000005 /* StorageAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000006 /* StorageAccounting.swift */; };
+		E5197C010000000000000007 /* StorageMaintenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5197C010000000000000008 /* StorageMaintenance.swift */; };
 		C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000002 /* MediaFavoritesStore.swift */; };
 		C0DEFA000000000000000003 /* MediaFavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEFA000000000000000004 /* MediaFavoritesView.swift */; };
 		AA0838D02F3B941A00049557 /* CurrentRoot.m in Sources */ = {isa = PBXBuildFile; fileRef = AA0838D12F3B941A00049557 /* CurrentRoot.m */; };
@@ -231,7 +229,6 @@
 		E5E000006 /* PendingShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E000016 /* PendingShare.swift */; };
 		E5E000007 /* SharedContainerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E000017 /* SharedContainerStore.swift */; };
 		E5E000008 /* ShareCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E000019 /* ShareCoordinator.swift */; };
-		E5E000009 /* ZeShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E5E000010 /* ZeShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E5E00000A /* MainInterface.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E5E00001A /* MainInterface.storyboard */; };
 		E5E0000A1 /* ExternalFileImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5E0000A2 /* ExternalFileImporter.swift */; };
 		E5F000001 /* ISHExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000011 /* ISHExecutionCoordinator.swift */; };
@@ -593,13 +590,6 @@
 			remoteGlobalIDString = E51000040;
 			remoteInfo = Ze;
 		};
-		E5E000081 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E51000060 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E5E000040;
-			remoteInfo = ZeShare;
-		};
 		E5FP00081 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E51000060 /* Project object */;
@@ -650,7 +640,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				E5E000009 /* ZeShare.appex in Embed Foundation Extensions */,
 				E5H000009 /* AgentWidgetExtension.appex in Embed Foundation Extensions */,
 				E5FP00009 /* ZeFileProvider.appex in Embed Foundation Extensions */,
 			);
@@ -705,9 +694,7 @@
 		CDNS001 /* ContainerDNS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerDNS.swift; sourceTree = "<group>"; };
 		AA0838BF2F3B941A00049557 /* RootfsResetButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsResetButton.swift; sourceTree = "<group>"; };
 		AA0838CD2F3B941A00049557 /* StorageManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageManagementView.swift; sourceTree = "<group>"; };
-		E5197C010000000000000002 /* StorageCacheCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageCacheCleaner.swift; sourceTree = "<group>"; };
-		E5197C010000000000000004 /* StorageCacheFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageCacheFiles.swift; sourceTree = "<group>"; };
-		E5197C010000000000000006 /* StorageAccounting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageAccounting.swift; sourceTree = "<group>"; };
+		E5197C010000000000000008 /* StorageMaintenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageMaintenance.swift; sourceTree = "<group>"; };
 		C0DEFA000000000000000002 /* MediaFavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/MediaFavoritesStore.swift"; sourceTree = SOURCE_ROOT; };
 		C0DEFA000000000000000004 /* MediaFavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Settings/MediaFavoritesView.swift"; sourceTree = SOURCE_ROOT; };
 		AA0838D12F3B941A00049557 /* CurrentRoot.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CurrentRoot.m; sourceTree = "<group>"; };
@@ -2397,9 +2384,7 @@
 				E5N0000142F3B941A00049557 /* MemoryManagementView.swift */,
 				E8A000013 /* OffloadPermissionSettingsView.swift */,
 				AA0838CD2F3B941A00049557 /* StorageManagementView.swift */,
-				E5197C010000000000000002 /* StorageCacheCleaner.swift */,
-				E5197C010000000000000004 /* StorageCacheFiles.swift */,
-				E5197C010000000000000006 /* StorageAccounting.swift */,
+				E5197C010000000000000008 /* StorageMaintenance.swift */,
 				E5MNT0101 /* MountedFoldersManager.swift */,
 				E5MNT0102 /* MountedFolderCoordinator.swift */,
 				E5MNT0103 /* MountedFoldersSettingsView.swift */,
@@ -2561,7 +2546,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				E5E000080 /* PBXTargetDependency */,
 				E5H000080 /* PBXTargetDependency */,
 				E5FP00080 /* PBXTargetDependency */,
 			);
@@ -2895,9 +2879,7 @@
 				CDNSB01 /* ContainerDNS.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
-				E5197C010000000000000001 /* StorageCacheCleaner.swift in Sources */,
-				E5197C010000000000000003 /* StorageCacheFiles.swift in Sources */,
-				E5197C010000000000000005 /* StorageAccounting.swift in Sources */,
+				E5197C010000000000000007 /* StorageMaintenance.swift in Sources */,
 				C0DEFA000000000000000001 /* MediaFavoritesStore.swift in Sources */,
 				C0DEEB000000000000000006 /* MediaFavoriteControls.swift in Sources */,
 				C0DEEB000000000000000005 /* AIChatViewModel+MediaFavoriteTools.swift in Sources */,
@@ -3377,11 +3359,6 @@
 			isa = PBXTargetDependency;
 			target = E51000040 /* Ze */;
 			targetProxy = AA8A56912F6FBB7A00A3E54E /* PBXContainerItemProxy */;
-		};
-		E5E000080 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E5E000040 /* ZeShare */;
-			targetProxy = E5E000081 /* PBXContainerItemProxy */;
 		};
 		E5FP00080 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
