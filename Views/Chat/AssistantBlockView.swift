@@ -147,7 +147,9 @@ struct AssistantBlockView: View {
             onSpeakText: onSpeakText,
             allowsSearchHighlight: true,
             visualizationOwner: block,
-            fitTextWidth: fitTextWidth
+            fitTextWidth: fitTextWidth,
+            imageFilesMayBeWriting: isActiveMessage,
+            imageWritingMessage: message
         )
         .fixedSize(horizontal: false, vertical: true)
         .modifier(ZeOpenURLHandler())

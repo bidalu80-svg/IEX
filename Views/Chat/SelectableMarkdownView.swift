@@ -3717,6 +3717,13 @@ final class ImageAttachment: NSTextAttachment {
         (loadedImage == nil && !loadFailed) || groupChildren.contains { $0.loadedImage == nil && !$0.loadFailed }
     }
     fileprivate var groupItems: [ImageAttachment] { [self] + groupChildren }
+    fileprivate var visibleGroupItems: [ImageAttachment] { groupItems.filter { !$0.isConfirmedMissing } }
+
+    fileprivate lazy var localImageURL = TranscriptLocalImageProbe.localURL(source)
+    private var localProbe = TranscriptLocalImageProbe()
+    private var localFingerprint: String?
+    private var localImageRevision = 0
+    private var isConfirmedMissing = false
 
     private var isLoading = false
     /// Terminal ze:// load failure: retries exhausted, so no bitmap will ever
@@ -3791,11 +3798,36 @@ final class ImageAttachment: NSTextAttachment {
         groupViews.allObjects.forEach { $0.refreshImages() }
     }
 
+    @MainActor fileprivate func checkLocalImagePresence(sessionID: String?, mayBeWriting: Bool) -> Bool {
+        guard let localImageURL else { return false }
+        let sample = TranscriptLocalImageProbe.sample(localImageURL, sessionID: sessionID)
+        if localProbe.confirmsMissing(sample, mayBeWriting: mayBeWriting), !isConfirmedMissing {
+            isConfirmedMissing = true
+            localImageRevision += 1
+            isLoading = false
+            invalidateLoadedImage()
+            loadFailed = true
+            return true
+        }
+        if case .present(let fingerprint) = sample {
+            let previous = localFingerprint
+            localFingerprint = fingerprint
+            if isConfirmedMissing || (previous == nil ? loadFailed : previous != fingerprint) {
+                isConfirmedMissing = false
+                localImageRevision += 1
+                isLoading = false
+                invalidateLoadedImage()
+                return true
+            }
+        }
+        return false
+    }
+
     static func isGalleryView(_ view: UIView) -> Bool { view is MarkdownImageGroupView }
 
     func resizeGroupView(_ view: UIView, width: CGFloat) {
         guard let group = view as? MarkdownImageGroupView else { return }
-        group.frame.size = Self.thumbnailSize(availableWidth: width, isGroup: true)
+        group.frame.size = presentationSize(width: width)
         group.setNeedsLayout()
     }
 
@@ -3877,17 +3909,28 @@ final class ImageAttachment: NSTextAttachment {
         return CGSize(width: side, height: side + strip)
     }
 
+    private func presentationSize(width: CGFloat) -> CGSize {
+        if !isImageGroup, !isConfirmedMissing { return Self.thumbnailSize(availableWidth: width) }
+        let count = visibleGroupItems.count
+        if count == 0 {
+            let font = UIFont.preferredFont(forTextStyle: .caption1)
+            return CGSize(width: min(width, Self.maxImageWidth), height: ceil(font.lineHeight) + 4)
+        }
+        if count != groupItems.count { return Self.thumbnailSize(availableWidth: width, isGroup: count > 1) }
+        return Self.thumbnailSize(availableWidth: width, isGroup: isImageGroup)
+    }
+
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint, characterIndex charIndex: Int) -> CGRect {
         attachmentBoundsCallCount &+= 1
         let width = min(lineFrag.width, textContainer?.size.width ?? lineFrag.width)
-        return CGRect(origin: .zero, size: Self.thumbnailSize(availableWidth: width, isGroup: isImageGroup))
+        return CGRect(origin: .zero, size: presentationSize(width: width))
     }
 
     func beginLoadingIfNeeded() {
         // Children refresh the fixed-size gallery directly, even after the
         // parent's TextKit callback is cleared when its first image loads.
         groupChildren.forEach { $0.beginLoadingIfNeeded() }
-        guard loadedImage == nil, !isLoading else {
+        guard !isConfirmedMissing, loadedImage == nil, !isLoading else {
             imgLogger.info("[ZeImage][Load] skip src=\(self.source) alreadyLoaded=\(self.loadedImage != nil) isLoading=\(self.isLoading)")
             return
         }
@@ -3930,12 +3973,14 @@ final class ImageAttachment: NSTextAttachment {
 
         let src = canonicalSrc
         let isZeURL = URL(string: src).map { $0.scheme == "ze" } ?? false
+        let isLocal = localImageURL != nil
+        let imageRevision = localImageRevision
         // [T-ios-failed-image-refetch-storm] For remote (non-ze) URLs that
         // failed recently, don't re-dispatch a network fetch on every cell
         // recycle — render the placeholder and bail. ze:// is exempt: those
         // are local files that may be written shortly after the markdown
         // references them, so the retriesRemaining-scheduled flow must stay.
-        if !isZeURL, NativeMediaImageCache.shared.isRecentlyFailed(src) {
+        if !isLocal, NativeMediaImageCache.shared.isRecentlyFailed(src) {
             imgLogger.info("[ZeImage][Load] SUPPRESSED (recent failure within TTL) src=\(src)")
             isLoading = false
             fileNotFound = true
@@ -3943,7 +3988,8 @@ final class ImageAttachment: NSTextAttachment {
         }
         imgLogger.info("[ZeImage][Load] dispatching async load src=\(src) isZeURL=\(isZeURL)")
         Task.detached(priority: .userInitiated) {
-            let img: UIImage?
+            let decodedImage: UIImage?
+            var localRead: (url: URL, fingerprint: String?)?
             // True once the source's bytes were actually obtained; separates
             // "file missing / fetch failed" (worth retrying) from "bytes read
             // but undecodable" (deterministic — see the completion handler).
@@ -3952,6 +3998,7 @@ final class ImageAttachment: NSTextAttachment {
                 imgLogger.info("[ZeImage][Load] resolving ze:// URL src=\(src) host=\(url.host ?? "nil") path=\(url.path)")
                 if let resolved = resolveZeFileURLForNativeText(url: url) {
                     imgLogger.info("[ZeImage][Load] ze:// resolved to localPath=\(resolved.path)")
+                    localRead = (resolved, zeLocalMediaFingerprint(for: resolved))
                     if let data = try? Data(contentsOf: resolved) {
                         dataRead = true
                         imgLogger.info("[ZeImage][Load] read \(data.count) bytes from localPath=\(resolved.path)")
@@ -3961,14 +4008,14 @@ final class ImageAttachment: NSTextAttachment {
                         } else {
                             imgLogger.error("[ZeImage][Load] downsample FAILED src=\(src) dataSize=\(data.count)")
                         }
-                        img = downsampled
+                        decodedImage = downsampled
                     } else {
                         imgLogger.error("[ZeImage][Load] Data(contentsOf:) FAILED localPath=\(resolved.path)")
-                        img = nil
+                        decodedImage = nil
                     }
                 } else {
                     imgLogger.warning("[ZeImage][Load] resolveZeFileURLForNativeText returned nil src=\(src)")
-                    img = nil
+                    decodedImage = nil
                 }
             } else if let url = URL(string: src), url.scheme == "http" || url.scheme == "https" {
                 imgLogger.info("[ZeImage][Load] fetching HTTP(S) url=\(src)")
@@ -3976,53 +4023,46 @@ final class ImageAttachment: NSTextAttachment {
                     dataRead = true
                     // HTTP images: no local file URL for re-downsample (network-only)
                     imgLogger.info("[ZeImage][Load] HTTP fetched \(data.count) bytes src=\(src)")
-                    img = downsampleImageData(data)
+                    decodedImage = downsampleImageData(data)
                 } else {
                     imgLogger.warning("[ZeImage][Load] HTTP fetch FAILED src=\(src)")
-                    img = nil
+                    decodedImage = nil
                 }
             } else if let url = URL(string: src) {
                 // file URL or relative
                 imgLogger.info("[ZeImage][Load] trying file/relative URL scheme=\(url.scheme ?? "nil") path=\(url.path)")
+                if url.isFileURL { localRead = (url, zeLocalMediaFingerprint(for: url)) }
                 if let data = try? Data(contentsOf: url) {
                     dataRead = true
                     imgLogger.info("[ZeImage][Load] file loaded \(data.count) bytes src=\(src)")
-                    img = downsampleImageData(data)
+                    decodedImage = downsampleImageData(data)
                 } else {
                     imgLogger.warning("[ZeImage][Load] file load FAILED src=\(src)")
-                    img = nil
+                    decodedImage = nil
                 }
             } else {
                 imgLogger.error("[ZeImage][Load] cannot parse URL src=\(src)")
-                img = nil
+                decodedImage = nil
             }
 
-            // Recompute the fingerprint post-load in case the file was
-            // rewritten between the pre-check at entry and this point.
-            let postLoadKey = zeMediaCacheKey(for: src)
-            if let img {
-                imgLogger.info("[ZeImage][Load] SUCCESS src=\(src) finalSize=\(img.size.width)x\(img.size.height) — caching in memory")
-                NativeMediaImageCache.shared.set(img, for: postLoadKey)
-                // Also record the size (keyed by canonical source) so future
-                // ImageAttachment instances can compute correct bounds before
-                // the bitmap reload finishes. [AttachHang preload-bounds]
-                NativeMediaImageCache.shared.recordSize(img.size, forSource: src)
-                // [T-ios-failed-image-refetch-storm] A previously-failed URL
-                // that now succeeded — clear its negative-cache entry.
-                if !isZeURL { NativeMediaImageCache.shared.clearFailure(src) }
-            } else {
-                imgLogger.warning("[ZeImage][Load] FAILED src=\(src) — no image produced")
-                // [T-ios-failed-image-refetch-storm] Negative-cache remote
-                // failures so cell recycling during scroll doesn't re-fetch the
-                // same broken URL every recycle (the image-session decel storm).
-                // ze:// is exempt — its not-yet-written-file case is handled
-                // by the retriesRemaining-scheduled retry below.
-                if !isZeURL { NativeMediaImageCache.shared.recordFailure(src) }
-            }
-
+            let readFile = localRead
+            let readBytes = dataRead
+            let readKey = readFile.flatMap { $0.fingerprint }.map { "\(src)|\($0)" } ?? fpKey
             await MainActor.run {
+                guard self.localImageRevision == imageRevision else { return }
+                let fileChanged = readFile.map { file in
+                    file.fingerprint == nil || file.fingerprint != zeLocalMediaFingerprint(for: file.url)
+                } ?? false
+                let img = fileChanged ? nil : decodedImage
+                if let img {
+                    NativeMediaImageCache.shared.set(img, for: readKey)
+                    NativeMediaImageCache.shared.recordSize(img.size, forSource: src)
+                    if !isLocal { NativeMediaImageCache.shared.clearFailure(src) }
+                } else if !isLocal {
+                    NativeMediaImageCache.shared.recordFailure(src)
+                }
                 self.loadedImage = img
-                self.loadedFingerprint = img != nil ? postLoadKey : nil
+                self.loadedFingerprint = img != nil ? readKey : nil
                 self.isLoading = false
                 if img != nil {
                     self.lastFailedFingerprint = nil
@@ -4033,16 +4073,16 @@ final class ImageAttachment: NSTextAttachment {
                     // Terminal NOW — a share export waits only ~5 s for its
                     // fresh attachment instances and must not stay blocked by
                     // the full ~15 s retry budget on every attempt.
-                    if dataRead && postLoadKey == self.lastFailedFingerprint {
-                        self.loadFailed = true
+                    if readBytes && !fileChanged {
+                        if readKey == self.lastFailedFingerprint { self.loadFailed = true }
+                        self.lastFailedFingerprint = readKey
                     }
-                    if dataRead { self.lastFailedFingerprint = postLoadKey }
                     if self.retriesRemaining == 0 {
                         // Retries exhausted: this failure is terminal (see loadFailed).
                         self.loadFailed = true
                     }
                 }
-                if img == nil && isZeURL && self.retriesRemaining > 0 && !self.loadFailed {
+                if img == nil && isLocal && self.retriesRemaining > 0 && !self.loadFailed {
                     imgLogger.info("[ZeImage][Load] RETRY scheduled src=\(src) retriesRemaining=\(self.retriesRemaining)")
                     self.fileNotFound = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -4068,6 +4108,13 @@ final class ImageAttachment: NSTextAttachment {
 
 
     func makeView(width: CGFloat) -> UIView {
+        if visibleGroupItems.isEmpty {
+            let label = UILabel(frame: CGRect(origin: .zero, size: presentationSize(width: width)))
+            label.text = String(localized: "Image failed to load")
+            label.font = .preferredFont(forTextStyle: .caption1)
+            label.textColor = .secondaryLabel
+            return label
+        }
         if isImageGroup {
             let side = Self.thumbnailSize(availableWidth: width).width
             let view = MarkdownImageGroupView(attachment: self, side: side)
@@ -4163,13 +4210,13 @@ final class MarkdownImageGroupView: UIView {
     private var revealSelection = true
 
     convenience init(attachment: ImageAttachment, side: CGFloat) {
-        self.init(side: side, imageCount: attachment.groupItems.count, attachment: attachment)
+        self.init(side: side, imageCount: attachment.visibleGroupItems.count, attachment: attachment)
     }
 
     init(side: CGFloat, imageCount: Int, attachment: ImageAttachment? = nil) {
         self.attachment = attachment
         super.init(frame: CGRect(x: 0, y: 0, width: side,
-                                 height: side + Self.stripSpacing + Self.stripHeight))
+                                 height: side + (imageCount > 1 ? Self.stripSpacing + Self.stripHeight : 0)))
         accessibilityIdentifier = "markdown.imageGroup"
         mainImage.accessibilityIdentifier = "markdown.imageGroup.main"
         mainImage.isAccessibilityElement = true
@@ -4190,6 +4237,7 @@ final class MarkdownImageGroupView: UIView {
         strip.alwaysBounceVertical = false
         strip.alwaysBounceHorizontal = false
         strip.delaysContentTouches = false
+        strip.isHidden = imageCount <= 1
         addSubview(strip)
         for index in 0..<imageCount {
             let button = UIButton(type: .custom)
@@ -4203,9 +4251,11 @@ final class MarkdownImageGroupView: UIView {
                     return
                 }
                 guard let attachment = self.attachment else { return }
-                let item = attachment.groupItems[index]
+                let items = attachment.visibleGroupItems
+                guard items.indices.contains(index) else { return }
+                let item = items[index]
                 attachment.selectionState.select(source: item.source,
-                    messageId: attachment.messageId, sources: attachment.groupSources)
+                    messageId: attachment.messageId, sources: items.map(\.source))
                 item.beginLoadingIfNeeded()
             }, for: .touchUpInside)
             let thumbnail = UIImageView()
@@ -4234,9 +4284,10 @@ final class MarkdownImageGroupView: UIView {
 
     func refreshImages() {
         guard let attachment else { return }
-        let items = attachment.groupItems
+        let items = attachment.visibleGroupItems
+        guard !items.isEmpty, items.count == buttons.count else { return }
         let selected = attachment.selectionState.selectedSource(messageId: attachment.messageId,
-                                                                  sources: attachment.groupSources)
+                                                                  sources: items.map(\.source))
         let selectedIndex = items.firstIndex { $0.source == selected } ?? 0
         if selected != lastSelectedSource { revealSelection = true; lastSelectedSource = selected }
         let current = items[selectedIndex]
@@ -4985,6 +5036,39 @@ final class ZeLayoutManager: NSLayoutManager {
 
 /// Non-editable, selectable UITextView subclass for rendering Markdown as NSAttributedString.
 final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate {
+    var imageFilesMayBeWriting = false
+    weak var imageWritingMessage: ChatMessage?
+    var imageSessionID: String?
+    private var localImageAttachments: [ObjectIdentifier: ImageAttachment] = [:]
+    private var localImageWatch: Task<Void, Never>?
+
+    private func updateLocalImageWatch() {
+        guard window != nil, !localImageAttachments.isEmpty else {
+            localImageWatch?.cancel()
+            localImageWatch = nil
+            return
+        }
+        guard localImageWatch == nil else { return }
+        localImageWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                self?.recheckLocalImages()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
+
+    private func recheckLocalImages() {
+        let sessionID = imageSessionID ?? AIChatViewModel.activeSessionId
+        let mayBeWriting = imageFilesMayBeWriting || imageWritingMessage?.hasLiveTranscriptImageWriter == true
+        var needsRefresh = false
+        for attachment in localImageAttachments.values {
+            if attachment.checkLocalImagePresence(sessionID: sessionID, mayBeWriting: mayBeWriting) {
+                needsRefresh = true
+            }
+        }
+        if needsRefresh { refreshAttachmentViews() }
+    }
     var markdownImageSelectionOnly = false
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -6008,6 +6092,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
         var newViews: [UIView] = []
         var newViewMap: [ObjectIdentifier: UIView] = [:]
         var reusedIds: Set<ObjectIdentifier> = []
+        var newLocalImages: [ObjectIdentifier: ImageAttachment] = [:]
 
         guard let textStorage = self.textStorage as? NSTextStorage,
               let layoutManager = self.layoutManager as? ZeLayoutManager else {
@@ -6047,6 +6132,11 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
         textStorage.enumerateAttribute(.attachment, in: fullRange, options: []) { value, range, _ in
             guard let attachment = value as? NSTextAttachment else { return }
+            if let image = attachment as? ImageAttachment {
+                for item in image.groupItems where item.localImageURL != nil {
+                    newLocalImages[ObjectIdentifier(item)] = item
+                }
+            }
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: self.textContainer)
             let existingView = previousViewMap[ObjectIdentifier(attachment)]
@@ -6331,6 +6421,8 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
         attachmentViews = newViews
         attachmentViewMap = newViewMap
+        localImageAttachments = newLocalImages
+        updateLocalImageWatch()
         // [AttachHotPath] Refresh dedupe fingerprint so the next UAV call
         // can short-circuit when storage / width / view count are unchanged.
         if let storage = self.textStorage as? NSTextStorage {
@@ -6430,6 +6522,7 @@ final class SelectableMarkdownTextView: UITextView, UIGestureRecognizerDelegate 
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        updateLocalImageWatch()
         if window == nil {
             // Release CALayer backing stores when removed from view tree
             layer.contents = nil
@@ -7143,6 +7236,9 @@ struct SelectableMarkdownView: UIViewRepresentable {
     var fitTextWidth = false
     var searchSegmentID: SimpleSegmentID? = nil
     var copyMarkdownSource: (() -> String)? = nil
+    var imageFilesMayBeWriting = false
+    var imageWritingMessage: ChatMessage? = nil
+    @Environment(\.chatSessionId) private var imageSessionID
     @Environment(\.openURL) private var openURL
 
     func makeCoordinator() -> Coordinator {
@@ -7207,6 +7303,9 @@ struct SelectableMarkdownView: UIViewRepresentable {
 
     func updateUIView(_ textView: SelectableMarkdownTextView, context: Context) {
         textView.copyMarkdownSource = copyMarkdownSource
+        textView.imageFilesMayBeWriting = imageFilesMayBeWriting
+        textView.imageWritingMessage = imageWritingMessage
+        textView.imageSessionID = imageSessionID
         textView.markdownImageSelectionOnly = imageSelectionOnly
         if context.coordinator.renderer.imageSelectionState !== imageSelectionState {
             context.coordinator.renderer.imageSelectionState = imageSelectionState
