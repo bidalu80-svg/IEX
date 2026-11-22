@@ -1,5 +1,4 @@
 import SwiftUI
-import QuartzCore
 
 private let shareLog = AppLogger(category: "Share")
 private let draftLog = AppLogger(category: "DraftSession")
@@ -4281,7 +4280,7 @@ private struct SessionRow: View, Equatable {
     /// contradict the row's live activity.
     ///
     /// [T-ios-session-running-shows-pause-badge] A session that is actively
-    /// running its agent loop (`isActive`, drawn with the running ring) is by
+    /// running its agent loop (`isActive`, drawn with the SpinningRing) is by
     /// definition NOT paused — yet a transient `canResume=true` flip mid-run
     /// (interrupted-tail detection at load, a Stop case that then resumes, a
     /// background-suspend that's already back in-flight) can leave a stale
@@ -4315,12 +4314,8 @@ private struct SessionRow: View, Equatable {
                         SuspendedRing(color: .yellow)
                             .frame(width: 42, height: 42)
                     } else if isActive {
-                        SessionRunningRing()
-                            .frame(width: 48, height: 48)
-                            .id(session.id)
-                            .transition(.identity)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                        SpinningRing(color: iconBackgroundColor)
+                            .frame(width: 42, height: 42)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -4705,154 +4700,6 @@ private struct SuspendedRing: View {
     var body: some View {
         Circle()
             .stroke(color, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-    }
-}
-
-private struct SessionRunningRing: UIViewRepresentable {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-
-    func makeUIView(context: Context) -> RingView { RingView() }
-
-    func updateUIView(_ uiView: RingView, context: Context) {
-        uiView.configure(active: scenePhase == .active, reduceMotion: reduceMotion)
-    }
-
-    static func dismantleUIView(_ uiView: RingView, coordinator: ()) {
-        uiView.stop()
-    }
-
-    final class RingView: UIView {
-        private let gradient = CAGradientLayer()
-        private let stroke = CAShapeLayer()
-        private weak var scrollView: UIScrollView?
-        private var scrollObservations: [NSKeyValueObservation] = []
-        private var sceneActive = false
-        private var reduceMotion = false
-        private static let rotationKey = "sessionRunningRing"
-
-        init() {
-            super.init(frame: .zero)
-            isUserInteractionEnabled = false
-            gradient.type = .conic
-            gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
-            gradient.endPoint = CGPoint(x: 1, y: 0.5)
-            gradient.isHidden = true
-            stroke.fillColor = nil
-            stroke.strokeColor = UIColor.white.cgColor
-            stroke.lineWidth = 1.25
-            gradient.mask = stroke
-            layer.addSublayer(gradient)
-            updateColors()
-        }
-
-        required init?(coder: NSCoder) { return nil }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            gradient.frame = bounds
-            stroke.frame = gradient.bounds
-            stroke.path = UIBezierPath(ovalIn: stroke.bounds.insetBy(dx: stroke.lineWidth / 2, dy: stroke.lineWidth / 2)).cgPath
-            CATransaction.commit()
-            updateVisibility()
-        }
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            observeScrollView()
-            updateVisibility()
-        }
-
-        override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-            super.traitCollectionDidChange(previousTraitCollection)
-            updateColors()
-        }
-
-        func configure(active: Bool, reduceMotion: Bool) {
-            sceneActive = active
-            if self.reduceMotion != reduceMotion {
-                self.reduceMotion = reduceMotion
-                updateColors()
-            }
-            observeScrollView()
-            updateVisibility()
-        }
-
-        func stop() {
-            sceneActive = false
-            scrollObservations.removeAll()
-            scrollView = nil
-            updateVisibility()
-        }
-
-        private func updateColors() {
-            let blue = UIColor.systemBlue.resolvedColor(with: traitCollection)
-            let opacities: [CGFloat] = reduceMotion ? [0.24, 0.24] : [0.05, 0.17, 0.48, 0.24, 0.05, 0.05]
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            gradient.colors = opacities.map { blue.withAlphaComponent($0).cgColor }
-            gradient.locations = reduceMotion ? nil : [0, 0.08, 0.16, 0.22, 0.32, 1]
-            CATransaction.commit()
-        }
-
-        private func observeScrollView() {
-            var ancestor = window == nil ? nil : superview
-            while let view = ancestor, !(view is UIScrollView) {
-                ancestor = view.superview
-            }
-            let enclosingScrollView = ancestor as? UIScrollView
-            guard enclosingScrollView !== scrollView else { return }
-            scrollObservations.removeAll()
-            scrollView = enclosingScrollView
-            guard let enclosingScrollView else { return }
-            scrollObservations = [
-                enclosingScrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updateVisibility() }
-                },
-                enclosingScrollView.observe(\.bounds, options: [.new]) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updateVisibility() }
-                },
-            ]
-        }
-
-        private func updateVisibility() {
-            let visible = sceneActive && isInViewport
-            if gradient.isHidden == visible {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                gradient.isHidden = !visible
-                CATransaction.commit()
-            }
-            guard visible, !reduceMotion else {
-                gradient.removeAnimation(forKey: Self.rotationKey)
-                return
-            }
-            guard gradient.animation(forKey: Self.rotationKey) == nil else { return }
-            let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
-            rotation.fromValue = 0
-            rotation.toValue = Double.pi * 2
-            rotation.duration = 2.8
-            rotation.repeatCount = .infinity
-            rotation.timingFunction = CAMediaTimingFunction(name: .linear)
-            gradient.add(rotation, forKey: Self.rotationKey)
-        }
-
-        private var isInViewport: Bool {
-            guard let window, let scrollView, !bounds.isEmpty else { return false }
-            let viewport = scrollView.bounds.inset(by: scrollView.adjustedContentInset)
-            var visibleBounds = convert(bounds, to: window).intersection(scrollView.convert(viewport, to: window))
-            var ancestor: UIView? = self
-            while let view = ancestor, !visibleBounds.isEmpty {
-                guard !view.isHidden, view.alpha > 0 else { return false }
-                if view.clipsToBounds || view === window {
-                    visibleBounds = visibleBounds.intersection(view.convert(view.bounds, to: window))
-                }
-                ancestor = view.superview
-            }
-            return !visibleBounds.isEmpty
-        }
     }
 }
 
