@@ -4,7 +4,7 @@ import json
 import plistlib
 import re
 from pathlib import Path
-from typing import NamedTuple
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,22 +29,22 @@ def check(condition, label):
 
 
 main = plistlib.loads((ROOT / "Info.plist").read_bytes())
-extension = plistlib.loads((ROOT / "ShareExtension/Info.plist").read_bytes())
-document_types = {identifier for declaration in main["CFBundleDocumentTypes"]
-                  if declaration["LSHandlerRank"] == "Alternate" and declaration["CFBundleTypeRole"] == "Viewer"
-                  for identifier in declaration["LSItemContentTypes"]}
-check(main["LSSupportsOpeningDocumentsInPlace"] and {
-    "public.json", "com.adobe.pdf", "org.openxmlformats.wordprocessingml.document",
-    "org.openxmlformats.spreadsheetml.sheet", "org.openxmlformats.presentationml.presentation", "public.plain-text",
-} <= document_types, "app is an alternate document handler and retains JSON")
-check("public.zip-archive" in document_types, "app registers ZIP as an alternate viewer")
-check(any(declaration["CFBundleTypeName"] == "All Files"
-          and declaration["CFBundleTypeRole"] == "Viewer" and declaration["LSHandlerRank"] == "Alternate"
-          and set(declaration["LSItemContentTypes"]) == {"public.data", "public.content"}
-          for declaration in main["CFBundleDocumentTypes"]),
-      "app registers both root types in one All Files alternate viewer entry")
-check(extension["NSExtension"]["NSExtensionPointIdentifier"] == "com.apple.share-services",
-      "existing Share Extension stays independent of document registration")
+document_types = main["CFBundleDocumentTypes"]
+check(main["LSSupportsOpeningDocumentsInPlace"] is True and all(
+    declaration["LSHandlerRank"] == "Alternate" and declaration["CFBundleTypeRole"] == "Viewer"
+    for declaration in document_types
+), "document types open in place as alternate viewers")
+check({declaration["CFBundleTypeName"]: set(declaration["LSItemContentTypes"])
+       for declaration in document_types} == {
+    "JSON Document": {"public.json"},
+    "Documents": {
+        "com.adobe.pdf", "org.openxmlformats.wordprocessingml.document",
+        "org.openxmlformats.spreadsheetml.sheet", "org.openxmlformats.presentationml.presentation",
+        "com.microsoft.word.doc", "com.microsoft.excel.xls", "com.microsoft.powerpoint.ppt",
+        "public.plain-text", "public.comma-separated-values-text", "public.rtf", "public.zip-archive",
+    },
+    "All Files": {"public.data", "public.content"},
+} and len(document_types) == 3, "JSON, specific document types including ZIP, and both All Files root types remain registered")
 
 scene = read("AppDelegate.swift")
 app = read("ZeApp.swift")
@@ -56,36 +56,51 @@ home = read("Views/ContentView.swift")
 chat = read("Views/Chat/AIChatView.swift")
 provider_config = read("Providers/ProviderConfigStore.swift")
 attachments = read("Agent/Chat/AIChatViewModel+Attachments.swift")
-extension_vm = read("ShareExtension/ShareViewModel.swift")
-extension_view = read("ShareExtension/ShareViewController.swift")
 project = read("Ze.xcodeproj/project.pbxproj")
 
 check(scene.count("Self.handleURLContexts(") >= 2 and "ExternalFileImporter.ingest(url, into: coordinator)" in scene
       and "ExternalFileImporter.ingest(url, into: shareCoordinator)" in app,
       "cold and warm scene delivery and SwiftUI fallback converge on the importer")
+can_ingest = section(importer, "static func canIngest(", "static var inbox:")
+ingest_gate = section(importer, "static func ingest(", "let access =")
+check(re.fullmatch(r"static func canIngest\(_ url: URL\) -> Bool \{\s*(?:return\s+)?url\.isFileURL\s*\}\s*", can_ingest)
+      and "guard canIngest(url) else { return }" in ingest_gate,
+      "the importer admits file URLs through its entry guard")
 check(".applicationSupportDirectory" in importer and "IncomingAttachments" in importer
       and "SharedContainerStore" not in importer and "UserDefaults" not in importer,
       "document-open staging does not depend on a shared group")
 check(importer.index("startAccessingSecurityScopedResource()") < importer.index("Task.detached")
-      < importer.index("copyRegularFile") and "named: url.lastPathComponent" in importer
+      < importer.index("SecurityScopedDocumentAccess.read(from: url)") < importer.index("copyRegularFile")
+      and "defer { if access { url.stopAccessingSecurityScopedResource() } }" in importer
+      and "named: url.lastPathComponent" in importer
       and "FileManager.default.copyItem" in inbox and "Data(contentsOf:" not in importer,
-      "the importer holds access and copies the named file without loading its bytes into memory")
+      "the importer balances scoped access, coordinates the read and copies the named file without loading its bytes into memory")
 publish = section(inbox, "private func publish", "private static func isFileName")
 check("UUID()" in publish and '".writing-' in publish and "skipsHiddenFiles" in inbox
       and publish.index("try prepare(staging)") < publish.index("JSONEncoder()") < publish.index("moveItem(at: staging, to: final)")
       and "defer { try? fileManager.removeItem(at: staging) }" in publish,
       "complete, independently named receipts publish atomically; failed writes stay invisible")
-check('guard let container = appGroupContainerURL else { return nil }' in container
-      and "ExternalFileImporter.inbox.receipts()" in coordinator and "SharedContainerStore.shareInbox?.receipts() ?? []" in coordinator
-      and "seen.insert($0.id).inserted" in coordinator and "awaitingRemoval" in coordinator,
-      "both inboxes converge and scans deduplicate by persisted ID")
+pending_scan = section(coordinator, "func checkForPendingShare()", "func acknowledge(")
+check("let local = ExternalFileImporter.inbox.receipts()" in pending_scan
+      and 'guard let container = appGroupContainerURL else { return nil }' in container
+      and "let shared = SharedContainerStore.shareInbox?.receipts() ?? []" in pending_scan
+      and "var seen = Set(awaitingRemoval.keys)" in pending_scan,
+      "the scan reads the private inbox and tolerates an unavailable legacy App Group inbox")
+check(re.search(r"let receipts\s*=\s*\(\s*local\s*\+\s*shared\s*\)\.filter\s*"
+                r"\{\s*seen\.insert\(\$0\.id\)\.inserted\s*\}\.sorted\s*\{", pending_scan)
+      and "if pending != receipts { pending = receipts }" in pending_scan,
+      "private and legacy receipts are merged, deduplicated and published to the pending queue")
 check('".received-\\(id.uuidString)"' in inbox and "moveItem(at: directory, to: retired)" in inbox
       and "pending.removeAll { $0.id == receipt.id }" in coordinator
       and "cleanSharedFiles" not in coordinator + container + chat and "bufferTTL" not in coordinator,
       "acknowledgement retires only the delivered ID and no timeout purges the queue")
 check("shareCoordinator.checkForPendingShare()" in section(app, "case .active:", "case .inactive:")
-      and "checkForPendingShare()" in read("Shared/DeepLinkRouter.swift"),
-      "manual foreground return checks the disk queue without needing an extension redirect")
+      and "coordinator.documentImportFinished()" in importer
+      and "checkForPendingShare()" in section(coordinator, "func documentImportFinished()", "func checkForPendingShare()"),
+      "foreground activation and completion of a document import scan the queue without an extension redirect")
+check(section(read("Shared/DeepLinkRouter.swift"), 'case "share":', 'case "views":').split()
+      == ['case', '"share":', 'shareCoordinator.checkForPendingShare()'],
+      "legacy ze://share remains a queue scan only")
 check("else if shareCoordinator.hasIncomingShares" in home and "lastLocalShareSessionID" in home
       and "let target = shareLaunchSessionID" in home and "incomingShareTargetID == nil" in home
       and 'Button("New Chat") { openSession(Self.makeNewSessionId()) }' in home,
@@ -316,148 +331,43 @@ check(fixture_recognition(over_budget_file)["providerType"] == "openAI"
       and over_budget_file.read_limits == [chunk_size] * (scan_limit // chunk_size) + [-1]
       and sum(over_budget_file.returned_bytes[:-1]) == scan_limit,
       "a still-plausible prefix reaches full validation only after the 256 KiB budget is exhausted")
-check("provider.registeredTypeIdentifiers" in extension_vm and "provider.suggestedName" in extension_vm
-      and "provider.loadFileRepresentation(forTypeIdentifier: identifier)" in extension_vm
-      and "copyRegularFile(at: url" in extension_vm and "jpegData" not in extension_vm and "UIImage" not in extension_vm,
-      "extension loads actual file representations and does not re-encode photos")
-extension_receive = section(extension_vm, "private func receive(_ provider", "private func loadFile")
-explicit_file_url = section(extension_receive, "type: .fileURL", "let generic")
-copy_url = section(extension_vm, "private static func copyFileURL", "private static func representedURL")
-load_file = section(extension_vm, "private func loadFile", "private func loadItem")
-load_item = section(extension_vm, "private func loadItem", "private static func copyFileURL")
-named_url_copy = "Self.copyFileURL(url, suggestedFileName: suggestedFileName, into: inbox)"
-check("let suggestedName = provider.suggestedName.map { ($0 as NSString).lastPathComponent }" in extension_receive
-      and "canLoadPlainText || !(name as NSString).pathExtension.isEmpty ? name : nil" in extension_receive
-      and named_url_copy in explicit_file_url
-      and extension_receive.count(named_url_copy) == extension_receive.count("Self.copyFileURL(") == 4
-      and "inbox.storeFile(named: suggestedFileName ?? url.lastPathComponent)" in copy_url
-      and "let name = suggestedFileName ?? url.lastPathComponent" in load_file
-      and "inbox.storeFile(named: name)" in load_file,
-      "suggested name with an extension (e.g. \u5408\u540c.pdf) wins over a temporary basename on every file URL route")
-file_types = section(extension_receive, "let generic", "let rankedFileTypes")
-text_commit_start = extension_receive.rfind("\n", 0, extension_receive.index("case .text(let text, let isLink)? = deferredText"))
-file_then_text = extension_receive[extension_receive.index("for identifier in rankedFileTypes"):text_commit_start]
-check(("if record(await loadFile(from: provider, identifier: identifier, suggestedFileName: suggestedFileName, "
-       "onFailure: fileFailure(for: identifier), into: inbox)) { return true }") in " ".join(file_then_text.split())
-      and file_then_text.index("await loadFile(") < file_then_text.index("type: .plainText"),
-      "plain text with a file representation and a suggested filename is staged as an attachment before inline text")
-check(".flatMap { $0.isEmpty ? nil : $0 }" in extension_receive
-      and "let canLoadPlainText = provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)" in extension_receive
-      and "canLoadPlainText || !(name as NSString).pathExtension.isEmpty ? name : nil" in extension_receive
-      and "let name = suggestedFileName ?? url.lastPathComponent" in load_file
-      and "try PendingShareInbox.copyRegularFile(at: url, to: destination)" in load_file
-      and "continuation.resume(returning: saved != nil ? .file(saved: true) : onFailure)" in load_file
-      and "guard !fileFailed, case .text(let text, let isLink)? = deferredText else { return false }" in extension_receive,
-      "a saved README keeps its exact name; only an evidenced file failure blocks the named text fallback")
-check("record(await loadItem(from: provider, type: .fileURL, onFailure: .file(saved: false)" in extension_receive
-      and 'guard let url = Self.representedURL(item), url.isFileURL else { return .file(saved: false) }' in explicit_file_url
-      and 'identifier: type.identifier, onFailure: onFailure, receive: receive' in load_item
-      and 'continuation.resume(returning: error == nil ? receive(item) : onFailure)' in load_item,
-      "a declared file URL load error or invalid item records failure instead of allowing a short text substitute")
-file_failure = section(extension_receive, "func fileFailure(", "for identifier in rankedFileTypes")
-check('Set(provider.registeredTypeIdentifiers(fileOptions: .openInPlace))' in file_types
-      and 'if openInPlaceIdentifiers.contains(identifier) { return true }' in file_types
-      and '.file(' not in file_types and '.offered' not in extension_vm
-      and ' '.join(file_failure.split()) == ('func fileFailure(for identifier: String) -> LoadedItem? '
-                                            '{ openInPlaceIdentifiers.contains(identifier) ? .file(saved: false) : nil }'),
-      "type and filename only schedule probes; only the in-place registration supplies their failure token")
-check(('guard error == nil, let url, url.isFileURL else { continuation.resume(returning: onFailure) return }') in ' '.join(load_file.split())
-      and 'continuation.resume(returning: saved != nil ? .file(saved: true) : onFailure)' in load_file
-      and 'let onFailure = fileFailure(for: identifier)' in file_then_text
-      and 'identifier: identifier, onFailure: onFailure, receive:' in file_then_text
-      and 'return saved != nil ? .file(saved: true) : onFailure' in file_then_text
-      and 'type: .plainText, receive:' in file_then_text and 'onFailure: LoadedItem? = nil' in load_item,
-      "optional callback and materialization failures emit no blocking outcome, including when a coerced file URL exists")
-check(all(token not in extension_vm for token in ('NSItemProviderError', 'as NSError', 'error.domain', 'error.code')),
-      "unverified callback error codes are not used as file registration evidence")
-url_routes = [explicit_file_url, section(extension_receive, "type: .url,", "if canLoadPlainText,"),
-              section(extension_receive, "type: .plainText,", "for identifier in rankedFileTypes"),
-              file_then_text[file_then_text.index("identifier: identifier, onFailure: onFailure, receive:"):]]
-text_commit = extension_receive[text_commit_start:]
-check(extension_receive.index("var fileFailed = false") < extension_receive.index("type: .fileURL")
-      and all(f"return .file(saved: (try? {named_url_copy}) != nil)" in route for route in url_routes)
-      and extension_receive.count("record(await loadItem(") == 4
-      and "case .file(let saved): if !saved { fileFailed = true } return saved" in " ".join(extension_receive.split())
-      and "if deferredText == nil { deferredText = item }" in extension_receive
-      and "storeText(" not in extension_receive[:text_commit_start]
-      and "if isLink || text.count <= 1000 { return (try? inbox.storeText(text)) != nil }" in text_commit
-      and 'inbox.storeFile(named: "Shared Text.txt")' in text_commit
-      and "result.failed += 1" in extension_vm,
-      "all delivered file routes record failures before text can be committed; string-only routing and failure totals are preserved")
 
 
-class RegistrationFixture(NamedTuple):
-    identifier: str
-    kind: str
-    outcome: str
+def project_object(identifier):
+    match = re.search(rf"^\t\t{identifier}\b[^\n]*= \{{(.*?)^\t\t\}};", project, re.M | re.S)
+    assert match, f"missing project object {identifier}"
+    return match.group(1)
 
 
-def expected_provider_route(registered, suggested_name, text, *, file_url=None, fallback=None):
-    file_failed = file_url is not None
-    if file_url == "saved":
-        return "file", suggested_name
-    for registration in registered:
-        if registration.outcome == "saved":
-            return "file", suggested_name
-        if registration.kind in {"file-url", "in-place"} or registration.outcome == "actual-url-copy-failed":
-            file_failed = True
-    if fallback == "saved":
-        return "file", suggested_name
-    if file_failed or fallback == "actual-url-copy-failed" or not text:
-        return "failed", None
-    if len(text) <= 1000:
-        return "text", text
-    return "file", "Shared Text.txt"
-
-
-plain_text = "public.utf8-plain-text"
-tsv = "public.utf8-tab-separated-values-text"
-csv = "public.comma-separated-values-text"
-custom_plain_text = "com.example.custom-plain-text-without-preferred-extension"
-pdf = "com.adobe.pdf"
-summary = "Short summary"
-plain_probe = RegistrationFixture(plain_text, kind="data", outcome="no-url")
-for identifier, name in ((plain_text, "README"), (custom_plain_text, "report.xyz")):
-    textual = RegistrationFixture(identifier, kind="data", outcome="error")
-    copied_file = textual._replace(kind="copy-file")
-    in_place = textual._replace(kind="in-place")
-    check(expected_provider_route([textual, plain_probe], name, summary) == ("text", summary)
-          and expected_provider_route([copied_file, plain_probe], name, summary) == ("text", summary)
-          and expected_provider_route([in_place, plain_probe], name, summary) == ("failed", None),
-          f"provider policy fixture: {name}, ordinary copy and data failures are unresolved; in-place failure blocks text")
-for identifier, name in ((tsv, "report.tsv"), (csv, "report.csv"), (custom_plain_text, "report.xyz"), (pdf, "report.pdf")):
-    check(all(expected_provider_route([RegistrationFixture(identifier, kind=kind, outcome=outcome), plain_probe],
-                                      suggested_name, summary) == ("failed", None)
-              for kind in ("in-place", "file-url") for suggested_name in (name, None) for outcome in ("error", "no-url"))
-          and expected_provider_route([RegistrationFixture(identifier, "copy-file", "error")], name, "") == ("failed", None),
-          f"provider policy fixture: {name}, explicit file evidence suppresses summaries and no usable payload still fails")
-check(expected_provider_route([plain_probe], None, "a" * 1000) == ("text", "a" * 1000),
-      "provider contract fixture: 1,000 characters of plain text remain inline")
-check(expected_provider_route([plain_probe], None, "a" * 1001) == ("file", "Shared Text.txt"),
-      "provider contract fixture: 1,001 characters of plain text become Shared Text.txt")
-check(expected_provider_route([plain_probe, RegistrationFixture("public.data", "data", "no-url")], "README", summary) == ("text", summary)
-      and expected_provider_route([plain_probe], "summary.txt", "a" * 1001) == ("file", "Shared Text.txt"),
-      "provider contract fixture: optional probe failures do not strand named text")
-check(expected_provider_route([plain_probe], "report.txt", summary, file_url="error") == ("failed", None)
-      and expected_provider_route([plain_probe._replace(outcome="actual-url-copy-failed")], "README", summary) == ("failed", None)
-      and expected_provider_route([plain_probe._replace(outcome="temporary-copy-failed")], "README", summary) == ("text", summary),
-      "provider policy fixture: explicit URL failure blocks text; failed temporary coercion alone does not")
-check(all(expected_provider_route([RegistrationFixture(identifier, kind="copy-file", outcome="saved")], name, summary) == ("file", name)
-          for identifier, name in ((tsv, "report.tsv"), (csv, "report.csv"), (custom_plain_text, "report.xyz"), (plain_text, "README")))
-      and expected_provider_route([RegistrationFixture(pdf, "in-place", "error"), plain_probe._replace(outcome="saved")],
-                                  "report.pdf", summary) == ("file", "report.pdf")
-      and expected_provider_route([RegistrationFixture(pdf, "in-place", "error")], "report.pdf", summary,
-                                  file_url="error", fallback="saved") == ("file", "report.pdf"),
-      "provider contract fixture: any later successful file route wins and keeps the original filename")
-
-check(extension_view.count("canOpenZe: false") == 2 and "Use Open in Ze" in extension_view
-      and extension_view.index("guard result.saved > 0") < extension_view.index('"Received by Ze"')
-      and "if canOpenZe" in extension_view and "context.open(url)" in extension_view
-      and "UIApplication" not in extension_view,
-      "extension reports commit results; an optional jump is offered only after a successful write")
-check(project.count("/* PendingShare.swift in Sources */") == 4
-      and project.count("/* SharedContainerStore.swift in Sources */") == 4
-      and project.count("/* ExternalFileImporter.swift in Sources */") == 2,
-      "receipt code compiles into both existing targets and the direct importer stays app-only")
+check(not re.search(r"\b(?:fileRef|productRef)\s*=\s*E5E000010\b", project),
+      "no build phase references the ZeShare.appex product")
+check(not re.search(r"\b(?:target|remoteGlobalIDString)\s*=\s*E5E000040\b", project)
+      and not re.search(r"\bE5E0000(?:80|81)\b", project),
+      "no target dependency or proxy builds ZeShare")
+scheme = ElementTree.parse(ROOT / "Ze.xcodeproj/xcshareddata/xcschemes/Ze.xcscheme")
+check(not any(reference.get("BlueprintIdentifier") == "E5E000040"
+              or reference.get("BuildableName") == "ZeShare.appex"
+              for reference in scheme.iter("BuildableReference")),
+      "the Ze scheme does not build ZeShare explicitly")
+share_target = project_object("E5E000040")
+share_sources = project_object("E5E000041")
+check("productReference = E5E000010" in share_target
+      and 'productType = "com.apple.product-type.app-extension"' in share_target
+      and "E5E000041 /* Sources */" in share_target and "E5E000042 /* Resources */" in share_target
+      and "E5E000010 /* ZeShare.appex */" in section(project, "/* Begin PBXFileReference section */", "/* End PBXFileReference section */")
+      and all(f"{name}.swift in Sources" in share_sources and (ROOT / f"ShareExtension/{name}.swift").is_file()
+              for name in ("ShareViewController", "ShareViewModel")),
+      "ZeShare target, product, phase wiring and source files remain available")
+app_target = project_object("E51000040")
+embed = project_object("E5E000060")
+check("E5E000060 /* Embed Foundation Extensions */" in app_target and "dstSubfolderSpec = 13;" in embed
+      and all(f"{product}.appex in Embed Foundation Extensions" in embed and dependency in app_target
+              for product, dependency in (("AgentWidgetExtension", "E5H000080"), ("ZeFileProvider", "E5FP00080"))),
+      "Ze still embeds and builds the widget and File Provider")
+app_sources = project_object("E51000041")
+check(all(f"{name}.swift in Sources" in app_sources and f"{name}.swift in Sources" in share_sources
+          for name in ("PendingShare", "SharedContainerStore"))
+      and "ExternalFileImporter.swift in Sources" in app_sources and "ExternalFileImporter.swift in Sources" not in share_sources,
+      "receipt code remains in both targets and the direct importer stays app-only")
 
 print(f"Incoming share structure checks passed: {checks}")
