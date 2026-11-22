@@ -16,7 +16,7 @@ NativeOffloads/              Objective-C/C 原生能力封装
 iSH/                         终端运行时和命令执行桥接
 WebApp/                      Web 内容与快捷入口相关实现
 FileProvider/                文件提供器扩展
-ShareExtension/              系统分享扩展
+ShareExtension/              保留的系统分享扩展源码（不随主 App 打包）
 AgentWidget/                 Widget 与 Live Activity 相关代码
 Resources/                   静态资源、模板和辅助数据
 Assets.xcassets/             图片、颜色、图标资源
@@ -44,7 +44,7 @@ Ze 的 iOS 浏览器统一使用 Apple `WKWebView` / WebKit：
 ### 启动链
 
 1. `ZeApp.swift` 创建 SwiftUI `App`，配置持久化容器、全局状态对象和根窗口。
-2. `AppDelegate.swift` 接收后台刷新、通知、URL Scheme、分享扩展和系统生命周期事件。
+2. `AppDelegate.swift` 接收后台刷新、通知、URL Scheme、外部文档打开和系统生命周期事件。
 3. 根视图进入 `Views/ContentView.swift`，根据当前会话、侧边栏状态和深链目标选择页面。
 4. 全局对象通过 `@EnvironmentObject`、单例或通知中心向子视图传递状态。
 

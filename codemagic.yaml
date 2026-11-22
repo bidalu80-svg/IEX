@@ -784,8 +784,8 @@ workflows:
           # [T-aot-target-scope] AOT objects reach the linker through a
           # user-defined setting that only the Ze target's OTHER_LDFLAGS
           # references. Setting OTHER_LDFLAGS on the command line applies to
-          # EVERY target in the build, so ZeShare.appex and ZeFileProvider.appex
-          # were handed aot_*.o as well and failed with
+          # EVERY target in the build. Previously, ZeFileProvider.appex and the
+          # then-embedded ZeShare.appex were handed aot_*.o and failed with
           #   Undefined symbols: _gadget_adc_reg / _gadget_add_ext
           # Those two extensions do not link libish_emu, which is where the
           # gadgets live, so they can never resolve them.

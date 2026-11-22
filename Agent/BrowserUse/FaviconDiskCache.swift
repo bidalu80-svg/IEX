@@ -117,10 +117,6 @@ actor FaviconDiskCache {
         return Usage(bytes: files.reduce(Int64(0)) { $0 + $1.bytes }, files: files.count)
     }
 
-    func storageCacheFiles(clear: Bool) -> StorageCacheFileResult {
-        StorageCacheFiles.process(.favicons, clear: clear)
-    }
-
     // MARK: - Housekeeping
 
     private struct CachedFile {

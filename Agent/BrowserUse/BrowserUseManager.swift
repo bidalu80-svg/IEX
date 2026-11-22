@@ -419,7 +419,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
             lastScreenshot = image
             if let jpegData = image.jpegData(compressionQuality: 0.7) {
                 let filename = "snapshot_\(Int(Date().timeIntervalSince1970 * 1000)).jpg"
-                let fileURL = Self.screenshotsDir.appendingPathComponent(filename)
+                let fileURL = Self.screenshotsLease.folder.appendingPathComponent(filename)
                 try jpegData.write(to: fileURL)
                 snapshotPath = fileURL.path
             }
@@ -908,10 +908,12 @@ final class BrowserUseManager: NSObject, ObservableObject {
     // MARK: - Screenshot
 
     /// Directory for saving browser screenshots.
-    private static let screenshotsDir: URL = {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("browser_screenshots", isDirectory: true)
+    private static let screenshotsLease: StorageMediaFileLease = {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("browser_screenshots/\(UUID().uuidString)", isDirectory: true)
+        let lease = StorageMediaFileLease(folder: dir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        return lease
     }()
 
     /// Max captured page height in CSS pixels — guards against runaway memory
@@ -1004,7 +1006,7 @@ final class BrowserUseManager: NSObject, ObservableObject {
 
         // Save to disk
         let filename = "screenshot_\(Int(Date().timeIntervalSince1970 * 1000)).jpg"
-        let fileURL = Self.screenshotsDir.appendingPathComponent(filename)
+        let fileURL = Self.screenshotsLease.folder.appendingPathComponent(filename)
         try jpegData.write(to: fileURL)
 
         let base64 = jpegData.base64EncodedString()

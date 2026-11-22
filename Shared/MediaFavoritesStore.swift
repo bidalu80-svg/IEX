@@ -152,10 +152,20 @@ final class MediaFavoritesStore: ObservableObject {
         if hasFile { try? fm.removeItem(at: staged) }
     }
 
-    func makeZip(for selected: [FavoriteMediaItem]) async -> URL? {
+    struct ShareItem: Identifiable {
+        let url: URL
+        let lease: StorageMediaFileLease?
+        var id: URL { url }
+    }
+
+    func makeZip(for selected: [FavoriteMediaItem]) async -> ShareItem? {
         guard !selected.isEmpty else { return nil }
-        let stageURL = fm.temporaryDirectory.appendingPathComponent("ze-favorites-stage-\(UUID().uuidString)", isDirectory: true)
-        let archiveURL = fm.temporaryDirectory.appendingPathComponent("Ze收藏夹-\(UUID().uuidString.prefix(8)).zip")
+        let workspace = fm.temporaryDirectory.appendingPathComponent("ze-favorites-export-\(UUID().uuidString)", isDirectory: true)
+        let lease = StorageMediaFileLease(folder: workspace)
+        defer { withExtendedLifetime(lease) {} }
+        let stageURL = workspace.appendingPathComponent("stage", isDirectory: true)
+        let archiveURL = workspace.appendingPathComponent("Ze收藏夹-\(UUID().uuidString.prefix(8)).zip")
+        defer { try? fm.removeItem(at: stageURL) }
 
         do {
             try fm.createDirectory(at: stageURL, withIntermediateDirectories: true)
@@ -187,15 +197,18 @@ final class MediaFavoritesStore: ObservableObject {
                 }
                 if let coordinationError { finish(.failure(coordinationError)) }
             }
-            try? fm.removeItem(at: stageURL)
-            return archiveURL
         } catch {
-            try? fm.removeItem(at: stageURL)
-            let entries = selected.map { (fileURL(for: $0), $0.fileName) }
-            guard let data = try? Self.makeStoredZip(items: entries) else { return nil }
-            try? data.write(to: archiveURL, options: .atomic)
-            return fm.fileExists(atPath: archiveURL.path) ? archiveURL : nil
+            do {
+                let entries = selected.map { (fileURL(for: $0), $0.fileName) }
+                let data = try Self.makeStoredZip(items: entries)
+                try fm.createDirectory(at: workspace, withIntermediateDirectories: true)
+                try data.write(to: archiveURL, options: .atomic)
+            } catch {
+                try? fm.removeItem(at: workspace)
+                return nil
+            }
         }
+        return ShareItem(url: archiveURL, lease: lease)
     }
 
     private var indexIsReadable = true

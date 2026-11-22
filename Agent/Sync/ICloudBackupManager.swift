@@ -220,6 +220,8 @@ final class ICloudBackupManager: ObservableObject {
             let remote = path.hasSuffix("/") ? path + fileName : path + "/" + fileName
             let data = try await RemoteSSHConnectionService.shared.downloadFile(at: remote, on: serverID)
             let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zebak")
+            let lease = StorageMediaFileLease(folder: temp)
+            defer { withExtendedLifetime(lease) {} }
             try data.write(to: temp, options: .atomic); defer { try? fm.removeItem(at: temp) }
             try await restoreEncrypted(from: temp, password: password)
         case .smbServer, .webDAVServer, .s3Bucket, .ftpServer:
@@ -227,6 +229,8 @@ final class ICloudBackupManager: ObservableObject {
             let remote = appendRemoteFile(destination.remotePath ?? destination.remoteProfile?.path ?? "/", name: fileName)
             let data = try await client.download(path: remote)
             let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zebak")
+            let lease = StorageMediaFileLease(folder: temp)
+            defer { withExtendedLifetime(lease) {} }
             try data.write(to: temp, options: .atomic); defer { try? fm.removeItem(at: temp) }
             try await restoreEncrypted(from: temp, password: password)
         }
@@ -344,6 +348,8 @@ final class ICloudBackupManager: ObservableObject {
 
         try fm.createDirectory(at: localBackupDirectoryURL, withIntermediateDirectories: true)
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let lease = StorageMediaFileLease(folder: tempDir)
+        defer { withExtendedLifetime(lease) {} }
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
         let stageDir = tempDir.appendingPathComponent("backup", isDirectory: true)
@@ -379,6 +385,8 @@ final class ICloudBackupManager: ObservableObject {
         let zipData = try decryptArchive(data, password: password)
         try checkCancelled()
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let lease = StorageMediaFileLease(folder: tempDir)
+        defer { withExtendedLifetime(lease) {} }
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
         let zipURL = tempDir.appendingPathComponent("payload.zip")
@@ -491,6 +499,8 @@ final class ICloudBackupManager: ObservableObject {
 
         // Create temp staging directory
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let lease = StorageMediaFileLease(folder: tempDir)
+        defer { withExtendedLifetime(lease) {} }
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
 
@@ -976,6 +986,8 @@ final class ICloudBackupManager: ObservableObject {
 
         // Extract to temp directory
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let lease = StorageMediaFileLease(folder: tempDir)
+        defer { withExtendedLifetime(lease) {} }
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
 

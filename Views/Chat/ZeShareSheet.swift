@@ -18,6 +18,7 @@ struct ZeShareSheet: UIViewControllerRepresentable {
     /// example the encrypted `.zebak` backup). Defaults to the extension's
     /// registered type, then `public.data`.
     var typeIdentifier: String? = nil
+    var fileLease: StorageMediaFileLease? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let item: Any
@@ -32,7 +33,11 @@ struct ZeShareSheet: UIViewControllerRepresentable {
         } else {
             item = ZeShareSheet.sanitizedShareURL(url) ?? url
         }
-        return UIActivityViewController(activityItems: [item], applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
+        if let fileLease {
+            controller.completionWithItemsHandler = { _, _, _, _ in withExtendedLifetime(fileLease) {} }
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

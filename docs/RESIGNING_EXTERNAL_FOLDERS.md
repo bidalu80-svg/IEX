@@ -4,7 +4,7 @@ Ze 的外部目录访问使用 iOS `UIDocumentPicker` 发放的安全作用域�
 
 ## 重签时必须保留的签名配置
 
-主 App、File Provider 扩展和分享扩展需要使用同一组 App Group：
+主 App、File Provider 扩展和小组件需要使用同一组 App Group：
 
 ```text
 group.com.ze.app
@@ -21,11 +21,14 @@ iCloud.com.ze.app
 ```text
 com.ze.app
 com.ze.app.FileProvider
-com.ze.app.ShareExtension
 com.ze.app.AgentWidget
 ```
 
 如果重签工具删除或替换了 App Group，Files 中的 Ze 目录可能仍然显示，但主 App 与 File Provider 会落到不同容器，表现为点击“打开”没有内容或操作无响应。此时需要在重签工具中恢复上面的 App Group，并重新安装；仅修改主 App 的 entitlement 不足以修复扩展。
+
+## 从其他 App 打开文件
+
+Ze 安装包不再包含分享扩展。在来源 App 选择“用其他应用打开”，再选 Ze；如果来源 App 不提供该选项，先将文件存到 Files，再在 Ze 对话里点“＋ → 添加文件”。文档直收不依赖 App Group。
 
 ## Ze 内的恢复路径
 

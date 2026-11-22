@@ -7,7 +7,7 @@ struct MediaFavoritesView: View {
     @State private var selectedIDs = Set<UUID>()
     @State private var isEditing = false
     @State private var previewItem: FavoriteMediaItem?
-    @State private var shareURL: URL?
+    @State private var shareItem: MediaFavoritesStore.ShareItem?
     @State private var showDeleteConfirmation = false
     @State private var isPreparingArchive = false
 
@@ -78,8 +78,8 @@ struct MediaFavoritesView: View {
         .sheet(item: $previewItem) { item in
             FavoriteMediaPreviewView(item: item, fileURL: store.fileURL(for: item))
         }
-        .sheet(item: $shareURL) { url in
-            ZeShareSheet(url: url)
+        .sheet(item: $shareItem) { item in
+            ZeShareSheet(url: item.url, fileLease: item.lease)
         }
         .confirmationDialog("删除收藏媒体？", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
@@ -165,7 +165,7 @@ struct MediaFavoritesView: View {
                 Label("预览", systemImage: "eye")
             }
             Button {
-                shareURL = store.fileURL(for: item)
+                shareItem = .init(url: store.fileURL(for: item), lease: nil)
             } label: {
                 Label("分享", systemImage: "square.and.arrow.up")
             }
@@ -182,14 +182,14 @@ struct MediaFavoritesView: View {
         let selected = visibleItems.filter { selectedIDs.contains($0.id) }
         guard !selected.isEmpty else { return }
         if selected.count == 1 {
-            shareURL = store.fileURL(for: selected[0])
+            shareItem = .init(url: store.fileURL(for: selected[0]), lease: nil)
             return
         }
         isPreparingArchive = true
         Task { @MainActor in
-            let url = await store.makeZip(for: selected)
+            let item = await store.makeZip(for: selected)
             isPreparingArchive = false
-            shareURL = url
+            shareItem = item
         }
     }
 }
