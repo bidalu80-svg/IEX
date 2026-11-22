@@ -349,7 +349,7 @@ check("contiguous images use the same native group view and reserve its exact si
       and "let members = bodyModel.segments(inRow: id)" in segment_view and "SimpleImageGroup(segments: members" in segment_view
       and "MarkdownImageGroupView(attachment: self, side: side)" in image_attachment
       and "MarkdownImageGroupView(side: size.width, imageCount: images.count)" in image_group
-      and "ImageAttachment.thumbnailSize(availableWidth: width, isGroup: occurrences.count > 1)" in image_group
+      and "ImageAttachment.thumbnailSize(availableWidth: width, isGroup: true)" in image_group
       and ".frame(width: size.width, height: size.height)" in image_group
       and r"\(members.hashValue)" in v3)
 check("group selection keeps occurrence identity for search, activation and the existing long-press menu",
@@ -509,66 +509,6 @@ check("retry is allowlisted for temporary failures rather than unknown media err
       and "default: return .unsupported" in failure and failure.rstrip().endswith("return .unsupported\n        }\n    }")
       and "[408, 425, 429].contains(http.statusCode) || http.statusCode >= 500" in media
       and "guard let image else { throw Failure.unsupported }" in media)
-local_probe = section(media, "struct TranscriptLocalImageProbe", "private struct MissingTranscriptImageLabel")
-check("confirmed missing local images shrink in standard and simple transcripts without taking away remote retry",
-      'url.isFileURL || url.scheme == "ze" else { return nil }' in local_probe
-      and "if error != ENOENT && error != ENOTDIR { uncertain = true }" in local_probe
-      and "return uncertain ? .unknown : .absent" in local_probe
-      and re.search(r"guard sample == \.absent, !mayBeWriting else \{\s*firstMiss = nil\s*return false\s*\}\s*"
-                    r"if let firstMiss \{ return firstMiss\.duration\(to: now\) >= \.seconds\(1\) \}\s*firstMiss = now\s*return false", local_probe)
-      and "if localProbe.confirmsMissing(sample, mayBeWriting: mayBeWriting), !isConfirmedMissing {" in image_attachment
-      and "groupItems.filter { !$0.isConfirmedMissing }" in image_attachment
-      and "if count == 0 {" in image_attachment and "height: ceil(font.lineHeight) + 4" in image_attachment
-      and "if visibleGroupItems.isEmpty {" in image_attachment
-      and "case .image where missingLocalImage: MissingTranscriptImageLabel()" in standalone_media
-      and "if confirmedMissing, !missingLocalImage {\n                    missingLocalImage = true" in standalone_media
-      and "if occurrences.isEmpty {\n                MissingTranscriptImageLabel()" in image_group
-      and "allEntries.filter { !missingLocalImages.contains($0.0) }" in image_group
-      and "if confirmedMissing, !missingLocalImages.contains(occurrence) {\n                missingLocalImages.insert(occurrence)" in image_group
-      and 'Button { retry += 1 } label: { Image(systemName: "arrow.clockwise.circle") }' in standalone_media
-      and "if !isLocal, NativeMediaImageCache.shared.isRecentlyFailed(src)" in image_attachment)
-check("local image presentation is rechecked on mounted rows and recovers when the file appears or changes",
-      "imageFilesMayBeWriting: isActiveMessage,\n            imageWritingMessage: message" in assistant
-      and segment_view.count("imageMayBeWriting: bridge.isActiveMessage") == 2
-      and "imageFilesMayBeWriting: bridge.isActiveMessage, imageWritingMessage: message" in segment_view
-      and "guard window != nil, !localImageAttachments.isEmpty else {" in markdown
-      and "if needsRefresh { refreshAttachmentViews() }" in markdown
-      and "if isConfirmedMissing || (previous == nil ? loadFailed : previous != fingerprint)" in image_attachment
-      and "missingLocalImage = false\n                        resource = nil\n                        retry += 1" in standalone_media
-      and "if wasMissing { missingLocalImages.remove(occurrence) }" in image_group
-      and ".onChange(of: missingLocalImage) { _ in onResize(segmentID) }" in standalone_media
-      and ".onChange(of: missingLocalImages) { _ in onResize() }" in image_group)
-live_image_writer = section(media, "var hasLiveTranscriptImageWriter: Bool", "struct TranscriptLocalImageProbe")
-active_bridge = section(v3, "private func updateBridge(_ bridge: CellStateBridgeV2, message: ChatMessage, lastMessageID:",
-                        "bridge.thinkingLevel =")
-check("assistant images retain active-turn protection and recheck their own running or streaming tools on each sample",
-      re.search(r"let isActive = isLast && vm\.isProcessing\s*\n\s*bridge\.isActiveMessage = isActive\s*\n", active_bridge)
-      and re.search(r"guard role == \.assistant else \{ return false \}\s*return blocks\.contains \{ block in\s*"
-                    r"switch block\.toolStatus \{\s*case \.running, \.streaming: return true\s*default: return false", live_image_writer)
-      and "textView.imageWritingMessage = imageWritingMessage" in markdown
-      and "let mayBeWriting = imageFilesMayBeWriting || imageWritingMessage?.hasLiveTranscriptImageWriter == true" in markdown
-      and "attachment.checkLocalImagePresence(sessionID: sessionID, mayBeWriting: mayBeWriting)" in markdown
-      and "probe.confirmsMissing(current, mayBeWriting: mayBeWriting())" in local_probe
-      and all("mayBeWriting: { imageMayBeWriting || message.hasLiveTranscriptImageWriter }" in view
-              and "message: ObjectIdentifier(message), mayBeWriting: imageMayBeWriting" in view
-              for view in (standalone_media, image_group)))
-media_cache_key = section(media, "func zeMediaCacheKey(for url: URL)", "extension ChatMessage")
-simple_image_fetch = section(standalone_media, "switch kind {\n        case .image:\n            let fileFingerprint", "case .video:\n            let asset")
-check("local bitmap keys include file identity and do not cache a decode across a replacement",
-      "guard let fingerprint = zeLocalMediaFingerprint(for: fileURL) else { return base }" in media_cache_key
-      and r'return "\(base)|\(fingerprint)"' in media_cache_key
-      and r'\(info.st_dev)|\(info.st_ino)|\(info.st_size)|\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec)' in media_cache_key
-      and r'return .present("\(candidate.path)|\(zeLocalMediaFingerprint(info))")' in local_probe
-      and "let fileFingerprint = url.isFileURL ? zeLocalMediaFingerprint(for: url) : nil" in simple_image_fetch
-      and r'let cacheKey = "simple-image:\(source.absoluteString)" + (fileFingerprint.map { "|\($0)" } ?? "")' in simple_image_fetch
-      and simple_image_fetch.index("fileFingerprint != zeLocalMediaFingerprint(for: url)")
-      < simple_image_fetch.index("NativeMediaImageCache.shared.set(image, for: cacheKey)")
-      and "let fpKey = zeMediaCacheKey(for: canonicalSrc)" in image_attachment
-      and "localRead = (resolved, zeLocalMediaFingerprint(for: resolved))" in image_attachment
-      and "if url.isFileURL { localRead = (url, zeLocalMediaFingerprint(for: url)) }" in image_attachment
-      and r'let readKey = readFile.flatMap { $0.fingerprint }.map { "\(src)|\($0)" } ?? fpKey' in image_attachment
-      and "file.fingerprint == nil || file.fingerprint != zeLocalMediaFingerprint(for: file.url)" in image_attachment
-      and "let img = fileChanged ? nil : decodedImage\n                if let img {\n                    NativeMediaImageCache.shared.set(img, for: readKey)" in image_attachment)
 visible_text = section(search, "var hasVisibleText:", "var searchText:")
 check("completion selects visible text, ignoring decorative rules even within a list or quote",
       r"last(where: \.hasVisibleText)" in glow_delivery and "blocks.contains(where: containsText)" in visible_text

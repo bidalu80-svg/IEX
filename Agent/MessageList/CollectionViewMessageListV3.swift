@@ -518,7 +518,7 @@ private struct SimpleAssistantSegmentView: View {
     let block: AssistantBlock
     let id: SimpleSegmentID
     let width: CGFloat
-    @ObservedObject var bridge: CellStateBridgeV2
+    let bridge: CellStateBridgeV2
     let glow: CompletionGlow?
     @Binding var selectedImageID: SimpleSegmentID?
     let onResize: ((SimpleSegmentID) -> Void)?
@@ -527,15 +527,13 @@ private struct SimpleAssistantSegmentView: View {
         let members = bodyModel.segments(inRow: id)
         if members.count > 1 {
             SimpleImageGroup(segments: members, width: width, message: message, blockID: block.id,
-                             selectedImageID: $selectedImageID, imageMayBeWriting: bridge.isActiveMessage,
-                             onResize: { onResize?(id) })
+                             selectedImageID: $selectedImageID)
         } else if let segment = members.first {
             let key = ChatSearchUnitKey(messageId: message.id, blockId: block.id, field: .body, segmentID: id)
             let copyMarkdown = { bodyModel.markdownForCopy(segment) }
             if let media = segment.media {
                 SimpleStandaloneMedia(media: media, blockID: block.id, segmentID: id, key: key, width: width,
-                                      bodyModel: bodyModel, message: message,
-                                      imageMayBeWriting: bridge.isActiveMessage) { onResize?($0) }
+                                      bodyModel: bodyModel, message: message) { onResize?($0) }
                     .id(media)
             } else if case .table(let alignments, let rows)? = segment.blocks.first, id.kind == .table {
                 SimpleStandaloneTable(alignments: alignments, rows: rows, width: width, key: key, bodyModel: bodyModel)
@@ -545,8 +543,7 @@ private struct SimpleAssistantSegmentView: View {
                                        onCopyScreenshot: bridge.onCopyScreenshot,
                                        onReadAloud: bridge.isStreaming ? nil : bridge.onReadAloud, onSpeakText: bridge.onSpeakText,
                                        allowsSearchHighlight: true, visualizationOwner: block, fitTextWidth: true,
-                                       searchSegmentID: id, copyMarkdownSource: copyMarkdown,
-                                       imageFilesMayBeWriting: bridge.isActiveMessage, imageWritingMessage: message)
+                                       searchSegmentID: id, copyMarkdownSource: copyMarkdown)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -2214,7 +2211,6 @@ extension CollectionViewMessageListV3 {
                     )
                     .transaction { $0.disablesAnimations = true }
                     .environmentObject(vm)
-                    .environment(\.chatSessionId, vm.sessionId)
                     .environment(\.chatSearchHighlights, searchHighlights)
                     .environment(\.chatSearchMessageId, message.id)
                     .environment(\.chatSearchDimmed, message.isCompactedHistory)
