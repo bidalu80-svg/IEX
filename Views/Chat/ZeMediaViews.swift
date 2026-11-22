@@ -102,7 +102,7 @@ func resolveZeFileURLCached(url: URL) -> URL? {
 }
 
 /// Fingerprint-based cache key for a media source string. Combines the
-/// source URL with the underlying file's identity and change metadata so in-memory image
+/// source URL with the underlying file's size + mtime so in-memory image
 /// caches naturally invalidate whenever the file on disk is rewritten
 /// (e.g. the agent regenerates a chart at the same path).
 ///
@@ -118,130 +118,23 @@ func zeMediaCacheKey(for source: String) -> String {
 
 func zeMediaCacheKey(for url: URL) -> String {
     let base = url.absoluteString
-    guard let fileURL = url.isFileURL ? url : (url.scheme == "ze" ? resolveZeFileURLCached(url: url) : nil) else {
+    // Non-ze schemes: return as-is, we don't own that file's lifecycle.
+    guard url.scheme == "ze" else { return base }
+    guard let fileURL = resolveZeFileURLCached(url: url) else {
         // File not resolvable (yet) — use the base key so a later real
         // fingerprint load replaces it naturally.
         return base
     }
-    guard let fingerprint = zeLocalMediaFingerprint(for: fileURL) else { return base }
-    return "\(base)|\(fingerprint)"
-}
-
-func zeLocalMediaFingerprint(for fileURL: URL) -> String? {
-    var info = stat()
-    guard stat(fileURL.path, &info) == 0 else { return nil }
-    return zeLocalMediaFingerprint(info)
-}
-
-private func zeLocalMediaFingerprint(_ info: stat) -> String {
-    "\(info.st_dev)|\(info.st_ino)|\(info.st_size)|\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec)|\(info.st_ctimespec.tv_sec).\(info.st_ctimespec.tv_nsec)"
-}
-
-extension ChatMessage {
-    var hasLiveTranscriptImageWriter: Bool {
-        guard role == .assistant else { return false }
-        return blocks.contains { block in
-            switch block.toolStatus {
-            case .running, .streaming: return true
-            default: return false
-            }
-        }
-    }
-}
-
-struct TranscriptLocalImageProbe {
-    enum Sample: Equatable {
-        case present(String)
-        case absent
-        case unknown
-    }
-
-    private var firstMiss: ContinuousClock.Instant?
-
-    mutating func confirmsMissing(_ sample: Sample, mayBeWriting: Bool, now: ContinuousClock.Instant = ContinuousClock.now) -> Bool {
-        guard sample == .absent, !mayBeWriting else {
-            firstMiss = nil
-            return false
-        }
-        if let firstMiss { return firstMiss.duration(to: now) >= .seconds(1) }
-        firstMiss = now
-        return false
-    }
-
-    static func localURL(_ source: String) -> URL? {
-        guard let url = URL(string: ImageAttachment.canonicalizeMarkdownImageSource(source)),
-              url.isFileURL || url.scheme == "ze" else { return nil }
-        return url
-    }
-
-    @MainActor static func watch(_ source: URL, sessionID: String?, mayBeWriting: @MainActor () -> Bool,
-                                onSample: @MainActor (Sample, Bool) async -> Void) async {
-        var probe = Self()
-        while !Task.isCancelled {
-            let current = sample(source, sessionID: sessionID)
-            await onSample(current, probe.confirmsMissing(current, mayBeWriting: mayBeWriting()))
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
-        }
-    }
-
-    @MainActor static func sample(_ source: URL, sessionID: String?) -> Sample {
-        guard UIApplication.shared.isProtectedDataAvailable else { return .unknown }
-        let candidates: [URL]
-        if source.isFileURL {
-            candidates = [source]
-        } else if let host = source.host, !host.isEmpty {
-            let paths = ZeURLPathDecoding.subPathCandidates(for: source)
-            var roots: [URL] = []
-            if let sessionID {
-                roots.append(AIChatViewModel.zePersistentBase.appendingPathComponent(sessionID).appendingPathComponent(host))
-            }
-            switch host {
-            case "skills": roots.append(AIChatViewModel.zeSkillsPersistentDir)
-            case "memory": roots.append(AIChatViewModel.zeMemoryPersistentDir)
-            case "shared": roots.append(AIChatViewModel.zeSharedPersistentDir)
-            case "mounts":
-                let mountedPaths = paths.compactMap { path -> URL? in
-                    let pieces = path.split(separator: "/", maxSplits: 1)
-                    guard let name = pieces.first, let mount = MountedFoldersManager.shared.resolvedURL(forName: String(name)) else { return nil }
-                    return pieces.count > 1 ? mount.appendingPathComponent(String(pieces[1])) : mount
-                }
-                guard !mountedPaths.isEmpty else { return .unknown }
-                return inspect(roots.flatMap { root in paths.map { root.appendingPathComponent($0) } } + mountedPaths)
-            default: break
-            }
-            if ["skills", "memory", "shared"].contains(host) {
-                roots.append(RootfsManager.shared.dataPath.appendingPathComponent("var/ze").appendingPathComponent(host))
-            }
-            guard !roots.isEmpty else { return .unknown }
-            candidates = roots.flatMap { root in paths.map { root.appendingPathComponent($0) } }
-        } else {
-            return .unknown
-        }
-        return inspect(candidates)
-    }
-
-    private static func inspect(_ candidates: [URL]) -> Sample {
-        var uncertain = false
-        for candidate in candidates {
-            var info = stat()
-            if stat(candidate.path, &info) == 0 {
-                return .present("\(candidate.path)|\(zeLocalMediaFingerprint(info))")
-            }
-            let error = errno
-            if error != ENOENT && error != ENOTDIR { uncertain = true }
-        }
-        return uncertain ? .unknown : .absent
-    }
-}
-
-private struct MissingTranscriptImageLabel: View {
-    var body: some View {
-        Text("Image failed to load")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.vertical, 2)
-    }
+    // Stat without going through FileManager's attribute wrapper — it
+    // allocates a dictionary and is measurably slower.
+    var st = stat()
+    guard stat(fileURL.path, &st) == 0 else { return base }
+    // Seconds + nanoseconds (APFS has nanosecond-resolution mtime, HFS+
+    // only seconds — either way we capture every rewrite we care about).
+    let secs = st.st_mtimespec.tv_sec
+    let nsecs = st.st_mtimespec.tv_nsec
+    let size = st.st_size
+    return "\(base)|\(size)|\(secs).\(nsecs)"
 }
 
 /// Standard placeholder height for media items to prevent layout jumps
@@ -659,23 +552,13 @@ struct SimpleStandaloneMedia: View {
     let width: CGFloat
     let bodyModel: SimpleTranscript.Body
     let message: ChatMessage
-    var imageMayBeWriting = false
     var onResize: (SimpleSegmentID) -> Void
     @Environment(\.openURL) private var openURL
-    @Environment(\.chatSessionId) private var sessionID
-    @State private var missingLocalImage = false
-    @State private var imageFingerprint: String?
     @State private var resource: Resource?
     @State private var failure: Failure?
     @State private var retry = 0
     @State private var videoURL: URL?
     @State private var audioPreview: Resource?
-
-    private struct ImageWatchKey: Equatable {
-        let sessionID: String?
-        let message: ObjectIdentifier
-        let mayBeWriting: Bool
-    }
 
     fileprivate enum Failure: Error {
         case unavailable, unsupported
@@ -711,7 +594,6 @@ struct SimpleStandaloneMedia: View {
     var body: some View {
         Group {
             switch kind {
-            case .image where missingLocalImage: MissingTranscriptImageLabel()
             case .image, .video: cover
             case .audio:
                 if let resource { SimpleAudioControls(name: media.name, key: key, url: resource.url, duration: resource.duration) { audioPreview = resource } }
@@ -728,25 +610,6 @@ struct SimpleStandaloneMedia: View {
         .background(ChatColors.secondaryBg)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: retry) { await load() }
-        .task(id: ImageWatchKey(sessionID: sessionID, message: ObjectIdentifier(message), mayBeWriting: imageMayBeWriting)) {
-            guard kind == .image, let source = TranscriptLocalImageProbe.localURL(media.source) else { return }
-            await TranscriptLocalImageProbe.watch(source, sessionID: sessionID ?? AIChatViewModel.activeSessionId,
-                                                  mayBeWriting: { imageMayBeWriting || message.hasLiveTranscriptImageWriter }) { sample, confirmedMissing in
-                if confirmedMissing, !missingLocalImage {
-                    missingLocalImage = true
-                    resource = nil
-                }
-                if case .present(let fingerprint) = sample {
-                    if missingLocalImage || (imageFingerprint == nil ? failure != nil : imageFingerprint != fingerprint) {
-                        missingLocalImage = false
-                        resource = nil
-                        retry += 1
-                    }
-                    if imageFingerprint != fingerprint { imageFingerprint = fingerprint }
-                }
-            }
-        }
-        .onChange(of: missingLocalImage) { _ in onResize(segmentID) }
         .fullScreenCover(item: $videoURL) { ZeVideoFullscreenPlayer(fileURL: $0, startsAutomatically: false) }
         .sheet(item: $audioPreview) { ZeAudioPreviewView(fileURL: $0.url).presentationDetents([.large]).presentationDragIndicator(.hidden) }
     }
@@ -883,9 +746,7 @@ struct SimpleStandaloneMedia: View {
         }
         switch kind {
         case .image:
-            let fileFingerprint = url.isFileURL ? zeLocalMediaFingerprint(for: url) : nil
-            if url.isFileURL, fileFingerprint == nil { throw Failure.unavailable }
-            let cacheKey = "simple-image:\(source.absoluteString)" + (fileFingerprint.map { "|\($0)" } ?? "")
+            let cacheKey = "simple-image:\(zeMediaCacheKey(for: source))"
             if let cached = NativeMediaImageCache.shared.image(for: cacheKey) { return Resource(url: url, thumbnail: cached) }
             let data: Data
             if url.isFileURL {
@@ -896,7 +757,6 @@ struct SimpleStandaloneMedia: View {
                 data = body
             }
             let image = await Task.detached(priority: .utility) { downsampleImageData(data, maxPixelSize: 2048) }.value
-            if url.isFileURL, fileFingerprint != zeLocalMediaFingerprint(for: url) { throw Failure.unavailable }
             guard let image else { throw Failure.unsupported }
             NativeMediaImageCache.shared.set(image, for: cacheKey)
             return Resource(url: url, thumbnail: image)
@@ -1017,13 +877,8 @@ private struct SimpleThumbnailImage: UIViewRepresentable {
     let message: ChatMessage
     let blockID: UUID
     @Binding var selectedImageID: SimpleSegmentID?
-    var imageMayBeWriting = false
-    var onResize: () -> Void = {}
     @Environment(\.chatSearchHighlights) private var search
-    @Environment(\.chatSessionId) private var sessionID
     @State private var images: [Occurrence: Result<UIImage, SimpleStandaloneMedia.Failure>] = [:]
-    @State private var missingLocalImages = Set<Occurrence>()
-    @State private var imageFingerprints: [Occurrence: String] = [:]
     @State private var retry = 0
 
     private struct Occurrence: Hashable, Sendable {
@@ -1036,90 +891,39 @@ private struct SimpleThumbnailImage: UIViewRepresentable {
         let retry: Int
     }
 
-    private struct WatchKey: Equatable {
-        let occurrences: [Occurrence]
-        let sessionID: String?
-        let message: ObjectIdentifier
-        let mayBeWriting: Bool
-    }
-
     var body: some View {
-        let allEntries = segments.compactMap { segment in
+        let entries = segments.compactMap { segment in
             segment.media.map { (Occurrence(id: segment.id, source: $0.source), $0) }
         }
-        let allOccurrences = allEntries.map { $0.0 }
-        let entries = allEntries.filter { !missingLocalImages.contains($0.0) }
         let occurrences = entries.map { $0.0 }
-        let size = ImageAttachment.thumbnailSize(availableWidth: width, isGroup: occurrences.count > 1)
-        Group {
-            if occurrences.isEmpty {
-                MissingTranscriptImageLabel()
-            } else {
-                let selected = occurrences.firstIndex { $0.id == selectedImageID } ?? 0
-                let (occurrence, media) = entries[selected]
-                Strip(images: occurrences.map { images[$0].flatMap { try? $0.get() } },
-                      labels: entries.map { $0.1.name }, selected: selected, size: size,
-                      onSelect: { selectedImageID = occurrences[$0].id },
-                      onOpen: { SimpleStandaloneMedia.openImage(message: message, blockID: blockID, segmentID: occurrence.id, media: media) })
-                    .id(occurrences)
-                    .frame(width: size.width, height: size.height)
-                    .overlay(alignment: .topLeading) {
-                        if case .failure(let failure)? = images[occurrence] {
-                            Group {
-                                if failure == .unavailable {
-                                    Button { retry += 1 } label: { Image(systemName: "arrow.clockwise.circle") }
-                                        .buttonStyle(.plain).accessibilityLabel(Text("Retry"))
-                                } else {
-                                    Image(systemName: "exclamationmark.circle").accessibilityLabel(Text("Unsupported"))
-                                }
+        let size = ImageAttachment.thumbnailSize(availableWidth: width, isGroup: true)
+        if occurrences.count > 1 {
+            let selected = occurrences.firstIndex { $0.id == selectedImageID } ?? 0
+            let (occurrence, media) = entries[selected]
+            Strip(images: occurrences.map { images[$0].flatMap { try? $0.get() } },
+                  labels: entries.map { $0.1.name }, selected: selected, size: size,
+                  onSelect: { selectedImageID = occurrences[$0].id },
+                  onOpen: { SimpleStandaloneMedia.openImage(message: message, blockID: blockID, segmentID: occurrence.id, media: media) })
+                .id(occurrences)
+                .frame(width: size.width, height: size.height)
+                .overlay(alignment: .topLeading) {
+                    if case .failure(let failure)? = images[occurrence] {
+                        Group {
+                            if failure == .unavailable {
+                                Button { retry += 1 } label: { Image(systemName: "arrow.clockwise.circle") }
+                                    .buttonStyle(.plain).accessibilityLabel(Text("Retry"))
+                            } else {
+                                Image(systemName: "exclamationmark.circle").accessibilityLabel(Text("Unsupported"))
                             }
-                            .foregroundStyle(.secondary)
-                            .padding(8)
                         }
+                        .foregroundStyle(.secondary)
+                        .padding(8)
                     }
-            }
-        }
-        .task(id: LoadKey(occurrences: allOccurrences, retry: retry)) { await load(allOccurrences) }
-        .task(id: WatchKey(occurrences: allOccurrences, sessionID: sessionID, message: ObjectIdentifier(message), mayBeWriting: imageMayBeWriting)) {
-            await watchLocalImages(allOccurrences)
-        }
-        .onChange(of: missingLocalImages) { _ in onResize() }
-        .task(id: allOccurrences) {
-            for await id in searchMatches(allOccurrences).values { selectedImageID = id }
-        }
-    }
-
-    private func watchLocalImages(_ occurrences: [Occurrence]) async {
-        guard !Task.isCancelled else { return }
-        missingLocalImages.formIntersection(occurrences)
-        imageFingerprints = imageFingerprints.filter { occurrences.contains($0.key) }
-        await withTaskGroup(of: Void.self) { group in
-            for occurrence in occurrences {
-                guard let source = TranscriptLocalImageProbe.localURL(occurrence.source) else { continue }
-                group.addTask { await self.watchLocalImage(source, occurrence: occurrence) }
-            }
-        }
-    }
-
-    private func watchLocalImage(_ source: URL, occurrence: Occurrence) async {
-        await TranscriptLocalImageProbe.watch(source, sessionID: sessionID ?? AIChatViewModel.activeSessionId,
-                                              mayBeWriting: { imageMayBeWriting || message.hasLiveTranscriptImageWriter }) { sample, confirmedMissing in
-            if confirmedMissing, !missingLocalImages.contains(occurrence) {
-                missingLocalImages.insert(occurrence)
-                images[occurrence] = nil
-            }
-            if case .present(let fingerprint) = sample {
-                let previous = imageFingerprints[occurrence]
-                if previous != fingerprint { imageFingerprints[occurrence] = fingerprint }
-                let failed: Bool
-                if case .failure? = images[occurrence] { failed = true } else { failed = false }
-                let wasMissing = missingLocalImages.contains(occurrence)
-                if wasMissing { missingLocalImages.remove(occurrence) }
-                if wasMissing || (previous == nil ? failed : previous != fingerprint) {
-                    images[occurrence] = nil
-                    await loadImage(occurrence)
                 }
-            }
+                .task(id: LoadKey(occurrences: occurrences, retry: retry)) { await load(occurrences) }
+                .task(id: occurrences) {
+                    for await id in searchMatches(occurrences).values { selectedImageID = id }
+                }
         }
     }
 
@@ -1139,7 +943,6 @@ private struct SimpleThumbnailImage: UIViewRepresentable {
         }
         await withTaskGroup(of: Void.self) { group in
             for occurrence in occurrences {
-                guard !missingLocalImages.contains(occurrence) else { continue }
                 if case .success? = images[occurrence] { continue }
                 group.addTask { await self.loadImage(occurrence) }
             }
@@ -1158,7 +961,7 @@ private struct SimpleThumbnailImage: UIViewRepresentable {
         } catch {
             result = .failure(.classify(error))
         }
-        guard !Task.isCancelled, !missingLocalImages.contains(occurrence) else { return }
+        guard !Task.isCancelled else { return }
         images[occurrence] = result
     }
 
