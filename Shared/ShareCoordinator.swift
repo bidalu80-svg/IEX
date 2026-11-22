@@ -46,13 +46,23 @@ enum ShareFeedbackToast {
 @MainActor
 final class ShareCoordinator: ObservableObject {
     static let shared = ShareCoordinator()
+    private static let shareNavigationLifetime: Duration = .seconds(120)
 
     @Published private(set) var pending: [PendingShareInbox.Receipt] = []
     @Published private(set) var documentImportsInFlight = 0
+    @Published private(set) var shareNavigationReceiptID: UUID?
+    private var shareNavigationArrivedAt: ContinuousClock.Instant?
     private var awaitingRemoval: [UUID: PendingShareInbox.Receipt] = [:]
+    private var shareNavigationCandidates = Set<UUID>()
     private var showImportFailure = false
 
     var hasIncomingShares: Bool { !pending.isEmpty || documentImportsInFlight > 0 }
+
+    var hasShareNavigation: Bool {
+        guard let receiptID = shareNavigationReceiptID, let arrivedAt = shareNavigationArrivedAt,
+              arrivedAt.duration(to: ContinuousClock.now) < Self.shareNavigationLifetime else { return false }
+        return pending.contains { $0.id == receiptID }
+    }
 
     func documentImportStarted() {
         documentImportsInFlight += 1
@@ -82,6 +92,9 @@ final class ShareCoordinator: ObservableObject {
             if $0.share.receivedAt == $1.share.receivedAt { return $0.id.uuidString < $1.id.uuidString }
             return $0.share.receivedAt < $1.share.receivedAt
         }
+        if pending.isEmpty, !receipts.isEmpty {
+            shareNavigationCandidates = Set(receipts.map(\.id))
+        }
         if pending != receipts { pending = receipts }
     }
 
@@ -89,6 +102,18 @@ final class ShareCoordinator: ObservableObject {
         guard pending.contains(receipt) else { return }
         removeAfterDelivery(receipt)
         pending.removeAll { $0.id == receipt.id }
+    }
+
+    func noteShareNavigation(receiptID: UUID) {
+        guard shareNavigationCandidates.contains(receiptID), pending.contains(where: { $0.id == receiptID }) else { return }
+        shareNavigationCandidates.removeAll()
+        shareNavigationArrivedAt = ContinuousClock.now
+        shareNavigationReceiptID = receiptID
+    }
+
+    func consumeShareNavigation() {
+        shareNavigationArrivedAt = nil
+        shareNavigationReceiptID = nil
     }
 
     private func removeAfterDelivery(_ receipt: PendingShareInbox.Receipt) {

@@ -103,13 +103,102 @@ check(section(read("Shared/DeepLinkRouter.swift"), 'case "share":', 'case "views
       "legacy ze://share remains a queue scan only")
 check("else if shareCoordinator.hasIncomingShares" in home and "lastLocalShareSessionID" in home
       and "let target = shareLaunchSessionID" in home and "incomingShareTargetID == nil" in home
-      and 'Button("New Chat") { openSession(Self.makeNewSessionId()) }' in home,
+      and 'target == nil ? LocalizedStringKey("New Chat") : LocalizedStringKey("Open Chat")' in home
+      and "openShareSession(target ?? Self.makeNewSessionId())" in home,
       "cold launch restores a known local conversation or offers session selection and a new draft")
+share_destination = section(home, "private var shareLaunchSessionID:", "private var canOpenShareFromHome:")
+remember_share = section(home, "private func rememberShareSession()", "private var incomingShareBanner:")
+check('sessions.lazy.filter { !$0.isArchived && $0.source != "subagent" }' in share_destination
+      and re.search(r"lastLocalShareSessionID\s*\}\?\.id\s*\?\?\s*localSessions\.first\?\.id", share_destination)
+      and "launchScreen" not in share_destination
+      and "let target = incomingShareTargetID else { return }" in remember_share
+      and "guard let sessionID, !sessionID.isEmpty else { return }" in remember_share
+      and re.findall(r"lastLocalShareSessionID = ([^\n]+)", remember_share) == ["sessionID"],
+      "share destination prefers a remembered eligible session and otherwise the latest; returning home preserves memory")
+launch = section(home, "guard !didInitialLoad else { return }", "didInitialLoad = true")
+warm_landing = section(home, "private func openArrivingShareFromHome()", "private func rememberShareSession()")
+home_gate = section(home, "private var canOpenShareFromHome:", "private func openArrivingShareFromHome()")
+check(launch.index("NotificationNavigationStore.shared.takePending()")
+      < launch.index("NotificationNavigationStore.shared.handledRecently") < launch.index("else if quickActionPending")
+      < launch.index('arguments.contains("--keyboard-hang-cold-start")')
+      < launch.index("else if shareCoordinator.hasIncomingShares") < launch.index("switch launchScreen")
+      and "shareCoordinator.hasShareNavigation || shareCoordinator.documentImportsInFlight > 0" in launch
+      and "withTransaction(tx) { landIncomingShareFromHome() }" in launch
+      and ".onChange(of: shareCoordinator.shareNavigationReceiptID)" in home
+      and "guard didInitialLoad, !NotificationNavigationStore.shared.handledRecently" in warm_landing
+      and all(marker in warm_landing for marker in ("consumedQuickActionTrigger", "case .idle", "landIncomingShareFromHome()"))
+      and all(marker in home_gate for marker in ("incomingShareTargetID == nil", "navigationPath.isEmpty", "activeToolSheet == nil")),
+      "cold and warm share landing preserve launch priority and leave open chats alone")
+navigation_offer = section(coordinator, "var hasShareNavigation:", "func documentImportStarted()")
+check("return pending.contains { $0.id == receiptID }" in navigation_offer
+      and "shareNavigationReceiptID =" not in navigation_offer
+      and home.count("shareCoordinator.consumeShareNavigation()") == 1
+      and re.search(r"guard scenePhase == \.active, canOpenShareFromHome, shareCoordinator\.hasShareNavigation,\s*"
+                    r"let target = shareLaunchSessionID else \{ return \}\s*openShareSession\(target\)", warm_landing)
+      and re.search(r"openSession\(target\)\s*if shareCoordinator\.shareNavigationReceiptID != nil "
+                    r"\{ shareCoordinator\.consumeShareNavigation\(\) \}", warm_landing),
+      "the explicit navigation signal survives failed gates and is consumed only after opening a chat")
+check(re.search(r"\.onChange\(of: canOpenShareFromHome \? shareLaunchSessionID : nil\) \{ target in\s*"
+                r"if target != nil \{ openArrivingShareFromHome\(\) \}", home),
+      "unblocking home or discovering an eligible destination retries the retained offer")
+banner = section(home, "private var incomingShareBanner:", "private var incomingShareBannerLabel:")
+check("if didInitialLoad, incomingShareTargetID == nil, !shareCoordinator.pending.isEmpty {" in banner
+      and "shareBannerButton" in banner,
+      "pending shares stay visible at home even when an eligible destination was not opened automatically")
+promotion = section(home, "publisher(for: .sessionDidCreate)", "guard let selId = selectedSessionId")
+draft_memory = section(home, "private func rememberShareSession()", "private var incomingShareBanner:")
+check('?["draftId"]' in promotion and "Self.isNewSessionId(noteDraftId)" in promotion
+      and re.search(r"Task \{ @MainActor in\s*guard !isWideLayout, "
+                    r"\(incomingShareTargetID \?\? lastStackShareDraftID\) == noteDraftId else \{ return \}\s*"
+                    r"lastLocalShareSessionID = newId", promotion)
+      and "lastStackShareDraftID = !isWideLayout && Self.isNewSessionId(target) ? target : nil" in draft_memory,
+      "narrow-stack draft promotion remembers the persisted ID only for the matching current or last draft")
+explicit_landing = section(coordinator, "func noteShareNavigation(", "private func removeAfterDelivery(")
+check("if pending.isEmpty, !receipts.isEmpty" in pending_scan
+      and "shareNavigationCandidates = Set(receipts.map(\\.id))" in pending_scan
+      and "noteShareNavigation(" not in pending_scan
+      and "shareNavigationCandidates.contains(receiptID)" in explicit_landing
+      and "shareNavigationCandidates.removeAll()" in explicit_landing
+      and "shareNavigationReceiptID = nil" in explicit_landing
+      and "if pendingWasEmpty, let deliveredID" in importer
+      and "coordinator.noteShareNavigation(receiptID: deliveredID)" in importer
+      and 'host == "share" && shareCoordinator.pending.isEmpty' in read("Shared/DeepLinkRouter.swift"),
+      "only an explicit delivery can claim the empty-to-pending navigation edge; foreground scans cannot")
+check("private static let shareNavigationLifetime: Duration = .seconds(120)" in coordinator
+      and coordinator.count("shareNavigationArrivedAt = ContinuousClock.now") == 1
+      and re.search(r"shareNavigationCandidates\.removeAll\(\)\s*"
+                    r"shareNavigationArrivedAt = ContinuousClock\.now\s*shareNavigationReceiptID = receiptID", explicit_landing)
+      and re.search(r"guard let receiptID = shareNavigationReceiptID, let arrivedAt = shareNavigationArrivedAt,\s*"
+                    r"arrivedAt\.duration\(to: ContinuousClock\.now\) < Self\.shareNavigationLifetime else \{ return false \}\s*"
+                    r"return pending\.contains \{ \$0\.id == receiptID \}", navigation_offer)
+      and re.search(r"func consumeShareNavigation\(\) \{\s*shareNavigationArrivedAt = nil\s*"
+                    r"shareNavigationReceiptID = nil", explicit_landing),
+      "explicit share navigation expires 120 seconds after arrival without expiring the receipt")
+fingerprint = section(importer, "private struct Fingerprint:", "private final class DeliveryGate:")
+check(importer.index("deliveries.publishOnce(source: readableURL)") < importer.index("inbox.storeFile(named:")
+      and all(field in fingerprint for field in ("info.st_dev", "info.st_ino", "info.st_size", "info.st_birthtimespec", "info.st_mtimespec"))
+      and "committedUntil[fingerprint] == nil && copying.insert(fingerprint).inserted" in importer
+      and "copying.remove(fingerprint)" in importer and "if committed {" in importer
+      and "ProcessInfo.processInfo.systemUptime + replayWindow" in importer,
+      "concurrent and replayed callbacks share a delivery gate before receipt creation without conflating different same-name files")
+delivery_gate = section(importer, "func publishOnce(", "let receipt = try publish()")
+check("guard reserved else { return nil }" in delivery_gate
+      and importer.count("inbox.storeFile(named:") == 1
+      and re.search(r"try deliveries\.publishOnce\(source: readableURL\) \{\s*try inbox\.storeFile\(named:", importer),
+      "rejected delivery reservations cannot publish and the only file receipt write stays inside publishOnce")
 target = section(chat, "private var canReceiveIncomingShares", "private func injectPendingShareIfNeeded")
 check(all(marker in target for marker in ("receivesIncomingShares", "isChatViewVisible", "scenePhase == .active",
                                            "!isReadOnly", "!lockStore.appIsLocked", "vm.hasCompletedInitialLoad"))
       and home.count("incomingShareTargetID == id)") == 2,
       "only the visible, loaded, unlocked local chat is eligible in each pane layout")
+check(re.search(r"sessionId == nil \|\| vm\.hasCompletedInitialLoad\s*\|\| "
+                r"\(!cached\.isNew && vm\.sessionId == sessionId && !vm\.messages\.isEmpty\)", target)
+      and all(marker in target for marker in ("!lockStore.showPrivacyScreen", "!titleIsVisuallyLocked",
+                                              "!hasOverlayPresented", "!vm.isLoadingSession && isShareSessionReady",
+                                              "vm.editingMessageIndex == nil"))
+      and re.search(r"\.onChange\(of: canReceiveIncomingShares\) \{ canReceive in\s*if canReceive \{\s*"
+                    r"promptedShareIDs\.removeAll\(\)\s*injectPendingShareIfNeeded\(\)", chat),
+      "a populated matching cached session can claim without a first load and still defers until the other gates reopen")
 delivery = section(chat, "private func injectPendingShareIfNeeded", "// MARK: - Pending Transfer Injection")
 check("vm.inputText +=" in delivery and "vm.inputText = " not in delivery and "sendMessage" not in delivery
       and "attachments.removeAll" not in delivery

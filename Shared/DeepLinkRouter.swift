@@ -49,6 +49,12 @@ enum DeepLinkRouter {
             deepLinkLog.info("ignored — non-ze or missing host: \(url.absoluteString)")
             return
         }
+        let awaitingShare = host == "share" && shareCoordinator.pending.isEmpty
+        defer {
+            if awaitingShare, let receiptID = shareCoordinator.pending.first?.id {
+                shareCoordinator.noteShareNavigation(receiptID: receiptID)
+            }
+        }
         let coord = DeepLinkCoordinator.shared
 
         switch host {

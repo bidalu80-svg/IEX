@@ -134,6 +134,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var shareCoordinator: ShareCoordinator
     @AppStorage("lastLocalShareSessionID") private var lastLocalShareSessionID = ""
+    @State private var lastStackShareDraftID: String?
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     /// Subscribe to the router so changes to its `@Published` fields are
     /// observed by SwiftUI — without this, `onChange(of: router.newChatTrigger)`
@@ -477,8 +478,18 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .sessionDidCreate)) { note in
-            guard isWideLayout, let newId = note.object as? String else { return }
+            guard let newId = note.object as? String else { return }
             let noteDraftId = (note.userInfo as? [String: String])?["draftId"]
+            if !isWideLayout {
+                guard let noteDraftId, Self.isNewSessionId(noteDraftId) else { return }
+                Task { @MainActor in
+                    guard !isWideLayout, (incomingShareTargetID ?? lastStackShareDraftID) == noteDraftId else { return }
+                    lastLocalShareSessionID = newId
+                    lastStackShareDraftID = nil
+                    refreshSessionList()
+                }
+                return
+            }
             draftLog.info("🔑DRAFT sessionDidCreate realId=\(newId) noteDraftId=\(noteDraftId ?? "nil") selId=\(selectedSessionId ?? "nil") curReal=\(newSessionRealId ?? "nil") curDraft=\(activeDraftId ?? "nil")")
             // Verify this notification came from the currently active draft.
             // A late notification from a previous (now-destroyed) draft must be ignored.
@@ -801,12 +812,10 @@ struct ContentView: View {
                 shareLog.info("[Share] .task: quick action pending — deferring launchScreen logic to QuickActionRouter")
             } else if ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") {
                 // The cold-start verifier owns navigation; launch defaults must not warm the keyboard.
-            } else if shareCoordinator.hasIncomingShares {
-                if incomingShareTargetID == nil, let target = shareLaunchSessionID {
-                    var tx = Transaction()
-                    tx.disablesAnimations = true
-                    withTransaction(tx) { openSession(target) }
-                }
+            } else if shareCoordinator.hasIncomingShares && (shareCoordinator.hasShareNavigation || shareCoordinator.documentImportsInFlight > 0) {
+                var tx = Transaction()
+                tx.disablesAnimations = true
+                withTransaction(tx) { landIncomingShareFromHome() }
             } else {
                 // No share — normal launch screen behavior
                 switch launchScreen {
@@ -964,6 +973,12 @@ struct ContentView: View {
         .onChange(of: incomingShareTargetID) { _ in
             rememberShareSession()
         }
+        .onChange(of: shareCoordinator.shareNavigationReceiptID) { _ in
+            openArrivingShareFromHome()
+        }
+        .onChange(of: canOpenShareFromHome ? shareLaunchSessionID : nil) { target in
+            if target != nil { openArrivingShareFromHome() }
+        }
         .onChange(of: didInitialLoad) { _ in
             if incomingShareTargetID != nil { rememberShareSession() }
         }
@@ -1021,6 +1036,7 @@ struct ContentView: View {
                     // Guard against rapid bg→fg→bg: if scenePhase already
                     // changed back, skip the stale .active work.
                     guard scenePhase == .active else { return }
+                    openArrivingShareFromHome()
                     fetchAlarmsIfNeeded()
                     if #available(iOS 17.0, *) {
                         SyncCore.shared.isAppInBackground = false
@@ -2323,19 +2339,44 @@ struct ContentView: View {
     }
 
     private var shareLaunchSessionID: String? {
-        guard launchScreen == 0 || launchScreen == 1 else { return nil }
-        let localSessions = sessions.filter { !$0.isArchived && $0.source != "subagent" }
+        let localSessions = sessions.lazy.filter { !$0.isArchived && $0.source != "subagent" }
         return localSessions.first { $0.id == lastLocalShareSessionID }?.id ??
-            (launchScreen == 1 ? localSessions.first?.id : nil)
+            localSessions.first?.id
+    }
+
+    private var canOpenShareFromHome: Bool {
+        incomingShareTargetID == nil && (isWideLayout ? selectedSessionId == nil : navigationPath.isEmpty)
+            && activeToolSheet == nil && !showTerminal && !showAlarmList
+            && sessionToDelete == nil && sessionToEdit == nil && folderMoveRequest == nil
+            && folderToRename == nil && folderToDissolve == nil
+            && !showDeleteConfirm && !showExportPreview && !isExporting && !showAddProvider && !showSelectModels
+    }
+
+    private func openArrivingShareFromHome() {
+        guard didInitialLoad, !NotificationNavigationStore.shared.handledRecently,
+              quickActionRouter.newChatTrigger == consumedQuickActionTrigger,
+              case .idle = QuickActionWorkflow.shared.state,
+              !ProcessInfo.processInfo.arguments.contains("--keyboard-hang-cold-start") else { return }
+        landIncomingShareFromHome()
+    }
+
+    private func landIncomingShareFromHome() {
+        guard scenePhase == .active, canOpenShareFromHome, shareCoordinator.hasShareNavigation,
+              let target = shareLaunchSessionID else { return }
+        openShareSession(target)
+    }
+
+    private func openShareSession(_ target: String) {
+        openSession(target)
+        if shareCoordinator.shareNavigationReceiptID != nil { shareCoordinator.consumeShareNavigation() }
     }
 
     private func rememberShareSession() {
-        guard didInitialLoad else { return }
-        if let target = incomingShareTargetID, !Self.isNewSessionId(target) {
-            lastLocalShareSessionID = target
-        } else {
-            lastLocalShareSessionID = incomingShareTargetID == nil ? "" : (newSessionRealId ?? "")
-        }
+        guard didInitialLoad, let target = incomingShareTargetID else { return }
+        lastStackShareDraftID = !isWideLayout && Self.isNewSessionId(target) ? target : nil
+        let sessionID = Self.isNewSessionId(target) ? newSessionRealId : target
+        guard let sessionID, !sessionID.isEmpty else { return }
+        lastLocalShareSessionID = sessionID
     }
 
     @ViewBuilder
@@ -2345,11 +2386,11 @@ struct ContentView: View {
                 HStack {
                     incomingShareBannerLabel
                     Spacer()
-                    newShareDraftButton
+                    shareBannerButton
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     incomingShareBannerLabel
-                    newShareDraftButton
+                    shareBannerButton
                 }
             }
             .padding(12)
@@ -2363,9 +2404,12 @@ struct ContentView: View {
             .font(.subheadline)
     }
 
-    private var newShareDraftButton: some View {
-        Button("New Chat") { openSession(Self.makeNewSessionId()) }
-            .buttonStyle(.borderedProminent)
+    private var shareBannerButton: some View {
+        let target = shareLaunchSessionID
+        return Button(target == nil ? LocalizedStringKey("New Chat") : LocalizedStringKey("Open Chat")) {
+            openShareSession(target ?? Self.makeNewSessionId())
+        }
+        .buttonStyle(.borderedProminent)
     }
 
     // MARK: - Empty State
