@@ -2191,8 +2191,13 @@ struct AIChatView: View {
     private var canReceiveIncomingShares: Bool {
         receivesIncomingShares && isChatViewVisible && scenePhase == .active && !isReadOnly
             && !lockStore.appIsLocked && !lockStore.showPrivacyScreen && !titleIsVisuallyLocked
-            && !hasOverlayPresented && !vm.isLoadingSession && (sessionId == nil || vm.hasCompletedInitialLoad)
+            && !hasOverlayPresented && !vm.isLoadingSession && isShareSessionReady
             && vm.editingMessageIndex == nil
+    }
+
+    private var isShareSessionReady: Bool {
+        sessionId == nil || vm.hasCompletedInitialLoad
+            || (!cached.isNew && vm.sessionId == sessionId && !vm.messages.isEmpty)
     }
 
     private func injectPendingShareIfNeeded() {
