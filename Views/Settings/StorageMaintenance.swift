@@ -241,8 +241,8 @@ enum StorageMaintenance {
         return info
     }
 
-    private static func isKind(_ info: stat, _ kind: Int32) -> Bool {
-        (info.st_mode & mode_t(S_IFMT)) == mode_t(kind)
+    private static func isKind(_ info: stat, _ kind: mode_t) -> Bool {
+        (info.st_mode & S_IFMT) == kind
     }
 
     private static func sameEntry(_ first: stat, _ second: stat) -> Bool {
