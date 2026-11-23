@@ -1050,6 +1050,7 @@ struct AIChatView: View {
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
                 .modifier(ChatNavigationGlassSurface(isCircle: true))
+                .clipShape(Circle())
                 .accessibilityLabel("会话列表")
             }, title: {
                 // The centered avatar stack is hosted above the transparent bar.
@@ -1062,6 +1063,7 @@ struct AIChatView: View {
                 .padding(.horizontal, 2)
                 .frame(height: 44)
                 .modifier(ChatNavigationGlassSurface())
+                .clipShape(Capsule())
             })
             .equatable()
         )
