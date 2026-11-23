@@ -1049,8 +1049,7 @@ struct AIChatView: View {
                 .buttonStyle(ChatHeaderButtonStyle())
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
-                .modifier(ChatNavigationGlassSurface(isCircle: true))
-                .clipShape(Circle())
+                .modifier(ChatToolbarSideGlass(isCircle: true))
                 .accessibilityLabel("会话列表")
             }, title: {
                 // The centered avatar stack is hosted above the transparent bar.
@@ -1062,8 +1061,7 @@ struct AIChatView: View {
                 }
                 .padding(.horizontal, 2)
                 .frame(height: 44)
-                .modifier(ChatNavigationGlassSurface())
-                .clipShape(Capsule())
+                .modifier(ChatToolbarSideGlass(isCircle: false))
             })
             .equatable()
         )
@@ -5517,6 +5515,30 @@ private struct ProviderImportSheet: View {
 // MARK: - Nav Bar Modifiers
 
 // BEGIN ProviderChatChrome
+private struct ChatToolbarSideGlass: ViewModifier {
+    let isCircle: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        // Reserve room inside the toolbar item for the drop shadow, then clip
+        // the glass to the control shape so the legacy Metal lens cannot paint
+        // its spill (a horizontal band) beside the control.
+        let inset: CGFloat = 3
+        let shape = isCircle ? AnyShape(Circle()) : AnyShape(Capsule())
+        return content
+            .padding(-inset)
+            .modifier(ChatNavigationGlassSurface(isCircle: isCircle))
+            .clipShape(shape)
+            .compositingGroup()
+            // Same drop shadow as ChatLegacyGlassSurface, scaled for a 44pt
+            // control: only the larger centered surfaces carry the full
+            // radius-10 shadow without it reading as a halo.
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.10),
+                    radius: 5, x: 0, y: 2)
+            .padding(inset)
+    }
+}
+
 /// One native glass surface per control/group. Equal width and height make
 /// the leading surface circular; the two trailing controls share one capsule.
 private struct ChatNavigationGlassSurface: ViewModifier {
