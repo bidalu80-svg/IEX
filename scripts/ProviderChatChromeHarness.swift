@@ -771,7 +771,9 @@ private final class FrostTailBackdrop: UIView {
                                 "barBottom": barBottom,
                                 "nativeBackgroundAlpha": navigation.topViewController?.navigationItem.standardAppearance?.backgroundColor?.cgColor.alpha ?? 0
                             ])
-                            try check(frost != nil && frost!.frame.minY == 0 && abs(frost!.frame.maxY - navigation.navigationBar.convert(navigation.navigationBar.bounds, to: frost!.superview).midY) < 1,
+                            try check(frost != nil &&
+                                      abs(frost!.convert(frost!.bounds, to: window).minY - window.bounds.minY) < 1 &&
+                                      abs(frost!.convert(frost!.bounds, to: window).maxY - bar.convert(bar.bounds, to: window).midY) < 1,
                                       "Frost covers status and navigation area with a fading lower extension: \(theme)-\(Int(width))-\(large)")
                         }
                         diagnostics.append([

@@ -5687,7 +5687,8 @@ private final class ChatProgressiveFrostView: UIView {
     func layout(barBottom: CGFloat, reduceTransparency: Bool) {
         lastBottom = barBottom
         guard window != nil, superview != nil else { return }
-        // The frame ends at the native navigation controls' centerline.
+        // The frame starts at the window top and ends at the native
+        // navigation controls' centerline in window coordinates.
         // Only scrolling content ABOVE that line fades. The controls and
         // avatar are separate siblings, so their own opacity is unchanged.
         let height = max(1, bounds.height)
@@ -6239,6 +6240,12 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
                 frostedOverlay.isUserInteractionEnabled = false
                 frostedOverlay.accessibilityElementsHidden = true
                 host.insertSubview(frostedOverlay, belowSubview: bar)
+            } else if let overlayIndex = host.subviews.firstIndex(of: frostedOverlay),
+                      let barIndex = host.subviews.firstIndex(of: bar),
+                      overlayIndex + 1 != barIndex {
+                // UIKit may reorder content after mounting the overlay.
+                // Move only the fade, keeping it immediately below the bar.
+                host.insertSubview(frostedOverlay, belowSubview: bar)
             }
             let barFrame = bar.convert(bar.bounds, to: host)
             let barBottom = barFrame.maxY
@@ -6266,11 +6273,18 @@ private struct ChatNavigationBarAppearance: UIViewControllerRepresentable {
             }
             // The reference red line crosses the toolbar icons' centers;
             // neither avatar size nor the provider capsule moves this boundary.
-            let height = max(1, barFrame.midY)
-            let nextFrame = CGRect(x: barFrame.minX, y: 0, width: barFrame.width, height: height)
-            if lastFrostFrame != nextFrame {
-                lastFrostFrame = nextFrame
-                frostedOverlay.frame = nextFrame
+            // Measure in the window before converting back to the existing
+            // host: its origin can shift between iOS versions.
+            if let window = bar.window {
+                let barFrameInWindow = bar.convert(bar.bounds, to: window)
+                let height = max(1, barFrameInWindow.midY - window.bounds.minY)
+                let windowFrame = CGRect(x: barFrameInWindow.minX, y: window.bounds.minY,
+                                         width: barFrameInWindow.width, height: height)
+                let nextFrame = host.convert(windowFrame, from: window)
+                if lastFrostFrame != nextFrame {
+                    lastFrostFrame = nextFrame
+                    frostedOverlay.frame = nextFrame
+                }
             }
             let reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
             frostedOverlay.layout(barBottom: barBottom,
