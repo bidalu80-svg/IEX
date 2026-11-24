@@ -200,7 +200,9 @@ final class ChatLayoutApplicationUITests: XCTestCase {
             waitForSearchState("Initial hit \(count)/\(count)") { counter.label == "结果 \(count)，共 \(count) 个" }
             let offset = searchEvents(trace).count
             if submissionStart == nil { submissionStart = offset }
-            for (submit, index) in (single ? [1, 1] : [1, 2]).enumerated() {
+            let expectedIndexes = single ? [1, 1] : [1, 2]
+            for submit in expectedIndexes.indices {
+                let index = expectedIndexes[submit]
                 searchKey.tap()
                 waitForSearchState("One native submit per tap, now at \(index)/\(count)") {
                     counter.label == "结果 \(index)，共 \(count) 个" && self.searchEvents(trace).dropFirst(offset)
