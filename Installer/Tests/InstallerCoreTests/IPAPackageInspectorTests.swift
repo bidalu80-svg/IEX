@@ -47,6 +47,29 @@ final class IPAPackageInspectorTests: XCTestCase {
         let package = try inspect(zip(entries))
         XCTAssertEqual(package.extensions.count, 2)
         XCTAssertEqual(Set(package.extensions.map(\.bundleIdentifier)), ["org.ze.widget", "org.ze.camera"])
+        XCTAssertEqual(package.application.relativePath, "Payload/Test.app")
+        let expectedPaths = ["Payload/Test.app/Extensions/Camera.appex", "Payload/Test.app/PlugIns/Widget.appex"]
+        XCTAssertEqual(package.extensions.map(\.relativePath), expectedPaths)
+
+        // Reproduce different absolute spellings of the same task directory on any
+        // host. Darwin can introduce this via /private URL canonicalization; a
+        // deliberate symlink alias exercises the production path conversion on Linux.
+        let alias = sandbox.appendingPathComponent("task-alias-with-a-different-length", isDirectory: true)
+        try fm.createSymbolicLink(at: alias, withDestinationURL: package.taskDirectory)
+        let canonicalApp = package.taskDirectory.appendingPathComponent("Payload/Test.app", isDirectory: true)
+        let aliasedApp = alias.appendingPathComponent("Payload/Test.app", isDirectory: true)
+        XCTAssertNotEqual(aliasedApp.path, canonicalApp.path)
+        XCTAssertEqual(try IPAPackageInspector.relativeBundlePath(aliasedApp, root: package.taskDirectory), "Payload/Test.app")
+        XCTAssertEqual(try IPAPackageInspector.relativeBundlePath(canonicalApp, root: alias), "Payload/Test.app")
+        for path in expectedPaths {
+            XCTAssertEqual(try IPAPackageInspector.relativeBundlePath(alias.appendingPathComponent(path), root: package.taskDirectory), path)
+        }
+        for unrelated in [try XCTUnwrap(sandbox), workspace.appendingPathComponent("other-task"),
+                          URL(fileURLWithPath: package.taskDirectory.path + "-sibling/Payload/Test.app")] {
+            XCTAssertThrowsError(try IPAPackageInspector.relativeBundlePath(unrelated, root: package.taskDirectory)) {
+                XCTAssertEqual(($0 as? PackageInspectionError)?.code, .unsafePath)
+            }
+        }
     }
     func testMissingInfo() throws { try reject(Array(appEntries().dropFirst()), .missingInfoPlist) }
     func testMissingExecutable() throws { try reject(Array(appEntries().prefix(1)), .missingExecutable) }

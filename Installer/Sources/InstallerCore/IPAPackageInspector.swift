@@ -140,6 +140,23 @@ public struct IPAPackageInspector {
         }
     }
 
+    /// Directory enumeration and symlink resolution can spell the same directory
+    /// differently (notably Darwin's /private prefix). Canonicalize both URLs and
+    /// compare path components before deriving an archive-relative bundle path.
+    static func relativeBundlePath(_ url: URL, root: URL) throws -> String {
+        let rootParts = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let bundleParts = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard bundleParts.count > rootParts.count,
+              bundleParts.starts(with: rootParts) else {
+            throw PackageInspectionError(.unsafePath, "bundle outside task directory")
+        }
+        let relative = bundleParts.dropFirst(rootParts.count).joined(separator: "/")
+        guard ZIP.safeComponents(relative) != nil else {
+            throw PackageInspectionError(.unsafePath, "invalid bundle relative path")
+        }
+        return relative
+    }
+
     private func bundle(_ url: URL, root: URL, os: SystemVersion, architectures: Set<String>) throws -> InspectedBundle {
         let infoURL = url.appendingPathComponent("Info.plist")
         guard FileManager.default.fileExists(atPath: infoURL.path) else { throw PackageInspectionError(.missingInfoPlist) }
@@ -172,7 +189,7 @@ public struct IPAPackageInspector {
         let minOS = try SystemVersion(minimumText)
         guard minOS <= os else { throw PackageInspectionError(.minimumOSVersion) }
         let binary = try MachO.check(Data(contentsOf: executableURL), os: os, supported: architectures, executable: true)
-        return try InspectedBundle(relativePath: String(url.path.dropFirst(root.path.count + 1)),
+        return try InspectedBundle(relativePath: Self.relativeBundlePath(url, root: root),
                                    bundleIdentifier: text("CFBundleIdentifier"), version: text("CFBundleShortVersionString"),
                                    build: text("CFBundleVersion"), executable: executable,
                                    architectures: binary, minimumOS: minOS)
