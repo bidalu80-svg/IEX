@@ -37,6 +37,14 @@ struct AgentLiveActivityWidget: Widget {
                         .padding(.vertical, 2)
                         .background(.green.opacity(0.18), in: Capsule())
                         .padding(.trailing, 8)
+                    } else if !context.state.floatingWindow && context.state.waitingForApproval {
+                        Text("等待审批")
+                            .font(.caption.bold())
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.orange.opacity(0.18), in: Capsule())
+                            .padding(.trailing, 8)
                     } else {
                         Text(context.state.sessions.contains { $0.sessionId.hasPrefix("scheduled-task:") }
                             ? String(localized: "\(context.state.activeSessionCount)个任务")
@@ -51,8 +59,53 @@ struct AgentLiveActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if let session = context.state.currentSession {
+                    if !context.state.floatingWindow && context.state.sessions.count > 1 {
                         VStack(alignment: .leading, spacing: 5) {
+                            if context.state.waitingForApproval && !context.state.allCompleted {
+                                Label("等待你允许", systemImage: "exclamationmark.circle.fill")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.orange)
+                            }
+                            ForEach(Array(context.state.sessions.prefix(3)), id: \.sessionId) { session in
+                                HStack(spacing: 5) {
+                                    Image(systemName: session.isCompleted ? "checkmark.circle.fill" : session.toolIcon)
+                                        .font(.caption)
+                                        .foregroundStyle(session.isCompleted ? .green : .blue)
+                                        .id(session.toolIcon)
+                                        .transition(.opacity.animation(.easeInOut(duration: 0.35)))
+                                    Text(session.title)
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.green)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    if session.isCompleted {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    } else {
+                                        Text(session.toolStatus)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .contentTransition(.interpolate)
+                                    }
+                                }
+                            }
+                            if context.state.sessions.count > 3 {
+                                Text("+\(context.state.sessions.count - 3)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.top, 4)
+                    } else if let session = context.state.currentSession {
+                        VStack(alignment: .leading, spacing: 5) {
+                            if !context.state.floatingWindow && context.state.waitingForApproval && !context.state.allCompleted {
+                                Label("等待你允许", systemImage: "exclamationmark.circle.fill")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.orange)
+                            }
                             HStack(spacing: 0) {
                                 Image(systemName: session.sessionId.hasPrefix("scheduled-task:") ? "clock" : "bubble.left.fill")
                                     .font(.caption)
@@ -133,7 +186,20 @@ struct AgentLiveActivityWidget: Widget {
                                 }
                             } else {
                                 HStack(spacing: 5) {
-                                    LiveActivitySpinner()
+                                    if context.state.floatingWindow {
+                                        LiveActivitySpinner()
+                                    } else {
+                                        Image(systemName: session.toolIcon)
+                                            .font(.caption)
+                                            .foregroundStyle(.blue)
+                                            .id(session.toolIcon)
+                                            .transition(.opacity.animation(.easeInOut(duration: 0.35)))
+                                        Text(session.toolStatus)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .contentTransition(.interpolate)
+                                    }
                                     Spacer()
                                     if !context.state.privacyMode {
                                         Text("Loop \(session.loopIteration)")
@@ -375,7 +441,16 @@ struct MinimalIconView: View {
     let state: AgentActivityAttributes.ContentState
 
     var body: some View {
-        if state.minimalShowsTool && !state.latestToolIcon.isEmpty {
+        if !state.floatingWindow && state.allCompleted {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        } else if !state.floatingWindow && state.waitingForApproval {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+        } else if !state.floatingWindow && state.hasError {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        } else if state.minimalShowsTool && !state.latestToolIcon.isEmpty {
             Image(systemName: state.latestToolIcon)
                 .font(.caption)
                 .foregroundStyle(.blue)
@@ -399,7 +474,20 @@ struct CompactTrailingView: View {
     let state: AgentActivityAttributes.ContentState
 
     var body: some View {
-        LiveActivitySpinner(scale: 0.85)
+        if state.floatingWindow {
+            LiveActivitySpinner(scale: 0.85)
+        } else if state.allCompleted {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        } else if state.waitingForApproval {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+        } else if state.hasError {
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        } else {
+            LiveActivitySpinner(scale: 0.85)
+        }
     }
 }
 

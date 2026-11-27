@@ -1,4 +1,5 @@
 ﻿import ActivityKit
+import Combine
 import Foundation
 import UIKit
 import os.log
@@ -27,6 +28,32 @@ final class AgentLiveActivityManager {
     private var lastPushDate: Date = .distantPast
     private var pendingState: Any?
     private var pendingPushWorkItem: DispatchWorkItem?
+    private var approvalObservation: AnyCancellable?
+
+    /// Read the existing approval gates only; their continuations and UI remain
+    /// owned by those gates. Subscribe lazily to avoid singleton-init cycles.
+    private func observeApprovalIfNeeded() {
+        guard approvalObservation == nil else { return }
+        approvalObservation = Publishers.CombineLatest3(
+            ConfigConfirmationGate.shared.$pending.map { $0 != nil },
+            RemoteServerAIConfirmationGate.shared.$pending.map { $0 != nil },
+            OffloadPermissionManager.shared.$pendingRequest.map { $0 != nil }
+        )
+        .map { $0 || $1 || $2 }
+        .removeDuplicates()
+        .dropFirst()
+        .sink { [weak self] _ in
+            // @Published emits before the property is stored. Read the gates on
+            // the next MainActor turn, after the new pending value is installed.
+            Task { @MainActor [weak self] in
+                guard let self, self.currentActivity != nil else { return }
+                self.updateActivity(
+                    sessions: BackgroundKeepAliveManager.shared.buildLiveSessionSnapshots(),
+                    immediately: true
+                )
+            }
+        }
+    }
 
     private var lastRenewDate: Date = .distantPast
     private static let minRenewInterval: TimeInterval = 5.0
@@ -499,6 +526,7 @@ final class AgentLiveActivityManager {
             logger.info("[LiveActivity][start] skipped: Activities not enabled in Settings")
             return
         }
+        observeApprovalIfNeeded()
         lifecycleGeneration = UUID()
         pendingStartState = nil
         pendingStartGeneration = nil
@@ -698,7 +726,7 @@ final class AgentLiveActivityManager {
 
     @available(iOS 16.2, *)
     /// - Parameter bypassRateLimit: skip the 3s/5s push throttle. Pass true ONLY
-    ///   for discrete user-initiated events (the Live Activity audio toggle) that
+    ///   for discrete events (approval changes or the Live Activity audio toggle) that
     ///   demand immediate visual feedback. Agent-driven refreshes must leave this
     ///   false so the throttle keeps damping their high-frequency churn.
     ///   [T-live-activity-audio-toggle-latency]
@@ -780,7 +808,10 @@ final class AgentLiveActivityManager {
         let minInterval: TimeInterval = isBackground ? 5.0 : 3.0
         let elapsed = Date().timeIntervalSince(lastPushDate)
 
-        if elapsed < minInterval, !bypassRateLimit {
+        let previous = lastPushedState as? AgentActivityAttributes.ContentState
+        let taskStatusChanged = previous?.waitingForApproval != state.waitingForApproval
+            || previous?.hasError != state.hasError
+        if elapsed < minInterval, !bypassRateLimit, !taskStatusChanged {
             pendingState = state
             if pendingPushWorkItem == nil {
                 let delay = minInterval - elapsed
@@ -798,8 +829,8 @@ final class AgentLiveActivityManager {
             return
         }
 
-        if bypassRateLimit, elapsed < minInterval {
-            logger.info("[LiveActivity][update] #\(self.updateCount) RATE-LIMIT BYPASS (user audio toggle, elapsed=\(String(format: "%.1f", elapsed))s < \(String(format: "%.1f", minInterval))s)")
+        if bypassRateLimit || taskStatusChanged, elapsed < minInterval {
+            logger.info("[LiveActivity][update] #\(self.updateCount) RATE-LIMIT BYPASS (discrete state change, elapsed=\(String(format: "%.1f", elapsed))s < \(String(format: "%.1f", minInterval))s)")
         }
         // Cancelling any queued work item + clearing pendingState here is what
         // keeps the bypass from double-pushing: a deferred push that was already
@@ -824,7 +855,27 @@ final class AgentLiveActivityManager {
         s.isAudioPlaying = audio.isPlaying
         s.isAudioLoaded = audio.isLoaded
         s.audioTitle = audio.title
-        return withPrivacyRedaction(s)
+        return withPrivacyRedaction(withTaskState(s))
+    }
+
+    /// Stamp pure task flags on start/update/renew/delete pushes, without
+    /// copying approval content or error text into ActivityKit.
+    @available(iOS 16.2, *)
+    private func withTaskState(_ state: AgentActivityAttributes.ContentState) -> AgentActivityAttributes.ContentState {
+        var s = state
+        let hasRunningSession = !s.allCompleted && s.sessions.contains { !$0.isCompleted }
+        s.waitingForApproval = hasRunningSession && (
+            ConfigConfirmationGate.shared.pending != nil
+                || RemoteServerAIConfirmationGate.shared.pending != nil
+                || OffloadPermissionManager.shared.pendingRequest != nil
+        )
+        // Same error sources used by endBackgroundProcessing's notification.
+        // A cache miss means unknown, never a fabricated failure.
+        s.hasError = s.sessions.contains { session in
+            guard let vm = ViewModelCache.shared.get(for: session.sessionId) else { return false }
+            return vm.errorMessage != nil || vm.messages.last?.error != nil
+        }
+        return s
     }
 
     /// [T-ios-live-activity-privacy-mode] Data-layer redaction: retain the

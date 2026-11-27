@@ -50,6 +50,9 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// until the user taps it and Ze decides whether to dismiss it.
         /// [T-ios-live-activity-soft-finish]
         var allCompleted: Bool = false
+        /// Pure task flags; carry no approval details or error messages.
+        var waitingForApproval: Bool = false
+        var hasError: Bool = false
         /// [T-ios-live-activity-audio-toggle] True while the global TTS/audio
         /// player (`GlobalAudioPlayer`) is actively playing a reply-narration or
         /// attachment audio. Drives the play/pause control shown beside the Agent
@@ -89,5 +92,35 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// Defaulted so ContentStates encoded before this field existed still
         /// decode (and so the end/cleanup states stay unchanged).
         var floatingWindow: Bool = false
+    }
+}
+
+// An initializer in an extension preserves the memberwise initializer used by
+// the app. Stored-property defaults alone do not make Codable accept missing keys.
+@available(iOS 16.2, *)
+extension AgentActivityAttributes.ContentState {
+    private enum CodingKeys: String, CodingKey {
+        case activeSessionCount, sessions, carouselIndex, soulName
+        case latestToolIcon, minimalShowsTool, allCompleted, waitingForApproval, hasError
+        case isAudioPlaying, isAudioLoaded, audioTitle, finishedAt, privacyMode, floatingWindow
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        activeSessionCount = try values.decode(Int.self, forKey: .activeSessionCount)
+        sessions = try values.decode([LiveSessionSnapshot].self, forKey: .sessions)
+        carouselIndex = try values.decode(Int.self, forKey: .carouselIndex)
+        soulName = try values.decode(String.self, forKey: .soulName)
+        latestToolIcon = try values.decodeIfPresent(String.self, forKey: .latestToolIcon) ?? ""
+        minimalShowsTool = try values.decodeIfPresent(Bool.self, forKey: .minimalShowsTool) ?? false
+        allCompleted = try values.decodeIfPresent(Bool.self, forKey: .allCompleted) ?? false
+        waitingForApproval = try values.decodeIfPresent(Bool.self, forKey: .waitingForApproval) ?? false
+        hasError = try values.decodeIfPresent(Bool.self, forKey: .hasError) ?? false
+        isAudioPlaying = try values.decodeIfPresent(Bool.self, forKey: .isAudioPlaying) ?? false
+        isAudioLoaded = try values.decodeIfPresent(Bool.self, forKey: .isAudioLoaded) ?? false
+        audioTitle = try values.decodeIfPresent(String.self, forKey: .audioTitle) ?? ""
+        finishedAt = try values.decodeIfPresent(Date.self, forKey: .finishedAt)
+        privacyMode = try values.decodeIfPresent(Bool.self, forKey: .privacyMode) ?? false
+        floatingWindow = try values.decodeIfPresent(Bool.self, forKey: .floatingWindow) ?? false
     }
 }
