@@ -119,6 +119,15 @@ class ReviewRunnerTests(unittest.TestCase):
                 return 1
             return 0
 
+        def fake_check_output(command, *args, **kwargs):
+            # subprocess is shared with platform.py. Darwin's platform.platform()
+            # probes `file -b` in binary mode and decodes the returned bytes, whereas
+            # this runner's git/toolchain probes explicitly request text=True.
+            output = "Mach-O 64-bit arm64" if command[:2] == ["file", "-b"] else "fixture"
+            text_mode = (kwargs.get("text") or kwargs.get("universal_newlines")
+                         or kwargs.get("encoding") or kwargs.get("errors"))
+            return output if text_mode else output.encode("utf-8")
+
         real_temporary_directory = review.tempfile.TemporaryDirectory
 
         @contextmanager
@@ -130,10 +139,33 @@ class ReviewRunnerTests(unittest.TestCase):
 
         with patch.object(review.sys, "argv", ["run-review.py", "--evidence", str(evidence)]), \
                 patch.object(review.shutil, "which", return_value="/fixture/swift"), \
-                patch.object(review.subprocess, "check_output", return_value="fixture"), \
-                patch.object(review, "run", side_effect=fake_run),                 patch.object(review.tempfile, "TemporaryDirectory", scratch_directory), patch("builtins.print"):
+                patch.object(review.subprocess, "check_output", side_effect=fake_check_output), \
+                patch.object(review, "run", side_effect=fake_run), \
+                patch.object(review.tempfile, "TemporaryDirectory", scratch_directory), patch("builtins.print"):
             code = review.main()
         return code, json.loads((evidence / "summary.json").read_text())["自动化实现验证"], evidence
+
+    def test_full_review_darwin_binary_platform_probe_on_any_host(self):
+        # Exercise the real stdlib architecture/_syscmd_file decode path without
+        # requiring macOS. A fresh cache prevents earlier tests hiding the probe.
+        # Only OS identity is synthetic; check_output still uses our shared stub.
+        real_probe = review.platform._syscmd_file
+        with patch.object(review.platform, "_platform_cache", {}), \
+                patch.object(review.platform, "uname", return_value=("Darwin", "fixture", "24.6.0", "fixture", "arm64", "arm")), \
+                patch.object(review.platform, "mac_ver", return_value=("15.8.2", ("", "", ""), "arm64")), \
+                patch.object(review.platform, "_syscmd_file", wraps=real_probe) as probe:
+            code, auto, evidence = self.run_injected_review("success")
+        self.assertEqual(code, 0, auto.get("error"))
+        self.assertEqual(auto["status"], "PASS")
+        self.assertTrue(all(item["controlledAssertionFailure"] for item in auto["mutations"]))
+        probe.assert_called_once()
+        environment = json.loads((evidence / "environment.json").read_text())
+        self.assertIn("macOS-15.8.2", environment["platform"])
+        # Python versions differ in whether architecture() names Mach-O linkage.
+        # The regression requires the byte-decoding probe, not a cosmetic suffix.
+        self.assertIn("64bit", environment["platform"])
+        self.assertEqual(environment["commit"], "fixture")
+        self.assertEqual(environment["swiftVersion"], "fixture")
 
     def test_full_review_classifies_mutation_compile_failure(self):
         code, auto, _ = self.run_injected_review("mutation-build")
