@@ -1,0 +1,56 @@
+name: Verify offline IPA installer core
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipa-install-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa-install-core-review:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile production modules, run offline fixtures and critical mutations
+        run: python3 Installer/run-review.py
+      - name: Publish verification boundaries
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence = Path("ipa-install-evidence")
+          evidence.mkdir(exist_ok=True)
+          path = evidence / "summary.json"
+          if not path.exists():
+              path.write_text(json.dumps({
+                  "自动化实现验证": {"status": "FAIL", "failureCategory": "build", "reason": "Runner did not produce results; inspect job logs"},
+                  "真机兼容记录": {"status": "NOT TESTED", "reason": "No physical device"}
+              }, ensure_ascii=False, indent=2) + "\n")
+          result = json.loads(path.read_text())
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write("| 自动化实现验证 | 真机兼容记录 |\n| --- | --- |\n")
+              output.write("| " + result["自动化实现验证"]["status"] + " — offline package + mock transaction | "
+                           + result["真机兼容记录"]["status"] + " — iOS 27 installation/launch unverified |\n")
+              output.write("\nSigning/profile, device protocol and UI integration are deferred. No simulator screenshots or xcresult were generated in this core job.\n")
+          PY
+      - name: Upload IPA installer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa-install-evidence
+          path: ipa-install-evidence/
+          retention-days: 7
+          if-no-files-found: error
