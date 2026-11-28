@@ -1,0 +1,83 @@
+name: Verify isolated connection experiment
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage1-connection-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  connection-fixtures:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile production connection core and kill four semantic mutations
+        run: python3 Installer/run-connection-review.py
+      - name: Compile real native backend and run protocol rejection fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p stage1-connection-evidence/native
+          rustup toolchain install stable --profile minimal
+          cargo +stable test --locked --manifest-path Installer/Native/Cargo.toml \
+            2>&1 | tee stage1-connection-evidence/native/macos-tests.log
+      - name: Exercise production Swift adapter through the real C ABI
+        run: bash Installer/test-native-abi.sh
+      - name: Upload connection fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-connection-fixtures
+          path: stage1-connection-evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+  connection-ios-integration:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+      - name: Build real Rust iOS device and simulator static libraries
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup override set stable
+          bash Installer/build-native-ios.sh
+      - name: Compile full Ze with experiment OFF and ON and verify final linkage
+        run: bash Installer/build-host-experiment.sh
+      - name: Link real device Ze with experiment ON and package unsigned IPA
+        run: bash Installer/build-device-experiment.sh
+      - name: State verification boundary
+        if: always()
+        run: |
+          mkdir -p stage1-connection-evidence
+          cat > stage1-connection-evidence/DEVICE-NOT-TESTED.txt <<'TEXT'
+          This job builds real Rust iOS archives and the production Ze simulator and device applications.
+          Read job outcomes and raw logs for compilation status; artifact upload is not PASS.
+          Settings discovery, notification delivery, background lifetime, SRP/PIN acceptance,
+          LocalDevVPN routing, TLS-PSK device compatibility and fresh lockdown identity checks
+          require a real device. Host / first connection / app reopen / device restart: NOT TESTED.
+          TEXT
+          cat stage1-connection-evidence/DEVICE-NOT-TESTED.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload native integration evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-connection-ios-integration
+          path: |
+            stage1-connection-evidence/
+            share-search-simulator-build.log
+            share-search-simulator-resolve.log
+          retention-days: 7
+          if-no-files-found: error
