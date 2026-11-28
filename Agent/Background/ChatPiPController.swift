@@ -177,6 +177,9 @@ private final class SilentAudioKeepAlive {
     func start() {
         guard !isRunning else { return }
         do {
+            #if ZE_CONNECTION_EXPERIMENT
+            NotificationCenter.default.post(name: AudioSessionCoordinator.connectionExperimentExternalAudio, object: nil)
+            #endif
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)

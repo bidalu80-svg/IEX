@@ -32,6 +32,9 @@ final class AudioSessionCoordinator {
     enum Intent: Int {
         // Higher rawValue = higher priority. Short interface sounds never
         // preempt recording, spoken replies, media or background keep-alive.
+        #if ZE_CONNECTION_EXPERIMENT
+        case connectionExperiment = -2
+        #endif
         case interfaceFeedback = -1
         case backgroundKeepAlive = 0
         case replyTTS = 1
@@ -48,6 +51,35 @@ final class AudioSessionCoordinator {
     var canPlayInterfaceFeedback: Bool { !isCapturing && !active.contains(.voiceCallPlayback) && !interrupted && !AVAudioSession.sharedInstance().secondaryAudioShouldBeSilencedHint }
     private var interrupted = false
 
+    #if ZE_CONNECTION_EXPERIMENT
+    nonisolated static let connectionExperimentExternalAudio = Notification.Name("Ze.ConnectionExperiment.externalAudio")
+    private var connectionExperimentRevoked: (() -> Void)?
+    func reserveConnectionExperiment(_ revoked: @escaping () -> Void) -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        guard active.isEmpty, !interrupted, !session.isOtherAudioPlaying,
+              session.category == .ambient || session.category == .soloAmbient,
+              !session.secondaryAudioShouldBeSilencedHint else { return false }
+        connectionExperimentRevoked = revoked
+        begin(.connectionExperiment)
+        guard sessionActive else { releaseConnectionExperiment(); return false }
+        return true
+    }
+    func releaseConnectionExperiment() {
+        connectionExperimentRevoked = nil
+        let owned = active.contains(.connectionExperiment)
+        end(.connectionExperiment)
+        // Restore an unambiguous idle category only when this lease owned it.
+        // Unknown legacy playback ownership at acquisition is conservatively blocked.
+        if owned && active.isEmpty { try? AVAudioSession.sharedInstance().setCategory(.ambient) }
+    }
+    private func revokeConnectionExperiment() {
+        let callback = connectionExperimentRevoked
+        connectionExperimentRevoked = nil
+        if active.remove(.connectionExperiment) != nil { apply(reason: "connection-experiment-revoked") }
+        callback?()
+    }
+    #endif
+
     // MARK: - Public API
 
     /// Posted when a media attachment preempts reply TTS — the active chat VM stops
@@ -59,6 +91,9 @@ final class AudioSessionCoordinator {
 
     /// Declare that `intent` now needs the audio session. Idempotent.
     func begin(_ intent: Intent) {
+        #if ZE_CONNECTION_EXPERIMENT
+        if intent != .connectionExperiment { revokeConnectionExperiment() }
+        #endif
         if intent == .mediaAttachment || intent == .replyTTS {
             NotificationCenter.default.post(name: Self.foregroundPlaybackStartedNotification, object: nil)
         }
@@ -99,6 +134,10 @@ final class AudioSessionCoordinator {
 
     private func profile(for intent: Intent) -> (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions) {
         switch intent {
+        #if ZE_CONNECTION_EXPERIMENT
+        case .connectionExperiment:
+            return (.playback, .default, [.mixWithOthers])
+        #endif
         case .interfaceFeedback:
             return (.ambient, .default, [.mixWithOthers])
         case .capture:
@@ -205,6 +244,9 @@ final class AudioSessionCoordinator {
     /// latches `isPaused` even with no live player and gates `pumpPlayback`, so
     /// the queue can't sneak a unit out under the recorder.
     private func pauseTTSForExternalAudio(reason: String) {
+        #if ZE_CONNECTION_EXPERIMENT
+        revokeConnectionExperiment()
+        #endif
         // Idempotent: repeated BEGIN signals (interruption + secondary-hint can
         // both fire) must not clear an already-recorded pause intent.
         guard !pausedByExternalAudio else { return }

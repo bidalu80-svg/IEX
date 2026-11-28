@@ -23,6 +23,7 @@ export PATH="$sim_root/meson-venv/bin:$(brew --prefix llvm)/bin:$(brew --prefix 
 # generated integration harness. Large native sources are staged separately by
 # prepare-ze-native-deps. No simulator changes are copied back to the checkout.
 rsync -a --exclude='.git' --exclude='.spm' --exclude='Vendor/ZeNative' \
+    --exclude='Installer/Native/target' --exclude='siboot-ref' --exclude='vendor-ref' \
     --exclude='build-macos' --exclude='.build' --exclude='*.ipa' \
     "$repo_root/" "$sim_checkout/"
 mkdir -p "$sim_checkout/Vendor"

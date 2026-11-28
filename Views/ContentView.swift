@@ -6036,6 +6036,9 @@ private struct SettingsSheet: View {
 }
 
 private struct AboutProjectView: View {
+    #if ZE_CONNECTION_EXPERIMENT
+    @State private var connectionVersionTaps = 0
+    #endif
     private struct Feature: Identifiable {
         let id = UUID()
         let icon: String
@@ -6092,6 +6095,14 @@ private struct AboutProjectView: View {
                     Text(buildDateText.map { "版本 \(marketingVersion) · 构建于 \($0) · 作者 ID：BLANK" } ?? "版本 \(marketingVersion) · 作者 ID：BLANK")
                         .font(.caption)
                         .foregroundStyle(ChatColors.tertiaryText)
+                    #if ZE_CONNECTION_EXPERIMENT
+                        .onTapGesture { connectionVersionTaps = min(7, connectionVersionTaps + 1) }
+                    #endif
+                    #if ZE_CONNECTION_EXPERIMENT
+                    if connectionVersionTaps == 7 {
+                        NavigationLink("连接实验") { ConnectionExperimentView() }
+                    }
+                    #endif
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 22)

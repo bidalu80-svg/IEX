@@ -215,6 +215,9 @@ final class SpeechRecognitionManager: ObservableObject {
         recognitionTask?.cancel()
         recognitionTask = nil
 
+        #if ZE_CONNECTION_EXPERIMENT
+        NotificationCenter.default.post(name: AudioSessionCoordinator.connectionExperimentExternalAudio, object: nil)
+        #endif
         let audioSession = AVAudioSession.sharedInstance()
         // No `.duckOthers`: capturing the mic shouldn't quiet other apps' audio
         // (it sometimes stayed ducked after recording stopped).

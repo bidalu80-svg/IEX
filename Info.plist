@@ -261,6 +261,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ze uses local network access for the debug server and to let the AI agent communicate with locally-hosted services.</string>
 	<key>NSAppTransportSecurity</key>

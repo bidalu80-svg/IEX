@@ -92,6 +92,9 @@ struct ModelQuickTestSheet: View {
 
     private func playAudio(_ data: Data) {
         do {
+            #if ZE_CONNECTION_EXPERIMENT
+            NotificationCenter.default.post(name: AudioSessionCoordinator.connectionExperimentExternalAudio, object: nil)
+            #endif
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             let player = try AVAudioPlayer(data: data)

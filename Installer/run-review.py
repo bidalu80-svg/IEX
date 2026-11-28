@@ -190,7 +190,7 @@ def main():
                     mutation = {"name": name, "status": "FAIL"}
                     auto["mutations"].append(mutation)
                     mutant = Path(scratch) / name
-                    shutil.copytree(PACKAGE, mutant, ignore=shutil.ignore_patterns(".build", ".swiftpm", "__pycache__"))
+                    shutil.copytree(PACKAGE, mutant, ignore=shutil.ignore_patterns(".build", ".swiftpm", "__pycache__", "target"))
                     source = mutant / "Sources" / "InstallerCore" / filename
                     original = source.read_text()
                     if original.count(before) != 1:

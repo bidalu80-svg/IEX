@@ -379,6 +379,9 @@ struct ZeVideoFullscreenPlayer: View {
                 p = AVPlayer(url: fileURL)
             }
             player = p
+            #if ZE_CONNECTION_EXPERIMENT
+            NotificationCenter.default.post(name: AudioSessionCoordinator.connectionExperimentExternalAudio, object: nil)
+            #endif
             try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
             try? AVAudioSession.sharedInstance().setActive(true)
             if externalPlayer == nil && startsAutomatically {
