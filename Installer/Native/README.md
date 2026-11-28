@@ -28,3 +28,18 @@ No-record identity creation requires explicit user consent, passed separately
 through the Swift contract and C ABI. Keychain item-not-found cannot reliably
 distinguish first use from loss of access after re-signing. It is never treated
 as permission to create a replacement identity.
+
+`ze_connection_run` stays synchronous, but constructs/polls its async operation
+on a joined Rust thread with an explicit 16 MiB stack. Darwin CI faulted in the
+future poll at the guard page of a 544 KiB GCD worker stack. The budget is twice
+the 8 MiB Linux stack on which the original contract passed, allowing additional
+debug SRP/TLS/serde frame headroom; it is not a measured maximum. Each call joins
+before return, so input buffers, session and callback context remain borrowed
+only for that call. Thread creation failure or worker panic returns
+`backendUnavailable`. Concurrent atomic cancellation remains supported.
+
+Callbacks now execute on that Rust thread. Swift copies the ephemeral PIN before
+dispatching to MainActor; non-PIN evidence is protected by NSLock and drained only
+after run returns. The Swift caller must retain context until return and must
+not synchronously re-enter/free the session from a callback. No GCD stack tuning,
+test bypass, logging subscriber or new wire protocol is involved.

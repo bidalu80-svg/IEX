@@ -42,6 +42,49 @@ impl Identity {
 #[derive(Default)]
 struct State { identity: Option<Identity>, listener: Option<TcpListener>, adapter: Option<AdapterHandle>, lockdown: Option<LockdownClient> }
 pub struct ZeSession { cancel: AtomicBool, runtime: Runtime, state: Mutex<State> }
+// CI's Darwin GCD caller has a 544KiB stack and faulted in the large debug
+// future's poll frame. Reserve 16MiB: twice the 8MiB Linux stack on which the
+// contract passed, with headroom for nested SRP/TLS/serde frames. This is a
+// conservative budget, not a measured peak. Never poll on the foreign stack.
+const RUN_STACK_BYTES: usize = 16 * 1024 * 1024;
+fn on_run_thread<T: Send>(work: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new().name("Ze.Connection.run".into())
+            .stack_size(RUN_STACK_BYTES).spawn_scoped(scope, work)
+            .map_err(|_| "backendUnavailable")?
+            .join().map_err(|_| "backendUnavailable")?
+    })
+}
+struct CallbackContext(*mut c_void);
+// The C ABI permits callbacks on a native worker. The caller retains context
+// until run returns; scoped join prevents this pointer escaping that lifetime.
+// Only the worker dereferences it via the caller's callback, never Rust itself.
+unsafe impl Send for CallbackContext {}
+impl CallbackContext { fn pointer(&self) -> *mut c_void { self.0 } }
+struct RunRequest<'a> {
+    session: &'a ZeSession, op: &'a CStr, input: &'a CStr,
+    event: Event, context: CallbackContext,
+}
+impl RunRequest<'_> {
+    // Called only on the explicitly sized Rust stack. Keeping the async frame
+    // construction here is essential: moving an already built future is too late.
+    fn execute(self) -> Result<Value> {
+        let session = self.session;
+        if session.cancel.load(Ordering::Acquire) { return Err("cancelled"); }
+        let op = self.op.to_str().map_err(|_| "identityInvalid")?;
+        let bytes = self.input.to_bytes();
+        if bytes.len() > 128*1024 { return Err("identityInvalid"); }
+        let input: Value = serde_json::from_slice(bytes).map_err(|_| "identityInvalid")?;
+        let mut state = session.state.lock().map_err(|_| "backendUnavailable")?;
+        session.runtime.block_on(async {
+            tokio::select! {
+                result = operation(&mut state, op, input, self.event, self.context.pointer()) => result,
+                _ = async { loop { if session.cancel.load(Ordering::Acquire) { break; } tokio::time::sleep(Duration::from_millis(10)).await; } } => Err("cancelled"),
+                _ = tokio::time::sleep(Duration::from_secs(120)) => Err("timeout")
+            }
+        })
+    }
+}
 fn emit(event: Event, context: *mut c_void, code: i32, pin: Option<&str>) {
     let pin = pin.and_then(|x| CString::new(x).ok());
     if let Some(callback) = event { callback(context, code, pin.as_ref().map_or(std::ptr::null(), |x| x.as_ptr())); }
@@ -226,25 +269,17 @@ pub unsafe extern "C" fn ze_connection_free(session: *mut ZeSession) {
     if !session.is_null() { drop(unsafe { Box::from_raw(session) }); }
 }
 /// # Safety: live serial-use session; valid NUL terminated input/op; callback
-/// context lives until return. Callback must not free/re-enter the session.
+/// context lives until return. Callback executes on the joined Rust worker and
+/// must not free/re-enter the session; cancel remains safe from another thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ze_connection_run(session: *mut ZeSession, op: *const c_char, input: *const c_char, event: Event, context: *mut c_void) -> *mut c_char {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Value> {
         let session = unsafe { session.as_ref() }.ok_or("backendUnavailable")?;
         if op.is_null() || input.is_null() { return Err("identityInvalid"); }
         if session.cancel.load(Ordering::Acquire) { return Err("cancelled"); }
-        let op = unsafe { CStr::from_ptr(op) }.to_str().map_err(|_| "identityInvalid")?;
-        let bytes = unsafe { CStr::from_ptr(input) }.to_bytes();
-        if bytes.len() > 128*1024 { return Err("identityInvalid"); }
-        let input: Value = serde_json::from_slice(bytes).map_err(|_| "identityInvalid")?;
-        let mut state = session.state.lock().map_err(|_| "backendUnavailable")?;
-        session.runtime.block_on(async {
-            tokio::select! {
-                result = operation(&mut state, op, input, event, context) => result,
-                _ = async { loop { if session.cancel.load(Ordering::Acquire) { break; } tokio::time::sleep(Duration::from_millis(10)).await; } } => Err("cancelled"),
-                _ = tokio::time::sleep(Duration::from_secs(120)) => Err("timeout")
-            }
-        })
+        let request = RunRequest { session, op: unsafe { CStr::from_ptr(op) },
+            input: unsafe { CStr::from_ptr(input) }, event, context: CallbackContext(context) };
+        on_run_thread(move || request.execute())
     }));
     let value = match result { Ok(Ok(value)) => json!({"ok":value}), Ok(Err(code)) => json!({"error":code}), Err(_) => json!({"error":"backendUnavailable"}) };
     CString::new(value.to_string()).expect("JSON has no NUL bytes").into_raw()
@@ -258,6 +293,50 @@ pub unsafe extern "C" fn ze_connection_string_free(value: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn ffi_prepare_and_restore_from_512k_caller_stack() {
+        std::thread::Builder::new().name("small-foreign-caller".into())
+            .stack_size(512 * 1024).spawn(|| unsafe {
+                let session = ze_connection_new(); assert!(!session.is_null());
+                let call = |op: &CStr, input: &CStr| {
+                    let output = ze_connection_run(session, op.as_ptr(), input.as_ptr(), None, std::ptr::null_mut());
+                    let value: Value = serde_json::from_slice(CStr::from_ptr(output).to_bytes()).unwrap();
+                    ze_connection_string_free(output); value
+                };
+                let fresh = call(c"prepare", c"{\"saved\":null,\"allowNewIdentity\":true}");
+                assert!(fresh.get("ok").is_some(), "prepare must execute on Rust's large stack");
+                let saved = CString::new(json!({"saved":fresh["ok"]["secret"],"allowNewIdentity":false}).to_string()).unwrap();
+                assert_eq!(call(c"prepare", &saved), fresh);
+                assert!(call(c"listen", c"{}")["ok"]["port"].as_u64().unwrap() > 0);
+                ze_connection_cancel(session);
+                assert_eq!(call(c"pair", c"{}")["error"], "cancelled");
+                ze_connection_free(session);
+            }).unwrap().join().unwrap();
+    }
+    #[test] fn run_worker_callback_is_joined_before_context_release() {
+        struct Observed { calls: std::sync::atomic::AtomicUsize, thread: Mutex<Option<std::thread::ThreadId>> }
+        extern "C" fn callback(context: *mut c_void, code: i32, pin: *const c_char) {
+            let state = unsafe { &*(context as *const Observed) };
+            assert_eq!(code, 2); assert!(pin.is_null());
+            *state.thread.lock().unwrap() = Some(std::thread::current().id());
+            state.calls.fetch_add(1, Ordering::SeqCst);
+        }
+        let state = Observed { calls: 0.into(), thread: Mutex::new(None) };
+        let context = CallbackContext(&state as *const Observed as *mut c_void);
+        let caller = std::thread::current().id();
+        let worker = on_run_thread(move || {
+            assert_eq!(std::thread::current().name(), Some("Ze.Connection.run"));
+            emit(Some(callback), context.pointer(), 2, None);
+            Ok(std::thread::current().id())
+        }).unwrap();
+        assert_ne!(worker, caller);
+        assert_eq!(state.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*state.thread.lock().unwrap(), Some(worker));
+        // The stack-owned callback context may now be dropped: join completed.
+    }
+    #[test] fn run_worker_panic_becomes_backend_unavailable() {
+        let result: Result<()> = on_run_thread(|| panic!("synthetic worker failure"));
+        assert_eq!(result.unwrap_err(), "backendUnavailable");
+    }
     #[tokio::test] async fn independent_wire_peer_wrong_pin_proof_is_rejected() {
         use base64::Engine;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

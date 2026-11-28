@@ -11,6 +11,10 @@ void ze_connection_free(ZeSession *session);
 // Input <=128KiB, NUL terminated JSON. Output allocated, free using string_free.
 // prepare:{saved: envelope|null, allowNewIdentity: bool}; listen:{}; pair:{}; connect:{};
 // query:{requestID: UUID}. No arbitrary service/key/domain inputs are accepted.
+// Synchronous: run joins its explicit 16MiB Rust worker before returning.
+// Event callbacks execute on that worker, not the calling thread. Keep context
+// and input buffers alive through return. Callbacks must not re-enter/free the
+// session; cancel from another thread remains permitted. PIN is callback-scoped.
 char *ze_connection_run(ZeSession *session, const char *operation, const char *input,
                         ZeEvent event, void *context);
 void ze_connection_string_free(char *value);
