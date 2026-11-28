@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Ship native objects, not Rust LLVM bitcode for Apple's/Swift's older reader.
-# Keep LTO off in Cargo.toml; Rust performs compilation before the Apple linker.
+# Compile this crate to native objects with LTO off. Prebuilt Rust sysroot archive
+# members can still contain bitcode; the final Apple link remains a required check.
 export RUSTFLAGS="${RUSTFLAGS:-} -C embed-bitcode=no"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence="${1:-$root/stage1-connection-evidence/native}"
@@ -21,7 +21,9 @@ for target in aarch64-apple-ios aarch64-apple-ios-sim; do
         2>&1 | tee "$evidence/$target-build.log"
     library="$root/Installer/Native/target/$target/release/libze_connection.a"
     test -s "$library"
-    xcrun nm -gU "$library" > "$evidence/$target-symbols.txt"
-    grep -q '_ze_connection_run' "$evidence/$target-symbols.txt"
+    # Apple's nm cannot parse LLVM 23 bitcode members in the Rust sysroot.
+    # Match the reader to the active producer; failures and all five ABI exports
+    # remain mandatory. Full Ze simulator/device linking follows in the CI job.
+    python3 "$root/Installer/check-native-symbols.py" "$library" "$evidence"
     shasum -a 256 "$library" > "$evidence/$target-sha256.txt"
 done
