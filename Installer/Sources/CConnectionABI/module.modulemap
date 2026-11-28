@@ -1,0 +1,4 @@
+module CConnectionABI {
+    header "include/bridge.h"
+    export *
+}

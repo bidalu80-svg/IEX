@@ -1,0 +1,22 @@
+[package]
+name = "ze-connection"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+idevice = { path = "upstream/idevice", default-features = false, features = ["ring", "remote_pairing", "tcp", "tunnel_tcp_stack", "rsd"] }
+tokio = { version = "1", features = ["rt", "net", "time", "macros", "sync", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+base64 = "0.22"
+
+[profile.release]
+panic = "unwind"
+lto = false
